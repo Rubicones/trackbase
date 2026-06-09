@@ -1,26 +1,175 @@
 @import "tailwindcss";
 
+/* ── Light theme (default) ─────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg:           #F5F5F3;
+  --bg-surface:   #EFEFED;
+  --bg-card:      #E8E8E5;
+  --border:       #DDDDD8;
+  --border-light: #CFCFCA;
+  --text:         #1A1A1A;
+  --text-sec:     #3D3D3D;
+  --text-muted:   #888888;
+  --text-dim:     #AAAAAA;
+  --accent:       #6366F1;
+  --accent-hover: #5254cc;
+  --amber:        #D97706;
+  --green:        #059669;
+  --danger:       #dc2626;
+  /* Badge pill backgrounds */
+  --badge-current-bg: #e8e8ff;
+  --badge-branch-bg:  #fff3d4;
+  --badge-merged-bg:  #d4f5e8;
 }
 
+/* ── Dark theme ────────────────────────────────────────────── */
+.dark {
+  --bg:           #0A0A0A;
+  --bg-surface:   #080808;
+  --bg-card:      #111111;
+  --border:       #141414;
+  --border-light: #1e1e1e;
+  --text:         #FFFFFF;
+  --text-sec:     #AAAAAA;
+  --text-muted:   #555555;
+  --text-dim:     #333333;
+  --accent:       #6366F1;
+  --accent-hover: #5254cc;
+  --amber:        #F59E0B;
+  --green:        #10B981;
+  --danger:       #f87171;
+  /* Badge pill backgrounds */
+  --badge-current-bg: #1a1a40;
+  --badge-branch-bg:  #221800;
+  --badge-merged-bg:  #081a10;
+}
+
+/* ── Tailwind color utilities → reference CSS vars ─────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-base:       var(--bg);
+  --color-surface:    var(--bg-surface);
+  --color-card:       var(--bg-card);
+  --color-edge:       var(--border);
+  --color-subtle:     var(--border-light);
+  --color-accent:     var(--accent);
+  --color-accent-dim: var(--accent-hover);
+  --color-amber:      var(--amber);
+  --color-emerald:    var(--green);
+  --color-danger:     var(--danger);
+  --color-bright:     var(--text);
+  --color-soft:       var(--text-sec);
+  --color-muted:      var(--text-muted);
+  --color-dim:        var(--text-dim);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/*
+ * Tailwind v4 puts utilities inside @layer. Unlayered CSS wins over layered
+ * CSS in the cascade, so a universal reset here was zeroing every p-/m-/gap-
+ * utility. Preflight already resets margins/padding inside @layer base.
+ */
+@layer base {
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    height: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  input, button, a { font-family: inherit; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+  button { cursor: pointer; border: none; background: none; }
+  button:active { transform: scale(0.97); }
+}
+
+@layer components {
+  /* Temporarily added to <html> during the theme transition */
+  .theme-transition,
+  .theme-transition * {
+    transition:
+      background-color 0.2s ease,
+      border-color 0.2s ease,
+      color 0.15s ease,
+      fill 0.15s ease,
+      stroke 0.15s ease !important;
+  }
+
+  .btn-topbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-light);
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .btn-topbar:hover {
+    background: var(--bg-surface);
+    border-color: var(--border);
+    color: var(--text-sec);
+  }
+
+  .btn-accent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    transition: background-color 0.15s ease;
+  }
+  .btn-accent:hover { background: var(--accent-hover); }
+
+  .btn-play {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--accent);
+    color: white;
+    transition: background-color 0.15s ease;
+  }
+  .btn-play:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-play:disabled { background: var(--border); cursor: not-allowed; }
+
+  .btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-light);
+    color: var(--text-muted);
+    transition: background-color 0.15s ease, color 0.12s ease;
+  }
+  .btn-icon:hover {
+    background: var(--bg-surface);
+    color: var(--text-sec);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes theme-icon-in {
+  from { opacity: 0; transform: rotate(-30deg) scale(0.85); }
+  to   { opacity: 1; transform: rotate(0deg) scale(1); }
 }
