@@ -4,16 +4,20 @@ import { supabase } from '@/lib/supabase'
 // POST /api/projects/[id]/merge
 // Body: {
 //   branchVersionId: string,
-//   resolutions: Array<{ trackName: string, choice: 'main' | 'branch' }>
+//   resolutions: Array<{
+//     trackName: string,
+//     fileChoice?: 'main' | 'branch',   // required when fileConflict
+//     nameChoice?: 'main' | 'branch',   // required when renameConflict
+//   }>
 // }
 //
 // Algorithm:
-//   1. Load current main tracks (these are the starting point)
-//   2. Re-run conflict detection to get autoMerge list
-//   3. Apply autoMerge: take_from_branch → replace/add; add_new → insert
-//   4. Apply resolutions: 'branch' → replace with branch track; 'main' → keep existing
+//   1. Load base/branch/main track sets
+//   2. Re-run conflict detection to determine fileConflict, renameConflict,
+//      fileChangedInBranch, renamedInBranch flags per track
+//   3. Determine final file source and display_name for each track
+//   4. Wipe main tracks and insert the merged set
 //   5. Mark branch as merged
-//   6. Return updated main version with tracks
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -22,7 +26,7 @@ export async function POST(
     const { id: projectId } = await params
     const { branchVersionId, resolutions = [] } = await req.json() as {
       branchVersionId: string
-      resolutions: Array<{ trackName: string; choice: 'main' | 'branch' }>
+      resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch' }>
     }
 
     if (!branchVersionId) {
@@ -54,7 +58,8 @@ export async function POST(
 
     // Fetch all relevant track sets
     const baseVersionId = branch.parent_id
-    const [baseTrk, branchTrk, mainTrk] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [baseTrk, branchTrk, mainTrk]: [any[], any[], any[]] = await Promise.all([
       baseVersionId
         ? supabase.from('tracks').select('*').eq('version_id', baseVersionId).then(r => r.data ?? [])
         : Promise.resolve([]),
@@ -62,41 +67,71 @@ export async function POST(
       supabase.from('tracks').select('*').eq('version_id', main.id).order('position', { ascending: true }).then(r => r.data ?? []),
     ])
 
-    // Build the merged track set starting from current main
+    // Start with all main tracks (tracks not touched by branch remain as-is)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mergedMap = new Map<string, any>() // keyed by track name
+    const mergedMap = new Map<string, any>()
     for (const t of mainTrk) mergedMap.set(t.name, t)
 
-    // Apply autoMerge changes (tracks changed only in branch, or new to branch)
+    const resolutionMap = new Map(resolutions.map(r => [r.trackName, r]))
+
+    // Process each branch track
     for (const bt of branchTrk) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const baseTrack = (baseTrk as any[]).find((t: { name: string }) => t.name === bt.name)
+      const baseTrack: any  = baseTrk.find((t: { name: string }) => t.name === bt.name) ?? null
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mainTrack = (mainTrk as any[]).find((t: { name: string }) => t.name === bt.name)
+      const mainTrack: any  = mainTrk.find((t: { name: string }) => t.name === bt.name) ?? null
 
-      const changedInBranch = !baseTrack || baseTrack.file_hash !== bt.file_hash
-      const changedInMain   = baseTrack && baseTrack.file_hash !== (mainTrack?.file_hash ?? baseTrack.file_hash)
+      // ── File conflict detection ────────────────────────────────────────────
+      const fileChangedInBranch = !baseTrack || baseTrack.file_hash !== bt.file_hash
+      const fileChangedInMain   = baseTrack
+        ? baseTrack.file_hash !== (mainTrack?.file_hash ?? baseTrack.file_hash)
+        : false
+      const fileConflict = fileChangedInBranch && fileChangedInMain && !!mainTrack
 
-      if (changedInBranch && !changedInMain) {
-        // Auto: take from branch (covers both take_from_branch and add_new)
-        mergedMap.set(bt.name, bt)
+      // ── Rename detection ───────────────────────────────────────────────────
+      const baseDisplay   = baseTrack  ? (baseTrack.display_name  ?? baseTrack.name)  : null
+      const branchDisplay = bt.display_name ?? bt.name
+      const mainDisplay   = mainTrack  ? (mainTrack.display_name  ?? mainTrack.name)  : null
+
+      const renamedInBranch = baseTrack ? branchDisplay !== baseDisplay : false
+      const renamedInMain   = baseTrack && mainTrack ? mainDisplay !== baseDisplay : false
+      const renameConflict  = renamedInBranch && renamedInMain && branchDisplay !== mainDisplay
+      const autoRename      = renamedInBranch && !renameConflict
+
+      const resolution = resolutionMap.get(bt.name)
+
+      // ── Step 1: Choose file source ─────────────────────────────────────────
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let fileSource: any
+      if (fileConflict) {
+        fileSource = resolution?.fileChoice === 'branch' ? bt : (mainTrack ?? bt)
+      } else if (fileChangedInBranch) {
+        fileSource = bt
+      } else {
+        fileSource = mainTrack ?? bt
       }
+
+      // ── Step 2: Determine final display_name ──────────────────────────────
+      let finalDisplayName: string | null
+      if (renameConflict) {
+        // User explicitly chose which name to keep
+        finalDisplayName = resolution?.nameChoice === 'branch'
+          ? (bt.display_name ?? null)
+          : (mainTrack?.display_name ?? null)
+      } else if (autoRename) {
+        // Branch renamed, main didn't — auto-apply branch's rename
+        finalDisplayName = bt.display_name ?? null
+      } else {
+        // No rename involved — preserve main's display_name
+        finalDisplayName = mainTrack?.display_name ?? null
+      }
+
+      mergedMap.set(bt.name, { ...fileSource, display_name: finalDisplayName })
     }
 
-    // Apply user resolutions (conflicts)
-    const resolutionMap = new Map(resolutions.map(r => [r.trackName, r.choice]))
-    for (const bt of branchTrk) {
-      const choice = resolutionMap.get(bt.name)
-      if (choice === 'branch') {
-        mergedMap.set(bt.name, bt)
-      }
-      // choice === 'main' → mergedMap already has the main track, nothing to do
-    }
-
-    // Build final ordered track list (preserve positions, re-number if needed)
+    // Build final ordered track list
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const finalTracks: any[] = Array.from(mergedMap.values())
-    // Sort: preserve original position order from main, new tracks go at the end
     finalTracks.sort((a, b) => {
       const aIsFromMain = mainTrk.some((t: { id: string }) => t.id === a.id)
       const bIsFromMain = mainTrk.some((t: { id: string }) => t.id === b.id)
@@ -128,6 +163,90 @@ export async function POST(
       .update({ merged_at: new Date().toISOString() })
       .eq('id', branchVersionId)
     if (mergeErr) throw mergeErr
+
+    // ── Copy comments to new main snapshot ────────────────────────────────────────
+    // Get tracks of new main to map names → new IDs
+    const { data: newMainTracks } = await supabase
+      .from('tracks')
+      .select('id, name')
+      .eq('version_id', main.id)
+
+    const newTrackByName = new Map((newMainTracks ?? []).map((t: { id: string; name: string }) => [t.name, t.id]))
+
+    const oldMainTrackIds = mainTrk.map((t: { id: string }) => t.id)
+    const branchTrackIds = branchTrk.map((t: { id: string }) => t.id)
+
+    const [mainComments, branchComments] = await Promise.all([
+      oldMainTrackIds.length
+        ? supabase.from('track_comments').select('*').in('track_id', oldMainTrackIds).then(r => r.data ?? [])
+        : Promise.resolve([]),
+      branchTrackIds.length
+        ? supabase.from('track_comments').select('*').in('track_id', branchTrackIds).then(r => r.data ?? [])
+        : Promise.resolve([]),
+    ])
+
+    const oldToNewCommentId = new Map<string, string>()
+
+    const allCommentsToCopy: Array<{ oldId: string; trackName: string; comment: Record<string, unknown> }> = []
+
+    // Add all main comments
+    for (const c of mainComments) {
+      const track = mainTrk.find((t: { id: string }) => t.id === c.track_id)
+      if (!track) continue
+      allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
+    }
+
+    // Add branch comments not already in main (by id)
+    const mainCommentIds = new Set(mainComments.map((c: { id: string }) => c.id))
+    for (const c of branchComments) {
+      if (mainCommentIds.has(c.id)) continue
+      const track = branchTrk.find((t: { id: string }) => t.id === c.track_id)
+      if (!track) continue
+      allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
+    }
+
+    if (allCommentsToCopy.length > 0) {
+      const newCommentRows = allCommentsToCopy.map(({ comment, trackName }) => {
+        const newTrackId = newTrackByName.get(trackName)
+        if (!newTrackId) return null
+        const { id: _id, track_id: _ti, version_id: _vi, ...rest } = comment as { id: string; track_id: string; version_id: string; [k: string]: unknown }
+        return { ...rest, track_id: newTrackId, version_id: main.id }
+      }).filter((r): r is NonNullable<typeof r> => r !== null)
+
+      if (newCommentRows.length > 0) {
+        const { data: insertedComments } = await supabase
+          .from('track_comments')
+          .insert(newCommentRows)
+          .select('id')
+
+        if (insertedComments) {
+          allCommentsToCopy.forEach(({ oldId }, i) => {
+            if (insertedComments[i]) oldToNewCommentId.set(oldId, insertedComments[i].id)
+          })
+        }
+      }
+    }
+
+    // Copy replies
+    if (oldToNewCommentId.size > 0) {
+      const { data: allReplies } = await supabase
+        .from('comment_replies')
+        .select('*')
+        .in('comment_id', [...oldToNewCommentId.keys()])
+
+      if (allReplies && allReplies.length > 0) {
+        const replyRows = allReplies.map((r: { id: string; comment_id: string; [k: string]: unknown }) => {
+          const newCommentId = oldToNewCommentId.get(r.comment_id)
+          if (!newCommentId) return null
+          const { id: _id, comment_id: _ci, ...rest } = r
+          return { ...rest, comment_id: newCommentId }
+        }).filter((r): r is NonNullable<typeof r> => r !== null)
+
+        if (replyRows.length > 0) {
+          await supabase.from('comment_replies').insert(replyRows)
+        }
+      }
+    }
 
     // Return fresh main with tracks
     const { data: updatedTracks } = await supabase

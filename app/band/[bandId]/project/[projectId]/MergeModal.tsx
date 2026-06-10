@@ -3,18 +3,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 
-// ─── Types (mirror preview route shape) ──────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface TrackSnapshot {
+  id: string
+  name: string
+  display_name: string | null
+  original_filename: string | null
+  file_size_bytes: number | null
+  created_at: string
+}
 
 export interface ConflictTrack {
   trackName: string
-  mainTrack: { id: string; name: string; original_filename: string | null; file_size_bytes: number | null; created_at: string }
-  branchTrack: { id: string; name: string; original_filename: string | null; file_size_bytes: number | null; created_at: string }
+  fileConflict: boolean
+  renameConflict: boolean
+  mainTrack: TrackSnapshot
+  branchTrack: TrackSnapshot
+  baseTrack: TrackSnapshot | null
 }
 
 export interface AutoMergeItem {
-  action: 'take_from_branch' | 'add_new'
+  action: 'take_from_branch' | 'add_new' | 'apply_rename'
   trackName: string
-  track: { id: string; name: string; original_filename: string | null }
+  track: { id: string; name: string; display_name: string | null; original_filename: string | null }
+  newDisplayName?: string
 }
 
 export interface MergePreview {
@@ -24,6 +37,14 @@ export interface MergePreview {
   mainName: string
   branchVersionId: string
   mainVersionId: string
+  branchCommentCount: number
+}
+
+// Per-track resolution (both choices are optional — only required when the
+// corresponding conflict flag is true)
+type Resolution = {
+  fileChoice?: 'main' | 'branch'
+  nameChoice?: 'main' | 'branch'
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,6 +62,10 @@ function fmtDate(iso: string) {
   if (diff < 172800) return 'yesterday'
   return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
 }
+
+const ACCENT       = '#6366F1'
+const CONFLICT_RED = '#ef4444'
+const CONFLICT_AMB = '#f59e0b'
 
 // ─── Mini static waveform ─────────────────────────────────────────────────────
 
@@ -121,30 +146,27 @@ function MiniWaveform({ trackId, color }: { trackId: string; color: string }) {
   )
 }
 
-// ─── Conflict card ────────────────────────────────────────────────────────────
+// ─── File conflict card (existing side-by-side UI) ────────────────────────────
 
-const ACCENT = '#6366F1'
-const CONFLICT_RED = '#ef4444'
-
-function ConflictCard({
+function FileConflictCard({
   label,
   track,
   chosen,
   onChoose,
 }: {
   label: 'MAIN' | 'BRANCH'
-  track: ConflictTrack['mainTrack'] | ConflictTrack['branchTrack']
+  track: TrackSnapshot
   chosen: boolean
   onChoose: () => void
 }) {
-  const color = chosen ? ACCENT : '#6b7280'
-  const bg = chosen ? 'rgba(99,102,241,0.08)' : 'transparent'
+  const color  = chosen ? ACCENT : '#6b7280'
+  const bg     = chosen ? 'rgba(99,102,241,0.08)' : 'transparent'
   const border = chosen ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)'
 
   return (
     <div
       className="flex-1 rounded-xl p-3 flex flex-col gap-2 transition-all duration-150"
-      style={{ background: bg, border, opacity: chosen === false ? 1 : 1 }}
+      style={{ background: bg, border }}
     >
       <div className="flex items-center justify-between">
         <span className="text-[9px] font-semibold tracking-widest uppercase" style={{ color }}>
@@ -157,7 +179,6 @@ function ConflictCard({
           </svg>
         )}
       </div>
-
       <div>
         <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-soft)' }}>
           {track.original_filename ?? track.name}
@@ -166,9 +187,7 @@ function ConflictCard({
           {fmtDate(track.created_at)}{track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
         </div>
       </div>
-
       <MiniWaveform trackId={track.id} color={color} />
-
       <button
         onClick={onChoose}
         className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
@@ -187,6 +206,64 @@ function ConflictCard({
   )
 }
 
+// ─── Rename conflict pills ────────────────────────────────────────────────────
+
+function RenameConflictPills({
+  mainName,
+  branchName,
+  chosen,
+  onChoose,
+}: {
+  mainName: string
+  branchName: string
+  chosen: 'main' | 'branch' | undefined
+  onChoose: (c: 'main' | 'branch') => void
+}) {
+  return (
+    <div className="flex gap-3">
+      {(['main', 'branch'] as const).map(side => {
+        const label = side === 'main' ? 'FROM MAIN' : 'FROM BRANCH'
+        const name  = side === 'main' ? mainName   : branchName
+        const sel   = chosen === side
+        return (
+          <div
+            key={side}
+            className="flex-1 rounded-lg p-4 flex flex-col gap-3 transition-all duration-150"
+            style={{
+              background: sel
+                ? 'color-mix(in srgb, var(--accent) 8%, var(--bg-card))'
+                : 'var(--bg-card)',
+              border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
+            }}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-widest m-0"
+              style={{ color: sel ? ACCENT : 'var(--text-dim)' }}>
+              {label}
+            </p>
+            <p className="text-[14px] font-medium m-0" style={{ color: 'var(--text)' }}>
+              &ldquo;{name}&rdquo;
+            </p>
+            <button
+              onClick={() => onChoose(side)}
+              className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
+              style={{
+                background: sel ? ACCENT : 'transparent',
+                border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
+                color: sel ? 'white' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT } }}
+              onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+            >
+              {sel ? '✓ Keep this' : 'Keep this'}
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── MergeModal ───────────────────────────────────────────────────────────────
 
 export function MergeModal({
@@ -200,14 +277,22 @@ export function MergeModal({
   onClose: () => void
   onMerged: (result: { tracksUpdated: number; branchName: string }) => void
 }) {
-  const [resolutions, setResolutions] = useState<Record<string, 'main' | 'branch'>>({})
-  const [merging, setMerging]       = useState(false)
-  const [mergeErr, setMergeErr]     = useState('')
+  const [resolutions, setResolutions] = useState<Record<string, Resolution>>({})
+  const [merging, setMerging]         = useState(false)
+  const [mergeErr, setMergeErr]       = useState('')
 
-  const resolvedCount  = Object.keys(resolutions).length
-  const conflictsTotal = preview.conflicts.length
-  const conflictsLeft  = conflictsTotal - resolvedCount
-  const canMerge       = conflictsLeft === 0 && !merging
+  function setFileChoice(trackName: string, choice: 'main' | 'branch') {
+    setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], fileChoice: choice } }))
+  }
+  function setNameChoice(trackName: string, choice: 'main' | 'branch') {
+    setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], nameChoice: choice } }))
+  }
+
+  const unresolvedCount = preview.conflicts.filter(c =>
+    (c.fileConflict   && !resolutions[c.trackName]?.fileChoice) ||
+    (c.renameConflict && !resolutions[c.trackName]?.nameChoice)
+  ).length
+  const canMerge = unresolvedCount === 0 && !merging
 
   async function handleMerge() {
     if (!canMerge) return
@@ -219,7 +304,11 @@ export function MergeModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           branchVersionId: preview.branchVersionId,
-          resolutions: Object.entries(resolutions).map(([trackName, choice]) => ({ trackName, choice })),
+          resolutions: Object.entries(resolutions).map(([trackName, { fileChoice, nameChoice }]) => ({
+            trackName,
+            ...(fileChoice && { fileChoice }),
+            ...(nameChoice && { nameChoice }),
+          })),
         }),
       })
       if (!res.ok) {
@@ -238,7 +327,7 @@ export function MergeModal({
 
   const hasConflicts = preview.conflicts.length > 0
 
-  // ── Clean merge confirm ──
+  // ── Clean merge confirm ──────────────────────────────────────────────────────
   if (!hasConflicts) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -248,14 +337,14 @@ export function MergeModal({
           </p>
           <p className="text-[12px] mb-5" style={{ color: 'var(--text-dim)' }}>No conflicts — ready to merge</p>
 
-          {/* Auto-merge summary */}
           <div className="rounded-xl mb-5 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
             {preview.autoMerge.length === 0 ? (
               <div className="px-4 py-3 text-[12px]" style={{ color: 'var(--text-dim)' }}>
                 No track changes — branch is identical to main
               </div>
             ) : preview.autoMerge.map((item, i) => (
-              <div key={i} className="flex items-start gap-2.5 px-4 py-2.5" style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+              <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
+                style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
                 <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
                   <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
                   <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -263,12 +352,41 @@ export function MergeModal({
                 <div>
                   <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
                   <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
-                    {item.action === 'add_new' ? 'new track will be added' : 'replaced with branch version'}
+                    {item.action === 'add_new'       ? 'new track will be added'
+                    : item.action === 'apply_rename'  ? `renamed → "${item.newDisplayName}"`
+                    : 'replaced with branch version'}
                   </span>
+                  {item.action === 'apply_rename' && item.track.display_name !== item.track.name && (
+                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
+                      &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Comments section */}
+          {preview.branchCommentCount > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                Comments
+              </p>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'rgba(16,185,129,0.06)', border: '0.5px solid rgba(16,185,129,0.2)',
+                borderRadius: 8, padding: '8px 12px',
+              }}>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="6" cy="6" r="5.5" stroke="#10B981" strokeWidth="0.9" />
+                  <path d="M3.5 6l2 2 3-3" stroke="#10B981" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {preview.branchCommentCount} comment{preview.branchCommentCount !== 1 ? 's' : ''} from branch will be added to main
+                </span>
+              </div>
+            </div>
+          )}
 
           {mergeErr && <p className="text-[12px] mb-3" style={{ color: '#ef4444' }}>{mergeErr}</p>}
 
@@ -302,7 +420,7 @@ export function MergeModal({
     )
   }
 
-  // ── Conflict resolver ──
+  // ── Conflict resolver ────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div
@@ -319,9 +437,9 @@ export function MergeModal({
           <p className="text-[15px] font-semibold" style={{ color: 'var(--text-bright)' }}>
             Merge &ldquo;{preview.branchName}&rdquo; into main
           </p>
-          <p className="text-[12px] mt-0.5" style={{ color: conflictsLeft > 0 ? '#f59e0b' : 'var(--text-dim)' }}>
-            {conflictsLeft > 0
-              ? `Resolve ${conflictsLeft} conflict${conflictsLeft > 1 ? 's' : ''} before merging`
+          <p className="text-[12px] mt-0.5" style={{ color: unresolvedCount > 0 ? CONFLICT_AMB : 'var(--text-dim)' }}>
+            {unresolvedCount > 0
+              ? `Resolve ${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} before merging`
               : 'All conflicts resolved — ready to merge'}
           </p>
         </div>
@@ -330,56 +448,148 @@ export function MergeModal({
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
 
           {/* Conflicts */}
-          {preview.conflicts.map((conflict) => (
-            <div key={conflict.trackName}>
-              {/* Conflict header row */}
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: resolutions[conflict.trackName] ? 'var(--green)' : CONFLICT_RED }} />
-                <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>{conflict.trackName}</span>
-                <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
-                  style={{
-                    background: resolutions[conflict.trackName] ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-                    color: resolutions[conflict.trackName] ? 'var(--green)' : CONFLICT_RED,
-                  }}
-                >
-                  {resolutions[conflict.trackName] ? 'RESOLVED' : 'CONFLICT'}
+          {preview.conflicts.map((conflict) => {
+            const res = resolutions[conflict.trackName] ?? {}
+            const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
+            const renameResolved = !conflict.renameConflict || !!res.nameChoice
+            const fullyResolved  = fileResolved && renameResolved
+
+            // Badge label + colours
+            const badgeLabel = conflict.fileConflict && conflict.renameConflict
+              ? 'FILE + RENAME CONFLICT'
+              : conflict.fileConflict
+              ? 'FILE CONFLICT'
+              : 'RENAME CONFLICT'
+            const badgeBg = fullyResolved
+              ? 'rgba(34,197,94,0.12)'
+              : conflict.fileConflict && conflict.renameConflict
+              ? 'rgba(239,68,68,0.12)'
+              : conflict.fileConflict
+              ? 'rgba(245,158,11,0.12)'
+              : 'rgba(99,102,241,0.12)'
+            const badgeColor = fullyResolved
+              ? 'var(--green)'
+              : conflict.fileConflict && conflict.renameConflict
+              ? CONFLICT_RED
+              : conflict.fileConflict
+              ? CONFLICT_AMB
+              : ACCENT
+
+            const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
+            const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
+
+            return (
+              <div key={conflict.trackName}>
+                {/* Conflict header */}
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ background: fullyResolved ? 'var(--green)' : CONFLICT_RED }} />
+                  <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
+                    {conflict.trackName}
+                  </span>
+                  <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
+                    style={{ background: badgeBg, color: badgeColor }}>
+                    {fullyResolved ? 'RESOLVED' : badgeLabel}
+                  </span>
+                </div>
+
+                {/* CASE A / C — File conflict: show side-by-side waveform cards */}
+                {conflict.fileConflict && (
+                  <div className="flex gap-3">
+                    <FileConflictCard
+                      label="MAIN"
+                      track={conflict.mainTrack}
+                      chosen={res.fileChoice === 'main'}
+                      onChoose={() => setFileChoice(conflict.trackName, 'main')}
+                    />
+                    <FileConflictCard
+                      label="BRANCH"
+                      track={conflict.branchTrack}
+                      chosen={res.fileChoice === 'branch'}
+                      onChoose={() => setFileChoice(conflict.trackName, 'branch')}
+                    />
+                  </div>
+                )}
+
+                {/* CASE B / C — Rename conflict: show name pills */}
+                {conflict.renameConflict && (
+                  <>
+                    {conflict.fileConflict && (
+                      <>
+                        <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
+                        <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>
+                          This track was also renamed:
+                        </p>
+                      </>
+                    )}
+                    {!conflict.fileConflict && (
+                      <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>
+                        Choose a name for this track:
+                      </p>
+                    )}
+                    <RenameConflictPills
+                      mainName={mainDisplayName}
+                      branchName={branchDisplayName}
+                      chosen={res.nameChoice}
+                      onChoose={c => setNameChoice(conflict.trackName, c)}
+                    />
+                  </>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Comments section */}
+          {preview.branchCommentCount > 0 && (
+            <div style={{ marginTop: 0 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                Comments
+              </p>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'rgba(16,185,129,0.06)', border: '0.5px solid rgba(16,185,129,0.2)',
+                borderRadius: 8, padding: '8px 12px',
+              }}>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="6" cy="6" r="5.5" stroke="#10B981" strokeWidth="0.9" />
+                  <path d="M3.5 6l2 2 3-3" stroke="#10B981" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {preview.branchCommentCount} comment{preview.branchCommentCount !== 1 ? 's' : ''} from branch will be added to main
                 </span>
               </div>
-
-              {/* Side-by-side cards */}
-              <div className="flex gap-3">
-                <ConflictCard
-                  label="MAIN"
-                  track={conflict.mainTrack}
-                  chosen={resolutions[conflict.trackName] === 'main'}
-                  onChoose={() => setResolutions(r => ({ ...r, [conflict.trackName]: 'main' }))}
-                />
-                <ConflictCard
-                  label="BRANCH"
-                  track={conflict.branchTrack}
-                  chosen={resolutions[conflict.trackName] === 'branch'}
-                  onChoose={() => setResolutions(r => ({ ...r, [conflict.trackName]: 'branch' }))}
-                />
-              </div>
             </div>
-          ))}
+          )}
 
           {/* Auto-merge items */}
           {preview.autoMerge.length > 0 && (
             <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
               {preview.autoMerge.map((item, i) => (
-                <div key={i} className="flex items-center gap-2.5 px-4 py-2.5"
+                <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
                   style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}
                 >
-                  <svg className="shrink-0" width="13" height="13" viewBox="0 0 13 13" fill="none">
+                  <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <circle cx="6.5" cy="6.5" r="6" fill="rgba(34,197,94,0.15)" />
                     <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
-                  <span className="text-[10px] uppercase tracking-wide font-semibold ml-auto px-[7px] py-[2px] rounded"
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>
+                      {item.trackName}
+                    </span>
+                    {item.action === 'apply_rename' ? (
+                      <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
+                        Display name will change: &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
+                      </p>
+                    ) : null}
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wide font-semibold shrink-0 px-[7px] py-[2px] rounded"
                     style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}
                   >
-                    {item.action === 'add_new' ? 'AUTO · NEW' : 'AUTO · FROM BRANCH'}
+                    {item.action === 'add_new'
+                      ? 'AUTO · NEW'
+                      : item.action === 'apply_rename'
+                      ? 'AUTO · RENAMED'
+                      : 'AUTO · FROM BRANCH'}
                   </span>
                 </div>
               ))}
@@ -388,7 +598,8 @@ export function MergeModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3" style={{ borderTop: '0.5px solid var(--border)' }}>
+        <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3"
+          style={{ borderTop: '0.5px solid var(--border)' }}>
           {mergeErr
             ? <p className="text-[12px]" style={{ color: '#ef4444' }}>{mergeErr}</p>
             : <div />
@@ -419,8 +630,8 @@ export function MergeModal({
                   </svg>
                   Merging…
                 </span>
-              ) : conflictsLeft > 0
-                ? `Merge (${conflictsLeft} conflict${conflictsLeft > 1 ? 's' : ''} left)`
+              ) : unresolvedCount > 0
+                ? `Merge (${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} left)`
                 : 'Merge →'
               }
             </button>

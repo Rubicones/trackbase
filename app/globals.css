@@ -7,6 +7,7 @@
   --bg-card:      #E8E8E5;
   --border:       #DDDDD8;
   --border-light: #CFCFCA;
+  --progress-track: #E5E5E2;
   --text:         #1A1A1A;
   --text-sec:     #3D3D3D;
   --text-muted:   #888888;
@@ -29,6 +30,7 @@
   --bg-card:      #111111;
   --border:       #141414;
   --border-light: #323232;
+  --progress-track: #282828;
   --text:         #FFFFFF;
   --text-sec:     #AAAAAA;
   --text-muted:   #7f7f7f;

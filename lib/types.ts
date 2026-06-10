@@ -1,12 +1,23 @@
+export interface CommentReply {
+  id: string
+  comment_id: string
+  content: string
+  created_by: string
+  author_username: string
+  created_at: string
+}
+
 export interface TrackComment {
   id: string
   track_id: string
+  version_id: string
   content: string
   timecode_start_ms: number
   timecode_end_ms: number
   created_by: string
-  author_name?: string | null
+  author_username: string
   created_at: string
+  replies?: CommentReply[]
 }
 
 export interface Track {

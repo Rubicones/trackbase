@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import type { TrackComment, Track, Version, Project } from '@/lib/types'
+import type { TrackComment, CommentReply, Track, Version, Project } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
@@ -39,12 +39,12 @@ const audioArrayBufferCache = new Map<string, ArrayBuffer>()
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const TRACK_PALETTE = [
-  { bg: '#16101f', bgLight: '#ede9ff', fg: '#a78bfa' },
-  { bg: '#0a1a14', bgLight: '#d4eed4', fg: '#34d399' },
-  { bg: '#1a1300', bgLight: '#f5e6c8', fg: '#fbbf24' },
-  { bg: '#1a0d0d', bgLight: '#fde8e8', fg: '#f87171' },
-  { bg: '#0d1020', bgLight: '#dbeafe', fg: '#60a5fa' },
-  { bg: '#170d18', bgLight: '#fce7f3', fg: '#e879f9' },
+  { bg: 'rgba(167,139,250,0.12)', bgLight: '#ede9ff', fg: '#a78bfa' },
+  { bg: 'rgba(52,211,153,0.12)', bgLight: '#d4eed4', fg: '#34d399' },
+  { bg: 'rgba(251,191,36,0.12)', bgLight: '#f5e6c8', fg: '#fbbf24' },
+  { bg: 'rgba(248,113,113,0.12)', bgLight: '#fde8e8', fg: '#f87171' },
+  { bg: 'rgba(96,165,250,0.12)', bgLight: '#dbeafe', fg: '#60a5fa' },
+  { bg: 'rgba(232,121,249,0.12)', bgLight: '#fce7f3', fg: '#e879f9' },
 ]
 const palette = (i: number) => TRACK_PALETTE[i % TRACK_PALETTE.length]
 
@@ -61,6 +61,22 @@ function fmtTime(s: number) {
 const fmtMs = (ms: number) => fmtTime(ms / 1000)
 
 function fmtDate(iso: string) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 172800) return 'yesterday'
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
+}
+
+function avatarColor(str: string): string {
+  const colors = ['#6366F1','#10B981','#F59E0B','#EC4899','#06B6D4','#8B5CF6','#F97316','#14B8A6']
+  let h = 0
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff
+  return colors[Math.abs(h) % colors.length]
+}
+
+function relativeTime(iso: string): string {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000
   if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
@@ -197,19 +213,33 @@ function ThemeToggle() {
 // ─── Comment tooltip (portal) ─────────────────────────────────────────────────
 
 function CommentTooltip({
-  comment, anchorLeft, anchorTop, onDelete, onHide,
+  comment, anchorLeft, anchorTop, onDelete, onHide, currentUserId, isOwner, onReplySubmit, onReplyFocusChange,
 }: {
   comment: TrackComment
   anchorLeft: number
   anchorTop: number
   onDelete: (id: string) => void
   onHide: () => void
+  currentUserId: string | undefined
+  isOwner: boolean
+  onReplySubmit: (commentId: string, content: string) => Promise<void>
+  onReplyFocusChange?: (focused: boolean) => void
 }) {
-  const W = 224
+  const W = 260
   let left = anchorLeft - W / 2
   if (left < 8) left = 8
   if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
   const caretLeft = Math.max(8, Math.min(W - 12, anchorLeft - left))
+
+  const [showAllReplies, setShowAllReplies] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [submittingReply, setSubmittingReply] = useState(false)
+  const replies: CommentReply[] = (comment.replies ?? []) as CommentReply[]
+  const visibleReplies = showAllReplies ? replies : replies.slice(0, 2)
+  const hiddenCount = replies.length - 2
+
+  const authorColor = avatarColor(comment.author_username ?? 'unknown')
+  const canDelete = comment.created_by === currentUserId || isOwner
 
   return createPortal(
     <div
@@ -227,16 +257,92 @@ function CommentTooltip({
         borderTop: '4px solid var(--bg-surface)',
       }} />
       <div className="px-3 py-2">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] text-accent tabular-nums">
+        {/* Top row: author + timecode + delete */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+          <div style={{
+            width: 18, height: 18, borderRadius: '50%',
+            background: `${authorColor}33`,
+            border: `1px solid ${authorColor}66`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 8, fontWeight: 600, color: authorColor, flexShrink: 0,
+          }}>
+            {(comment.author_username ?? 'unknown').slice(0, 2).toUpperCase()}
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text-sec)', fontWeight: 500 }}>{comment.author_username ?? 'unknown'}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>·</span>
+          <span className="text-[11px] tabular-nums" style={{ color: 'var(--accent)' }}>
             {fmtMs(comment.timecode_start_ms)} → {fmtMs(comment.timecode_end_ms)}
           </span>
-          <button
-            onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
-            className="text-[12px] text-dim hover:text-danger transition-colors duration-150 px-0.5 leading-none"
-          >✕</button>
+          {canDelete && (
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
+              className="text-[12px] text-dim hover:text-danger transition-colors duration-150 px-0.5 leading-none"
+              style={{ marginLeft: 'auto' }}
+            >✕</button>
+          )}
         </div>
-        <p className="text-[12px] text-soft leading-snug break-words">{comment.content}</p>
+        {/* Relative time */}
+        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '0 0 8px 0' }}>{relativeTime(comment.created_at)}</p>
+        {/* Comment text */}
+        <p className="text-[13px] text-soft leading-snug break-words" style={{ margin: 0, lineHeight: 1.5 }}>{comment.content}</p>
+
+        {/* Replies */}
+        {replies.length > 0 && (
+          <div style={{ borderTop: '0.5px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
+            {visibleReplies.map(r => {
+              const rc = avatarColor(r.author_username)
+              return (
+                <div key={r.id} style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                    <div style={{
+                      width: 16, height: 16, borderRadius: '50%',
+                      background: `${rc}33`, border: `1px solid ${rc}66`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 7, fontWeight: 600, color: rc, flexShrink: 0,
+                    }}>
+                      {r.author_username.slice(0, 2).toUpperCase()}
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-sec)' }}>{r.author_username}</span>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-sec)', lineHeight: 1.4, margin: 0 }}>{r.content}</p>
+                  <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '2px 0 0 0' }}>{relativeTime(r.created_at)}</p>
+                </div>
+              )
+            })}
+            {!showAllReplies && hiddenCount > 0 && (
+              <button onClick={() => setShowAllReplies(true)} style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 4 }}>
+                Show {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Reply input */}
+        <div style={{ borderTop: '0.5px solid var(--border)', marginTop: replies.length > 0 ? 4 : 8, paddingTop: 6 }}>
+          <input
+            placeholder="Reply..."
+            value={replyText}
+            onChange={e => setReplyText(e.target.value)}
+            onFocus={() => onReplyFocusChange?.(true)}
+            onBlur={() => { setTimeout(() => onReplyFocusChange?.(false), 150) }}
+            onKeyDown={async e => {
+              if (e.key === 'Enter' && !e.shiftKey && replyText.trim() && !submittingReply) {
+                e.preventDefault()
+                setSubmittingReply(true)
+                try { await onReplySubmit(comment.id, replyText.trim()); setReplyText('') }
+                catch { /* ignore */ }
+                finally { setSubmittingReply(false) }
+              }
+            }}
+            style={{
+              width: '100%', background: 'var(--bg-card)', border: '0.5px solid var(--border)',
+              borderRadius: 6, padding: '5px 8px', fontSize: 12, color: 'var(--text)',
+              outline: 'none', boxSizing: 'border-box',
+            }}
+            onMouseEnter={e => { (e.target as HTMLInputElement).style.borderColor = 'var(--accent)' }}
+            onMouseLeave={e => { (e.target as HTMLInputElement).style.borderColor = 'var(--border)' }}
+          />
+        </div>
       </div>
     </div>,
     document.body
@@ -245,12 +351,15 @@ function CommentTooltip({
 
 // ─── Comment range marker ─────────────────────────────────────────────────────
 
-function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete }: {
+function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete, currentUserId, isOwner, onReplyCreate }: {
   comment: TrackComment
   durationMs: number
   dotTopOffset: number
   commentMode: boolean
   onDelete: (id: string) => void
+  currentUserId: string | undefined
+  isOwner: boolean
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
 }) {
   const startPct = durationMs > 0 ? (comment.timecode_start_ms / durationMs) * 100 : 0
   const endPct = durationMs > 0 ? (comment.timecode_end_ms / durationMs) * 100 : 0
@@ -258,10 +367,17 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
   const isNarrow = widthPct < 3
 
   const [showTooltip, setShowTooltip] = useState(false)
+  const [replyFocused, setReplyFocused] = useState(false)
   const rangeRef = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const scheduleHide = () => { hideTimer.current = setTimeout(() => setShowTooltip(false), 120) }
+  const tooltipVisible = showTooltip || replyFocused
+
+  const scheduleHide = () => {
+    hideTimer.current = setTimeout(() => {
+      if (!replyFocused) setShowTooltip(false)
+    }, 120)
+  }
   const cancelHide = () => { if (hideTimer.current) clearTimeout(hideTimer.current) }
 
   function getAnchor() {
@@ -271,6 +387,8 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
       ? { left: r.left, top: r.top }
       : { left: r.left + r.width / 2, top: r.top }
   }
+
+  const replyCount = comment.replies?.length ?? 0
 
   return (
     <div
@@ -288,19 +406,19 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
       {/* Range fill */}
       <div
         className="absolute inset-0 transition-colors duration-150"
-        style={{ background: showTooltip ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.08)' }}
+        style={{ background: tooltipVisible ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.08)' }}
       />
       {/* Left edge line */}
       <div
         className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150"
-        style={{ left: 0, width: 1.5, background: '#6366F1', opacity: showTooltip ? 1.0 : 0.5 }}
+        style={{ left: 0, width: 1.5, background: '#6366F1', opacity: tooltipVisible ? 1.0 : 0.5 }}
       />
       {/* Right edge line */}
       <div
         className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150"
-        style={{ right: 0, width: 1.5, background: '#6366F1', opacity: showTooltip ? 1.0 : 0.5 }}
+        style={{ right: 0, width: 1.5, background: '#6366F1', opacity: tooltipVisible ? 1.0 : 0.5 }}
       />
-      {showTooltip && (() => {
+      {tooltipVisible && (() => {
         const { left, top } = getAnchor()
         return (
           <CommentTooltip
@@ -309,6 +427,10 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
             anchorTop={top}
             onDelete={onDelete}
             onHide={scheduleHide}
+            currentUserId={currentUserId}
+            isOwner={isOwner}
+            onReplySubmit={onReplyCreate}
+            onReplyFocusChange={(focused) => setReplyFocused(focused)}
           />
         )
       })()}
@@ -318,10 +440,11 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
 
 // ─── Comment input bubble (portal) ────────────────────────────────────────────
 
-function CommentInputBubble({ input, onSubmit, onClose }: {
+function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
   input: ActiveCommentInput
   onSubmit: (content: string) => Promise<void>
   onClose: () => void
+  currentUser: { username: string } | null
 }) {
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -372,6 +495,20 @@ function CommentInputBubble({ input, onSubmit, onClose }: {
         borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
         borderTop: '4px solid var(--bg-card)',
       }} />
+      {currentUser && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+          <div style={{
+            width: 16, height: 16, borderRadius: '50%',
+            background: `${avatarColor(currentUser.username)}33`,
+            border: `1px solid ${avatarColor(currentUser.username)}66`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 7, fontWeight: 600, color: avatarColor(currentUser.username), flexShrink: 0,
+          }}>
+            {currentUser.username.slice(0, 2).toUpperCase()}
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text-sec)', fontWeight: 500 }}>{currentUser.username}</span>
+        </div>
+      )}
       <div className="text-[10px] text-accent tabular-nums mb-2">
         {fmtMs(startMs)} → {fmtMs(endMs)}
       </div>
@@ -401,17 +538,22 @@ function CommentInputBubble({ input, onSubmit, onClose }: {
 
 function Waveform({
   trackId, muted, playedRatio, color, durationMs,
-  commentMode, comments, activeInput,
+  commentMode, comments, activeInput, audioReady,
   onSeek, onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
+  currentUserId, isOwner, onReplyCreate, currentUser,
 }: {
   trackId: string; muted: boolean; playedRatio: number; color: string; durationMs: number
-  commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null
+  commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
   onSeek: (t: number) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
   onCloseInput: () => void
   onReady?: () => void
+  currentUserId: string | undefined
+  isOwner: boolean
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUser: { username: string } | null
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== 'light'
@@ -635,8 +777,8 @@ function Waveform({
         />
       )}
 
-      {/* z-index 3: saved comment ranges */}
-      {comments.map(c => (
+      {/* z-index 3: saved comment ranges (only after audio is decoded) */}
+      {audioReady && comments.map(c => (
         <CommentRangeMarker
           key={c.id}
           comment={c}
@@ -644,6 +786,9 @@ function Waveform({
           dotTopOffset={overlapOffsets.get(c.id) ?? 0}
           commentMode={commentMode}
           onDelete={onCommentDelete}
+          currentUserId={currentUserId}
+          isOwner={isOwner}
+          onReplyCreate={onReplyCreate}
         />
       ))}
 
@@ -718,6 +863,7 @@ function Waveform({
           input={activeInput}
           onSubmit={(content) => onCommentCreate(trackId, activeInput.startMs, activeInput.endMs, content)}
           onClose={onCloseInput}
+          currentUser={currentUser}
         />
       )}
     </div>
@@ -730,10 +876,12 @@ function usePlayer(tracks: Track[], versionId: string) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
   const gainsRef = useRef<Map<string, GainNode>>(new Map())
+  const masterGainRef = useRef<GainNode | null>(null)
   const bufsRef = useRef<Map<string, AudioBuffer>>(new Map())
   const startRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
+  const [volume, setVolumeState] = useState(1)
 
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -746,6 +894,10 @@ function usePlayer(tracks: Track[], versionId: string) {
     let cancelled = false
     const ctx = new AudioContext()
     actxRef.current = ctx
+    const masterGain = ctx.createGain()
+    masterGain.gain.value = volume
+    masterGain.connect(ctx.destination)
+    masterGainRef.current = masterGain
     bufsRef.current = new Map()
     setLoaded(0)
     let maxDur = 0
@@ -784,7 +936,7 @@ function usePlayer(tracks: Track[], versionId: string) {
     bufsRef.current.forEach((buf, id) => {
       const g = ctx.createGain()
       g.gain.value = mutedTracks.has(id) ? 0 : 1
-      g.connect(ctx.destination)
+      g.connect(masterGainRef.current ?? ctx.destination)
       newGains.set(id, g)
       const src = ctx.createBufferSource()
       src.buffer = buf
@@ -827,7 +979,12 @@ function usePlayer(tracks: Track[], versionId: string) {
     })
   }, [])
 
-  return { playing, currentTime, duration, loaded, total: tracks.length, mutedTracks, play: () => play(), pause, seek, toggleMute }
+  const setVolume = useCallback((v: number) => {
+    setVolumeState(v)
+    if (masterGainRef.current) masterGainRef.current.gain.value = v
+  }, [])
+
+  return { playing, currentTime, duration, loaded, total: tracks.length, mutedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute }
 }
 
 // ─── Action button ────────────────────────────────────────────────────────────
@@ -889,8 +1046,8 @@ function ActionButton({
 
 const ICON_EMOJIS = ['🥁','🎸','🎹','🎤','🎵','🎷','🎺','🎻','🪗','🎙','🔊','✨']
 const ICON_COLORS = [
-  '#0d1a0d', '#1a1000', '#0d0d1f', '#1a0a1a',
-  '#0a1a1a', '#1a0a0a', '#141414', '#0f1a12',
+  'rgba(52,211,153,0.15)', 'rgba(251,191,36,0.15)', 'rgba(167,139,250,0.15)', 'rgba(232,121,249,0.15)',
+  'rgba(96,165,250,0.15)', 'rgba(248,113,113,0.15)', 'rgba(255,255,255,0.10)', 'rgba(52,211,153,0.25)',
 ]
 
 function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
@@ -901,7 +1058,7 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   onClose: () => void
 }) {
   const [emoji, setEmoji] = useState(initialEmoji ?? '🎵')
-  const [color, setColor] = useState(initialColor ?? '#0d0d1f')
+  const [color, setColor] = useState(initialColor ?? 'rgba(167,139,250,0.15)')
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -999,14 +1156,15 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
 
 function TrackRow({
   track, index, muted, changed, playedRatio, durationMs,
-  commentMode, activeInput,
+  commentMode, activeInput, audioReady,
   onToggleMute, onReplace, onSeek,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onIconUpdate,
+  currentUserId, isOwner, onReplyCreate, currentUser,
 }: {
   track: Track; index: number; muted: boolean; changed: boolean
   playedRatio: number; durationMs: number; commentMode: boolean
-  activeInput: ActiveCommentInput | null
+  activeInput: ActiveCommentInput | null; audioReady: boolean
   onToggleMute: () => void; onReplace: (f: File) => void; onSeek: (t: number) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
@@ -1015,6 +1173,10 @@ function TrackRow({
   onDeleteTrack: (trackId: string) => Promise<void>
   onRenameTrack: (trackId: string, newName: string) => void
   onIconUpdate: (trackId: string, emoji: string, color: string) => void
+  currentUserId: string | undefined
+  isOwner: boolean
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUser: { username: string } | null
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== 'light'
@@ -1192,9 +1354,11 @@ function TrackRow({
         <Waveform
           trackId={track.id} muted={muted} playedRatio={playedRatio} color={col.fg}
           durationMs={durationMs} commentMode={commentMode} comments={track.comments ?? []}
-          activeInput={activeInput} onSeek={onSeek} onCommentPlace={onCommentPlace}
+          activeInput={activeInput} audioReady={audioReady} onSeek={onSeek} onCommentPlace={onCommentPlace}
           onCommentDelete={onCommentDelete} onCommentCreate={onCommentCreate} onCloseInput={onCloseInput}
           onReady={() => setWaveformReady(true)}
+          currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
+          currentUser={currentUser}
         />
       </div>
 
@@ -1280,13 +1444,16 @@ function TrackRow({
 
 // ─── Player bar ───────────────────────────────────────────────────────────────
 
-function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPause, onSeek }: {
-  playing: boolean; currentTime: number; duration: number; loaded: number; total: number
-  onPlay: () => void; onPause: () => void; onSeek: (t: number) => void
+function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume }: {
+  playing: boolean; currentTime: number; duration: number; loaded: number; total: number; volume: number
+  onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
 }) {
   const pct = duration > 0 ? currentTime / duration : 0
   const [dragging, setDragging] = useState(false)
+  const [showVolume, setShowVolume] = useState(false)
+  const [prevVolume, setPrevVolume] = useState(1)
   const barRef = useRef<HTMLDivElement>(null)
+  const volRef = useRef<HTMLDivElement>(null)
 
   function posToTime(clientX: number) {
     const r = barRef.current?.getBoundingClientRect()
@@ -1294,7 +1461,43 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
     return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration
   }
 
+  function toggleMute() {
+    if (volume > 0) { setPrevVolume(volume); onVolume(0) }
+    else onVolume(prevVolume || 1)
+  }
+
+  // Close volume popover on outside click
+  useEffect(() => {
+    if (!showVolume) return
+    function handler(e: MouseEvent) {
+      if (volRef.current && !volRef.current.contains(e.target as Node)) setShowVolume(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showVolume])
+
   const isLoading = loaded < total && total > 0
+
+  const VolumeIcon = () => {
+    if (volume === 0) return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+        <path d="M10 4l4 4M14 4l-4 4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      </svg>
+    )
+    if (volume < 0.5) return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+        <path d="M10 5.5a1.5 1.5 0 0 1 0 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      </svg>
+    )
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+        <path d="M10 4.5a3 3 0 0 1 0 5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      </svg>
+    )
+  }
 
   return (
     <div className="flex items-center gap-3 h-[52px] shrink-0 px-[22px]" style={{ borderBottom: '0.5px solid var(--border)' }}>
@@ -1321,7 +1524,7 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
         onMouseUp={() => setDragging(false)}
         onMouseLeave={() => setDragging(false)}
       >
-        <div className="w-full rounded-full relative" style={{ height: 4, background: 'var(--border-light)' }}>
+        <div className="w-full rounded-full relative" style={{ height: 4, background: 'var(--progress-track)' }}>
           <div className="h-full rounded-full relative" style={{ width: `${pct * 100}%`, background: 'var(--accent)' }}>
             <div className="absolute top-1/2 rounded-full bg-white" style={{ right: -5, width: 10, height: 10, transform: 'translateY(-50%)', boxShadow: '0 0 0 2px rgba(99,102,241,0.3)' }} />
           </div>
@@ -1330,22 +1533,66 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
 
       <span className="text-[12px] tabular-nums shrink-0 w-8 text-muted">{fmtTime(duration)}</span>
 
-      <button className="text-dim hover:text-muted transition-colors duration-150 p-1">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-          <path d="M10 4.5a3 3 0 0 1 0 5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-        </svg>
-      </button>
+      {/* Volume button + popover */}
+      <div ref={volRef} style={{ position: 'relative' }}>
+        <button
+          onClick={toggleMute}
+          onContextMenu={e => { e.preventDefault(); setShowVolume(v => !v) }}
+          onDoubleClick={() => setShowVolume(v => !v)}
+          className="text-dim hover:text-muted transition-colors duration-150 p-1"
+          title="Click to mute · Double-click for slider"
+        >
+          <VolumeIcon />
+        </button>
+        {showVolume && (
+          <div style={{
+            position: 'absolute', bottom: '100%', right: 0, marginBottom: 6,
+            background: 'var(--bg-card)', border: '0.5px solid var(--border)',
+            borderRadius: 10, padding: '10px 8px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>
+              {Math.round(volume * 100)}%
+            </span>
+            <input
+              type="range"
+              min={0} max={1} step={0.01}
+              value={volume}
+              onChange={e => onVolume(parseFloat(e.target.value))}
+              style={{
+                writingMode: 'vertical-lr' as const,
+                direction: 'rtl' as const,
+                height: 80,
+                width: 20,
+                cursor: 'pointer',
+                accentColor: 'var(--accent)',
+              }}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
+// ─── Format bytes helper ──────────────────────────────────────────────────────
+
+function formatBytes(b: number): string {
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
+  storageUsed: number
+  storageLimit: number
+  commentCounts: Record<string, number>
 }) {
   function dotColor(v: Version) {
     return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
@@ -1366,16 +1613,6 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       label: '+ New branch',
       icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="9" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" /><path d="M3 4.5V7.5M3 4.5C3 7 6 7 6 9H7.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
       action: onNewBranch,
-    },
-    {
-      label: 'History',
-      icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="0.9" /><path d="M6 3.5V6l2 1.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
-      action: () => {},
-    },
-    {
-      label: '+ Invite member',
-      icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="4" r="2" stroke="currentColor" strokeWidth="0.9" /><path d="M2.5 10.5c0-1.93 1.57-3.5 3.5-3.5s3.5 1.57 3.5 3.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /><path d="M9 4.5v2M10 5.5H8" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
-      action: () => {},
     },
   ]
 
@@ -1402,6 +1639,14 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
               <div className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-px" style={{ background: dotColor(v!) }} />
                 <span className="flex-1 text-[13px] truncate" style={{ color: 'var(--text-sec)' }}>{v!.name}</span>
+                {(commentCounts[v!.id] ?? 0) > 0 && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--text-dim)' }}>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                      <path d="M1.5 2.5h7a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5H6L4.5 9 3 7.5H1.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5z" stroke="currentColor" strokeWidth="0.7" />
+                    </svg>
+                    <span style={{ fontSize: 9 }}>{commentCounts[v!.id]}</span>
+                  </span>
+                )}
                 <span className="text-[9px] font-semibold rounded shrink-0 px-[7px] py-[2px] tracking-wide" style={{ background: b.bg, color: b.color }}>
                   {b.label}
                 </span>
@@ -1459,11 +1704,19 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       <div className="px-4 py-3">
         <div className="flex justify-between mb-1.5">
           <span className="text-[10px] text-dim">Storage</span>
-          <span className="text-[10px] text-dim">3.4 / 10 GB</span>
+          <span className="text-[10px] text-dim">{formatBytes(storageUsed)} of {formatBytes(storageLimit)}</span>
         </div>
         <div className="h-0.5 rounded-full" style={{ background: 'var(--border)' }}>
-          <div className="w-[34%] h-full bg-accent rounded-full" />
+          <div className="h-full rounded-full" style={{
+            width: `${Math.min((storageUsed / storageLimit) * 100, 100)}%`,
+            background: storageUsed / storageLimit > 0.95 ? '#ef4444'
+              : storageUsed / storageLimit > 0.80 ? '#F59E0B'
+              : 'var(--accent)',
+          }} />
         </div>
+        {storageUsed / storageLimit > 0.95 && (
+          <p className="text-[10px] mt-1 m-0" style={{ color: '#ef4444' }}>Almost full — upgrade to continue uploading</p>
+        )}
       </div>
     </aside>
   )
@@ -1505,6 +1758,7 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => voi
 export default function ProjectPage() {
   const { bandId, projectId } = useParams<{ bandId: string; projectId: string }>()
   const cache = useVersionCache()
+  const { user, profile } = useAuth()
 
   const [project, setProject] = useState<Project | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
@@ -1520,6 +1774,9 @@ export default function ProjectPage() {
   const [mergeModal, setMergeModal] = useState<{ branchId: string; preview: MergePreview } | null>(null)
   const [mergeCheckingId, setMergeCheckingId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [storageUsed, setStorageUsed] = useState(0)
+  const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
+  const [shareCopied, setShareCopied] = useState(false)
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1548,6 +1805,11 @@ export default function ProjectPage() {
         const main = data.versions.find((v: Version) => v.type === 'main')
         setActiveVersionId(main?.id ?? data.versions[0]?.id ?? '')
       }
+
+      fetch(`/api/projects/${projectId}/storage`)
+        .then(r => r.json())
+        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
+        .catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -1744,7 +2006,42 @@ export default function ProjectPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  async function handleReplyCreate(commentId: string, content: string) {
+    const res = await fetch(`/api/comments/${commentId}/replies`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
+    if (!res.ok) throw new Error('Failed')
+    const { reply } = await res.json()
+
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => ({
+        ...t,
+        comments: (t.comments ?? []).map(c =>
+          c.id === commentId
+            ? { ...c, replies: [...(c.replies ?? []), reply] }
+            : c
+        ),
+      })),
+    })))
+  }
+
+  const isOwner = false // project page doesn't fetch band membership; allow comment deletion by author only
+  const currentUser = profile && profile.username ? { username: profile.username as string } : null
+
   const totalComments = activeTracks.reduce((n, t) => n + (t.comments?.length ?? 0), 0)
+
+  const commentCounts: Record<string, number> = {}
+  for (const v of versions) {
+    commentCounts[v.id] = v.tracks.reduce((n, t) => n + (t.comments?.length ?? 0), 0)
+  }
+
+  async function handleShare() {
+    await navigator.clipboard.writeText(window.location.href)
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2000)
+  }
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center text-[13px] text-muted">Loading…</div>
@@ -1767,9 +2064,15 @@ export default function ProjectPage() {
         <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
         <span className="text-[13px]" style={{ color: 'var(--text-sec)' }}>{project.name}</span>
         <div className="flex-1" />
-        <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="btn-topbar">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          Share
+        <button onClick={handleShare} className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
+          {shareCopied ? (
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <path d="M2.5 6.5l3 3 5-5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+          )}
+          {shareCopied ? 'Copied!' : 'Share'}
         </button>
         <a href={`/api/versions/${activeVersionId}/export`} className="btn-topbar">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
@@ -1791,6 +2094,9 @@ export default function ProjectPage() {
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
           mergeCheckingId={mergeCheckingId}
+          storageUsed={storageUsed}
+          storageLimit={storageLimit}
+          commentCounts={commentCounts}
         />
 
         <main className="flex flex-col flex-1 overflow-hidden min-w-0" style={{ background: 'var(--bg)' }}>
@@ -1824,7 +2130,7 @@ export default function ProjectPage() {
             </div>
           </div>
 
-          <PlayerBar playing={player.playing} currentTime={player.currentTime} duration={player.duration} loaded={player.loaded} total={player.total} onPlay={player.play} onPause={player.pause} onSeek={player.seek} />
+          <PlayerBar playing={player.playing} currentTime={player.currentTime} duration={player.duration} loaded={player.loaded} total={player.total} volume={player.volume} onPlay={player.play} onPause={player.pause} onSeek={player.seek} onVolume={player.setVolume} />
 
           {/* Comment mode banner */}
           <div className={`overflow-hidden transition-[height,opacity] duration-200 ${commentMode ? 'h-[34px] opacity-100' : 'h-0 opacity-0'}`}>
@@ -1852,6 +2158,7 @@ export default function ProjectPage() {
                 muted={player.mutedTracks.has(t.id)} changed={isChanged(t)}
                 playedRatio={playedRatio} durationMs={durationMs}
                 commentMode={commentMode} activeInput={activeCommentInput}
+                audioReady={player.loaded >= player.total && player.total > 0}
                 onToggleMute={() => player.toggleMute(t.id)}
                 onReplace={f => handleReplaceTrack(t, f)}
                 onSeek={player.seek}
@@ -1862,6 +2169,10 @@ export default function ProjectPage() {
                 onDeleteTrack={handleDeleteTrack}
                 onRenameTrack={handleRenameTrack}
                 onIconUpdate={handleIconUpdate}
+                currentUserId={user?.id}
+                isOwner={isOwner}
+                onReplyCreate={handleReplyCreate}
+                currentUser={currentUser}
               />
             ))}
 
@@ -1889,14 +2200,9 @@ export default function ProjectPage() {
             <div className="flex items-center gap-5">
               {project.bpm && <span className="text-[11px] text-dim">BPM <span className="text-soft font-medium">{project.bpm}</span></span>}
               {project.key && <span className="text-[11px] text-dim">Key <span className="text-soft font-medium">{project.key}</span></span>}
-              <span className="text-[11px] text-dim">Format <span className="text-soft font-medium">FLAC</span></span>
               <span className="text-[11px] text-dim">Tracks <span className="text-soft font-medium">{activeTracks.length}</span></span>
             </div>
             <div className="flex items-center gap-2">
-              <button className="btn-topbar">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="0.9"/><path d="M3 10c0-1.66 1.34-3 3-3s3 1.34 3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/></svg>
-                Members
-              </button>
               <button
                 onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
                 className={`inline-flex items-center gap-1.5 px-3 h-[34px] rounded-lg text-[12px] font-medium transition-all duration-150 ${commentMode ? 'btn-accent' : 'btn-topbar'}`}

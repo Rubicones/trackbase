@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { getUserIdFromToken } from '@/lib/supabase/server'
 
 // POST /api/tracks/[id]/comments
 // Body: { content: string, timecode_start_ms: number, timecode_end_ms: number }
@@ -8,6 +9,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const token = req.cookies.get('sb-at')?.value
+    const userId = token ? getUserIdFromToken(token) : null
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const { id: trackId } = await params
     const body = await req.json()
     const { content, timecode_start_ms, timecode_end_ms } = body
@@ -41,6 +46,7 @@ export async function POST(
         content: content.trim(),
         timecode_start_ms,
         timecode_end_ms,
+        created_by: userId,
       })
       .select()
       .single()
@@ -53,7 +59,19 @@ export async function POST(
       )
     }
 
-    return NextResponse.json({ comment }, { status: 201 })
+    // Fetch author username
+    const { data: authorProfile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', comment.created_by)
+      .maybeSingle()
+
+    const commentWithAuthor = {
+      ...comment,
+      author_username: authorProfile?.username ?? 'unknown',
+      replies: [],
+    }
+    return NextResponse.json({ comment: commentWithAuthor }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[comments/post] Unexpected error:', err)

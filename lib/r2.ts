@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3'
 import { Readable } from 'stream'
 
@@ -47,6 +48,10 @@ export async function existsInR2(key: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+export async function deleteFromR2(key: string): Promise<void> {
+  await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
 }
 
 /** Build the canonical R2 storage path for a project file. */

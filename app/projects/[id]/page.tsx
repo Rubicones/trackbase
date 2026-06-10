@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
+import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 
@@ -37,12 +38,12 @@ const audioArrayBufferCache = new Map<string, ArrayBuffer>()
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const TRACK_PALETTE = [
-  { bg: '#16101f', bgLight: '#ede9ff', fg: '#a78bfa' },
-  { bg: '#0a1a14', bgLight: '#d4eed4', fg: '#34d399' },
-  { bg: '#1a1300', bgLight: '#f5e6c8', fg: '#fbbf24' },
-  { bg: '#1a0d0d', bgLight: '#fde8e8', fg: '#f87171' },
-  { bg: '#0d1020', bgLight: '#dbeafe', fg: '#60a5fa' },
-  { bg: '#170d18', bgLight: '#fce7f3', fg: '#e879f9' },
+  { bg: 'rgba(167,139,250,0.12)', bgLight: '#ede9ff', fg: '#a78bfa' },
+  { bg: 'rgba(52,211,153,0.12)', bgLight: '#d4eed4', fg: '#34d399' },
+  { bg: 'rgba(251,191,36,0.12)', bgLight: '#f5e6c8', fg: '#fbbf24' },
+  { bg: 'rgba(248,113,113,0.12)', bgLight: '#fde8e8', fg: '#f87171' },
+  { bg: 'rgba(96,165,250,0.12)', bgLight: '#dbeafe', fg: '#60a5fa' },
+  { bg: 'rgba(232,121,249,0.12)', bgLight: '#fce7f3', fg: '#e879f9' },
 ]
 const palette = (i: number) => TRACK_PALETTE[i % TRACK_PALETTE.length]
 
@@ -1128,12 +1129,22 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
   )
 }
 
+// ─── Format bytes helper ──────────────────────────────────────────────────────
+
+function formatBytes(b: number): string {
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
+  storageUsed: number
+  storageLimit: number
 }) {
   function dotColor(v: Version) {
     return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
@@ -1154,16 +1165,6 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       label: '+ New branch',
       icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="9" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" /><path d="M3 4.5V7.5M3 4.5C3 7 6 7 6 9H7.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
       action: onNewBranch,
-    },
-    {
-      label: 'History',
-      icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="0.9" /><path d="M6 3.5V6l2 1.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
-      action: () => {},
-    },
-    {
-      label: '+ Invite member',
-      icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="4" r="2" stroke="currentColor" strokeWidth="0.9" /><path d="M2.5 10.5c0-1.93 1.57-3.5 3.5-3.5s3.5 1.57 3.5 3.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /><path d="M9 4.5v2M10 5.5H8" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
-      action: () => {},
     },
   ]
 
@@ -1247,11 +1248,19 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       <div className="px-4 py-3">
         <div className="flex justify-between mb-1.5">
           <span className="text-[10px] text-dim">Storage</span>
-          <span className="text-[10px] text-dim">3.4 / 10 GB</span>
+          <span className="text-[10px] text-dim">{formatBytes(storageUsed)} of {formatBytes(storageLimit)}</span>
         </div>
         <div className="h-0.5 rounded-full" style={{ background: 'var(--border)' }}>
-          <div className="w-[34%] h-full bg-accent rounded-full" />
+          <div className="h-full rounded-full" style={{
+            width: `${Math.min((storageUsed / storageLimit) * 100, 100)}%`,
+            background: storageUsed / storageLimit > 0.95 ? '#ef4444'
+              : storageUsed / storageLimit > 0.80 ? '#F59E0B'
+              : 'var(--accent)',
+          }} />
         </div>
+        {storageUsed / storageLimit > 0.95 && (
+          <p className="text-[10px] mt-1 m-0" style={{ color: '#ef4444' }}>Almost full — upgrade to continue uploading</p>
+        )}
       </div>
     </aside>
   )
@@ -1308,6 +1317,9 @@ export default function ProjectPage() {
   const [mergeModal, setMergeModal] = useState<{ branchId: string; preview: MergePreview } | null>(null)
   const [mergeCheckingId, setMergeCheckingId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [storageUsed, setStorageUsed] = useState(0)
+  const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
+  const [shareCopied, setShareCopied] = useState(false)
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1336,6 +1348,11 @@ export default function ProjectPage() {
         const main = data.versions.find((v: Version) => v.type === 'main')
         setActiveVersionId(main?.id ?? data.versions[0]?.id ?? '')
       }
+
+      fetch(`/api/projects/${projectId}/storage`)
+        .then(r => r.json())
+        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
+        .catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -1519,6 +1536,12 @@ export default function ProjectPage() {
 
   const totalComments = activeTracks.reduce((n, t) => n + (t.comments?.length ?? 0), 0)
 
+  async function handleShare() {
+    await navigator.clipboard.writeText(window.location.href)
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2000)
+  }
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center text-[13px] text-muted">Loading…</div>
   )
@@ -1540,9 +1563,15 @@ export default function ProjectPage() {
         <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
         <span className="text-[13px]" style={{ color: 'var(--text-sec)' }}>{project.name}</span>
         <div className="flex-1" />
-        <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="btn-topbar">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          Share
+        <button onClick={handleShare} className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
+          {shareCopied ? (
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <path d="M2.5 6.5l3 3 5-5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+          )}
+          {shareCopied ? 'Copied!' : 'Share'}
         </button>
         <a href={`/api/versions/${activeVersionId}/export`} className="btn-topbar">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
@@ -1553,7 +1582,7 @@ export default function ProjectPage() {
           Save version
         </button>
         <ThemeToggle />
-        <div className="w-[34px] h-[34px] rounded-full shrink-0 flex items-center justify-center text-[11px] font-medium text-accent" style={{ background: 'rgba(99,102,241,0.15)' }}>D</div>
+        <AvatarDropdown />
       </header>
 
       {/* Body */}
@@ -1564,6 +1593,8 @@ export default function ProjectPage() {
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
           mergeCheckingId={mergeCheckingId}
+          storageUsed={storageUsed}
+          storageLimit={storageLimit}
         />
 
         <main className="flex flex-col flex-1 overflow-hidden min-w-0" style={{ background: 'var(--bg)' }}>
@@ -1660,14 +1691,9 @@ export default function ProjectPage() {
             <div className="flex items-center gap-5">
               {project.bpm && <span className="text-[11px] text-dim">BPM <span className="text-soft font-medium">{project.bpm}</span></span>}
               {project.key && <span className="text-[11px] text-dim">Key <span className="text-soft font-medium">{project.key}</span></span>}
-              <span className="text-[11px] text-dim">Format <span className="text-soft font-medium">FLAC</span></span>
               <span className="text-[11px] text-dim">Tracks <span className="text-soft font-medium">{activeTracks.length}</span></span>
             </div>
             <div className="flex items-center gap-2">
-              <button className="btn-topbar">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="0.9"/><path d="M3 10c0-1.66 1.34-3 3-3s3 1.34 3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/></svg>
-                Members
-              </button>
               <button
                 onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
                 className={`inline-flex items-center gap-1.5 px-3 h-[34px] rounded-lg text-[12px] font-medium transition-all duration-150 ${commentMode ? 'btn-accent' : 'btn-topbar'}`}
