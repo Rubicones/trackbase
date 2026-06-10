@@ -28,11 +28,11 @@
   --bg-surface:   #080808;
   --bg-card:      #111111;
   --border:       #141414;
-  --border-light: #1e1e1e;
+  --border-light: #323232;
   --text:         #FFFFFF;
   --text-sec:     #AAAAAA;
-  --text-muted:   #555555;
-  --text-dim:     #333333;
+  --text-muted:   #7f7f7f;
+  --text-dim:     #504f4f;
   --accent:       #6366F1;
   --accent-hover: #5254cc;
   --amber:        #F59E0B;
@@ -172,4 +172,9 @@
 @keyframes theme-icon-in {
   from { opacity: 0; transform: rotate(-30deg) scale(0.85); }
   to   { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }

@@ -12,10 +12,16 @@ export async function GET(
 
     const { data: project, error: projErr } = await supabase
       .from('projects')
-      .select('*')
+      .select('*, bands(name)')
       .eq('id', id)
       .single()
     if (projErr) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    // Flatten band name into project object
+    if (project.bands) {
+      project.band_name = (project.bands as { name: string }).name
+      delete project.bands
+    }
 
     const { data: versions, error: verErr } = await supabase
       .from('versions')
@@ -41,7 +47,7 @@ export async function GET(
           .from('track_comments')
           .select('*')
           .in('track_id', trackIds)
-          .order('timecode_ms', { ascending: true })
+          .order('timecode_start_ms', { ascending: true })
       : { data: [] }
 
     const tracksWithComments = (tracks ?? []).map((t: Record<string, unknown>) => ({

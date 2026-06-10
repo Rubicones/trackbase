@@ -2,20 +2,27 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
 // POST /api/tracks/[id]/comments
-// Body: { content: string, timecode_ms: number }
+// Body: { content: string, timecode_start_ms: number, timecode_end_ms: number }
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: trackId } = await params
-    const { content, timecode_ms } = await req.json()
+    const body = await req.json()
+    const { content, timecode_start_ms, timecode_end_ms } = body
 
     if (!content?.trim()) {
       return NextResponse.json({ error: 'content is required' }, { status: 400 })
     }
-    if (typeof timecode_ms !== 'number') {
-      return NextResponse.json({ error: 'timecode_ms is required' }, { status: 400 })
+    if (typeof timecode_start_ms !== 'number') {
+      return NextResponse.json({ error: 'timecode_start_ms is required' }, { status: 400 })
+    }
+    if (typeof timecode_end_ms !== 'number') {
+      return NextResponse.json({ error: 'timecode_end_ms is required' }, { status: 400 })
+    }
+    if (timecode_end_ms <= timecode_start_ms) {
+      return NextResponse.json({ error: 'timecode_end_ms must be greater than timecode_start_ms' }, { status: 400 })
     }
 
     // Get version_id from track
@@ -32,15 +39,24 @@ export async function POST(
         track_id: trackId,
         version_id: track.version_id,
         content: content.trim(),
-        timecode_ms,
+        timecode_start_ms,
+        timecode_end_ms,
       })
       .select()
       .single()
-    if (error) throw error
+
+    if (error) {
+      console.error('[comments/post] Supabase error:', error)
+      return NextResponse.json(
+        { error: error.message, details: error.details, hint: error.hint },
+        { status: 500 }
+      )
+    }
 
     return NextResponse.json({ comment }, { status: 201 })
   } catch (err) {
-    console.error('[comments/post]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[comments/post] Unexpected error:', err)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

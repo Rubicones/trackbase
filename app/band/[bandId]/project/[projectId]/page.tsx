@@ -6,6 +6,8 @@ import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
+import { useAuth } from '@/contexts/AuthContext'
+import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 
@@ -883,6 +885,116 @@ function ActionButton({
   )
 }
 
+// ─── Icon picker popover ──────────────────────────────────────────────────────
+
+const ICON_EMOJIS = ['🥁','🎸','🎹','🎤','🎵','🎷','🎺','🎻','🪗','🎙','🔊','✨']
+const ICON_COLORS = [
+  '#0d1a0d', '#1a1000', '#0d0d1f', '#1a0a1a',
+  '#0a1a1a', '#1a0a0a', '#141414', '#0f1a12',
+]
+
+function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
+  trackId: string
+  initialEmoji: string | null
+  initialColor: string | null
+  onApply: (emoji: string, color: string) => void
+  onClose: () => void
+}) {
+  const [emoji, setEmoji] = useState(initialEmoji ?? '🎵')
+  const [color, setColor] = useState(initialColor ?? '#0d0d1f')
+  const [saving, setSaving] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  async function handleApply() {
+    setSaving(true)
+    try {
+      await fetch(`/api/tracks/${trackId}/icon`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ icon_emoji: emoji, icon_color: color }),
+      })
+      onApply(emoji, color)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', top: '100%', left: 0, zIndex: 50,
+        background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
+        borderRadius: 10, padding: 14, width: 240,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+        marginTop: 4,
+      }}
+      onClick={e => e.stopPropagation()}
+    >
+      {/* Emoji grid */}
+      <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', margin: '0 0 8px' }}>Instrument</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 12 }}>
+        {ICON_EMOJIS.map(e => (
+          <button key={e} onClick={() => setEmoji(e)} style={{
+            width: 36, height: 36, borderRadius: 7, fontSize: 18,
+            background: emoji === e ? `color-mix(in srgb, var(--accent) 10%, transparent)` : 'transparent',
+            border: `0.5px solid ${emoji === e ? 'var(--accent)' : 'transparent'}`,
+            cursor: 'pointer', transition: 'all 0.12s',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+            onMouseEnter={e2 => { if (emoji !== e) e2.currentTarget.style.background = 'var(--bg-card)' }}
+            onMouseLeave={e2 => { if (emoji !== e) e2.currentTarget.style.background = 'transparent' }}
+          >{e}</button>
+        ))}
+      </div>
+
+      {/* Color row */}
+      <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', margin: '0 0 8px' }}>Color</p>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        {ICON_COLORS.map(c => (
+          <button key={c} onClick={() => setColor(c)} style={{
+            width: 22, height: 22, borderRadius: '50%', background: c,
+            border: `2px solid ${color === c ? 'white' : 'transparent'}`,
+            cursor: 'pointer', flexShrink: 0,
+            transform: color === c ? 'scale(1.1)' : 'scale(1)',
+            transition: 'transform 0.12s, border-color 0.12s',
+          }}
+            onMouseEnter={e2 => { if (color !== c) e2.currentTarget.style.transform = 'scale(1.15)' }}
+            onMouseLeave={e2 => { if (color !== c) e2.currentTarget.style.transform = 'scale(1)' }}
+          />
+        ))}
+      </div>
+
+      {/* Preview */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{emoji}</div>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Preview</span>
+      </div>
+
+      {/* Buttons */}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button onClick={onClose} style={{
+          background: 'transparent', border: '0.5px solid var(--border)',
+          borderRadius: 6, padding: '4px 12px', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer',
+        }}>Cancel</button>
+        <button onClick={handleApply} disabled={saving} style={{
+          background: 'var(--accent)', border: 'none',
+          borderRadius: 6, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+          opacity: saving ? 0.6 : 1,
+        }}>{saving ? '…' : 'Apply'}</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
 
 function TrackRow({
@@ -890,7 +1002,7 @@ function TrackRow({
   commentMode, activeInput,
   onToggleMute, onReplace, onSeek,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
-  onDeleteTrack,
+  onDeleteTrack, onRenameTrack, onIconUpdate,
 }: {
   track: Track; index: number; muted: boolean; changed: boolean
   playedRatio: number; durationMs: number; commentMode: boolean
@@ -901,19 +1013,55 @@ function TrackRow({
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
   onCloseInput: () => void
   onDeleteTrack: (trackId: string) => Promise<void>
+  onRenameTrack: (trackId: string, newName: string) => void
+  onIconUpdate: (trackId: string, emoji: string, color: string) => void
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
   const col = palette(index)
-  const iconBg = isDark ? col.bg : col.bgLight
   const instrument = detectInstrument(track.name)
+
+  // Use custom color if set, else palette
+  const iconBg = track.icon_color ?? (isDark ? col.bg : col.bgLight)
 
   const [waveformReady, setWaveformReady] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
   const [rowHovered, setRowHovered] = useState(false)
+  const [showIconPicker, setShowIconPicker] = useState(false)
+
+  // ── Inline rename ──────────────────────────────────────────────────────────
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [nameFlash, setNameFlash] = useState(false)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const displayName = track.display_name ?? track.name
+
+  function startEdit() {
+    setEditValue(displayName)
+    setEditing(true)
+    setTimeout(() => { renameInputRef.current?.select() }, 0)
+  }
+
+  async function commitRename() {
+    const trimmed = editValue.trim()
+    setEditing(false)
+    if (!trimmed || trimmed === displayName) return
+    try {
+      const res = await fetch(`/api/tracks/${track.id}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (res.ok) {
+        onRenameTrack(track.id, trimmed)
+        setNameFlash(true)
+        setTimeout(() => setNameFlash(false), 400)
+      }
+    } catch { /* ignore */ }
+  }
 
   const rowBg = deleteError
     ? 'rgba(239,68,68,0.12)'
@@ -949,19 +1097,83 @@ function TrackRow({
     >
       <span className="text-center text-[11px] text-dim tabular-nums">{index + 1}</span>
 
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: iconBg }}>
-        {waveformReady ? (
-          <InstrumentSVG type={instrument} color={col.fg} />
-        ) : (
-          <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
-            <circle cx="6.5" cy="6.5" r="5" stroke={col.fg} strokeWidth="1.5" strokeOpacity="0.2" />
-            <path d="M6.5 1.5A5 5 0 0 1 11.5 6.5" stroke={col.fg} strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+      {/* Icon square — click to open picker */}
+      <div className="relative">
+        <button
+          onClick={() => setShowIconPicker(p => !p)}
+          className="w-8 h-8 rounded-lg flex items-center justify-center transition-opacity duration-150 hover:opacity-80"
+          style={{ background: iconBg, border: 'none', cursor: 'pointer', padding: 0 }}
+          title="Change icon"
+        >
+          {track.icon_emoji ? (
+            <span style={{ fontSize: 15, lineHeight: 1 }}>{track.icon_emoji}</span>
+          ) : waveformReady ? (
+            <InstrumentSVG type={instrument} color={col.fg} />
+          ) : (
+            <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <circle cx="6.5" cy="6.5" r="5" stroke={col.fg} strokeWidth="1.5" strokeOpacity="0.2" />
+              <path d="M6.5 1.5A5 5 0 0 1 11.5 6.5" stroke={col.fg} strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          )}
+        </button>
+        {showIconPicker && (
+          <IconPicker
+            trackId={track.id}
+            initialEmoji={track.icon_emoji}
+            initialColor={track.icon_color}
+            onApply={(e, c) => { onIconUpdate(track.id, e, c); setShowIconPicker(false) }}
+            onClose={() => setShowIconPicker(false)}
+          />
         )}
       </div>
 
+      {/* Track name — double-click or pencil to rename */}
       <div className="min-w-0">
-        <div className="text-[13px] text-soft truncate">{track.name}</div>
+        {editing ? (
+          <input
+            ref={renameInputRef}
+            value={editValue}
+            onChange={e => setEditValue(e.target.value.slice(0, 40))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') { setEditing(false) }
+            }}
+            onBlur={commitRename}
+            style={{
+              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
+              borderRadius: 5, padding: '2px 6px', fontSize: 13, color: 'var(--text)',
+              width: 120, outline: 'none',
+            }}
+          />
+        ) : (
+          <div
+            className="flex items-center gap-1 group"
+            onDoubleClick={startEdit}
+          >
+            <div
+              className="text-[13px] text-soft truncate"
+              style={{ color: nameFlash ? 'var(--accent)' : undefined, transition: 'color 0.3s' }}
+            >
+              {displayName}
+            </div>
+            {rowHovered && (
+              <button
+                onClick={startEdit}
+                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-dim)', padding: 0, lineHeight: 1,
+                  display: 'flex', alignItems: 'center',
+                }}
+                title="Rename"
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                  <path d="M7.5 1.5l2 2-6 6H1.5v-2l6-6z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
         <div className="mt-0.5">
           {changed ? (
             <span className="text-[10px] text-amber flex items-center gap-1">
@@ -1291,7 +1503,7 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => voi
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProjectPage() {
-  const { id: projectId } = useParams<{ id: string }>()
+  const { bandId, projectId } = useParams<{ bandId: string; projectId: string }>()
   const cache = useVersionCache()
 
   const [project, setProject] = useState<Project | null>(null)
@@ -1434,6 +1646,21 @@ export default function ProjectPage() {
     cache.invalidate(activeVersionId)
   }
 
+  function handleRenameTrack(trackId: string, newName: string) {
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => t.id === trackId ? { ...t, display_name: newName } : t),
+    })))
+    cache.invalidate(activeVersionId)
+  }
+
+  function handleIconUpdate(trackId: string, emoji: string, color: string) {
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => t.id === trackId ? { ...t, icon_emoji: emoji, icon_color: color } : t),
+    })))
+  }
+
   async function handleAddTrack(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     if (!files.length || !activeVersionId) return
@@ -1531,12 +1758,12 @@ export default function ProjectPage() {
 
       {/* Topbar */}
       <header className="flex items-center h-[56px] shrink-0 px-[18px] gap-2.5" style={{ background: 'var(--bg-surface)', borderBottom: '0.5px solid var(--border)' }}>
-        <a href="/" className="flex items-center no-underline mr-1.5">
+        <a href="/dashboard" className="flex items-center no-underline mr-1.5">
           <span className="text-[14px] font-semibold tracking-tight" style={{ color: 'var(--text-sec)' }}>track</span>
           <span className="text-[14px] font-semibold text-accent tracking-tight">base</span>
         </a>
         <span className="text-lg leading-none" style={{ color: 'var(--border-light)' }}>·</span>
-        <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>The Noise</span>
+        <a href={`/band/${bandId}`} className="text-[13px] no-underline hover:underline" style={{ color: 'var(--text-muted)' }}>{project.band_name ?? 'Band'}</a>
         <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
         <span className="text-[13px]" style={{ color: 'var(--text-sec)' }}>{project.name}</span>
         <div className="flex-1" />
@@ -1553,7 +1780,7 @@ export default function ProjectPage() {
           Save version
         </button>
         <ThemeToggle />
-        <div className="w-[34px] h-[34px] rounded-full shrink-0 flex items-center justify-center text-[11px] font-medium text-accent" style={{ background: 'rgba(99,102,241,0.15)' }}>D</div>
+        <AvatarDropdown />
       </header>
 
       {/* Body */}
@@ -1633,6 +1860,8 @@ export default function ProjectPage() {
                 onCommentCreate={handleCommentCreate}
                 onCloseInput={() => setActiveCommentInput(null)}
                 onDeleteTrack={handleDeleteTrack}
+                onRenameTrack={handleRenameTrack}
+                onIconUpdate={handleIconUpdate}
               />
             ))}
 
