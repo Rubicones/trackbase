@@ -3,6 +3,9 @@ import { createHash } from 'crypto'
 import { supabase } from '@/lib/supabase'
 import { uploadToR2, r2Key } from '@/lib/r2'
 import { audioToFlac } from '@/lib/ffmpeg'
+import { getUserIdFromToken } from '@/lib/supabase/server'
+import { logActivity, fmtFileSize } from '@/lib/activity'
+import { DEFAULT_TRACK_ICON_COLOR } from '@/lib/trackIcon'
 
 const ALLOWED_MIMETYPES: Record<string, 'wav' | 'mp3'> = {
   'audio/wav':   'wav',
@@ -16,6 +19,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: versionId } = await params
+  const userId = (() => { const t = req.cookies.get('sb-at')?.value; return t ? getUserIdFromToken(t) : null })()
   console.log('[upload] versionId:', versionId)
 
   // 1. Verify version
@@ -123,6 +127,7 @@ export async function POST(
       storage_path: storagePath,
       file_size_bytes: fileSizeBytes,
       position,
+      icon_color: DEFAULT_TRACK_ICON_COLOR,
     })
     .select()
     .single()
@@ -132,5 +137,17 @@ export async function POST(
   }
 
   console.log('[upload] done, track id:', track.id)
+
+  // Log activity (fire-and-forget)
+  supabase
+    .from('projects').select('id, band_id').eq('id', version.project_id).maybeSingle()
+    .then(({ data: proj }) => {
+      if (proj) logActivity({
+        bandId: proj.band_id, userId, action: 'upload',
+        subject: file.name, detail: fmtFileSize(fileSizeBytes),
+        projectId: proj.id,
+      })
+    })
+
   return NextResponse.json({ track }, { status: 201 })
 }

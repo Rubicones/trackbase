@@ -101,7 +101,7 @@ export default function InvitePage() {
 
 function Screen({ children }: { children: React.ReactNode }) {
   return (
-    <main style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: '2rem' }}>
+    <main className="auth-shell">
       {children}
     </main>
   )

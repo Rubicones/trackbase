@@ -533,6 +533,49 @@ function StructureTransport({
   )
 }
 
+// ─── Chords hover tooltip ─────────────────────────────────────────────────────
+
+function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
+  const c = SECTION_COLORS[section.type] ?? SECTION_COLORS.custom
+  const W = 200
+  const cellCx = rect.left + rect.width / 2
+  const pLeft = typeof window !== 'undefined'
+    ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
+    : 8
+  const caret = Math.max(12, Math.min(W - 12, cellCx - pLeft))
+  const pTop = rect.top - 8
+
+  return createPortal(
+    <div style={{
+      position: 'fixed', top: pTop, left: pLeft, width: W,
+      transform: 'translateY(-100%)',
+      background: 'var(--bg-surface)',
+      border: `0.5px solid ${c.fg}`,
+      borderRadius: 8, padding: '8px 10px',
+      zIndex: 300, boxShadow: '0 4px 20px rgba(0,0,0,0.28)',
+      pointerEvents: 'none',
+    }}>
+      <div style={{
+        position: 'absolute', bottom: -5, left: caret - 5,
+        width: 0, height: 0,
+        borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+        borderTop: `5px solid ${c.fg}`,
+        pointerEvents: 'none',
+      }} />
+      <div style={{ fontSize: 10, color: c.fg, fontWeight: 600, marginBottom: 5 }}>
+        {sectionLabel(section)}
+      </div>
+      <div style={{
+        fontSize: 11, fontFamily: 'var(--font-mono, monospace)',
+        color: 'var(--text-sec)', whiteSpace: 'pre-wrap', lineHeight: 1.55,
+      }}>
+        {section.chords}
+      </div>
+    </div>,
+    document.body
+  )
+}
+
 // ─── Structure overlay ────────────────────────────────────────────────────────
 
 type SelMode = 'idle' | 'start_set' | 'naming'
@@ -582,6 +625,7 @@ export default function StructureOverlay({
   const [selEnd, setSelEnd] = useState<number | null>(null)
   const [hint, setHint] = useState<{ text: string; isError: boolean } | null>(null)
   const [activeEdit, setActiveEdit] = useState<ActiveEdit | null>(null)
+  const [hoveredChords, setHoveredChords] = useState<{ section: Section; rect: DOMRect } | null>(null)
 
   const stripRef = useRef<HTMLDivElement>(null)
   const sectionsRef = useRef(sections)
@@ -600,6 +644,7 @@ export default function StructureOverlay({
       setSelEnd(null)
       setHint(null)
       setActiveEdit(null)
+      setHoveredChords(null)
     }
   }, [editMode])
 
@@ -780,6 +825,7 @@ export default function StructureOverlay({
           sectionId: hit.id,
           cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
         })
+        setHoveredChords(null)
       }
       return
     }
@@ -1034,7 +1080,14 @@ export default function StructureOverlay({
               const c = SECTION_COLORS[s.type] ?? SECTION_COLORS.custom
               const isActive = activeEdit?.sectionId === s.id
               return (
-                <div key={s.id} style={{
+                <div key={s.id}
+                  onMouseEnter={e => {
+                    if (s.chords?.trim() && !isActive) {
+                      setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
+                    }
+                  }}
+                  onMouseLeave={() => setHoveredChords(null)}
+                  style={{
                   position: 'absolute', top: 0, bottom: 0,
                   left: `${tp(s.start_bar) * 100}%`,
                   width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
@@ -1164,6 +1217,11 @@ export default function StructureOverlay({
           onDelete={handleDelete}
           onClose={() => setActiveEdit(null)}
         />
+      )}
+
+      {/* Chords hover tooltip */}
+      {hoveredChords && (
+        <ChordsTooltip section={hoveredChords.section} rect={hoveredChords.rect} />
       )}
     </>
   )

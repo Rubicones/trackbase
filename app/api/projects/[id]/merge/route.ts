@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { getUserIdFromToken } from '@/lib/supabase/server'
+import { logActivity } from '@/lib/activity'
 import {
   buildBarMap,
   groupConsecutiveBars,
@@ -38,6 +40,7 @@ export async function POST(
 ) {
   try {
     const { id: projectId } = await params
+    const userId = (() => { const t = req.cookies.get('sb-at')?.value; return t ? getUserIdFromToken(t) : null })()
     const { branchVersionId, resolutions = [], sectionResolutions = [] } = await req.json() as {
       branchVersionId: string
       resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch' }>
@@ -320,6 +323,16 @@ export async function POST(
       .select('*')
       .eq('version_id', main.id)
       .order('position', { ascending: true })
+
+    // Log activity (fire-and-forget)
+    supabase
+      .from('projects').select('band_id, name').eq('id', projectId).maybeSingle()
+      .then(({ data: proj }) => {
+        if (proj) logActivity({
+          bandId: proj.band_id, userId, action: 'merge',
+          subject: `${branch.name} → main`, projectId,
+        })
+      })
 
     return NextResponse.json({
       merged: true,

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTheme } from 'next-themes'
 import { useAuth } from '@/contexts/AuthContext'
 import { Avatar } from '@/components/Avatar'
 import { getSupabaseClient } from '@/lib/supabase/client'
@@ -10,6 +11,7 @@ type ActiveSection = null | 'email' | 'username'
 
 export function AvatarDropdown() {
   const router = useRouter()
+  const { theme, setTheme } = useTheme()
   const { user, profile, signOut, refreshProfile } = useAuth()
   const [open, setOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<ActiveSection>(null)
@@ -243,6 +245,9 @@ export function AvatarDropdown() {
             </div>
           )}
 
+          {/* Theme toggle */}
+          <ThemeRow theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+
           {/* Divider + sign out */}
           <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
           <SignOutRow onSignOut={handleSignOut} />
@@ -294,6 +299,42 @@ function SignOutRow({ onSignOut }: { onSignOut: () => void }) {
   )
 }
 
+function ThemeRow({ theme, onToggle }: { theme: string | undefined; onToggle: () => void }) {
+  const [hov, setHov] = useState(false)
+  const isDark = theme === 'dark'
+  return (
+    <button
+      onClick={onToggle}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 7,
+        width: '100%', background: hov ? 'var(--bg-card)' : 'transparent',
+        border: 'none', color: 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
+        transition: 'background 0.12s', textAlign: 'left', justifyContent: 'space-between',
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {isDark ? <MoonIcon /> : <SunIcon />}
+        {isDark ? 'Dark mode' : 'Light mode'}
+      </span>
+      {/* Toggle pill */}
+      <span style={{
+        display: 'flex', alignItems: 'center',
+        width: 32, height: 18, borderRadius: 9,
+        background: isDark ? 'var(--accent)' : 'var(--border-light)',
+        padding: 2, transition: 'background 0.2s', flexShrink: 0,
+      }}>
+        <span style={{
+          width: 14, height: 14, borderRadius: '50%', background: '#fff',
+          transform: isDark ? 'translateX(14px)' : 'translateX(0)',
+          transition: 'transform 0.2s',
+        }} />
+      </span>
+    </button>
+  )
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 function EmailIcon() {
@@ -317,6 +358,23 @@ function LogoutSVG() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
       <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+function SunIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1" />
+      <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.93 2.93l1.06 1.06M10.01 10.01l1.06 1.06M10.01 3.99l1.06-1.06M2.93 11.07l1.06-1.06"
+        stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+    </svg>
+  )
+}
+function MoonIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M11.5 8.5A5 5 0 1 1 5.5 2.5a3.5 3.5 0 0 0 6 6z"
+        stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

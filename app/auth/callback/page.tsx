@@ -63,7 +63,7 @@ export default function AuthCallbackPage() {
   }, [router])
 
   return (
-    <main style={styles.main}>
+    <main className="auth-shell">
       <div style={styles.card}>
         <Spinner />
         <p style={styles.text}>Signing you in…</p>

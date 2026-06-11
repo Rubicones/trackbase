@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
+import { BrandSpinner } from '@/components/BrandSpinner'
 
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
@@ -177,8 +178,8 @@ export default function OnboardingPage() {
     : inviteStatus === 'valid'
 
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
+    <main className="auth-shell">
+      <div className="onboarding-card" style={styles.card}>
         <div style={styles.logo}>
           <span style={{ color: 'var(--text-sec)' }}>track</span>
           <span style={{ color: 'var(--accent)' }}>base</span>
@@ -236,7 +237,7 @@ export default function OnboardingPage() {
             <p style={styles.stepSub}>You can always do both later</p>
 
             {/* Two cards side by side */}
-            <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+            <div className="onboarding-band-cards">
               <BandCard
                 selected={bandMode === 'create'}
                 onClick={() => setBandMode('create')}
@@ -391,11 +392,7 @@ function DoorIcon() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function LoadingScreen() {
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading…</p>
-    </div>
-  )
+  return <BrandSpinner />
 }
 
 function SmallSpinner() {

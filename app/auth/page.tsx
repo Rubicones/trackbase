@@ -56,7 +56,7 @@ export default function AuthPage() {
   if (checking) return <div style={{ minHeight: '100vh', background: 'var(--bg)' }} />
 
   return (
-    <main style={styles.main}>
+    <main className="auth-shell">
       <div style={styles.card}>
         {/* Logo */}
         <div style={styles.logo}>
@@ -69,7 +69,7 @@ export default function AuthPage() {
         <p style={styles.tagline}>Git-like versioning for music demos</p>
 
         {sent ? (
-          <div style={styles.sentBox}>
+          <div className="auth-card-inner" style={styles.sentBox}>
             {/* Mail icon */}
             <div style={styles.iconWrap}>
               <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
@@ -93,7 +93,7 @@ export default function AuthPage() {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} style={styles.form}>
+          <form onSubmit={handleSubmit} className="auth-card-inner" style={styles.form}>
             <label style={styles.label}>Email address</label>
             <input
               type="email"

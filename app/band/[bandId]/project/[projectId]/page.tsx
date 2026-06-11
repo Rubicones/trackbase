@@ -12,6 +12,8 @@ import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
+import { resolveTrackIconColor, TRACK_ICON_COLORS } from '@/lib/trackIcon'
+import { BrandSpinner } from '@/components/BrandSpinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1044,10 +1046,7 @@ function ActionButton({
 // ─── Icon picker popover ──────────────────────────────────────────────────────
 
 const ICON_EMOJIS = ['🥁','🎸','🎹','🎤','🎵','🎷','🎺','🎻','🪗','🎙','🔊','✨']
-const ICON_COLORS = [
-  'rgba(52,211,153,0.15)', 'rgba(251,191,36,0.15)', 'rgba(167,139,250,0.15)', 'rgba(232,121,249,0.15)',
-  'rgba(96,165,250,0.15)', 'rgba(248,113,113,0.15)', 'rgba(255,255,255,0.10)', 'rgba(52,211,153,0.25)',
-]
+const ICON_COLORS = TRACK_ICON_COLORS
 
 function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   trackId: string
@@ -1056,8 +1055,10 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   onApply: (emoji: string, color: string) => void
   onClose: () => void
 }) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme !== 'light'
   const [emoji, setEmoji] = useState(initialEmoji ?? '🎵')
-  const [color, setColor] = useState(initialColor ?? 'rgba(167,139,250,0.15)')
+  const [color, setColor] = useState(() => resolveTrackIconColor(initialColor))
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -1117,7 +1118,7 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         {ICON_COLORS.map(c => (
           <button key={c} onClick={() => setColor(c)} style={{
-            width: 22, height: 22, borderRadius: '50%', background: c,
+            width: 22, height: 22, borderRadius: '50%', background: resolveTrackIconColor(c, isDark),
             border: `2px solid ${color === c ? 'white' : 'transparent'}`,
             cursor: 'pointer', flexShrink: 0,
             transform: color === c ? 'scale(1.1)' : 'scale(1)',
@@ -1131,7 +1132,7 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
 
       {/* Preview */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{emoji}</div>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: resolveTrackIconColor(color, isDark), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{emoji}</div>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Preview</span>
       </div>
 
@@ -1183,8 +1184,7 @@ function TrackRow({
   const col = palette(index)
   const instrument = detectInstrument(track.name)
 
-  // Use custom color if set, else palette
-  const iconBg = track.icon_color ?? (isDark ? col.bg : col.bgLight)
+  const iconBg = resolveTrackIconColor(track.icon_color, isDark)
 
   const [waveformReady, setWaveformReady] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -2271,9 +2271,7 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center text-[13px] text-muted">Loading…</div>
-  )
+  if (loading) return <BrandSpinner />
   if (error || !project) return (
     <div className="min-h-screen flex items-center justify-center text-[13px] text-danger">{error || 'Project not found'}</div>
   )
@@ -2491,7 +2489,7 @@ export default function ProjectPage() {
               })()}
 
               {versionLoading ? (
-                <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
+                <BrandSpinner fullscreen={false} />
               ) : activeTracks.length === 0 ? (
                 <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
               ) : activeTracks.map((t, i) => (

@@ -7,8 +7,10 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { resolveTrackIconColor } from '@/lib/trackIcon'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
+import { BrandSpinner } from '@/components/BrandSpinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -907,7 +909,7 @@ function TrackRow({
   const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
   const col = palette(index)
-  const iconBg = isDark ? col.bg : col.bgLight
+  const iconBg = isDark ? resolveTrackIconColor(col.bg, true) : col.bgLight
   const instrument = detectInstrument(track.name)
 
   const [waveformReady, setWaveformReady] = useState(false)
@@ -1548,9 +1550,7 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center text-[13px] text-muted">Loading…</div>
-  )
+  if (loading) return <BrandSpinner />
   if (error || !project) return (
     <div className="min-h-screen flex items-center justify-center text-[13px] text-danger">{error || 'Project not found'}</div>
   )
@@ -1653,7 +1653,7 @@ export default function ProjectPage() {
             </div>
 
             {versionLoading ? (
-              <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
+              <BrandSpinner fullscreen={false} />
             ) : activeTracks.length === 0 ? (
               <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
             ) : activeTracks.map((t, i) => (

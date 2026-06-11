@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { getUserIdFromToken } from '@/lib/supabase/server'
+import { logActivity } from '@/lib/activity'
 
 // POST /api/projects/[id]/versions
 // Creates a new branch from an existing version.
@@ -12,6 +14,7 @@ export async function POST(
 ) {
   try {
     const { id: projectId } = await params
+    const userId = (() => { const t = req.cookies.get('sb-at')?.value; return t ? getUserIdFromToken(t) : null })()
     const { name, parent_id } = await req.json()
 
     if (!name || !parent_id) {
@@ -145,6 +148,13 @@ export async function POST(
         }
       }
     }
+
+    // Log activity (fire-and-forget)
+    supabase
+      .from('projects').select('band_id, name').eq('id', projectId).maybeSingle()
+      .then(({ data: proj }) => {
+        if (proj) logActivity({ bandId: proj.band_id, userId, action: 'branch', subject: name, projectId })
+      })
 
     return NextResponse.json({ version }, { status: 201 })
   } catch (err) {

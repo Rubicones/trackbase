@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
+import { logActivity, fmtTimecode } from '@/lib/activity'
 
 // POST /api/tracks/[id]/comments
 // Body: { content: string, timecode_start_ms: number, timecode_end_ms: number }
@@ -71,6 +72,22 @@ export async function POST(
       author_username: authorProfile?.username ?? 'unknown',
       replies: [],
     }
+
+    // Log activity (fire-and-forget)
+    supabase
+      .from('versions').select('project_id').eq('id', track.version_id).maybeSingle()
+      .then(({ data: ver }) => ver
+        ? supabase.from('projects').select('band_id, name').eq('id', ver.project_id).maybeSingle()
+            .then(({ data: proj }) => {
+              if (proj) logActivity({
+                bandId: proj.band_id, userId, action: 'comment',
+                subject: proj.name, detail: fmtTimecode(timecode_start_ms),
+                projectId: ver.project_id,
+              })
+            })
+        : null
+      )
+
     return NextResponse.json({ comment: commentWithAuthor }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
