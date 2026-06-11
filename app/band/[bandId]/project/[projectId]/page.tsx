@@ -1870,7 +1870,6 @@ export default function ProjectPage() {
   const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
   const trackListRef = useRef<HTMLDivElement>(null)
   const tracksBodyRef = useRef<HTMLDivElement>(null)
-  const [overlayHeight, setOverlayHeight] = useState(0)
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false)
   const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
@@ -1972,14 +1971,6 @@ export default function ProjectPage() {
     return () => obs.disconnect()
   }, [activeTracks.length])
 
-  // Track rows height observer — constrains section-divider overlay height
-  useEffect(() => {
-    const el = tracksBodyRef.current
-    if (!el) return
-    const obs = new ResizeObserver(() => setOverlayHeight(el.offsetHeight))
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
 
   const mainVersion = versions.find(v => v.type === 'main')
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
@@ -2464,8 +2455,41 @@ export default function ProjectPage() {
 
           {/* Track list */}
           <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden" style={{ position: 'relative' }}>
-            {/* tracksBodyRef wraps track rows only — used to measure overlay height */}
-            <div ref={tracksBodyRef}>
+            {/* tracksBodyRef: position:relative so the section overlay can anchor inside it */}
+            <div ref={tracksBodyRef} style={{ position: 'relative' }}>
+
+              {/* Section boundary dashed lines overlay */}
+              {sections.length > 0 && project && trackDurationMs > 0 && (() => {
+                const { barDurationMs } = getBarMath(project, trackDurationMs)
+                const wl = waveformBounds?.left ?? 228
+                const wr = waveformBounds?.right ?? 68
+                return (
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0,
+                    left: wl, right: wr,
+                    pointerEvents: 'none', zIndex: 4,
+                  }}>
+                    {[...new Set(sections.flatMap(s => [
+                      ...(s.start_bar > 0 ? [s.start_bar] : []),
+                      s.end_bar,
+                    ]))].map(bar => {
+                      const pct = (bar * barDurationMs) / trackDurationMs
+                      return (
+                        <div
+                          key={bar}
+                          style={{
+                            position: 'absolute', top: 0, height: '100%',
+                            left: `${pct * 100}%`,
+                            width: 0,
+                            borderLeft: '1px dashed var(--border)',
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
               {versionLoading ? (
                 <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
               ) : activeTracks.length === 0 ? (
@@ -2546,35 +2570,6 @@ export default function ProjectPage() {
               />
             </div>
 
-            {/* Section boundary dashed lines overlay — height constrained to track rows */}
-            {sections.length > 0 && project && trackDurationMs > 0 && overlayHeight > 0 && (() => {
-              const { barDurationMs } = getBarMath(project, trackDurationMs)
-              const wl = waveformBounds?.left ?? 228
-              const wr = waveformBounds?.right ?? 68
-              return (
-                <div style={{
-                  position: 'absolute', top: 0,
-                  height: overlayHeight,
-                  left: wl, right: wr,
-                  pointerEvents: 'none', zIndex: 4,
-                }}>
-                  {sections.filter(s => s.start_bar > 0).map(s => {
-                    const pct = (s.start_bar * barDurationMs) / trackDurationMs
-                    return (
-                      <div
-                        key={s.id}
-                        style={{
-                          position: 'absolute', top: 0, height: '100%',
-                          left: `${pct * 100}%`,
-                          width: 0,
-                          borderLeft: '1px dashed var(--border)',
-                        }}
-                      />
-                    )
-                  })}
-                </div>
-              )
-            })()}
           </div>
 
           {/* Footer */}
