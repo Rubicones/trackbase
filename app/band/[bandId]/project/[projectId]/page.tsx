@@ -875,7 +875,11 @@ function usePlayer(tracks: Track[], versionId: string) {
   const startRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
-  const [volume, setVolumeState] = useState(1)
+  const [volume, setVolumeState] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1
+    const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
+    return isNaN(saved) ? 1 : Math.max(0, Math.min(1, saved))
+  })
 
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -976,6 +980,7 @@ function usePlayer(tracks: Track[], versionId: string) {
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
     if (masterGainRef.current) masterGainRef.current.gain.value = v
+    if (typeof window !== 'undefined') localStorage.setItem('trackbase_volume', String(v))
   }, [])
 
   return { playing, currentTime, duration, loaded, total: tracks.length, mutedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute }
@@ -1437,6 +1442,61 @@ function TrackRow({
   )
 }
 
+// ─── Skeleton track row (DnD uploads) ────────────────────────────────────────
+
+function SkeletonTrackRow({ name, progress, error, errorMsg, onRetry }: {
+  name: string; progress: number; error: boolean; errorMsg: string; onRetry: () => void
+}) {
+  return (
+    <div
+      className="flex items-center h-[72px] px-[22px] gap-3"
+      style={{
+        borderBottom: '0.5px solid var(--border)',
+        borderLeft: error ? '3px solid #ef4444' : undefined,
+      }}
+    >
+      {/* Icon placeholder */}
+      <div className="w-8 h-8 rounded-lg shrink-0 animate-pulse" style={{ background: 'var(--bg-card)' }} />
+      {/* Name + progress */}
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium truncate mb-1" style={{ color: 'var(--text-sec)' }}>{name}</div>
+        {error ? (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px]" style={{ color: '#ef4444' }}>Upload failed{errorMsg ? ` — ${errorMsg}` : ''}</span>
+            <button
+              onClick={onRetry}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 11 }}
+            >
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 5.5a4 4 0 1 0 .5-2" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M1.5 2v3.5H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-[3px] rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+              <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progress}%`, background: 'var(--accent)' }} />
+            </div>
+            <span className="text-[11px] shrink-0" style={{ color: 'var(--text-dim)' }}>
+              {progress > 0 ? `${progress}%` : 'Uploading…'}
+            </span>
+          </div>
+        )}
+      </div>
+      {/* Waveform shimmer */}
+      {!error && (
+        <div className="rounded-md shrink-0 overflow-hidden" style={{ width: 160, height: 40, background: 'var(--bg-card)', position: 'relative' }}>
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--accent) 20%, transparent) 50%, transparent 100%)',
+            backgroundSize: '200% 100%',
+            animation: 'shimmer 1.5s infinite linear',
+          }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Player bar ───────────────────────────────────────────────────────────────
 
 function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume }: {
@@ -1472,31 +1532,40 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
   }, [showVolume])
 
   const isLoading = loaded < total && total > 0
+  const volPct = Math.round(volume * 100)
 
-  const VolumeIcon = () => {
+  // 4-state volume icon: 0=muted, 1-33=low, 34-66=mid, 67-100=full
+  function VolumeIcon() {
     if (volume === 0) return (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 4l4 4M14 4l-4 4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+        <path d="M9.5 4.5l3 3M12.5 4.5l-3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
       </svg>
     )
-    if (volume < 0.5) return (
+    if (volPct <= 33) return (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 5.5a1.5 1.5 0 0 1 0 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+        <path d="M10 6a0.7 0.7 0 0 1 0 2" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+      </svg>
+    )
+    if (volPct <= 66) return (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+        <path d="M10 5a2 2 0 0 1 0 4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
       </svg>
     )
     return (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 4.5a3 3 0 0 1 0 5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+        <path d="M10 4a3.5 3.5 0 0 1 0 6" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
       </svg>
     )
   }
 
   return (
-    <div className="flex items-center gap-3 h-[52px] shrink-0 px-[22px]" style={{ borderBottom: '0.5px solid var(--border)' }}>
-      <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play">
+    <div className="flex items-center h-[52px] shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
+      {/* Play button — flush to left edge */}
+      <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play" style={{ flexShrink: 0, marginLeft: 0 }}>
         {isLoading ? (
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
             <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
@@ -1509,11 +1578,17 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
         )}
       </button>
 
-      <span className="text-[12px] tabular-nums shrink-0 w-8 text-soft">{fmtTime(currentTime)}</span>
+      {/* Combined time — "0:42 / 2:55" */}
+      <span className="text-[12px] tabular-nums shrink-0 whitespace-nowrap" style={{ marginLeft: 10 }}>
+        <span style={{ color: 'var(--text-sec)' }}>{fmtTime(currentTime)}</span>
+        <span style={{ color: 'var(--text-muted)' }}> / {fmtTime(duration)}</span>
+      </span>
 
+      {/* Progress bar — flex: 1 */}
       <div
         ref={barRef}
         className="flex-1 h-5 flex items-center cursor-pointer"
+        style={{ margin: '0 12px' }}
         onMouseDown={e => { setDragging(true); onSeek(posToTime(e.clientX)) }}
         onMouseMove={e => { if (dragging) onSeek(posToTime(e.clientX)) }}
         onMouseUp={() => setDragging(false)}
@@ -1526,35 +1601,31 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
         </div>
       </div>
 
-      <span className="text-[12px] tabular-nums shrink-0 w-8 text-muted">{fmtTime(duration)}</span>
-
-      {/* Volume button + popover */}
-      <div ref={volRef} style={{ position: 'relative' }}>
+      {/* Volume button + popover — flush right */}
+      <div ref={volRef} style={{ position: 'relative', marginRight: 0 }}>
         <button
-          onClick={toggleMute}
-          onContextMenu={e => { e.preventDefault(); setShowVolume(v => !v) }}
-          onDoubleClick={() => setShowVolume(v => !v)}
+          onClick={() => setShowVolume(v => !v)}
           className="text-dim hover:text-muted transition-colors duration-150 p-1"
-          title="Click to mute · Double-click for slider"
+          title="Volume"
         >
           <VolumeIcon />
         </button>
         {showVolume && (
           <div style={{
-            position: 'absolute', bottom: '100%', right: 0, marginBottom: 6,
-            background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-            borderRadius: 10, padding: '10px 8px',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+            position: 'absolute', bottom: 'calc(100% + 8px)', right: 0,
+            background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
+            borderRadius: 8, padding: '12px 10px',
+            width: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+            zIndex: 50, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>
-              {Math.round(volume * 100)}%
-            </span>
+            {/* Percentage label */}
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{volPct}</span>
+            {/* Vertical slider */}
             <input
               type="range"
-              min={0} max={1} step={0.01}
-              value={volume}
-              onChange={e => onVolume(parseFloat(e.target.value))}
+              min={0} max={100} step={1}
+              value={volPct}
+              onChange={e => onVolume(parseInt(e.target.value) / 100)}
               style={{
                 writingMode: 'vertical-lr' as const,
                 direction: 'rtl' as const,
@@ -1564,6 +1635,28 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
                 accentColor: 'var(--accent)',
               }}
             />
+            {/* Mute toggle */}
+            <button
+              onClick={toggleMute}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: volume === 0 ? 'var(--accent)' : 'var(--text-muted)',
+                display: 'flex', alignItems: 'center',
+              }}
+              title={volume === 0 ? 'Unmute' : 'Mute'}
+            >
+              {volume === 0 ? (
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                  <path d="M9.5 4.5l3 3M12.5 4.5l-3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                  <path d="M10 4a3.5 3.5 0 0 1 0 6" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+                </svg>
+              )}
+            </button>
           </div>
         )}
       </div>
@@ -1776,6 +1869,13 @@ export default function ProjectPage() {
   const [editStructure, setEditStructure] = useState(false)
   const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
   const trackListRef = useRef<HTMLDivElement>(null)
+  const tracksBodyRef = useRef<HTMLDivElement>(null)
+  const [overlayHeight, setOverlayHeight] = useState(0)
+  // Drag-and-drop state
+  const [isDragging, setIsDragging] = useState(false)
+  const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
+  const [skeletonTracks, setSkeletonTracks] = useState<Array<{ id: string; name: string; progress: number; error: boolean; errorMsg: string }>>([])
+  const [dndProgress, setDndProgress] = useState<{ done: number; total: number } | null>(null)
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1871,6 +1971,16 @@ export default function ProjectPage() {
     obs.observe(listEl)
     return () => obs.disconnect()
   }, [activeTracks.length])
+
+  // Track rows height observer — constrains section-divider overlay height
+  useEffect(() => {
+    const el = tracksBodyRef.current
+    if (!el) return
+    const obs = new ResizeObserver(() => setOverlayHeight(el.offsetHeight))
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
   const mainVersion = versions.find(v => v.type === 'main')
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
@@ -1983,6 +2093,98 @@ export default function ProjectPage() {
     }
   }
 
+  // Sequential upload with per-file skeleton rows (used by DnD)
+  async function handleUploadFiles(files: File[]) {
+    if (!files.length || !activeVersionId) return
+    setDndProgress({ done: 0, total: files.length })
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const skeletonId = crypto.randomUUID()
+      const baseName = file.name.replace(/\.[^.]+$/, '')
+      setSkeletonTracks(prev => [...prev, { id: skeletonId, name: baseName, progress: 0, error: false, errorMsg: '' }])
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.upload.addEventListener('progress', ev => {
+            if (ev.lengthComputable) {
+              const p = Math.round((ev.loaded / ev.total) * 100)
+              setSkeletonTracks(prev => prev.map(s => s.id === skeletonId ? { ...s, progress: p } : s))
+            }
+          })
+          xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve()
+            else {
+              try { reject(new Error(JSON.parse(xhr.responseText).error ?? 'Upload failed')) }
+              catch { reject(new Error('Upload failed')) }
+            }
+          })
+          xhr.addEventListener('error', () => reject(new Error('Network error')))
+          const fd = new FormData()
+          fd.append('file', file)
+          fd.append('name', baseName)
+          fd.append('position', String(activeTracks.length + i))
+          xhr.open('POST', `/api/versions/${activeVersionId}/tracks/upload`)
+          xhr.send(fd)
+        })
+        setSkeletonTracks(prev => prev.filter(s => s.id !== skeletonId))
+        setDndProgress(d => d ? { done: d.done + 1, total: d.total } : null)
+        cache.invalidate(activeVersionId)
+        await loadProject()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Upload failed'
+        setSkeletonTracks(prev => prev.map(s => s.id === skeletonId ? { ...s, error: true, errorMsg: msg } : s))
+        setDndProgress(d => d ? { done: d.done + 1, total: d.total } : null)
+      }
+    }
+    setDndProgress(null)
+  }
+
+  // Drag-and-drop helpers
+  function isAudioDrag(e: React.DragEvent) {
+    return Array.from(e.dataTransfer.items).some(it =>
+      it.kind === 'file' && (it.type.startsWith('audio/') || it.type === '')
+    )
+  }
+  function handleContentDragOver(e: React.DragEvent) {
+    if (!isAudioDrag(e)) return
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy'
+    setIsDragging(true)
+  }
+  function handleContentDragLeave(e: React.DragEvent) {
+    if (e.relatedTarget && (e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) return
+    setIsDragging(false); setIsDraggingAddRow(false)
+  }
+  function handleContentDrop(e: React.DragEvent) {
+    e.preventDefault(); setIsDragging(false); setIsDraggingAddRow(false)
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('audio/') || f.name.endsWith('.wav') || f.name.endsWith('.mp3')
+    )
+    if (!files.length) {
+      setToast('Only WAV and MP3 files are supported')
+      setTimeout(() => setToast(null), 3000)
+      return
+    }
+    handleUploadFiles(files)
+  }
+  function handleAddRowDragOver(e: React.DragEvent) {
+    if (!isAudioDrag(e)) return
+    e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'
+    setIsDraggingAddRow(true)
+  }
+  function handleAddRowDragLeave(e: React.DragEvent) {
+    e.stopPropagation()
+    if (e.relatedTarget && (e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) return
+    setIsDraggingAddRow(false)
+  }
+  function handleAddRowDrop(e: React.DragEvent) {
+    e.preventDefault(); e.stopPropagation()
+    setIsDragging(false); setIsDraggingAddRow(false)
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('audio/') || f.name.endsWith('.wav') || f.name.endsWith('.mp3')
+    )
+    if (files.length) handleUploadFiles(files)
+  }
+
   async function handleReplaceTrack(track: Track, file: File) {
     setUploading(true)
     try {
@@ -2023,6 +2225,7 @@ export default function ProjectPage() {
       })
       if (!res.ok) { alert((await res.json().catch(() => ({}))).error ?? 'Failed to check merge'); return }
       const preview = await res.json()
+      console.log('Merge preview:', JSON.stringify(preview, null, 2))
       setMergeModal({ branchId, preview })
     } catch { alert('Network error') }
     finally { setMergeCheckingId(null) }
@@ -2133,7 +2336,34 @@ export default function ProjectPage() {
           commentCounts={commentCounts}
         />
 
-        <main className="flex flex-col flex-1 overflow-hidden min-w-0" style={{ background: 'var(--bg)' }}>
+        <main
+          className="flex flex-col flex-1 overflow-hidden min-w-0"
+          style={{ background: 'var(--bg)', position: 'relative' }}
+          onDragOver={handleContentDragOver}
+          onDragLeave={handleContentDragLeave}
+          onDrop={handleContentDrop}
+        >
+          {/* Full-screen drag overlay */}
+          {isDragging && (
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 200, pointerEvents: 'none',
+              background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+              border: '2px dashed var(--accent)',
+              borderRadius: 8,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 10,
+            }}>
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <path d="M16 4v16M8 14l8-8 8 8" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M4 26h24" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
+              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>Drop audio files to add tracks</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>WAV and MP3 supported</span>
+            </div>
+          )}
+
+          {/* Content — dimmed while dragging */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', opacity: isDragging ? 0.4 : 1, transition: 'opacity 0.15s' }}>
 
           {/* Project header */}
           <div className="px-[22px] pt-4 pb-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
@@ -2234,60 +2464,97 @@ export default function ProjectPage() {
 
           {/* Track list */}
           <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden" style={{ position: 'relative' }}>
-            {versionLoading ? (
-              <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
-            ) : activeTracks.length === 0 ? (
-              <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
-            ) : activeTracks.map((t, i) => (
-              <TrackRow
-                key={t.id} track={t} index={i}
-                muted={player.mutedTracks.has(t.id)} changed={isChanged(t)}
-                playedRatio={playedRatio} durationMs={durationMs}
-                commentMode={commentMode} activeInput={activeCommentInput}
-                audioReady={player.loaded >= player.total && player.total > 0}
-                onToggleMute={() => player.toggleMute(t.id)}
-                onReplace={f => handleReplaceTrack(t, f)}
-                onSeek={player.seek}
-                onCommentPlace={setActiveCommentInput}
-                onCommentDelete={handleCommentDelete}
-                onCommentCreate={handleCommentCreate}
-                onCloseInput={() => setActiveCommentInput(null)}
-                onDeleteTrack={handleDeleteTrack}
-                onRenameTrack={handleRenameTrack}
-                onIconUpdate={handleIconUpdate}
-                currentUserId={user?.id}
-                isOwner={isOwner}
-                onReplyCreate={handleReplyCreate}
-                currentUser={currentUser}
-              />
-            ))}
+            {/* tracksBodyRef wraps track rows only — used to measure overlay height */}
+            <div ref={tracksBodyRef}>
+              {versionLoading ? (
+                <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
+              ) : activeTracks.length === 0 ? (
+                <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
+              ) : activeTracks.map((t, i) => (
+                <TrackRow
+                  key={t.id} track={t} index={i}
+                  muted={player.mutedTracks.has(t.id)} changed={isChanged(t)}
+                  playedRatio={playedRatio} durationMs={durationMs}
+                  commentMode={commentMode} activeInput={activeCommentInput}
+                  audioReady={player.loaded >= player.total && player.total > 0}
+                  onToggleMute={() => player.toggleMute(t.id)}
+                  onReplace={f => handleReplaceTrack(t, f)}
+                  onSeek={player.seek}
+                  onCommentPlace={setActiveCommentInput}
+                  onCommentDelete={handleCommentDelete}
+                  onCommentCreate={handleCommentCreate}
+                  onCloseInput={() => setActiveCommentInput(null)}
+                  onDeleteTrack={handleDeleteTrack}
+                  onRenameTrack={handleRenameTrack}
+                  onIconUpdate={handleIconUpdate}
+                  currentUserId={user?.id}
+                  isOwner={isOwner}
+                  onReplyCreate={handleReplyCreate}
+                  currentUser={currentUser}
+                />
+              ))}
+              {/* Skeleton track rows for DnD uploads */}
+              {skeletonTracks.map(s => (
+                <SkeletonTrackRow
+                  key={s.id}
+                  name={s.name}
+                  progress={s.progress}
+                  error={s.error}
+                  errorMsg={s.errorMsg}
+                  onRetry={() => {/* retry handled by re-triggering upload */}}
+                />
+              ))}
+            </div>
 
-            <div className="px-[22px] py-3">
+            <div className="px-[22px] py-3"
+              onDragOver={handleAddRowDragOver}
+              onDragLeave={handleAddRowDragLeave}
+              onDrop={handleAddRowDrop}
+            >
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-dim hover:text-muted transition-colors duration-150 disabled:cursor-not-allowed"
-                style={{ border: '0.5px dashed var(--border-light)' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-light)' }}
+                className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg transition-colors duration-150 disabled:cursor-not-allowed"
+                style={{
+                  border: isDraggingAddRow ? '0.5px dashed var(--accent)' : '0.5px dashed var(--border-light)',
+                  background: isDraggingAddRow ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
+                  color: isDraggingAddRow ? 'var(--accent)' : 'var(--text-dim)',
+                }}
+                onMouseEnter={e => { if (!isDraggingAddRow) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+                onMouseLeave={e => { if (!isDraggingAddRow) { e.currentTarget.style.borderColor = 'var(--border-light)'; e.currentTarget.style.color = 'var(--text-dim)' } }}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-                <span className="text-[12px]">{uploading ? 'Uploading…' : 'Add track (WAV / MP3)'}</span>
+                {isDraggingAddRow ? (
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M6 2v6M2 6l4-4 4 4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 10h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+                )}
+                <span className="text-[12px]">
+                  {isDraggingAddRow ? 'Drop to add track' : uploading ? 'Uploading…' : 'Add track (WAV / MP3)'}
+                </span>
               </button>
+              {dndProgress && dndProgress.total > 1 && (
+                <p className="text-[11px] mt-1" style={{ color: 'var(--text-dim)' }}>
+                  Uploading {dndProgress.done + 1} of {dndProgress.total} files…
+                </p>
+              )}
               <input ref={fileInputRef} type="file"
                 accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg,audio/mp3"
                 multiple className="hidden" onChange={handleAddTrack}
               />
             </div>
 
-            {/* Section boundary dashed lines overlay */}
-            {sections.length > 0 && project && trackDurationMs > 0 && (() => {
+            {/* Section boundary dashed lines overlay — height constrained to track rows */}
+            {sections.length > 0 && project && trackDurationMs > 0 && overlayHeight > 0 && (() => {
               const { barDurationMs } = getBarMath(project, trackDurationMs)
               const wl = waveformBounds?.left ?? 228
               const wr = waveformBounds?.right ?? 68
               return (
                 <div style={{
-                  position: 'absolute', top: 0, bottom: 0,
+                  position: 'absolute', top: 0,
+                  height: overlayHeight,
                   left: wl, right: wr,
                   pointerEvents: 'none', zIndex: 4,
                 }}>
@@ -2297,7 +2564,7 @@ export default function ProjectPage() {
                       <div
                         key={s.id}
                         style={{
-                          position: 'absolute', top: 0, bottom: 0,
+                          position: 'absolute', top: 0, height: '100%',
                           left: `${pct * 100}%`,
                           width: 0,
                           borderLeft: '1px dashed var(--border)',
@@ -2327,6 +2594,8 @@ export default function ProjectPage() {
               </button>
             </div>
           </div>
+
+          </div>{/* end content dim wrapper */}
         </main>
       </div>
 

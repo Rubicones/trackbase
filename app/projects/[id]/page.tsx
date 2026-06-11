@@ -1086,8 +1086,9 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
   const isLoading = loaded < total && total > 0
 
   return (
-    <div className="flex items-center gap-3 h-[52px] shrink-0 px-[22px]" style={{ borderBottom: '0.5px solid var(--border)' }}>
-      <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play">
+    <div className="flex items-center h-[52px] shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
+      {/* Play button — flush to left edge */}
+      <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play" style={{ flexShrink: 0, marginLeft: 0 }}>
         {isLoading ? (
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
             <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
@@ -1100,11 +1101,17 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
         )}
       </button>
 
-      <span className="text-[12px] tabular-nums shrink-0 w-8 text-soft">{fmtTime(currentTime)}</span>
+      {/* Combined time */}
+      <span className="text-[12px] tabular-nums shrink-0 whitespace-nowrap" style={{ marginLeft: 10 }}>
+        <span style={{ color: 'var(--text-sec)' }}>{fmtTime(currentTime)}</span>
+        <span style={{ color: 'var(--text-muted)' }}> / {fmtTime(duration)}</span>
+      </span>
 
+      {/* Progress bar — flex: 1 */}
       <div
         ref={barRef}
         className="flex-1 h-5 flex items-center cursor-pointer"
+        style={{ margin: '0 12px' }}
         onMouseDown={e => { setDragging(true); onSeek(posToTime(e.clientX)) }}
         onMouseMove={e => { if (dragging) onSeek(posToTime(e.clientX)) }}
         onMouseUp={() => setDragging(false)}
@@ -1117,9 +1124,8 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
         </div>
       </div>
 
-      <span className="text-[12px] tabular-nums shrink-0 w-8 text-muted">{fmtTime(duration)}</span>
-
-      <button className="text-dim hover:text-muted transition-colors duration-150 p-1">
+      {/* Volume icon — flush right */}
+      <button className="text-dim hover:text-muted transition-colors duration-150 p-1" title="Volume">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
           <path d="M10 4.5a3 3 0 0 1 0 5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />

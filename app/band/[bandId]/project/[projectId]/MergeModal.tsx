@@ -588,7 +588,7 @@ export function MergeModal({
   if (!hasConflicts) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="rounded-2xl p-5 w-[420px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)' }}>
+        <div className="rounded-2xl p-5 w-[420px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)', maxHeight: '90vh', overflowY: 'auto' }}>
           <p className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-bright)' }}>
             Merge &ldquo;{preview.branchName}&rdquo; into main
           </p>
@@ -657,7 +657,8 @@ export function MergeModal({
           )}
 
           {/* No changes at all */}
-          {preview.autoMerge.length === 0 && sectionAutoItems.length === 0 && (
+          {preview.autoMerge.length === 0 && sectionAutoItems.length === 0 &&
+            !(preview.commentChanges?.added.length || preview.commentChanges?.deleted.length) && (
             <div className="rounded-xl mb-4 px-4 py-3 text-[12px]"
               style={{ color: 'var(--text-dim)', border: '0.5px solid var(--border)' }}>
               No changes — branch is identical to main

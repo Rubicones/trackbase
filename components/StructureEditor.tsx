@@ -465,65 +465,51 @@ function StructureTransport({
   const volRef = useRef<HTMLDivElement>(null)
   const isLoading = loaded < totalTracks && totalTracks > 0
 
-  useEffect(() => {
-    if (!showVolume) return
-    function handler(e: MouseEvent) {
-      if (volRef.current && !volRef.current.contains(e.target as Node)) setShowVolume(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showVolume])
+  // (volume popover is hover-controlled — no click-outside handler needed)
 
   function toggleMute() {
     if (volume > 0) { setPrevVolume(volume); onVolume(0) }
     else onVolume(prevVolume || 1)
   }
 
-  if (side === 'left') {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-        gap: 8, paddingRight: 10, width: '100%',
-      }}>
-        <button onClick={playing ? onPause : onPlay} disabled={totalTracks === 0} className="btn-play">
-          {isLoading ? (
-            <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
-              <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          ) : playing ? (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><path d="M3.5 2l8 5-8 5V2z" /></svg>
-          )}
-        </button>
-        <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--text-sec)', minWidth: 36 }}>
-          {fmtTime(currentTime)}
-        </span>
-      </div>
-    )
-  }
+  if (side === 'right') return null
 
+  // side === 'left': play + time + volume, all left-aligned
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4, width: '100%',
+      display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+      gap: 8, paddingLeft: 10, width: '100%',
     }}>
-      <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)', minWidth: 36 }}>
-        {fmtTime(duration)}
+      <button onClick={playing ? onPause : onPlay} disabled={totalTracks === 0} className="btn-play">
+        {isLoading ? (
+          <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
+            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        ) : playing ? (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><path d="M3.5 2l8 5-8 5V2z" /></svg>
+        )}
+      </button>
+      <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        <span style={{ color: 'var(--text-sec)' }}>{fmtTime(currentTime)}</span>
+        <span style={{ color: 'var(--text-muted)' }}> / {fmtTime(duration)}</span>
       </span>
-      <div ref={volRef} style={{ position: 'relative' }}>
+      <div ref={volRef} style={{ position: 'relative' }}
+        onMouseEnter={() => setShowVolume(true)}
+        onMouseLeave={() => setShowVolume(false)}
+      >
         <button
           onClick={toggleMute}
-          onDoubleClick={() => setShowVolume(v => !v)}
-          className="text-dim hover:text-muted transition-colors duration-150 p-1"
-          title="Click to mute · Double-click for slider"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex' }}
+          title="Click to mute · Hover for slider"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', padding: 4 }}
         >
           <VolumeIcon volume={volume} />
         </button>
         {showVolume && (
           <div style={{
-            position: 'absolute', bottom: '100%', right: 0, marginBottom: 6,
+            position: 'absolute', bottom: '100%', left: 0, marginBottom: 6,
             background: 'var(--bg-card)', border: '0.5px solid var(--border)',
             borderRadius: 10, padding: '10px 8px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,

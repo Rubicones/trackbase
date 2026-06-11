@@ -192,32 +192,44 @@ export async function POST(
     const { conflicts: sectionBarConflicts, autoFromBranch: sectionAutoFromBranch } =
       groupConsecutiveBars(baseMap, branchMap, mainMap, totalBars)
 
-    // ── Comment diff (added in branch / deleted in branch vs base) ────────────
+    // ── Comment diff (added in branch / deleted in branch vs main) ───────────
+    // We compare main's comments vs branch's comments so that a comment deleted
+    // in the branch (but still present on main) correctly surfaces as "deleted".
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const branchTrackMap = new Map(branchTracks.map((t: any) => [t.id, t.display_name ?? t.name]))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const baseTrackMap   = new Map(baseTracks.map((t: any) => [t.id, t.display_name ?? t.name]))
+    const mainTrackMap   = new Map(mainTracks.map((t: any) => [t.id, t.display_name ?? t.name]))
     const branchCommentTrackIds = branchTracks.map((t: { id: string }) => t.id)
-    const baseCommentTrackIds   = baseTracks.map((t: { id: string }) => t.id)
+    const mainCommentTrackIds   = mainTracks.map((t: { id: string }) => t.id)
 
-    const [rawBranchComments, rawBaseComments] = await Promise.all([
+    // Note: track_comments stores the author as `created_by` (user UUID),
+    // not `author_username`. We fetch created_by and resolve usernames below.
+    const [rawBranchComments, rawMainComments] = await Promise.all([
       branchCommentTrackIds.length
         ? supabase.from('track_comments')
-            .select('id, author_username, timecode_start_ms, timecode_end_ms, content, track_id')
+            .select('id, created_by, timecode_start_ms, timecode_end_ms, content, track_id')
             .in('track_id', branchCommentTrackIds)
             .then(r => r.data ?? [])
         : Promise.resolve([]),
-      baseCommentTrackIds.length
+      mainCommentTrackIds.length
         ? supabase.from('track_comments')
-            .select('id, author_username, timecode_start_ms, timecode_end_ms, content, track_id')
-            .in('track_id', baseCommentTrackIds)
+            .select('id, created_by, timecode_start_ms, timecode_end_ms, content, track_id')
+            .in('track_id', mainCommentTrackIds)
             .then(r => r.data ?? [])
         : Promise.resolve([]),
     ])
 
+    // Resolve author usernames from profiles
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allAuthorIds = [...new Set([...(rawBranchComments as any[]), ...(rawMainComments as any[])].map((c: any) => c.created_by).filter(Boolean))]
+    const { data: commentAuthorProfiles } = allAuthorIds.length
+      ? await supabase.from('profiles').select('id, username').in('id', allAuthorIds)
+      : { data: [] }
+    const commentAuthorMap = new Map((commentAuthorProfiles ?? []).map((p: { id: string; username: string }) => [p.id, p.username]))
+
     // Reply counts
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allPreviewIds = [...(rawBranchComments as any[]), ...(rawBaseComments as any[])].map((c: any) => c.id)
+    const allPreviewIds = [...(rawBranchComments as any[]), ...(rawMainComments as any[])].map((c: any) => c.id)
     const replyCounts = new Map<string, number>()
     if (allPreviewIds.length) {
       const { data: replies } = await supabase
@@ -233,7 +245,7 @@ export async function POST(
     function toCommentPreview(c: any, trackMap: Map<string, string>): CommentPreview {
       return {
         id: c.id,
-        author_username: c.author_username,
+        author_username: commentAuthorMap.get(c.created_by) ?? null,
         timecode_start_ms: c.timecode_start_ms,
         timecode_end_ms: c.timecode_end_ms,
         content: c.content,
@@ -242,19 +254,32 @@ export async function POST(
       }
     }
 
+    // Comments are copied with new UUIDs when a branch is created, so ID-based
+    // diffing would falsely flag ALL comments as added/deleted. Instead we use
+    // a content fingerprint: same (content, timecode_start, timecode_end, created_by)
+    // = same logical comment. Only truly new or deleted comments surface here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function commentKey(c: any): string {
+      return `${c.created_by}|${c.timecode_start_ms}|${c.timecode_end_ms}|${c.content}`
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mainKeys = new Set((rawMainComments as any[]).map(commentKey))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const branchKeys = new Set((rawBranchComments as any[]).map(commentKey))
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const addedInBranch: CommentPreview[] = (rawBranchComments as any[])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .filter((bc: any) => !(rawBaseComments as any[]).some((base: any) => base.id === bc.id))
+      .filter((bc: any) => !mainKeys.has(commentKey(bc)))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((bc: any) => toCommentPreview(bc, branchTrackMap))
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const deletedInBranch: CommentPreview[] = (rawBaseComments as any[])
+    const deletedInBranch: CommentPreview[] = (rawMainComments as any[])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .filter((base: any) => !(rawBranchComments as any[]).some((bc: any) => bc.id === base.id))
+      .filter((mc: any) => !branchKeys.has(commentKey(mc)))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((base: any) => toCommentPreview(base, baseTrackMap))
+      .map((mc: any) => toCommentPreview(mc, mainTrackMap))
 
     const result: MergePreview = {
       conflicts,
