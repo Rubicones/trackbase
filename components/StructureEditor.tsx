@@ -1,8 +1,15 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
-import type { Project, Section, SectionType } from '@/lib/types'
+import type { Project, Section, SectionType, Track } from '@/lib/types'
+import { detectChordsInAudio } from '@/lib/chordDetection'
+import {
+  barDurationSec,
+  getMergedToneBuffer,
+  sectionTimeRangeSec,
+  sliceSectionFromToneBuffer,
+} from '@/lib/mergedAudioBuffer'
 
 // ─── Section colors ───────────────────────────────────────────────────────────
 
@@ -32,6 +39,10 @@ const SECTION_TYPE_LABELS: Record<SectionType, string> = {
 
 export function sectionLabel(s: Section): string {
   return s.custom_name ?? (s.type.charAt(0).toUpperCase() + s.type.slice(1))
+}
+
+function trackLabel(t: Track): string {
+  return t.display_name ?? t.name ?? t.original_filename ?? 'Track'
 }
 
 export function getBarMath(project: Project, totalDurationMs: number) {
@@ -186,14 +197,17 @@ function NamePickerPortal({
 type CellPos = { left: number; top: number; width: number; height: number }
 
 function SectionEditPopover({
-  section, cellPos,
-  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDelete, onClose,
+  section, cellPos, detectingChords, audioTracks,
+  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onDelete, onClose,
 }: {
   section: Section
   cellPos: CellPos
+  detectingChords: boolean
+  audioTracks: Track[]
   onTypeChange: (id: string, type: SectionType, customName?: string) => void
   onChordsLocalChange: (id: string, chords: string) => void
   onChordsAutoSave: (id: string, chords: string) => Promise<void>
+  onDetectChords: (trackIds: string[]) => void
   onDelete: (id: string) => void
   onClose: () => void
 }) {
@@ -209,12 +223,38 @@ function SectionEditPopover({
   const [chords, setChords] = useState(section.chords ?? '')
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [isDirty, setIsDirty] = useState(false)
+  const wasDetectingRef = useRef(detectingChords)
+  const [trackPickerOpen, setTrackPickerOpen] = useState(false)
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(
+    () => new Set(audioTracks.map(t => t.id)),
+  )
 
   useEffect(() => {
+    setSelectedTrackIds(new Set(audioTracks.map(t => t.id)))
+    setTrackPickerOpen(false)
+  }, [section.id, audioTracks.map(t => t.id).join('|')])
+
+  useEffect(() => {
+    setIsDirty(false)
     setChords(section.chords ?? '')
     setSaveStatus('idle')
-    setIsDirty(false)
   }, [section.id])
+
+  useEffect(() => {
+    if (!isDirty) setChords(section.chords ?? '')
+  }, [section.chords, isDirty])
+
+  // When detection finishes, push chords into the textarea without closing the popover.
+  useEffect(() => {
+    const wasDetecting = wasDetectingRef.current
+    wasDetectingRef.current = detectingChords
+    if (wasDetecting && !detectingChords && section.chords?.trim() && !isDirty) {
+      setChords(section.chords)
+      setSaveStatus('saved')
+      const t = setTimeout(() => setSaveStatus('idle'), 1500)
+      return () => clearTimeout(t)
+    }
+  }, [detectingChords, section.chords, isDirty])
 
   // Flush pending save on unmount (fire-and-forget)
   useEffect(() => {
@@ -254,20 +294,29 @@ function SectionEditPopover({
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) onClose()
+      const target = e.target
+      if (!(target instanceof Node)) return
+      if (popoverRef.current?.contains(target)) return
+      // Strip section clicks open/switch the popover on the same mousedown — don't close.
+      if (target instanceof Element && target.closest('[data-structure-section]')) return
+      onClose()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [onClose])
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (trackPickerOpen) setTrackPickerOpen(false)
+      else onClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, trackPickerOpen])
 
   const W = 246
-  const POPOVER_H = 280
+  const POPOVER_H = trackPickerOpen ? 420 : 300
   const cellCx = cellPos.left + cellPos.width / 2
   const pLeft = typeof window !== 'undefined'
     ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
@@ -285,6 +334,22 @@ function SectionEditPopover({
     if (!customName.trim()) return
     onTypeChange(section.id, 'custom', customName.trim())
     setCustomMode(false)
+  }
+
+  function toggleTrack(id: string) {
+    setSelectedTrackIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleRunDetection() {
+    const ids = audioTracks.filter(t => selectedTrackIds.has(t.id)).map(t => t.id)
+    if (ids.length === 0) return
+    setTrackPickerOpen(false)
+    onDetectChords(ids)
   }
 
   const textareaBorderColor = isDirty && saveStatus === 'idle' ? '#F59E0B' : 'var(--border)'
@@ -346,25 +411,46 @@ function SectionEditPopover({
 
           {/* chord textarea with autosave indicator */}
           <div style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-              <span style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 500 }}>Chords</span>
-              {isDirty && saveStatus === 'idle' && (
-                <span style={{ fontSize: 9, color: '#F59E0B' }}>Unsaved</span>
-              )}
-              {saveStatus === 'saving' && (
-                <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>Saving…</span>
-              )}
-              {saveStatus === 'saved' && (
-                <span style={{ fontSize: 9, color: '#10B981' }}>● Saved</span>
-              )}
-              {saveStatus === 'error' && (
-                <span style={{ fontSize: 9, color: '#ef4444' }}>Error</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 500 }}>Chords</span>
+                {detectingChords && (
+                  <span style={{ fontSize: 9, color: 'var(--accent)' }}>Detecting…</span>
+                )}
+                {!detectingChords && isDirty && saveStatus === 'idle' && (
+                  <span style={{ fontSize: 9, color: '#F59E0B' }}>Unsaved</span>
+                )}
+                {!detectingChords && saveStatus === 'saving' && (
+                  <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>Saving…</span>
+                )}
+                {!detectingChords && saveStatus === 'saved' && (
+                  <span style={{ fontSize: 9, color: '#10B981' }}>● Saved</span>
+                )}
+                {!detectingChords && saveStatus === 'error' && (
+                  <span style={{ fontSize: 9, color: '#ef4444' }}>Error</span>
+                )}
+              </div>
+              {audioTracks.length > 0 && !trackPickerOpen && (
+                <button
+                  type="button"
+                  disabled={detectingChords}
+                  onClick={() => setTrackPickerOpen(true)}
+                  style={{
+                    flexShrink: 0, padding: '2px 8px', borderRadius: 5, fontSize: 10, fontWeight: 500,
+                    background: 'transparent', border: '0.5px solid var(--accent)',
+                    color: 'var(--accent)', cursor: detectingChords ? 'not-allowed' : 'pointer',
+                    opacity: detectingChords ? 0.5 : 1,
+                  }}
+                >
+                  Detect chords
+                </button>
               )}
             </div>
             <textarea
               value={chords} rows={2}
+              disabled={detectingChords}
               onChange={e => handleChordsChange(e.target.value)}
-              placeholder="Am F C G…"
+              placeholder={detectingChords ? 'Analyzing audio…' : 'Am F C G…'}
               style={{
                 width: '100%', boxSizing: 'border-box', resize: 'none',
                 background: 'var(--bg-card)',
@@ -376,6 +462,65 @@ function SectionEditPopover({
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
               onBlur={e => { e.currentTarget.style.borderColor = textareaBorderColor }}
             />
+            {trackPickerOpen && (
+              <div style={{
+                marginTop: 8, padding: '8px 8px 6px',
+                background: 'var(--bg-card)', border: '0.5px solid var(--border)',
+                borderRadius: 6,
+              }}>
+                <p style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 500, margin: '0 0 6px' }}>
+                  Tracks to analyze
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 120, overflowY: 'auto', marginBottom: 8 }}>
+                  {audioTracks.map(track => (
+                    <label
+                      key={track.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        fontSize: 11, color: 'var(--text-sec)', cursor: 'pointer',
+                        minWidth: 0,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTrackIds.has(track.id)}
+                        onChange={() => toggleTrack(track.id)}
+                        style={{ flexShrink: 0, accentColor: 'var(--accent)' }}
+                      />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {trackLabel(track)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setTrackPickerOpen(false)}
+                    style={{
+                      padding: '3px 10px', borderRadius: 5, fontSize: 10,
+                      background: 'transparent', border: '0.5px solid var(--border)',
+                      color: 'var(--text-muted)', cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedTrackIds.size === 0}
+                    onClick={handleRunDetection}
+                    style={{
+                      padding: '3px 10px', borderRadius: 5, fontSize: 10, fontWeight: 500,
+                      background: 'var(--accent)', border: 'none', color: '#fff',
+                      cursor: selectedTrackIds.size === 0 ? 'not-allowed' : 'pointer',
+                      opacity: selectedTrackIds.size === 0 ? 0.45 : 1,
+                    }}
+                  >
+                    Run detection
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* delete */}
@@ -607,7 +752,7 @@ type ResizeDrag = {
 }
 
 export default function StructureOverlay({
-  project, versionId, totalDurationMs,
+  project, versionId, totalDurationMs, tracks,
   sections, onSectionsChange,
   editMode, onEditModeChange,
   waveformBounds, currentTimeMs = 0,
@@ -617,8 +762,9 @@ export default function StructureOverlay({
   project: Project
   versionId: string
   totalDurationMs: number
+  tracks: Track[]
   sections: Section[]
-  onSectionsChange: (ss: Section[]) => void
+  onSectionsChange: Dispatch<SetStateAction<Section[]>>
   editMode: boolean
   onEditModeChange: (v: boolean) => void
   waveformBounds: { left: number; right: number } | null
@@ -648,8 +794,11 @@ export default function StructureOverlay({
   const resizeDragRef = useRef<ResizeDrag | null>(null)
   const pendingChordSavesRef = useRef<Map<string, string>>(new Map())
   const [pendingChordIds, setPendingChordIds] = useState<Set<string>>(new Set())
+  const [detectingChordsFor, setDetectingChordsFor] = useState<string | null>(null)
   sectionsRef.current = sections
   activeEditRef.current = activeEdit
+
+  const audioTracks = tracks.filter(t => t.file_type !== 'midi')
 
   // Reset when leaving edit mode
   useEffect(() => {
@@ -832,15 +981,13 @@ export default function StructureOverlay({
     // Edit mode — click on existing section to select
     const hit = sections.find(s => bar >= s.start_bar && bar < s.end_bar)
     if (hit) {
-      if (!activeEdit || activeEdit.sectionId !== hit.id) {
-        const sLeft = rect.left + tp(hit.start_bar) * rect.width
-        const sWidth = (tp(hit.end_bar) - tp(hit.start_bar)) * rect.width
-        setActiveEdit({
-          sectionId: hit.id,
-          cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
-        })
-        setHoveredChords(null)
-      }
+      const sLeft = rect.left + tp(hit.start_bar) * rect.width
+      const sWidth = (tp(hit.end_bar) - tp(hit.start_bar)) * rect.width
+      setActiveEdit({
+        sectionId: hit.id,
+        cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
+      })
+      setHoveredChords(null)
       return
     }
 
@@ -871,6 +1018,65 @@ export default function StructureOverlay({
     }
   }
 
+  function openSectionEdit(section: Section) {
+    const el = stripRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const sLeft = rect.left + tp(section.start_bar) * rect.width
+    const sWidth = (tp(section.end_bar) - tp(section.start_bar)) * rect.width
+    setActiveEdit({
+      sectionId: section.id,
+      cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
+    })
+  }
+
+  async function runChordDetection(section: Section, selectedTrackIds: string[]) {
+    if (selectedTrackIds.length === 0) return
+
+    setDetectingChordsFor(section.id)
+    try {
+      const bpm = project.bpm ?? 120
+      const timeSig = project.time_signature ?? '4/4'
+      const totalSec = totalDurationMs / 1000
+      const barDurSec = barDurationSec(bpm, timeSig)
+      const barCount = section.end_bar - section.start_bar
+
+      const buffer = await getMergedToneBuffer(
+        tracks, bpm, timeSig, totalSec, selectedTrackIds,
+      )
+      if (!buffer) return
+
+      const { startTimeSec, endTimeSec } = sectionTimeRangeSec(
+        section.start_bar,
+        section.end_bar,
+        bpm,
+        timeSig,
+      )
+      const slice = sliceSectionFromToneBuffer(buffer, startTimeSec, endTimeSec)
+      if (slice.length === 0) return
+
+      const detected = await detectChordsInAudio(slice, {
+        sampleRate: buffer.sampleRate,
+        barDurationSec: barDurSec,
+        barCount,
+      })
+      if (!detected.trim()) return
+
+      handleChordsLocalChange(section.id, detected)
+      await handleChordsAutoSave(section.id, detected)
+    } catch (err) {
+      console.warn('[chordDetection]', err)
+    } finally {
+      setDetectingChordsFor(prev => (prev === section.id ? null : prev))
+    }
+  }
+
+  function handleDetectChords(sectionId: string, selectedTrackIds: string[]) {
+    const section = sections.find(s => s.id === sectionId)
+    if (!section) return
+    void runChordDetection(section, selectedTrackIds)
+  }
+
   async function handleConfirmNew(type: SectionType, customName?: string) {
     if (selStart === null || selEnd === null) return
     const c = SECTION_COLORS[type] ?? SECTION_COLORS.custom
@@ -886,7 +1092,12 @@ export default function StructureOverlay({
       })
       if (!res.ok) throw new Error('Failed')
       const { section } = await res.json()
-      onSectionsChange([...sections, section].sort((a, b) => a.start_bar - b.start_bar))
+      onSectionsChange(prev =>
+        [...prev, section].sort((a, b) => a.start_bar - b.start_bar),
+      )
+      requestAnimationFrame(() => {
+        openSectionEdit(section)
+      })
     } catch (err) {
       console.error(err)
     }
@@ -895,8 +1106,8 @@ export default function StructureOverlay({
 
   function handleTypeChange(id: string, type: SectionType, customName?: string) {
     const c = SECTION_COLORS[type] ?? SECTION_COLORS.custom
-    onSectionsChange(sections.map(s =>
-      s.id === id ? { ...s, type, custom_name: customName ?? null, color: c.bg } : s
+    onSectionsChange(prev => prev.map(s =>
+      s.id === id ? { ...s, type, custom_name: customName ?? null, color: c.bg } : s,
     ))
     fetch(`/api/sections/${id}`, {
       method: 'PUT',
@@ -906,7 +1117,9 @@ export default function StructureOverlay({
   }
 
   function handleChordsLocalChange(id: string, chords: string) {
-    onSectionsChange(sections.map(s => s.id === id ? { ...s, chords } : s))
+    onSectionsChange(prev =>
+      prev.map(s => (s.id === id ? { ...s, chords } : s)),
+    )
     pendingChordSavesRef.current.set(id, chords)
     setPendingChordIds(prev => new Set(prev).add(id))
   }
@@ -950,8 +1163,10 @@ export default function StructureOverlay({
     onEditModeChange(false)
   }
 
+  const closeActiveEdit = useCallback(() => setActiveEdit(null), [])
+
   function handleDelete(id: string) {
-    onSectionsChange(sections.filter(s => s.id !== id))
+    onSectionsChange(prev => prev.filter(s => s.id !== id))
     setActiveEdit(null)
     fetch(`/api/sections/${id}`, { method: 'DELETE' }).catch(console.error)
   }
@@ -1095,6 +1310,7 @@ export default function StructureOverlay({
               const isActive = activeEdit?.sectionId === s.id
               return (
                 <div key={s.id}
+                  data-structure-section
                   onMouseEnter={e => {
                     if (s.chords?.trim() && !isActive) {
                       setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
@@ -1225,11 +1441,14 @@ export default function StructureOverlay({
         <SectionEditPopover
           section={activeSection}
           cellPos={activeEdit.cellPos}
+          detectingChords={detectingChordsFor === activeSection.id}
+          audioTracks={audioTracks}
           onTypeChange={handleTypeChange}
           onChordsLocalChange={handleChordsLocalChange}
           onChordsAutoSave={handleChordsAutoSave}
+          onDetectChords={ids => handleDetectChords(activeSection.id, ids)}
           onDelete={handleDelete}
-          onClose={() => setActiveEdit(null)}
+          onClose={closeActiveEdit}
         />
       )}
 

@@ -3045,6 +3045,7 @@ export default function ProjectPage() {
               project={project}
               versionId={activeVersionId}
               totalDurationMs={totalProjectDurationMs}
+              tracks={activeTracks}
               sections={sections}
               onSectionsChange={setSections}
               editMode={editStructure}

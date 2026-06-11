@@ -227,6 +227,14 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
   const initials = band.name.split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('')
   const roleLabel = band.userRoleLabel ?? (isOwner ? 'Owner' : 'Member')
   const storagePct = band.storageBytes / band.storageLimitBytes
+  const activityLine = band.latestActivity
+    ? formatActivityLine(
+        band.latestActivity.action,
+        band.latestActivity.subject,
+        band.latestActivity.detail,
+        band.latestActivity.project_name,
+      )
+    : null
 
   useEffect(() => {
     if (!menuOpen) return
@@ -257,6 +265,8 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
         padding: '18px 18px 16px 16px',
         transition: 'border-color 0.15s',
         position: 'relative',
+        minWidth: 0,
+        overflow: 'hidden',
       }}
     >
       {/* Card header row */}
@@ -329,26 +339,27 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
       </div>
 
       {/* Recent activity row */}
-      {band.latestActivity && (
+      {band.latestActivity && activityLine && (
         <div style={{
           borderTop: '0.5px solid var(--border)', borderBottom: '0.5px solid var(--border)',
           padding: '10px 0', marginBottom: 12,
           display: 'flex', alignItems: 'center', gap: 8,
+          minWidth: 0,
         }}>
           <div style={{
             flexShrink: 0, width: 8, height: 8, borderRadius: '50%',
             background: activityDotColor(band.latestActivity.action),
           }} />
-          <p style={{
-            fontSize: 13, color: 'var(--text-muted)', margin: 0,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {formatActivityLine(
-              band.latestActivity.action,
-              band.latestActivity.subject,
-              band.latestActivity.detail,
-              band.latestActivity.project_name,
-            )}
+          <p
+            title={activityLine}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 13, color: 'var(--text-muted)', margin: 0,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
+            {activityLine}
           </p>
         </div>
       )}
