@@ -9,15 +9,13 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 let _client: SupabaseClient<any> | null = null
 
 export function getSupabaseClient(): SupabaseClient<any> {
-  if (typeof window === 'undefined') {
-    throw new Error('getSupabaseClient() must only be called in the browser')
-  }
   if (!_client) {
+    const isBrowser = typeof window !== 'undefined'
     _client = createClient<any>(url, key, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
+        persistSession: isBrowser,
+        autoRefreshToken: isBrowser,
+        detectSessionInUrl: isBrowser,
       },
     })
   }

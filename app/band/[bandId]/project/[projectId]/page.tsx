@@ -4,12 +4,14 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import type { TrackComment, CommentReply, Track, Version, Project } from '@/lib/types'
+import type { TrackComment, CommentReply, Track, Version, Project, Section } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
+import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
+import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,15 +28,7 @@ interface ActiveCommentInput {
 }
 
 // ─── Audio caches ─────────────────────────────────────────────────────────────
-// Both live at module scope so they survive component unmount/remount (version
-// switches) for the lifetime of the browser tab.
-
-/** Decoded waveform bar amplitudes per track ID (72 floats, normalised 0–1). */
-const waveformBarsCache = new Map<string, number[]>()
-
-/** Raw audio ArrayBuffer per track ID.  decodeAudioData() detaches the buffer,
- *  so callers must use .slice(0) to get a fresh copy before decoding. */
-const audioArrayBufferCache = new Map<string, ArrayBuffer>()
+// Imported from @/lib/waveformCache (shared with StructureEditor).
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1246,6 +1240,7 @@ function TrackRow({
 
   return (
     <div
+      data-track-row
       className="relative grid items-center h-[62px] gap-3 px-[22px] overflow-visible"
       style={{
         gridTemplateColumns: '20px 32px 118px 1fr 22px auto',
@@ -1350,7 +1345,7 @@ function TrackRow({
         </div>
       </div>
 
-      <div className="relative min-w-0 overflow-visible">
+      <div className="relative min-w-0 overflow-visible" data-waveform-col>
         <Waveform
           trackId={track.id} muted={muted} playedRatio={playedRatio} color={col.fg}
           durationMs={durationMs} commentMode={commentMode} comments={track.comments ?? []}
@@ -1777,6 +1772,10 @@ export default function ProjectPage() {
   const [storageUsed, setStorageUsed] = useState(0)
   const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
   const [shareCopied, setShareCopied] = useState(false)
+  const [sections, setSections] = useState<Section[]>([])
+  const [editStructure, setEditStructure] = useState(false)
+  const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
+  const trackListRef = useRef<HTMLDivElement>(null)
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1837,8 +1836,41 @@ export default function ProjectPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVersionId])
 
+  useEffect(() => {
+    if (!activeVersionId) return
+    fetch(`/api/versions/${activeVersionId}/sections`)
+      .then(r => r.json())
+      .then(d => setSections(d.sections ?? []))
+      .catch(() => {})
+  }, [activeVersionId])
+
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+
+  // Measure waveform column bounds for structure overlay alignment.
+  // Uses [data-waveform-col] from an actual track row so the right offset
+  // includes the button column (auto). Falls back to header child[3] when
+  // no tracks are rendered yet.
+  useEffect(() => {
+    const listEl = trackListRef.current
+    if (!listEl) return
+    function measure() {
+      if (!listEl) return
+      const wfEl = listEl.querySelector('[data-waveform-col]') as HTMLElement | null
+      const rowEl = wfEl?.closest('[data-track-row]') as HTMLElement | null
+      if (!wfEl || !rowEl) return
+      const rowRect = rowEl.getBoundingClientRect()
+      const wfRect = wfEl.getBoundingClientRect()
+      setWaveformBounds({
+        left: wfRect.left - rowRect.left,
+        right: rowRect.right - wfRect.right,
+      })
+    }
+    measure()
+    const obs = new ResizeObserver(measure)
+    obs.observe(listEl)
+    return () => obs.disconnect()
+  }, [activeTracks.length])
   const mainVersion = versions.find(v => v.type === 'main')
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
@@ -1846,6 +1878,8 @@ export default function ProjectPage() {
   const player = usePlayer(activeTracks, activeVersionId)
   const playedRatio = player.duration > 0 ? player.currentTime / player.duration : 0
   const durationMs = player.duration * 1000
+  // Use stored duration_ms for bar math (available before audio decodes)
+  const trackDurationMs = Math.max(...activeTracks.map(t => t.duration_ms ?? 0), durationMs, 0)
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -2103,7 +2137,42 @@ export default function ProjectPage() {
 
           {/* Project header */}
           <div className="px-[22px] pt-4 pb-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-            <h1 className="text-[17px] font-medium text-bright">{project.name}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h1 className="text-[17px] font-medium text-bright">{project.name}</h1>
+              <button
+                onClick={() => setEditStructure(p => !p)}
+                disabled={activeTracks.length === 0}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                  background: sections.length > 0 ? 'rgba(99,102,241,0.08)' : 'transparent',
+                  border: sections.length > 0
+                    ? '0.5px solid rgba(99,102,241,0.3)'
+                    : '0.5px solid var(--border-light)',
+                  color: sections.length > 0 ? 'var(--accent)' : 'var(--text-muted)',
+                  cursor: activeTracks.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: activeTracks.length === 0 ? 0.4 : 1,
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  if (activeTracks.length > 0) {
+                    e.currentTarget.style.borderColor = 'var(--accent)'
+                    e.currentTarget.style.color = 'var(--accent)'
+                  }
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = sections.length > 0 ? 'rgba(99,102,241,0.3)' : 'var(--border-light)'
+                  e.currentTarget.style.color = sections.length > 0 ? 'var(--accent)' : 'var(--text-muted)'
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                  <rect x="1" y="1" width="9" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
+                  <rect x="1" y="4.5" width="5" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
+                  <rect x="1" y="8" width="7" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
+                </svg>
+                {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
+              </button>
+            </div>
             <p className="text-[11px] text-dim mt-0.5">
               {activeTracks.length} track{activeTracks.length !== 1 ? 's' : ''}
               {player.duration > 0 ? ` · ${fmtTime(player.duration)}` : ''}{' · updated today'}
@@ -2130,7 +2199,30 @@ export default function ProjectPage() {
             </div>
           </div>
 
-          <PlayerBar playing={player.playing} currentTime={player.currentTime} duration={player.duration} loaded={player.loaded} total={player.total} volume={player.volume} onPlay={player.play} onPause={player.pause} onSeek={player.seek} onVolume={player.setVolume} />
+          {/* Structure + transport — bar ruler, sections, play/time/volume */}
+          {project && (
+            <StructureOverlay
+              project={project}
+              versionId={activeVersionId}
+              totalDurationMs={Math.max(trackDurationMs, durationMs, 1)}
+              sections={sections}
+              onSectionsChange={setSections}
+              editMode={editStructure}
+              onEditModeChange={setEditStructure}
+              waveformBounds={waveformBounds}
+              currentTimeMs={player.currentTime * 1000}
+              playing={player.playing}
+              currentTime={player.currentTime}
+              duration={player.duration}
+              loaded={player.loaded}
+              totalTracks={player.total}
+              volume={player.volume}
+              onPlay={player.play}
+              onPause={player.pause}
+              onSeek={player.seek}
+              onVolume={player.setVolume}
+            />
+          )}
 
           {/* Comment mode banner */}
           <div className={`overflow-hidden transition-[height,opacity] duration-200 ${commentMode ? 'h-[34px] opacity-100' : 'h-0 opacity-0'}`}>
@@ -2141,13 +2233,7 @@ export default function ProjectPage() {
           </div>
 
           {/* Track list */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="grid gap-3 px-[22px] py-2.5" style={{ gridTemplateColumns: '20px 32px 118px 1fr 22px auto', borderBottom: '0.5px solid var(--border)' }}>
-              {['#', '', 'Track', 'Waveform', '', ''].map((h, i) => (
-                <span key={i} className="text-[10px] text-dim font-medium uppercase tracking-widest">{h}</span>
-              ))}
-            </div>
-
+          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden" style={{ position: 'relative' }}>
             {versionLoading ? (
               <div className="px-[22px] py-12 text-center text-[13px] text-dim">Loading…</div>
             ) : activeTracks.length === 0 ? (
@@ -2193,6 +2279,35 @@ export default function ProjectPage() {
                 multiple className="hidden" onChange={handleAddTrack}
               />
             </div>
+
+            {/* Section boundary dashed lines overlay */}
+            {sections.length > 0 && project && trackDurationMs > 0 && (() => {
+              const { barDurationMs } = getBarMath(project, trackDurationMs)
+              const wl = waveformBounds?.left ?? 228
+              const wr = waveformBounds?.right ?? 68
+              return (
+                <div style={{
+                  position: 'absolute', top: 0, bottom: 0,
+                  left: wl, right: wr,
+                  pointerEvents: 'none', zIndex: 4,
+                }}>
+                  {sections.filter(s => s.start_bar > 0).map(s => {
+                    const pct = (s.start_bar * barDurationMs) / trackDurationMs
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          position: 'absolute', top: 0, bottom: 0,
+                          left: `${pct * 100}%`,
+                          width: 0,
+                          borderLeft: '1px dashed var(--border)',
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Footer */}

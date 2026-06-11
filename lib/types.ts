@@ -54,4 +54,23 @@ export interface Project {
   name: string
   bpm: number | null
   key: string | null
+  time_signature: string | null  // e.g. '4/4', '3/4'; default '4/4'
+}
+
+export type SectionType =
+  | 'intro' | 'verse' | 'chorus' | 'pre-chorus'
+  | 'bridge' | 'drop' | 'breakdown' | 'outro' | 'custom'
+
+export interface Section {
+  id: string
+  version_id: string
+  project_id: string
+  type: SectionType
+  custom_name: string | null
+  start_bar: number
+  end_bar: number
+  chords: string | null
+  color: string
+  position: number
+  created_at: string
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
+import type { BarState, ConflictRange, AutoBarRange } from '@/lib/sectionMerge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,21 @@ export interface AutoMergeItem {
   newDisplayName?: string
 }
 
+export interface CommentPreview {
+  id: string
+  author_username: string | null
+  timecode_start_ms: number
+  timecode_end_ms: number
+  content: string
+  track_name: string
+  reply_count: number
+}
+
+export interface CommentChanges {
+  added: CommentPreview[]
+  deleted: CommentPreview[]
+}
+
 export interface MergePreview {
   conflicts: ConflictTrack[]
   autoMerge: AutoMergeItem[]
@@ -37,10 +53,15 @@ export interface MergePreview {
   mainName: string
   branchVersionId: string
   mainVersionId: string
+  branchCommentCount: number
+  // ── Section bar merge ──────────────────────────────────────────────────────
+  sectionBarConflicts:   ConflictRange[]
+  sectionAutoFromBranch: AutoBarRange[]
+  // ── Comment diff ──────────────────────────────────────────────────────────
+  commentChanges?: CommentChanges
 }
 
-// Per-track resolution (both choices are optional — only required when the
-// corresponding conflict flag is true)
+// Per-track resolution
 type Resolution = {
   fileChoice?: 'main' | 'branch'
   nameChoice?: 'main' | 'branch'
@@ -62,9 +83,50 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
 }
 
+function fmtMs(ms: number) {
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  return m > 0 ? `${m}:${String(s % 60).padStart(2, '0')}` : `0:${String(s).padStart(2, '0')}`
+}
+
+function avatarColor(username: string | null): string {
+  if (!username) return '#6b7280'
+  const colors = ['#6366F1', '#10B981', '#A855F7', '#F59E0B', '#06B6D4', '#ef4444', '#3b82f6', '#f97316']
+  let h = 0
+  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) >>> 0
+  return colors[h % colors.length]
+}
+
+function sectionLabel(state: BarState | null): string {
+  if (!state) return 'empty'
+  if (state.type === 'custom' && state.customName) return state.customName
+  return state.type.charAt(0).toUpperCase() + state.type.slice(1)
+}
+
+function rangeKey(r: { startBar: number; endBar: number }) {
+  return `${r.startBar}-${r.endBar}`
+}
+
 const ACCENT       = '#6366F1'
 const CONFLICT_RED = '#ef4444'
 const CONFLICT_AMB = '#f59e0b'
+
+const SECTION_FG: Record<string, string> = {
+  intro:        '#6366F1',
+  verse:        '#10B981',
+  chorus:       '#A855F7',
+  'pre-chorus': '#F59E0B',
+  bridge:       '#06B6D4',
+  drop:         '#ef4444',
+  breakdown:    '#6b7280',
+  outro:        '#3b82f6',
+  custom:       '#9ca3af',
+}
+
+function sectionColor(state: BarState | null): string {
+  if (!state) return '#6b7280'
+  return SECTION_FG[state.type] ?? '#9ca3af'
+}
 
 // ─── Mini static waveform ─────────────────────────────────────────────────────
 
@@ -263,6 +325,190 @@ function RenameConflictPills({
   )
 }
 
+// ─── Section conflict pill ────────────────────────────────────────────────────
+
+function SectionStatePill({
+  label, state, chosen, onChoose,
+}: {
+  label: 'MAIN' | 'BRANCH'
+  state: BarState | null
+  chosen: boolean
+  onChoose: () => void
+}) {
+  const color = sectionColor(state)
+  const sel   = chosen
+
+  return (
+    <div
+      className="flex-1 rounded-lg p-3 flex flex-col gap-2 transition-all duration-150 cursor-pointer"
+      style={{
+        background: sel ? `${color}18` : 'var(--bg-card)',
+        border: sel ? `0.5px solid ${color}` : '0.5px solid var(--border)',
+      }}
+      onClick={onChoose}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-semibold tracking-widest uppercase"
+          style={{ color: sel ? color : 'var(--text-dim)' }}>
+          {label}
+        </span>
+        {sel && (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <circle cx="6" cy="6" r="5.5" fill={color} />
+            <path d="M3.5 6l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {state ? (
+          <>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded"
+              style={{ background: `${color}20`, color }}>
+              {sectionLabel(state)}
+            </span>
+            {state.chords && (
+              <span className="text-[10px] truncate" style={{ color: 'var(--text-dim)' }}>
+                {state.chords}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>no section</span>
+        )}
+      </div>
+      <button
+        onClick={e => { e.stopPropagation(); onChoose() }}
+        className="w-full rounded-lg py-1 text-[11px] font-medium transition-all duration-150"
+        style={{
+          background: sel ? color : 'transparent',
+          border: sel ? `0.5px solid ${color}` : '0.5px solid var(--border)',
+          color: sel ? 'white' : 'var(--text-muted)',
+          cursor: 'pointer',
+        }}
+        onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = color; e.currentTarget.style.color = color } }}
+        onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+      >
+        {sel ? '✓ Keeping this' : 'Keep this'}
+      </button>
+    </div>
+  )
+}
+
+// ─── Comment changes section ──────────────────────────────────────────────────
+
+function CommentRow({ c }: { c: CommentPreview }) {
+  const color = avatarColor(c.author_username)
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 12px' }}>
+      <div style={{ width: 20, height: 20, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+        <span style={{ fontSize: 10, color: 'white', fontWeight: 600 }}>{(c.author_username ?? '?')[0].toUpperCase()}</span>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-soft)' }}>{c.author_username ?? 'Unknown'}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>·</span>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{fmtMs(c.timecode_start_ms)}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>·</span>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.track_name}</span>
+          {c.reply_count > 0 && <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>· {c.reply_count} repl{c.reply_count !== 1 ? 'ies' : 'y'}</span>}
+        </div>
+        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.content}</p>
+      </div>
+    </div>
+  )
+}
+
+function CommentChangesSection({
+  commentChanges,
+  commentDeletionChoice,
+  onDeletionChoiceChange,
+  showAddedDetail,
+  onToggleAddedDetail,
+  showDeletedDetail,
+  onToggleDeletedDetail,
+}: {
+  commentChanges: CommentChanges
+  commentDeletionChoice: 'keep' | 'apply'
+  onDeletionChoiceChange: (c: 'keep' | 'apply') => void
+  showAddedDetail: boolean
+  onToggleAddedDetail: () => void
+  showDeletedDetail: boolean
+  onToggleDeletedDetail: () => void
+}) {
+  const { added, deleted } = commentChanges
+  if (added.length === 0 && deleted.length === 0) return null
+  return (
+    <div>
+      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, marginTop: 0 }}>Comments</p>
+
+      {added.length > 0 && (
+        <div style={{ marginBottom: deleted.length > 0 ? 8 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(16,185,129,0.06)', border: '0.5px solid rgba(16,185,129,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <circle cx="6" cy="6" r="5.5" stroke="#10B981" strokeWidth="0.9" />
+              <path d="M3.5 6l2 2 3-3" stroke="#10B981" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1 }}>
+              {added.length} comment{added.length !== 1 ? 's' : ''} from branch will be added to main
+            </span>
+            <button onClick={onToggleAddedDetail} style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+              {showAddedDetail ? 'Hide ▴' : 'Details ▾'}
+            </button>
+          </div>
+          {showAddedDetail && (
+            <div style={{ marginTop: 4, borderRadius: 8, overflow: 'hidden', border: '0.5px solid var(--border)' }}>
+              {added.map((c, i) => (
+                <div key={c.id} style={{ borderBottom: i < added.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                  <CommentRow c={c} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {deleted.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(245,158,11,0.06)', border: '0.5px solid rgba(245,158,11,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 2.5V7" stroke="#F59E0B" strokeWidth="1.2" strokeLinecap="round" />
+              <circle cx="6" cy="9.5" r="0.75" fill="#F59E0B" />
+            </svg>
+            <span style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1 }}>
+              {deleted.length} comment{deleted.length !== 1 ? 's' : ''} were deleted in branch
+            </span>
+            <button onClick={onToggleDeletedDetail} style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+              {showDeletedDetail ? 'Hide ▴' : 'Details ▾'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            {(['keep', 'apply'] as const).map(choice => (
+              <button key={choice} onClick={() => onDeletionChoiceChange(choice)}
+                style={{
+                  fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                  border: commentDeletionChoice === choice ? '0.5px solid #F59E0B' : '0.5px solid var(--border)',
+                  background: commentDeletionChoice === choice ? 'rgba(245,158,11,0.12)' : 'transparent',
+                  color: commentDeletionChoice === choice ? '#F59E0B' : 'var(--text-dim)',
+                }}>
+                {choice === 'keep' ? 'Keep in main' : 'Apply deletions'}
+              </button>
+            ))}
+          </div>
+          {showDeletedDetail && (
+            <div style={{ marginTop: 4, borderRadius: 8, overflow: 'hidden', border: '0.5px solid var(--border)' }}>
+              {deleted.map((c, i) => (
+                <div key={c.id} style={{ borderBottom: i < deleted.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                  <CommentRow c={c} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── MergeModal ───────────────────────────────────────────────────────────────
 
 export function MergeModal({
@@ -276,9 +522,13 @@ export function MergeModal({
   onClose: () => void
   onMerged: (result: { tracksUpdated: number; branchName: string }) => void
 }) {
-  const [resolutions, setResolutions] = useState<Record<string, Resolution>>({})
-  const [merging, setMerging]         = useState(false)
-  const [mergeErr, setMergeErr]       = useState('')
+  const [resolutions, setResolutions]               = useState<Record<string, Resolution>>({})
+  const [sectionResolutions, setSectionResolutions] = useState<Record<string, 'main' | 'branch'>>({})
+  const [merging, setMerging]                       = useState(false)
+  const [mergeErr, setMergeErr]                     = useState('')
+  const [commentDeletionChoice, setCommentDeletionChoice] = useState<'keep' | 'apply'>('keep')
+  const [showAddedDetail, setShowAddedDetail]             = useState(false)
+  const [showDeletedDetail, setShowDeletedDetail]         = useState(false)
 
   function setFileChoice(trackName: string, choice: 'main' | 'branch') {
     setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], fileChoice: choice } }))
@@ -286,11 +536,22 @@ export function MergeModal({
   function setNameChoice(trackName: string, choice: 'main' | 'branch') {
     setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], nameChoice: choice } }))
   }
+  function setSectionChoice(key: string, choice: 'main' | 'branch') {
+    setSectionResolutions(r => ({ ...r, [key]: choice }))
+  }
 
-  const unresolvedCount = preview.conflicts.filter(c =>
+  const unresolvedTrackCount = preview.conflicts.filter(c =>
     (c.fileConflict   && !resolutions[c.trackName]?.fileChoice) ||
     (c.renameConflict && !resolutions[c.trackName]?.nameChoice)
   ).length
+
+  const sectionConflicts = preview.sectionBarConflicts ?? []
+  const sectionAutoItems = preview.sectionAutoFromBranch ?? []
+  const unresolvedSectionCount = sectionConflicts.filter(
+    c => !sectionResolutions[rangeKey(c)]
+  ).length
+
+  const unresolvedCount = unresolvedTrackCount + unresolvedSectionCount
   const canMerge = unresolvedCount === 0 && !merging
 
   async function handleMerge() {
@@ -308,6 +569,11 @@ export function MergeModal({
             ...(fileChoice && { fileChoice }),
             ...(nameChoice && { nameChoice }),
           })),
+          sectionResolutions: Object.entries(sectionResolutions).map(([key, choice]) => {
+            const [startBar, endBar] = key.split('-').map(Number)
+            return { startBar, endBar, choice }
+          }),
+          ...((preview.commentChanges?.deleted.length ?? 0) > 0 && { commentDeletionChoice }),
         }),
       })
       if (!res.ok) {
@@ -324,60 +590,101 @@ export function MergeModal({
     }
   }
 
-  const hasConflicts = preview.conflicts.length > 0
+  const hasConflicts = preview.conflicts.length > 0 || sectionConflicts.length > 0
 
-  // ── Clean merge confirm ──────────────────────────────────────────────────────
+  // ── Clean merge confirm ────────────────────────────────────────────────────
   if (!hasConflicts) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="rounded-2xl p-5 w-[380px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)' }}>
+        <div className="rounded-2xl p-5 w-[420px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)' }}>
           <p className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-bright)' }}>
             Merge &ldquo;{preview.branchName}&rdquo; into main
           </p>
           <p className="text-[12px] mb-5" style={{ color: 'var(--text-dim)' }}>No conflicts — ready to merge</p>
 
-          <div className="rounded-xl mb-5 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
-            {preview.autoMerge.length === 0 ? (
-              <div className="px-4 py-3 text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                No track changes — branch is identical to main
+          {preview.autoMerge.length > 0 && (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Tracks</p>
+              <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
+                {preview.autoMerge.map((item, i) => (
+                  <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
+                    style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                    <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
+                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
+                      <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <div>
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
+                      <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
+                        {item.action === 'add_new' ? 'new track will be added'
+                        : item.action === 'apply_rename' ? `renamed → "${item.newDisplayName}"`
+                        : 'replaced with branch version'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : preview.autoMerge.map((item, i) => (
-              <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
-                style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                  <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
-                  <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <div>
-                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
-                  <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
-                    {item.action === 'add_new'       ? 'new track will be added'
-                    : item.action === 'apply_rename'  ? `renamed → "${item.newDisplayName}"`
-                    : 'replaced with branch version'}
-                  </span>
-                  {item.action === 'apply_rename' && item.track.display_name !== item.track.name && (
-                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
-                      &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
-                    </p>
-                  )}
-                </div>
+            </>
+          )}
+
+          {sectionAutoItems.length > 0 && (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Structure</p>
+              <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
+                {sectionAutoItems.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2.5 px-4 py-2.5"
+                    style={{ borderBottom: i < sectionAutoItems.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                    <svg className="shrink-0" width="13" height="13" viewBox="0 0 13 13" fill="none">
+                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
+                      <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="text-[12px]" style={{ color: 'var(--text-soft)' }}>Bars {item.startBar + 1}–{item.endBar}</span>
+                    <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>→</span>
+                    {item.branchState ? (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded"
+                        style={{ background: `${sectionColor(item.branchState)}20`, color: sectionColor(item.branchState) }}>
+                        {sectionLabel(item.branchState)}
+                      </span>
+                    ) : (
+                      <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>cleared</span>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
+
+          {preview.autoMerge.length === 0 && sectionAutoItems.length === 0 && (
+            <div className="rounded-xl mb-4 px-4 py-3 text-[12px]"
+              style={{ color: 'var(--text-dim)', border: '0.5px solid var(--border)' }}>
+              No changes — branch is identical to main
+            </div>
+          )}
+
+          {preview.commentChanges && (
+            <div style={{ marginBottom: 16 }}>
+              <CommentChangesSection
+                commentChanges={preview.commentChanges}
+                commentDeletionChoice={commentDeletionChoice}
+                onDeletionChoiceChange={setCommentDeletionChoice}
+                showAddedDetail={showAddedDetail}
+                onToggleAddedDetail={() => setShowAddedDetail(v => !v)}
+                showDeletedDetail={showDeletedDetail}
+                onToggleDeletedDetail={() => setShowDeletedDetail(v => !v)}
+              />
+            </div>
+          )}
 
           {mergeErr && <p className="text-[12px] mb-3" style={{ color: '#ef4444' }}>{mergeErr}</p>}
 
           <div className="flex gap-2 justify-end">
-            <button
-              onClick={onClose}
+            <button onClick={onClose}
               className="px-4 py-1.5 rounded-lg text-[12px] transition-colors duration-150"
               style={{ border: '0.5px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent' }}
               onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
             >Cancel</button>
-            <button
-              onClick={handleMerge}
-              disabled={merging}
+            <button onClick={handleMerge} disabled={merging}
               className="px-5 py-1.5 rounded-lg text-[12px] font-medium text-white disabled:opacity-50 transition-opacity"
               style={{ background: ACCENT, border: `0.5px solid ${ACCENT}`, cursor: merging ? 'not-allowed' : 'pointer' }}
             >
@@ -397,18 +704,11 @@ export function MergeModal({
     )
   }
 
-  // ── Conflict resolver ────────────────────────────────────────────────────────
+  // ── Conflict resolver ──────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div
-        className="w-full flex flex-col rounded-2xl overflow-hidden"
-        style={{
-          maxWidth: 660,
-          maxHeight: '90vh',
-          background: 'var(--bg-card)',
-          border: '0.5px solid var(--border-light)',
-        }}
-      >
+      <div className="w-full flex flex-col rounded-2xl overflow-hidden"
+        style={{ maxWidth: 660, maxHeight: '90vh', background: 'var(--bg-card)', border: '0.5px solid var(--border-light)' }}>
         {/* Header */}
         <div className="px-5 pt-5 pb-4 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
           <p className="text-[15px] font-semibold" style={{ color: 'var(--text-bright)' }}>
@@ -424,127 +724,160 @@ export function MergeModal({
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
 
-          {/* Conflicts */}
-          {preview.conflicts.map((conflict) => {
-            const res = resolutions[conflict.trackName] ?? {}
-            const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
-            const renameResolved = !conflict.renameConflict || !!res.nameChoice
-            const fullyResolved  = fileResolved && renameResolved
-
-            // Badge label + colours
-            const badgeLabel = conflict.fileConflict && conflict.renameConflict
-              ? 'FILE + RENAME CONFLICT'
-              : conflict.fileConflict
-              ? 'FILE CONFLICT'
-              : 'RENAME CONFLICT'
-            const badgeBg = fullyResolved
-              ? 'rgba(34,197,94,0.12)'
-              : conflict.fileConflict && conflict.renameConflict
-              ? 'rgba(239,68,68,0.12)'
-              : conflict.fileConflict
-              ? 'rgba(245,158,11,0.12)'
-              : 'rgba(99,102,241,0.12)'
-            const badgeColor = fullyResolved
-              ? 'var(--green)'
-              : conflict.fileConflict && conflict.renameConflict
-              ? CONFLICT_RED
-              : conflict.fileConflict
-              ? CONFLICT_AMB
-              : ACCENT
-
-            const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
-            const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
-
-            return (
-              <div key={conflict.trackName}>
-                {/* Conflict header */}
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{ background: fullyResolved ? 'var(--green)' : CONFLICT_RED }} />
-                  <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
-                    {conflict.trackName}
-                  </span>
-                  <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
-                    style={{ background: badgeBg, color: badgeColor }}>
-                    {fullyResolved ? 'RESOLVED' : badgeLabel}
-                  </span>
-                </div>
-
-                {/* CASE A / C — File conflict: show side-by-side waveform cards */}
-                {conflict.fileConflict && (
-                  <div className="flex gap-3">
-                    <FileConflictCard
-                      label="MAIN"
-                      track={conflict.mainTrack}
-                      chosen={res.fileChoice === 'main'}
-                      onChoose={() => setFileChoice(conflict.trackName, 'main')}
-                    />
-                    <FileConflictCard
-                      label="BRANCH"
-                      track={conflict.branchTrack}
-                      chosen={res.fileChoice === 'branch'}
-                      onChoose={() => setFileChoice(conflict.trackName, 'branch')}
-                    />
-                  </div>
-                )}
-
-                {/* CASE B / C — Rename conflict: show name pills */}
-                {conflict.renameConflict && (
-                  <>
+          {/* Track conflicts */}
+          {preview.conflicts.length > 0 && (
+            <div className="flex flex-col gap-4">
+              <p className="text-[11px] font-semibold uppercase tracking-widest -mb-1" style={{ color: 'var(--text-muted)' }}>Tracks</p>
+              {preview.conflicts.map((conflict) => {
+                const res = resolutions[conflict.trackName] ?? {}
+                const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
+                const renameResolved = !conflict.renameConflict || !!res.nameChoice
+                const fullyResolved  = fileResolved && renameResolved
+                const badgeLabel = conflict.fileConflict && conflict.renameConflict ? 'FILE + RENAME CONFLICT'
+                  : conflict.fileConflict ? 'FILE CONFLICT' : 'RENAME CONFLICT'
+                const badgeBg = fullyResolved ? 'rgba(34,197,94,0.12)'
+                  : conflict.fileConflict && conflict.renameConflict ? 'rgba(239,68,68,0.12)'
+                  : conflict.fileConflict ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.12)'
+                const badgeColor = fullyResolved ? 'var(--green)'
+                  : conflict.fileConflict && conflict.renameConflict ? CONFLICT_RED
+                  : conflict.fileConflict ? CONFLICT_AMB : ACCENT
+                const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
+                const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
+                return (
+                  <div key={conflict.trackName}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: fullyResolved ? 'var(--green)' : CONFLICT_RED }} />
+                      <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>{conflict.trackName}</span>
+                      <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
+                        style={{ background: badgeBg, color: badgeColor }}>
+                        {fullyResolved ? 'RESOLVED' : badgeLabel}
+                      </span>
+                    </div>
                     {conflict.fileConflict && (
+                      <div className="flex gap-3">
+                        <FileConflictCard label="MAIN" track={conflict.mainTrack}
+                          chosen={res.fileChoice === 'main'} onChoose={() => setFileChoice(conflict.trackName, 'main')} />
+                        <FileConflictCard label="BRANCH" track={conflict.branchTrack}
+                          chosen={res.fileChoice === 'branch'} onChoose={() => setFileChoice(conflict.trackName, 'branch')} />
+                      </div>
+                    )}
+                    {conflict.renameConflict && (
                       <>
-                        <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
-                        <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>
-                          This track was also renamed:
-                        </p>
+                        {conflict.fileConflict && (
+                          <>
+                            <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
+                            <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>This track was also renamed:</p>
+                          </>
+                        )}
+                        {!conflict.fileConflict && (
+                          <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>Choose a name for this track:</p>
+                        )}
+                        <RenameConflictPills mainName={mainDisplayName} branchName={branchDisplayName}
+                          chosen={res.nameChoice} onChoose={c => setNameChoice(conflict.trackName, c)} />
                       </>
                     )}
-                    {!conflict.fileConflict && (
-                      <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>
-                        Choose a name for this track:
-                      </p>
-                    )}
-                    <RenameConflictPills
-                      mainName={mainDisplayName}
-                      branchName={branchDisplayName}
-                      chosen={res.nameChoice}
-                      onChoose={c => setNameChoice(conflict.trackName, c)}
-                    />
-                  </>
-                )}
-              </div>
-            )
-          })}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
-          {/* Auto-merge items */}
+          {/* Section bar conflicts */}
+          {sectionConflicts.length > 0 && (
+            <div className="flex flex-col gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Structure</p>
+              {sectionConflicts.map((conflict) => {
+                const key      = rangeKey(conflict)
+                const chosen   = sectionResolutions[key]
+                const resolved = !!chosen
+                return (
+                  <div key={key}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: resolved ? 'var(--green)' : CONFLICT_RED }} />
+                      <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
+                        Bars {conflict.startBar + 1}–{conflict.endBar}
+                      </span>
+                      <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
+                        style={{ background: resolved ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)', color: resolved ? 'var(--green)' : CONFLICT_AMB }}>
+                        {resolved ? 'RESOLVED' : 'STRUCTURE CONFLICT'}
+                      </span>
+                    </div>
+                    <div className="flex gap-3">
+                      <SectionStatePill label="MAIN"   state={conflict.mainState}
+                        chosen={chosen === 'main'}   onChoose={() => setSectionChoice(key, 'main')} />
+                      <SectionStatePill label="BRANCH" state={conflict.branchState}
+                        chosen={chosen === 'branch'} onChoose={() => setSectionChoice(key, 'branch')} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Section auto items */}
+          {sectionAutoItems.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Structure (auto)</p>
+              <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
+                {sectionAutoItems.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2.5 px-4 py-2.5"
+                    style={{ borderBottom: i < sectionAutoItems.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                    <svg className="shrink-0" width="13" height="13" viewBox="0 0 13 13" fill="none">
+                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(34,197,94,0.15)" />
+                      <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="text-[12px]" style={{ color: 'var(--text-soft)' }}>Bars {item.startBar + 1}–{item.endBar}</span>
+                    <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>→</span>
+                    {item.branchState ? (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded"
+                        style={{ background: `${sectionColor(item.branchState)}20`, color: sectionColor(item.branchState) }}>
+                        {sectionLabel(item.branchState)}
+                      </span>
+                    ) : (
+                      <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>cleared</span>
+                    )}
+                    <span className="text-[10px] uppercase tracking-wide font-semibold ml-auto px-[7px] py-[2px] rounded"
+                      style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}>AUTO</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Comments */}
+          {preview.commentChanges && (
+            <CommentChangesSection
+              commentChanges={preview.commentChanges}
+              commentDeletionChoice={commentDeletionChoice}
+              onDeletionChoiceChange={setCommentDeletionChoice}
+              showAddedDetail={showAddedDetail}
+              onToggleAddedDetail={() => setShowAddedDetail(v => !v)}
+              showDeletedDetail={showDeletedDetail}
+              onToggleDeletedDetail={() => setShowDeletedDetail(v => !v)}
+            />
+          )}
+
+          {/* Track auto items */}
           {preview.autoMerge.length > 0 && (
             <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
               {preview.autoMerge.map((item, i) => (
                 <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
-                  style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}
-                >
+                  style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
                   <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <circle cx="6.5" cy="6.5" r="6" fill="rgba(34,197,94,0.15)" />
                     <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <div className="flex-1 min-w-0">
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>
-                      {item.trackName}
-                    </span>
-                    {item.action === 'apply_rename' ? (
+                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
+                    {item.action === 'apply_rename' && (
                       <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
                         Display name will change: &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
                       </p>
-                    ) : null}
+                    )}
                   </div>
                   <span className="text-[10px] uppercase tracking-wide font-semibold shrink-0 px-[7px] py-[2px] rounded"
-                    style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}
-                  >
-                    {item.action === 'add_new'
-                      ? 'AUTO · NEW'
-                      : item.action === 'apply_rename'
-                      ? 'AUTO · RENAMED'
-                      : 'AUTO · FROM BRANCH'}
+                    style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}>
+                    {item.action === 'add_new' ? 'AUTO · NEW' : item.action === 'apply_rename' ? 'AUTO · RENAMED' : 'AUTO · FROM BRANCH'}
                   </span>
                 </div>
               ))}
@@ -555,21 +888,15 @@ export function MergeModal({
         {/* Footer */}
         <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3"
           style={{ borderTop: '0.5px solid var(--border)' }}>
-          {mergeErr
-            ? <p className="text-[12px]" style={{ color: '#ef4444' }}>{mergeErr}</p>
-            : <div />
-          }
+          {mergeErr ? <p className="text-[12px]" style={{ color: '#ef4444' }}>{mergeErr}</p> : <div />}
           <div className="flex gap-2">
-            <button
-              onClick={onClose}
+            <button onClick={onClose}
               className="px-4 py-1.5 rounded-lg text-[12px] transition-colors duration-150"
               style={{ border: '0.5px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent' }}
               onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
             >Cancel</button>
-            <button
-              onClick={handleMerge}
-              disabled={!canMerge}
+            <button onClick={handleMerge} disabled={!canMerge}
               className="px-5 py-1.5 rounded-lg text-[12px] font-medium text-white disabled:opacity-40 transition-all duration-150"
               style={{
                 background: canMerge ? '#22c55e' : 'var(--border)',

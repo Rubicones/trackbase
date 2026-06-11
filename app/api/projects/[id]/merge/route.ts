@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import {
+  buildBarMap,
+  groupConsecutiveBars,
+  barMapToSections,
+  calculateTotalBars,
+  BarState,
+} from '@/lib/sectionMerge'
 
 // POST /api/projects/[id]/merge
 // Body: {
@@ -8,6 +15,11 @@ import { supabase } from '@/lib/supabase'
 //     trackName: string,
 //     fileChoice?: 'main' | 'branch',   // required when fileConflict
 //     nameChoice?: 'main' | 'branch',   // required when renameConflict
+//   }>,
+//   sectionResolutions: Array<{
+//     startBar: number,
+//     endBar: number,
+//     choice: 'main' | 'branch',
 //   }>
 // }
 //
@@ -17,16 +29,19 @@ import { supabase } from '@/lib/supabase'
 //      fileChangedInBranch, renamedInBranch flags per track
 //   3. Determine final file source and display_name for each track
 //   4. Wipe main tracks and insert the merged set
-//   5. Mark branch as merged
+//   5. Build section finalMap from bar-by-bar merge + resolutions
+//   6. Replace main sections with finalMap output
+//   7. Mark branch as merged
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: projectId } = await params
-    const { branchVersionId, resolutions = [] } = await req.json() as {
+    const { branchVersionId, resolutions = [], sectionResolutions = [] } = await req.json() as {
       branchVersionId: string
       resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch' }>
+      sectionResolutions: Array<{ startBar: number; endBar: number; choice: 'main' | 'branch' }>
     }
 
     if (!branchVersionId) {
@@ -114,15 +129,12 @@ export async function POST(
       // ── Step 2: Determine final display_name ──────────────────────────────
       let finalDisplayName: string | null
       if (renameConflict) {
-        // User explicitly chose which name to keep
         finalDisplayName = resolution?.nameChoice === 'branch'
           ? (bt.display_name ?? null)
           : (mainTrack?.display_name ?? null)
       } else if (autoRename) {
-        // Branch renamed, main didn't — auto-apply branch's rename
         finalDisplayName = bt.display_name ?? null
       } else {
-        // No rename involved — preserve main's display_name
         finalDisplayName = mainTrack?.display_name ?? null
       }
 
@@ -157,6 +169,60 @@ export async function POST(
       if (insertErr) throw insertErr
     }
 
+    // ── Section bar merge ─────────────────────────────────────────────────────
+    const [baseSections, branchSections, mainSections] = await Promise.all([
+      baseVersionId
+        ? supabase.from('sections').select('*').eq('version_id', baseVersionId).then(r => r.data ?? [])
+        : Promise.resolve([]),
+      supabase.from('sections').select('*').eq('version_id', branchVersionId).then(r => r.data ?? []),
+      supabase.from('sections').select('*').eq('version_id', main.id).then(r => r.data ?? []),
+    ])
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const totalBars = calculateTotalBars(baseSections as any[], branchSections as any[], mainSections as any[])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const baseMap   = buildBarMap(baseSections   as any[], totalBars)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const branchMap = buildBarMap(branchSections as any[], totalBars)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mainMap   = buildBarMap(mainSections   as any[], totalBars)
+
+    const { conflicts: sectionConflicts, autoFromBranch } =
+      groupConsecutiveBars(baseMap, branchMap, mainMap, totalBars)
+
+    // Build final bar map: start from main, apply auto-from-branch, then resolutions
+    const finalMap: (BarState | null)[] = [...mainMap]
+
+    for (const range of autoFromBranch) {
+      for (let b = range.startBar; b < range.endBar; b++) {
+        finalMap[b] = branchMap[b]
+      }
+    }
+
+    for (const res of sectionResolutions) {
+      const conflict = sectionConflicts.find(
+        c => c.startBar === res.startBar && c.endBar === res.endBar
+      )
+      if (!conflict) continue
+      const chosenState = res.choice === 'branch' ? conflict.branchState : conflict.mainState
+      for (let b = res.startBar; b < res.endBar; b++) {
+        finalMap[b] = chosenState
+      }
+    }
+
+    const newSections = barMapToSections(finalMap, main.id, projectId)
+
+    const { error: delSecErr } = await supabase
+      .from('sections')
+      .delete()
+      .eq('version_id', main.id)
+    if (delSecErr) throw delSecErr
+
+    if (newSections.length > 0) {
+      const { error: insSecErr } = await supabase.from('sections').insert(newSections)
+      if (insSecErr) throw insSecErr
+    }
+
     // Mark branch as merged
     const { error: mergeErr } = await supabase
       .from('versions')
@@ -164,8 +230,7 @@ export async function POST(
       .eq('id', branchVersionId)
     if (mergeErr) throw mergeErr
 
-    // ── Copy comments to new main snapshot ────────────────────────────────────────
-    // Get tracks of new main to map names → new IDs
+    // ── Copy comments to new main snapshot ────────────────────────────────────
     const { data: newMainTracks } = await supabase
       .from('tracks')
       .select('id, name')
@@ -174,7 +239,7 @@ export async function POST(
     const newTrackByName = new Map((newMainTracks ?? []).map((t: { id: string; name: string }) => [t.name, t.id]))
 
     const oldMainTrackIds = mainTrk.map((t: { id: string }) => t.id)
-    const branchTrackIds = branchTrk.map((t: { id: string }) => t.id)
+    const branchTrackIds  = branchTrk.map((t: { id: string }) => t.id)
 
     const [mainComments, branchComments] = await Promise.all([
       oldMainTrackIds.length
@@ -186,20 +251,23 @@ export async function POST(
     ])
 
     const oldToNewCommentId = new Map<string, string>()
-
     const allCommentsToCopy: Array<{ oldId: string; trackName: string; comment: Record<string, unknown> }> = []
 
-    // Add all main comments
     for (const c of mainComments) {
       const track = mainTrk.find((t: { id: string }) => t.id === c.track_id)
       if (!track) continue
       allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
     }
 
-    // Add branch comments not already in main (by id)
-    const mainCommentIds = new Set(mainComments.map((c: { id: string }) => c.id))
+    // Only include branch comments that were added AFTER the branch was created.
+    // Comments copied from the parent at branch-creation time have a created_at
+    // that is ≤ branch.created_at — skip those to avoid duplicating main's
+    // existing comments in the merged result.
+    const branchCreatedAt = new Date(branch.created_at).getTime()
+    const mainCommentIds  = new Set(mainComments.map((c: { id: string }) => c.id))
     for (const c of branchComments) {
       if (mainCommentIds.has(c.id)) continue
+      if (new Date(c.created_at as string).getTime() <= branchCreatedAt) continue
       const track = branchTrk.find((t: { id: string }) => t.id === c.track_id)
       if (!track) continue
       allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
@@ -227,7 +295,6 @@ export async function POST(
       }
     }
 
-    // Copy replies
     if (oldToNewCommentId.size > 0) {
       const { data: allReplies } = await supabase
         .from('comment_replies')
@@ -248,7 +315,6 @@ export async function POST(
       }
     }
 
-    // Return fresh main with tracks
     const { data: updatedTracks } = await supabase
       .from('tracks')
       .select('*')
