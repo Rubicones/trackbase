@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import type { TrackComment, CommentReply, Track, Version, Project, Section } from '@/lib/types'
+import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
@@ -14,6 +14,9 @@ import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
 import { resolveTrackIconColor, TRACK_ICON_COLORS } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import MiniPianoRoll from '@/components/MiniPianoRoll'
+import PianoRollEditor from '@/components/PianoRollEditor'
+import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,6 +82,52 @@ function relativeTime(iso: string): string {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   if (diff < 172800) return 'yesterday'
   return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
+}
+
+function durationMsToBars(durationMs: number, bpm: number, timeSignature: string): number {
+  const beatsPerBar = parseInt(timeSignature.split('/')[0]) || 4
+  const barDurationMs = (60000 / bpm) * beatsPerBar
+  return barDurationMs > 0 ? Math.ceil((durationMs || 0) / barDurationMs) : 0
+}
+
+/** Track content length in ms on the project timeline (excludes start_bar offset). */
+function trackContentDurationMs(
+  t: Track,
+  projBpm: number,
+  runtimeMs?: number,
+): number {
+  if (t.file_type === 'midi' && t.midi_data?.notes?.length) {
+    const sixthMs = sixteenthDuration(projBpm) * 1000
+    const lastEnd = Math.max(...t.midi_data.notes.map(n => n.startSixteenth + n.durationSixteenths))
+    return Math.ceil(lastEnd * sixthMs)
+  }
+  return (runtimeMs && runtimeMs > 0 ? runtimeMs : t.duration_ms) ?? 0
+}
+
+/** End position on the project timeline in seconds (start_bar + content). */
+function trackTimelineEndSec(
+  t: Track,
+  projBpm: number,
+  projTimeSig: string,
+  decodedDurationSec?: number,
+): number {
+  const beatsPerBar = parseInt(projTimeSig.split('/')[0]) || 4
+  const barDurSec = (60 / projBpm) * beatsPerBar
+  const startSec = (t.start_bar ?? 0) * barDurSec
+  const contentSec = trackContentDurationMs(t, projBpm, decodedDurationSec ? decodedDurationSec * 1000 : undefined) / 1000
+  return startSec + contentSec
+}
+
+function calculateProjectTotalBars(tracks: Track[], bpm: number, timeSignature: string): number {
+  if (!tracks.length) return 16
+  const beatsPerBar = parseInt(timeSignature.split('/')[0]) || 4
+  const barDurationMs = (60000 / bpm) * beatsPerBar
+  if (!barDurationMs) return 16
+  const endBars = tracks.map(t => {
+    const trackBars = durationMsToBars(t.duration_ms ?? 0, bpm, timeSignature)
+    return (t.start_bar ?? 0) + trackBars
+  })
+  return Math.max(...endBars, 16)
 }
 
 /** Compute dot y-offsets for overlapping comment ranges (8px per level). */
@@ -535,12 +584,11 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
 function Waveform({
   trackId, muted, playedRatio, color, durationMs,
   commentMode, comments, activeInput, audioReady,
-  onSeek, onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
+  onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
   currentUserId, isOwner, onReplyCreate, currentUser,
 }: {
   trackId: string; muted: boolean; playedRatio: number; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
-  onSeek: (t: number) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
@@ -560,7 +608,17 @@ function Waveform({
   const [ready, setReady] = useState(false)
   const [animProgress, setAnimProgress] = useState(0) // 0 = flat dots, 1 = full bars
   const animRafRef = useRef(0)
-  const [mouseRatio, setMouseRatio] = useState<number | null>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      setContainerWidth(entries[0]?.contentRect.width ?? 0)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Drag state — ref to avoid re-renders during drag
   const dragRef = useRef<{
@@ -652,7 +710,7 @@ function Waveform({
       ctx.roundRect(i * step, (h - bh) / 2, barW, bh, barW / 2)
       ctx.fill()
     }
-  }, [animProgress, muted, playedRatio, color, isDark])
+  }, [animProgress, muted, playedRatio, color, isDark, containerWidth, ready])
 
   // When audio becomes ready, animate bars from flat dots → full height (ease-out cubic, 320 ms).
   useEffect(() => {
@@ -727,20 +785,10 @@ function Waveform({
   }
 
   function handleMouseMove(e: React.MouseEvent) {
-    if (commentMode) {
-      if (dragRef.current?.active) {
-        const pct = Math.max(0, Math.min(1, getXPercent(e.clientX)))
-        dragRef.current.currentPct = pct
-        setDragRect({ startX: dragRef.current.startPct, endX: pct })
-      }
-      return
-    }
-    setMouseRatio(getXPercent(e.clientX))
-  }
-
-  function handleMouseLeave() {
-    // If dragging, let the window listener handle finalization on mouseup
-    setMouseRatio(null)
+    if (!commentMode || !dragRef.current?.active) return
+    const pct = Math.max(0, Math.min(1, getXPercent(e.clientX)))
+    dragRef.current.currentPct = pct
+    setDragRect({ startX: dragRef.current.startPct, endX: pct })
   }
 
   const overlapOffsets = computeOverlapOffsets(comments)
@@ -758,20 +806,10 @@ function Waveform({
       className="relative overflow-visible"
       style={{ cursor, userSelect: 'none', WebkitUserSelect: 'none' } as React.CSSProperties}
       onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      onClick={e => { if (!commentMode) onSeek((getXPercent(e.clientX) * durationMs) / 1000) }}
+      onMouseMove={commentMode ? handleMouseMove : undefined}
     >
       {/* z-index 1: waveform bars (dots while loading, grows to full on ready) */}
       <canvas ref={canvasRef} className="w-full block relative z-[1]" style={{ height: 34 }} />
-
-      {/* z-index 2: seek hover line (non-comment mode only) */}
-      {mouseRatio !== null && !commentMode && !thisInputActive && (
-        <div
-          className="absolute top-0 bottom-0 w-px z-[2] pointer-events-none -translate-x-1/2"
-          style={{ left: `${mouseRatio * 100}%`, background: 'var(--text-muted)', opacity: 0.5 }}
-        />
-      )}
 
       {/* z-index 3: saved comment ranges (only after audio is decoded) */}
       {audioReady && comments.map(c => (
@@ -868,7 +906,7 @@ function Waveform({
 
 // ─── Player hook ──────────────────────────────────────────────────────────────
 
-function usePlayer(tracks: Track[], versionId: string) {
+function usePlayer(tracks: Track[], versionId: string, project: Project | null) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
   const gainsRef = useRef<Map<string, GainNode>>(new Map())
@@ -877,6 +915,8 @@ function usePlayer(tracks: Track[], versionId: string) {
   const startRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
+  // MIDI playback refs — soundfont notes scheduled via AudioContext
+  const midiScheduledRef = useRef<AudioNode[]>([])
   const [volume, setVolumeState] = useState<number>(() => {
     if (typeof window === 'undefined') return 1
     const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
@@ -888,6 +928,22 @@ function usePlayer(tracks: Track[], versionId: string) {
   const [duration, setDuration] = useState(0)
   const [loaded, setLoaded] = useState(0)
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
+  const mutedTracksRef = useRef<Set<string>>(new Set())
+  const playingRef = useRef(playing)
+  playingRef.current = playing
+  const [trackDurations, setTrackDurations] = useState<Map<string, number>>(new Map())
+
+  // Only load audio tracks (MIDI tracks are handled separately via soundfont)
+  const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+  const midiTracks = tracks.filter(t => t.file_type === 'midi')
+  // Keep a ref so scheduleMidiNotes always has the latest list without extra deps
+  const midiTracksRef = useRef(midiTracks)
+  midiTracksRef.current = midiTracks
+  const tracksRef = useRef(tracks)
+  tracksRef.current = tracks
+  // Keep project ref stable so scheduleMidiNotes (useCallback with [] deps) can read it
+  const projectRef = useRef(project)
+  projectRef.current = project
 
   useEffect(() => {
     if (!tracks.length) return
@@ -901,7 +957,12 @@ function usePlayer(tracks: Track[], versionId: string) {
     bufsRef.current = new Map()
     setLoaded(0)
     let maxDur = 0
-    Promise.all(tracks.map(async t => {
+
+    // MIDI tracks intentionally excluded from maxDur — the project timeline
+    // is governed by audio-only duration. MIDI notes scheduled via soundfont
+    // already play at the correct offset; they don't stretch the timeline.
+
+    Promise.all(audioTracks.map(async t => {
       try {
         // Use cached ArrayBuffer to avoid re-fetching audio on version revisit.
         const cachedAB = audioArrayBufferCache.get(t.id)
@@ -914,39 +975,163 @@ function usePlayer(tracks: Track[], versionId: string) {
           audioArrayBufferCache.set(t.id, ab.slice(0))
         }
         const decoded = await ctx.decodeAudioData(ab)
-        if (!cancelled) { bufsRef.current.set(t.id, decoded); maxDur = Math.max(maxDur, decoded.duration); setLoaded(c => c + 1) }
+        if (!cancelled) {
+          bufsRef.current.set(t.id, decoded)
+          const proj = projectRef.current
+          const projBpmL = proj?.bpm ?? 120
+          const projBeatsL = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
+          const barDurSecL = (60 / projBpmL) * projBeatsL
+          const trackOffL = (t.start_bar ?? 0) * barDurSecL
+          maxDur = Math.max(maxDur, trackOffL + decoded.duration)
+          const decodedMs = Math.round(decoded.duration * 1000)
+          setTrackDurations(prev => {
+            const next = new Map(prev)
+            next.set(t.id, decodedMs)
+            return next
+          })
+          setLoaded(c => c + 1)
+        }
       } catch { /* skip */ }
-    })).then(() => { if (!cancelled) setDuration(maxDur) })
+    })).then(() => {
+      if (!cancelled) {
+        // Include MIDI + offsets so player duration matches the structure timeline
+        for (const t of tracks) {
+          const buf = bufsRef.current.get(t.id)
+          maxDur = Math.max(maxDur, trackTimelineEndSec(
+            t,
+            projectRef.current?.bpm ?? 120,
+            projectRef.current?.time_signature ?? '4/4',
+            buf?.duration,
+          ))
+        }
+        setDuration(maxDur)
+      }
+    })
     return () => { cancelled = true; ctx.close(); cancelAnimationFrame(rafRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versionId])
+
+  // Recompute timeline when track offsets/metadata change (without reloading audio)
+  useEffect(() => {
+    const proj = projectRef.current
+    if (!proj || !tracks.length) return
+    let maxDur = 0
+    for (const t of tracks) {
+      const buf = bufsRef.current.get(t.id)
+      maxDur = Math.max(maxDur, trackTimelineEndSec(
+        t,
+        proj.bpm ?? 120,
+        proj.time_signature ?? '4/4',
+        buf?.duration,
+      ))
+    }
+    if (maxDur > 0) setDuration(maxDur)
+  }, [tracks])
 
   const stopSources = useCallback(() => {
     sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
     sourcesRef.current = []
     cancelAnimationFrame(rafRef.current)
+    // Stop scheduled MIDI notes
+    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+    midiScheduledRef.current = []
   }, [])
 
-  const play = useCallback(async (offset = offsetRef.current) => {
+  // audioCtxPlayTime: ctx.currentTime captured at the moment playback started,
+  // BEFORE any async work. This ensures notes are scheduled relative to the
+  // true audio start, not some later time after soundfont loading.
+  const scheduleMidiNotes = useCallback(async (offset: number, audioCtxPlayTime: number) => {
+    const ctx = actxRef.current
+    if (!ctx) return
+    const proj = projectRef.current
+    // Always use PROJECT BPM for scheduling — never the MIDI file's internal tempo.
+    // MIDI file BPM is only used during parsing (tick→sixteenth conversion) which
+    // is already done; midiData.notes are stored in sixteenths independent of tempo.
+    const projBpm = proj?.bpm ?? 120
+    const projTimeSig = proj?.time_signature ?? '4/4'
+    const [projN, projD] = projTimeSig.split('/').map(Number)
+    const projSpb = sixteenthsPerBar(projN || 4, projD || 4)
+    // sixteenthDuration uses project BPM: (60 / bpm) / 4
+    const sixthSec = sixteenthDuration(projBpm)
+    const projBarDurationSec = projSpb * sixthSec
+
+    for (const midiTrack of midiTracksRef.current) {
+      if (mutedTracksRef.current.has(midiTrack.id)) continue
+      const data = midiTrack.midi_data
+      if (!data || !data.notes.length) continue
+      try {
+        const { default: Soundfont } = await import('soundfont-player')
+        const instrName = gmInstrumentName(data.instrument)
+        const instrument = await Soundfont.instrument(ctx, instrName, { soundfont: 'MusyngKite' })
+        // Bar offset in seconds (project bars × bar duration at project BPM)
+        const startOffsetSec = (midiTrack.start_bar ?? midiTrack.midi_start_bar ?? 0) * projBarDurationSec
+        for (const note of data.notes) {
+          // Absolute project-timeline position of this note (in seconds)
+          const noteAbsoluteSec = startOffsetSec + note.startSixteenth * sixthSec
+          const noteDurSec = note.durationSixteenths * sixthSec
+          // Skip notes entirely before the playback start position
+          if (noteAbsoluteSec + noteDurSec < offset) continue
+          // AudioContext time when this note should sound:
+          // = time playback started + (note position − playback offset)
+          const schedTime = audioCtxPlayTime + (noteAbsoluteSec - offset)
+          if (schedTime < ctx.currentTime - 0.01) continue // missed — skip
+          const scheduled = instrument.play(note.pitch.toString(), schedTime, {
+            duration: noteDurSec,
+            gain: note.velocity / 127,
+          })
+          midiScheduledRef.current.push(scheduled)
+        }
+      } catch { /* no soundfont — skip */ }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const play = useCallback(async (offset = offsetRef.current, tracksOverride?: Track[]) => {
     const ctx = actxRef.current
     if (!ctx) return
     stopSources()
     if (ctx.state === 'suspended') await ctx.resume()
     const newGains = new Map<string, GainNode>()
+    const proj = projectRef.current
+    const projBpmP = proj?.bpm ?? 120
+    const projBeatsP = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
+    const projBarDurSecP = (60 / projBpmP) * projBeatsP
+    const metaTracks = (tracksOverride ?? tracksRef.current).filter(t => t.file_type !== 'midi')
+    const trackMetaMap = new Map(metaTracks.map(t => [t.id, t]))
+    // Capture AudioContext time ONCE before starting any sources — used as
+    // absolute reference for both audio scheduling and MIDI note scheduling.
+    const audioCtxPlayTime = ctx.currentTime
     bufsRef.current.forEach((buf, id) => {
+      const trackMeta = trackMetaMap.get(id)
+      const trackOffsetSec = (trackMeta?.start_bar ?? 0) * projBarDurSecP
+      const trackEndSec = trackOffsetSec + buf.duration
+      // Skip tracks that end before the playback position
+      if (trackEndSec <= offset) return
       const g = ctx.createGain()
-      g.gain.value = mutedTracks.has(id) ? 0 : 1
+      g.gain.value = mutedTracksRef.current.has(id) ? 0 : 1
       g.connect(masterGainRef.current ?? ctx.destination)
       newGains.set(id, g)
       const src = ctx.createBufferSource()
       src.buffer = buf
       src.connect(g)
-      src.start(0, offset)
+      if (offset <= trackOffsetSec) {
+        // Playback position is before this track — schedule delayed start
+        src.start(audioCtxPlayTime + (trackOffsetSec - offset), 0)
+      } else {
+        // Playback position is inside this track — start immediately from offset into buffer
+        src.start(audioCtxPlayTime, offset - trackOffsetSec)
+      }
       sourcesRef.current.push(src)
     })
     gainsRef.current = newGains
-    startRef.current = ctx.currentTime - offset
+    startRef.current = audioCtxPlayTime - offset
     offsetRef.current = offset
+    if (tracksOverride) {
+      midiTracksRef.current = tracksOverride.filter(t => t.file_type === 'midi')
+    } else {
+      midiTracksRef.current = tracksRef.current.filter(t => t.file_type === 'midi')
+    }
+    scheduleMidiNotes(offset, audioCtxPlayTime).catch(console.warn)
     setPlaying(true)
     const dur = duration || 1
     const tick = () => {
@@ -956,28 +1141,40 @@ function usePlayer(tracks: Track[], versionId: string) {
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [mutedTracks, duration, stopSources])
+  }, [duration, stopSources, scheduleMidiNotes])
 
   const pause = useCallback(() => {
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
     stopSources(); setPlaying(false)
   }, [stopSources])
 
-  const seek = useCallback((t: number) => {
+  const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
-    if (playing) play(t)
+    if (playing) play(t, tracksOverride)
     else setCurrentTime(t)
   }, [playing, play])
 
   const toggleMute = useCallback((id: string) => {
-    setMutedTracks(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      const g = gainsRef.current.get(id)
-      if (g) g.gain.value = next.has(id) ? 0 : 1
-      return next
-    })
-  }, [])
+    const next = new Set(mutedTracksRef.current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    mutedTracksRef.current = next
+    setMutedTracks(next)
+
+    const g = gainsRef.current.get(id)
+    if (g) g.gain.value = next.has(id) ? 0 : 1
+
+    // Reschedule MIDI notes when muting/unmuting during playback
+    if (playingRef.current) {
+      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+      midiScheduledRef.current = []
+      const ctx = actxRef.current
+      if (ctx) {
+        const elapsed = ctx.currentTime - startRef.current
+        scheduleMidiNotes(elapsed, ctx.currentTime).catch(console.warn)
+      }
+    }
+  }, [scheduleMidiNotes])
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
@@ -985,7 +1182,7 @@ function usePlayer(tracks: Track[], versionId: string) {
     if (typeof window !== 'undefined') localStorage.setItem('trackbase_volume', String(v))
   }, [])
 
-  return { playing, currentTime, duration, loaded, total: tracks.length, mutedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute }
+  return { playing, currentTime, duration, loaded, total: audioTracks.length, mutedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute, audioContext: actxRef, trackDurations }
 }
 
 // ─── Action button ────────────────────────────────────────────────────────────
@@ -1155,17 +1352,19 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
 
 function TrackRow({
-  track, index, muted, changed, playedRatio, durationMs,
+  track, index, muted, changed, currentTimeMs,
   commentMode, activeInput, audioReady,
-  onToggleMute, onReplace, onSeek,
+  onToggleMute, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
-  onDeleteTrack, onRenameTrack, onIconUpdate,
+  onDeleteTrack, onRenameTrack, onIconUpdate, onMidiDataUpdate, onStartBarUpdate,
+  onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
+  projectId, versionId, project, totalBars, runtimeDurationMs,
 }: {
   track: Track; index: number; muted: boolean; changed: boolean
-  playedRatio: number; durationMs: number; commentMode: boolean
+  currentTimeMs: number; commentMode: boolean
   activeInput: ActiveCommentInput | null; audioReady: boolean
-  onToggleMute: () => void; onReplace: (f: File) => void; onSeek: (t: number) => void
+  onToggleMute: () => void; onReplace: (f: File) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
@@ -1173,25 +1372,121 @@ function TrackRow({
   onDeleteTrack: (trackId: string) => Promise<void>
   onRenameTrack: (trackId: string, newName: string) => void
   onIconUpdate: (trackId: string, emoji: string, color: string) => void
+  onMidiDataUpdate: (trackId: string, updates: Partial<Track>) => void
+  onStartBarUpdate: (trackId: string, startBar: number) => Promise<void>
+  onDragStartOffset: () => void
+  onDragEndOffset: () => void
+  otherTrackDragging: boolean
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
   currentUser: { username: string } | null
+  projectId: string
+  versionId: string
+  project: Project
+  totalBars: number
+  runtimeDurationMs: number
 }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
   const col = palette(index)
   const instrument = detectInstrument(track.name)
+  const isMidi = track.file_type === 'midi'
 
   const iconBg = resolveTrackIconColor(track.icon_color, isDark)
 
+  // All state/refs must come before computed values that read state
   const [waveformReady, setWaveformReady] = useState(false)
+  useEffect(() => { setWaveformReady(false) }, [track.id])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
   const [rowHovered, setRowHovered] = useState(false)
   const [showIconPicker, setShowIconPicker] = useState(false)
+  const [pianoRollOpen, setPianoRollOpen] = useState(false)
+  // Drag-to-offset state
+  const [isOffsetDragging, setIsOffsetDragging] = useState(false)
+  const [dragPreviewBar, setDragPreviewBar] = useState<number | null>(null)
+  const dragStartXRef = useRef(0)
+  const origStartBarRef = useRef(0)
+  const dragPreviewBarRef = useRef<number | null>(null)
+  const waveformColRef = useRef<HTMLDivElement>(null)
+
+  // Per-track offset and timing (uses dragPreviewBar state above)
+  const projBpmRow = project.bpm ?? 120
+  const projTimeSigRow = project.time_signature ?? '4/4'
+  const beatsPerBarRow = parseInt(projTimeSigRow.split('/')[0]) || 4
+  const barDurationMsRow = (60000 / projBpmRow) * beatsPerBarRow
+  const effectiveStartBar = dragPreviewBar ?? (track.start_bar ?? 0)
+  const trackOffsetMs = effectiveStartBar * barDurationMsRow
+  // Prefer runtime decoded duration (populated once audio buffer loads); fall back to DB value.
+  const rawContentMs = trackContentDurationMs(track, projBpmRow, runtimeDurationMs)
+  const durationKnown = rawContentMs > 0
+  const trackDurationBars = durationKnown
+    ? durationMsToBars(rawContentMs, projBpmRow, projTimeSigRow)
+    : Math.max(1, totalBars - effectiveStartBar)
+  const trackOwnDurationMs = durationKnown
+    ? rawContentMs
+    : trackDurationBars * barDurationMsRow
+  // Playhead position relative to this track's content
+  const trackLocalTimeMs = Math.max(0, currentTimeMs - trackOffsetMs)
+  const trackPlayedRatio = trackOwnDurationMs > 0
+    ? Math.min(1, trackLocalTimeMs / trackOwnDurationMs)
+    : 0
+  // Waveform column layout
+  const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
+  const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
+  const isAudioLoading = !isMidi && !waveformReady
+  const layoutWidthPercent = isAudioLoading
+    ? Math.max(widthPercent, 100 - startPercent)
+    : widthPercent
+
+  // Drag-to-offset mouse handlers
+  function handleOffsetMouseDown(e: React.MouseEvent) {
+    if (commentMode) return
+    e.preventDefault()
+    dragStartXRef.current = e.clientX
+    origStartBarRef.current = track.start_bar ?? 0
+    const initialBar = track.start_bar ?? 0
+    setIsOffsetDragging(true)
+    dragPreviewBarRef.current = initialBar
+    setDragPreviewBar(initialBar)
+    onDragStartOffset()
+  }
+
+  useEffect(() => {
+    if (!isOffsetDragging) return
+    function onMouseMove(e: MouseEvent) {
+      const colEl = waveformColRef.current
+      if (!colEl) return
+      const containerWidth = colEl.offsetWidth
+      const barsPerPixel = totalBars / containerWidth
+      const deltaX = e.clientX - dragStartXRef.current
+      const newStartBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
+      dragPreviewBarRef.current = newStartBar
+      setDragPreviewBar(newStartBar)
+    }
+    async function onMouseUp() {
+      setIsOffsetDragging(false)
+      onDragEndOffset()
+      const newBar = dragPreviewBarRef.current
+      dragPreviewBarRef.current = null
+      if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
+        try {
+          await onStartBarUpdate(track.id, newBar)
+        } catch { /* ignore */ }
+      }
+      setDragPreviewBar(null)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOffsetDragging, dragPreviewBar, totalBars])
 
   // ── Inline rename ──────────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false)
@@ -1231,6 +1526,7 @@ function TrackRow({
     : rowHovered && !commentMode
     ? 'var(--bg-surface)'
     : 'transparent'
+  const rowOpacity = otherTrackDragging ? 0.5 : 1
 
   async function handleConfirmDelete() {
     setDeleting(true)
@@ -1244,15 +1540,21 @@ function TrackRow({
   }
 
   return (
+    <>
     <div
       data-track-row
       className="relative grid items-center h-[62px] gap-3 px-[22px] overflow-visible"
       style={{
         gridTemplateColumns: '20px 32px 118px 1fr 22px auto',
         background: rowBg,
-        boxShadow: confirmDelete || deleteError ? 'inset 0 0 0 0.5px rgba(239,68,68,0.2)' : 'none',
-        borderBottom: '0.5px solid var(--border)',
-        transition: 'background 0.15s, box-shadow 0.15s',
+        boxShadow: isOffsetDragging
+          ? '0 2px 8px rgba(0,0,0,0.15)'
+          : confirmDelete || deleteError
+          ? 'inset 0 0 0 0.5px rgba(239,68,68,0.2)'
+          : 'none',
+        borderBottom: pianoRollOpen ? 'none' : '0.5px solid var(--border)',
+        transition: 'background 0.15s, box-shadow 0.15s, opacity 0.15s',
+        opacity: rowOpacity,
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
@@ -1318,6 +1620,15 @@ function TrackRow({
             >
               {displayName}
             </div>
+            {/* MIDI badge */}
+            {isMidi && (
+              <span style={{
+                background: 'var(--bg-card)', border: '0.5px solid var(--border)',
+                color: 'var(--accent)', fontSize: 9, textTransform: 'uppercase',
+                letterSpacing: '0.5px', padding: '1px 5px', borderRadius: 3,
+                flexShrink: 0, lineHeight: 1.5,
+              }}>MIDI</span>
+            )}
             {rowHovered && (
               <button
                 onClick={startEdit}
@@ -1342,24 +1653,109 @@ function TrackRow({
               <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><circle cx="2" cy="2" r="1" fill="currentColor" /><circle cx="7" cy="2" r="1" fill="currentColor" /><circle cx="2" cy="7" r="1" fill="currentColor" /><path d="M3 2h3M2 3v3M7 3l-5 5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" /></svg>
               modified
             </span>
+          ) : isMidi && track.midi_data ? (
+            <span className="text-[11px] text-dim truncate block">
+              {track.midi_data.notes.length} notes
+              {' · '}
+              {trackDurationBars} bars
+              {(track.start_bar ?? 0) > 0 ? ` · starts at bar ${(track.start_bar ?? 0) + 1}` : ''}
+              {' · '}
+              {gmProgramLabel(track.midi_data.instrument)}
+            </span>
           ) : (
             <span className="text-[11px] text-dim truncate block">
-              {track.original_filename ?? '—'}{track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
+              {track.original_filename ?? '—'}
+              {track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
+              {(track.start_bar ?? 0) > 0 ? ` · starts at bar ${(track.start_bar ?? 0) + 1}` : ''}
             </span>
           )}
         </div>
       </div>
 
-      <div className="relative min-w-0 overflow-visible" data-waveform-col>
-        <Waveform
-          trackId={track.id} muted={muted} playedRatio={playedRatio} color={col.fg}
-          durationMs={durationMs} commentMode={commentMode} comments={track.comments ?? []}
-          activeInput={activeInput} audioReady={audioReady} onSeek={onSeek} onCommentPlace={onCommentPlace}
-          onCommentDelete={onCommentDelete} onCommentCreate={onCommentCreate} onCloseInput={onCloseInput}
-          onReady={() => setWaveformReady(true)}
-          currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
-          currentUser={currentUser}
-        />
+      <div ref={waveformColRef} className="relative min-w-0 overflow-hidden" style={{ height: 34 }} data-waveform-col>
+        {/* Subtle diagonal stripe pattern for empty space */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 4px, var(--border) 4px, var(--border) 5px)',
+          opacity: 0.3,
+        }} />
+
+        {/* Waveform/MIDI content — absolutely positioned at start_bar */}
+        <div
+          style={{
+            position: 'absolute',
+            left: `${startPercent}%`,
+            width: `${layoutWidthPercent}%`,
+            height: '100%',
+            cursor: isOffsetDragging ? 'grabbing' : 'grab',
+            borderLeft: effectiveStartBar > 0 ? '1px solid var(--border-light)' : 'none',
+            zIndex: 1,
+            transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
+          }}
+          onMouseDown={handleOffsetMouseDown}
+        >
+          {isMidi ? (
+            track.midi_data ? (
+              <div style={{ width: '100%', height: '100%', opacity: muted ? 0.35 : 1 }}>
+                <MiniPianoRoll
+                  midiData={track.midi_data}
+                  color={col.fg}
+                  projectBpm={project.bpm ?? undefined}
+                  totalProjectMs={trackOwnDurationMs}
+                  height={34}
+                  midiStartBar={0}
+                />
+              </div>
+            ) : (
+              <div style={{ width: '100%', height: 34, background: 'var(--bg-card)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>Loading…</span>
+              </div>
+            )
+          ) : (
+            <Waveform
+              trackId={track.id} muted={muted} playedRatio={trackPlayedRatio} color={col.fg}
+              durationMs={trackOwnDurationMs} commentMode={commentMode}
+              comments={(track.comments ?? []).map(c => ({
+                ...c,
+                timecode_start_ms: c.timecode_start_ms - trackOffsetMs,
+                timecode_end_ms: c.timecode_end_ms - trackOffsetMs,
+              }))}
+              activeInput={activeInput} audioReady={audioReady}
+              onCommentPlace={input => onCommentPlace({
+                ...input,
+                startMs: input.startMs + trackOffsetMs,
+                endMs: input.endMs + trackOffsetMs,
+              })}
+              onCommentDelete={onCommentDelete}
+              onCommentCreate={(tid, sMs, eMs, content) =>
+                onCommentCreate(tid, trackOffsetMs + sMs, trackOffsetMs + eMs, content)
+              }
+              onCloseInput={onCloseInput}
+              onReady={() => setWaveformReady(true)}
+              currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
+              currentUser={currentUser}
+            />
+          )}
+        </div>
+
+        {/* Snap indicator during drag */}
+        {isOffsetDragging && dragPreviewBar !== null && (() => {
+          const snapPct = totalBars > 0 ? (dragPreviewBar / totalBars) * 100 : 0
+          return (
+            <>
+              <div style={{
+                position: 'absolute', left: `${snapPct}%`, top: 0, height: '100%',
+                width: 1, background: 'var(--accent)', zIndex: 10, pointerEvents: 'none',
+              }} />
+              <div style={{
+                position: 'absolute', left: `${snapPct}%`, top: 2, zIndex: 10,
+                transform: 'translateX(-50%)', pointerEvents: 'none',
+                background: 'var(--accent)', color: 'white',
+                fontSize: 10, padding: '2px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+              }}>Bar {dragPreviewBar + 1}</div>
+            </>
+          )
+        })()}
       </div>
 
       <button
@@ -1391,6 +1787,29 @@ function TrackRow({
           </div>
         ) : (
           <>
+            {/* Edit MIDI button — always visible for MIDI tracks */}
+            {isMidi && (
+              <ActionButton
+                tooltip="Edit MIDI"
+                color="var(--accent)"
+                hoverBg="rgba(99,102,241,0.10)"
+                hoverBorderColor="rgba(99,102,241,0.30)"
+                hoverColor="var(--accent)"
+                onClick={() => setPianoRollOpen(p => !p)}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="8" width="20" height="12" rx="2" />
+                  <path d="M6 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+                  <line x1="6" y1="12" x2="6" y2="17" />
+                  <line x1="10" y1="12" x2="10" y2="17" />
+                  <line x1="14" y1="12" x2="14" y2="17" />
+                  <line x1="18" y1="12" x2="18" y2="17" />
+                  <line x1="8" y1="12" x2="8" y2="15" />
+                  <line x1="12" y1="12" x2="12" y2="15" />
+                  <line x1="16" y1="12" x2="16" y2="15" />
+                </svg>
+              </ActionButton>
+            )}
             <ActionButton
               tooltip="Replace track"
               color="#6366F1"
@@ -1403,18 +1822,20 @@ function TrackRow({
                 <path d="M21 17H10a3 3 0 0 1-3-3v-1" /><path d="M10 20l-3-3 3-3" />
               </svg>
             </ActionButton>
-            <ActionButton
-              tooltip="Download as WAV"
-              color="var(--text-muted)"
-              hoverBg="var(--bg-surface)"
-              hoverColor="var(--text-sec)"
-              href={`/api/tracks/${track.id}/download`}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-                <path d="M7 11l5 5 5-5" /><line x1="12" y1="4" x2="12" y2="16" />
-              </svg>
-            </ActionButton>
+            {!isMidi && (
+              <ActionButton
+                tooltip="Download as WAV"
+                color="var(--text-muted)"
+                hoverBg="var(--bg-surface)"
+                hoverColor="var(--text-sec)"
+                href={`/api/tracks/${track.id}/download`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                  <path d="M7 11l5 5 5-5" /><line x1="12" y1="4" x2="12" y2="16" />
+                </svg>
+              </ActionButton>
+            )}
             <ActionButton
               tooltip="Delete track"
               color="var(--text-dim)"
@@ -1434,11 +1855,40 @@ function TrackRow({
       </div>
 
       <input ref={fileRef} type="file"
-        accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg,audio/mp3"
+        accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
         className="hidden"
         onChange={e => { const f = e.target.files?.[0]; if (f) onReplace(f); e.target.value = '' }}
       />
     </div>
+
+    {/* Piano roll editor — inline expandable panel */}
+    <div style={{
+      maxHeight: pianoRollOpen ? 500 : 0,
+      overflow: 'hidden',
+      transition: 'max-height 0.3s ease',
+    }}>
+      {pianoRollOpen && (
+        <PianoRollEditor
+          track={track}
+          projectId={projectId}
+          versionId={versionId}
+          bpm={project.bpm ?? 120}
+          timeSignatureNumerator={
+            project.time_signature ? parseInt(project.time_signature.split('/')[0]) : 4
+          }
+          timeSignatureDenominator={
+            project.time_signature ? parseInt(project.time_signature.split('/')[1]) : 4
+          }
+          midiStartBar={track.start_bar ?? track.midi_start_bar ?? 0}
+          onClose={() => setPianoRollOpen(false)}
+          onSaved={(updates) => {
+            onMidiDataUpdate(track.id, updates)
+            setPianoRollOpen(false)
+          }}
+        />
+      )}
+    </div>
+    </>
   )
 }
 
@@ -1875,6 +2325,41 @@ export default function ProjectPage() {
   const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
   const [skeletonTracks, setSkeletonTracks] = useState<Array<{ id: string; name: string; progress: number; error: boolean; errorMsg: string }>>([])
   const [dndProgress, setDndProgress] = useState<{ done: number; total: number } | null>(null)
+  // Track being dragged (for dimming others)
+  const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null)
+
+  // ── Project rename ─────────────────────────────────────────────────────────
+  const [projectNameEditing, setProjectNameEditing] = useState(false)
+  const [projectNameValue, setProjectNameValue] = useState('')
+  const [projectNameFlash, setProjectNameFlash] = useState(false)
+  const projectNameInputRef = useRef<HTMLInputElement>(null)
+
+  function startProjectRename() {
+    if (!project) return
+    setProjectNameValue(project.name)
+    setProjectNameEditing(true)
+    setTimeout(() => { projectNameInputRef.current?.select() }, 0)
+  }
+
+  async function commitProjectRename() {
+    if (!project) return
+    const trimmed = projectNameValue.trim()
+    setProjectNameEditing(false)
+    if (!trimmed || trimmed === project.name) return
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (res.ok) {
+        const { project: updated } = await res.json()
+        setProject(updated)
+        setProjectNameFlash(true)
+        setTimeout(() => setProjectNameFlash(false), 400)
+      }
+    } catch { /* ignore */ }
+  }
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1976,11 +2461,56 @@ export default function ProjectPage() {
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
 
-  const player = usePlayer(activeTracks, activeVersionId)
-  const playedRatio = player.duration > 0 ? player.currentTime / player.duration : 0
+  const player = usePlayer(activeTracks, activeVersionId, project)
+  const playerRef = useRef(player)
+  playerRef.current = player
+
+  // Spacebar toggles play/pause (skip when typing in inputs)
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space') return
+      const el = e.target as HTMLElement
+      if (
+        el.tagName === 'INPUT' ||
+        el.tagName === 'TEXTAREA' ||
+        el.tagName === 'SELECT' ||
+        el.isContentEditable
+      ) return
+
+      e.preventDefault()
+      const p = playerRef.current
+      if (p.total === 0) return
+      if (p.playing) p.pause()
+      else p.play()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const durationMs = player.duration * 1000
-  // Use stored duration_ms for bar math (available before audio decodes)
-  const trackDurationMs = Math.max(...activeTracks.map(t => t.duration_ms ?? 0), durationMs, 0)
+  const projBpm = project?.bpm ?? 120
+  const projTimeSig = project?.time_signature ?? '4/4'
+  const projBeatsPerBar = parseInt(projTimeSig.split('/')[0]) || 4
+  const projBarDurationMs = (60000 / projBpm) * projBeatsPerBar
+  // Total bars: max(start_bar + durationBars) across ALL tracks.
+  // Duration uses project BPM for all track types (including MIDI).
+  function effectiveTrackDurationMs(t: Track): number {
+    return trackContentDurationMs(
+      t,
+      projBpm,
+      player.trackDurations.get(t.id),
+    )
+  }
+  const totalProjectBars = activeTracks.length > 0 ? (() => {
+    const barDurMs = projBarDurationMs || 2000
+    const endBars = activeTracks.map(t => {
+      const dMs = effectiveTrackDurationMs(t)
+      const bars = Math.ceil((dMs || 0) / barDurMs)
+      return (t.start_bar ?? 0) + bars
+    })
+    return Math.max(...endBars, 16)
+  })() : 16
+  const totalProjectDurationMs = Math.max(totalProjectBars * projBarDurationMs, durationMs, 1)
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -2058,6 +2588,47 @@ export default function ProjectPage() {
     })))
   }
 
+  function handleMidiDataUpdate(trackId: string, updates: Partial<Track>) {
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => t.id === trackId ? { ...t, ...updates } : t),
+    })))
+    cache.invalidate(activeVersionId)
+  }
+
+  async function handleStartBarUpdate(trackId: string, startBar: number) {
+    const res = await fetch(`/api/tracks/${trackId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_bar: startBar }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error((err as { error?: string }).error ?? 'Failed to save track offset')
+    }
+
+    const updatedTracks = activeTracks.map(t => t.id === trackId
+      ? { ...t, start_bar: startBar, midi_start_bar: startBar }
+      : t)
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => t.id === trackId
+        ? { ...t, start_bar: startBar, midi_start_bar: startBar }
+        : t),
+    })))
+    cache.invalidate(activeVersionId)
+    if (player.playing) player.seek(player.currentTime, updatedTracks)
+  }
+
+  async function doUploadTrack(file: File, position: number) {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('name', file.name.replace(/\.[^/.]+$/, ''))
+    fd.append('position', String(position))
+    const res = await fetch(`/api/versions/${activeVersionId}/tracks/upload`, { method: 'POST', body: fd })
+    if (!res.ok) throw new Error((await res.json()).error ?? res.statusText)
+  }
+
   async function handleAddTrack(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     if (!files.length || !activeVersionId) return
@@ -2066,13 +2637,11 @@ export default function ProjectPage() {
     const errors: string[] = []
     try {
       for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const fd = new FormData()
-        fd.append('file', file)
-        fd.append('name', file.name.replace(/\.[^/.]+$/, ''))
-        fd.append('position', String(activeTracks.length + i))
-        const res = await fetch(`/api/versions/${activeVersionId}/tracks/upload`, { method: 'POST', body: fd })
-        if (!res.ok) errors.push(`${file.name}: ${(await res.json()).error ?? res.statusText}`)
+        try {
+          await doUploadTrack(files[i], activeTracks.length + i)
+        } catch (err) {
+          errors.push(`${files[i].name}: ${err instanceof Error ? err.message : 'Upload failed'}`)
+        }
       }
       cache.invalidate(activeVersionId)
       await loadProject()
@@ -2131,13 +2700,20 @@ export default function ProjectPage() {
   }
 
   // Drag-and-drop helpers
-  function isAudioDrag(e: React.DragEvent) {
+  function isAcceptedFileDrag(e: React.DragEvent) {
     return Array.from(e.dataTransfer.items).some(it =>
       it.kind === 'file' && (it.type.startsWith('audio/') || it.type === '')
     )
   }
+  function isAcceptedFile(f: File) {
+    return (
+      f.type.startsWith('audio/') ||
+      f.name.endsWith('.wav') || f.name.endsWith('.mp3') ||
+      f.name.endsWith('.mid') || f.name.endsWith('.midi')
+    )
+  }
   function handleContentDragOver(e: React.DragEvent) {
-    if (!isAudioDrag(e)) return
+    if (!isAcceptedFileDrag(e)) return
     e.preventDefault(); e.dataTransfer.dropEffect = 'copy'
     setIsDragging(true)
   }
@@ -2147,18 +2723,16 @@ export default function ProjectPage() {
   }
   function handleContentDrop(e: React.DragEvent) {
     e.preventDefault(); setIsDragging(false); setIsDraggingAddRow(false)
-    const files = Array.from(e.dataTransfer.files).filter(f =>
-      f.type.startsWith('audio/') || f.name.endsWith('.wav') || f.name.endsWith('.mp3')
-    )
+    const files = Array.from(e.dataTransfer.files).filter(isAcceptedFile)
     if (!files.length) {
-      setToast('Only WAV and MP3 files are supported')
+      setToast('Only WAV, MP3, and MIDI files are supported')
       setTimeout(() => setToast(null), 3000)
       return
     }
     handleUploadFiles(files)
   }
   function handleAddRowDragOver(e: React.DragEvent) {
-    if (!isAudioDrag(e)) return
+    if (!isAcceptedFileDrag(e)) return
     e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'
     setIsDraggingAddRow(true)
   }
@@ -2170,9 +2744,7 @@ export default function ProjectPage() {
   function handleAddRowDrop(e: React.DragEvent) {
     e.preventDefault(); e.stopPropagation()
     setIsDragging(false); setIsDraggingAddRow(false)
-    const files = Array.from(e.dataTransfer.files).filter(f =>
-      f.type.startsWith('audio/') || f.name.endsWith('.wav') || f.name.endsWith('.mp3')
-    )
+    const files = Array.from(e.dataTransfer.files).filter(isAcceptedFile)
     if (files.length) handleUploadFiles(files)
   }
 
@@ -2288,7 +2860,12 @@ export default function ProjectPage() {
         <span className="text-lg leading-none" style={{ color: 'var(--border-light)' }}>·</span>
         <a href={`/band/${bandId}`} className="text-[13px] no-underline hover:underline" style={{ color: 'var(--text-muted)' }}>{project.band_name ?? 'Band'}</a>
         <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
-        <span className="text-[13px]" style={{ color: 'var(--text-sec)' }}>{project.name}</span>
+        <span
+          className="text-[13px] truncate max-w-[200px]"
+          style={{ color: projectNameFlash ? 'var(--accent)' : 'var(--text-sec)', transition: 'color 0.3s' }}
+        >
+          {projectNameEditing ? projectNameValue || project.name : project.name}
+        </span>
         <div className="flex-1" />
         <button onClick={handleShare} className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
           {shareCopied ? (
@@ -2346,8 +2923,8 @@ export default function ProjectPage() {
                 <path d="M16 4v16M8 14l8-8 8 8" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                 <path d="M4 26h24" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"/>
               </svg>
-              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>Drop audio files to add tracks</span>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>WAV and MP3 supported</span>
+              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>Drop files to add tracks</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>WAV, MP3, and MIDI supported</span>
             </div>
           )}
 
@@ -2357,7 +2934,51 @@ export default function ProjectPage() {
           {/* Project header */}
           <div className="px-[22px] pt-4 pb-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h1 className="text-[17px] font-medium text-bright">{project.name}</h1>
+              {projectNameEditing ? (
+                <input
+                  ref={projectNameInputRef}
+                  value={projectNameValue}
+                  onChange={e => setProjectNameValue(e.target.value.slice(0, 80))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') commitProjectRename()
+                    if (e.key === 'Escape') setProjectNameEditing(false)
+                  }}
+                  onBlur={commitProjectRename}
+                  className="text-[17px] font-medium text-bright"
+                  style={{
+                    background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
+                    borderRadius: 6, padding: '2px 10px',
+                    width: 280, maxWidth: '100%', outline: 'none',
+                  }}
+                />
+              ) : (
+                <div className="flex items-center gap-1.5 group min-w-0" onDoubleClick={startProjectRename}>
+                  <h1
+                    className="text-[17px] font-medium text-bright truncate"
+                    style={{
+                      color: projectNameFlash ? 'var(--accent)' : undefined,
+                      transition: 'color 0.3s',
+                    }}
+                  >
+                    {project.name}
+                  </h1>
+                  <button
+                    type="button"
+                    onClick={startProjectRename}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--text-dim)', padding: 0, lineHeight: 1,
+                      display: 'flex', alignItems: 'center',
+                    }}
+                    title="Rename project"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              )}
               <button
                 onClick={() => setEditStructure(p => !p)}
                 disabled={activeTracks.length === 0}
@@ -2423,7 +3044,7 @@ export default function ProjectPage() {
             <StructureOverlay
               project={project}
               versionId={activeVersionId}
-              totalDurationMs={Math.max(trackDurationMs, durationMs, 1)}
+              totalDurationMs={totalProjectDurationMs}
               sections={sections}
               onSectionsChange={setSections}
               editMode={editStructure}
@@ -2457,8 +3078,8 @@ export default function ProjectPage() {
             <div ref={tracksBodyRef} style={{ position: 'relative' }}>
 
               {/* Section boundary dashed lines overlay */}
-              {sections.length > 0 && project && trackDurationMs > 0 && (() => {
-                const { barDurationMs } = getBarMath(project, trackDurationMs)
+              {sections.length > 0 && project && totalProjectDurationMs > 0 && (() => {
+                const { barDurationMs } = getBarMath(project, totalProjectDurationMs)
                 const wl = waveformBounds?.left ?? 228
                 const wr = waveformBounds?.right ?? 68
                 return (
@@ -2471,7 +3092,7 @@ export default function ProjectPage() {
                       ...(s.start_bar > 0 ? [s.start_bar] : []),
                       s.end_bar,
                     ]))].map(bar => {
-                      const pct = (bar * barDurationMs) / trackDurationMs
+                      const pct = (bar * barDurationMs) / totalProjectDurationMs
                       return (
                         <div
                           key={bar}
@@ -2479,7 +3100,7 @@ export default function ProjectPage() {
                             position: 'absolute', top: 0, height: '100%',
                             left: `${pct * 100}%`,
                             width: 0,
-                            borderLeft: '1px dashed var(--border)',
+                            borderLeft: '1px dashed rgba(128,128,128,0.45)',
                           }}
                         />
                       )
@@ -2496,12 +3117,11 @@ export default function ProjectPage() {
                 <TrackRow
                   key={t.id} track={t} index={i}
                   muted={player.mutedTracks.has(t.id)} changed={isChanged(t)}
-                  playedRatio={playedRatio} durationMs={durationMs}
+                  currentTimeMs={player.currentTime * 1000}
                   commentMode={commentMode} activeInput={activeCommentInput}
                   audioReady={player.loaded >= player.total && player.total > 0}
                   onToggleMute={() => player.toggleMute(t.id)}
                   onReplace={f => handleReplaceTrack(t, f)}
-                  onSeek={player.seek}
                   onCommentPlace={setActiveCommentInput}
                   onCommentDelete={handleCommentDelete}
                   onCommentCreate={handleCommentCreate}
@@ -2509,10 +3129,20 @@ export default function ProjectPage() {
                   onDeleteTrack={handleDeleteTrack}
                   onRenameTrack={handleRenameTrack}
                   onIconUpdate={handleIconUpdate}
+                  onMidiDataUpdate={handleMidiDataUpdate}
+                  onStartBarUpdate={handleStartBarUpdate}
+                  onDragStartOffset={() => setDraggingTrackId(t.id)}
+                  onDragEndOffset={() => setDraggingTrackId(null)}
+                  otherTrackDragging={draggingTrackId !== null && draggingTrackId !== t.id}
                   currentUserId={user?.id}
                   isOwner={isOwner}
                   onReplyCreate={handleReplyCreate}
                   currentUser={currentUser}
+                  projectId={projectId}
+                  versionId={activeVersionId}
+                  project={project}
+                  totalBars={totalProjectBars}
+                  runtimeDurationMs={effectiveTrackDurationMs(t)}
                 />
               ))}
               {/* Skeleton track rows for DnD uploads */}
@@ -2554,7 +3184,7 @@ export default function ProjectPage() {
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
                 )}
                 <span className="text-[12px]">
-                  {isDraggingAddRow ? 'Drop to add track' : uploading ? 'Uploading…' : 'Add track (WAV / MP3)'}
+                  {isDraggingAddRow ? 'Drop to add track' : uploading ? 'Uploading…' : 'Add track (WAV / MP3 / MIDI)'}
                 </span>
               </button>
               {dndProgress && dndProgress.total > 1 && (
@@ -2563,7 +3193,7 @@ export default function ProjectPage() {
                 </p>
               )}
               <input ref={fileInputRef} type="file"
-                accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg,audio/mp3"
+                accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
                 multiple className="hidden" onChange={handleAddTrack}
               />
             </div>
@@ -2593,6 +3223,7 @@ export default function ProjectPage() {
       </div>
 
       {showBranchModal && <NewBranchModal onConfirm={handleNewBranch} onCancel={() => setShowBranchModal(false)} />}
+
 
       {mergeModal && (
         <MergeModal

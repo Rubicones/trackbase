@@ -4,6 +4,65 @@ import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 const adminSupabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
 
+function getUserId(req: NextRequest): string | null {
+  const token = req.cookies.get('sb-at')?.value
+  return token ? getUserIdFromToken(token) : null
+}
+
+// PATCH /api/projects/[id] — rename project
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const userId = getUserId(req)
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { id: projectId } = await params
+    const { name } = await req.json()
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return NextResponse.json({ error: 'name is required' }, { status: 400 })
+    }
+    if (name.trim().length > 80) {
+      return NextResponse.json({ error: 'name must be 80 characters or fewer' }, { status: 400 })
+    }
+
+    const { data: project } = await supabase
+      .from('projects')
+      .select('band_id')
+      .eq('id', projectId)
+      .single()
+    if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    const { data: membership } = await supabase
+      .from('band_members')
+      .select('role')
+      .eq('band_id', project.band_id)
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    const { data, error } = await supabase
+      .from('projects')
+      .update({ name: name.trim() })
+      .eq('id', projectId)
+      .select('*, bands(name)')
+      .single()
+    if (error) throw error
+
+    if (data.bands) {
+      data.band_name = (data.bands as { name: string }).name
+      delete data.bands
+    }
+
+    return NextResponse.json({ project: data })
+  } catch (err) {
+    console.error(err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 // GET /api/projects/[id]
 // Returns project + all versions + tracks (with comments) per version
 export async function GET(

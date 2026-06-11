@@ -29,13 +29,22 @@ ffmpeg.setFfmpegPath(resolveFfmpegPath())
 export async function audioToFlac(
   buffer: Buffer,
   inputFormat: 'wav' | 'mp3'
-): Promise<Buffer> {
+): Promise<{ flac: Buffer; durationMs: number }> {
   const id = randomUUID()
   const inPath = path.join(tmpdir(), `${id}.${inputFormat}`)
   const outPath = path.join(tmpdir(), `${id}.flac`)
 
   try {
     await writeFile(inPath, buffer)
+
+    // Probe input duration (fast, runs on already-written file)
+    const durationMs = await new Promise<number>((resolve) => {
+      ffmpeg.ffprobe(inPath, (_err, meta) => {
+        resolve(_err ? 0 : Math.round((meta?.format?.duration ?? 0) * 1000))
+      })
+    })
+
+    // Convert to FLAC
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inPath)
         .audioCodec('flac')
@@ -45,7 +54,8 @@ export async function audioToFlac(
         .on('error', (err) => reject(err))
         .run()
     })
-    return await readFile(outPath)
+
+    return { flac: await readFile(outPath), durationMs }
   } finally {
     await unlink(inPath).catch(() => {})
     await unlink(outPath).catch(() => {})

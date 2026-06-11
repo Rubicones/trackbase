@@ -7,6 +7,7 @@ import {
   ConflictRange,
   AutoBarRange,
 } from '@/lib/sectionMerge'
+import { trackStartBar } from '@/lib/trackMerge'
 
 // ─── Shared types (re-exported so MergeModal can import them) ─────────────────
 
@@ -17,23 +18,26 @@ interface TrackSnapshot {
   original_filename: string | null
   file_size_bytes: number | null
   created_at: string
-  storage_path: string
+  start_bar: number
 }
 
 export interface ConflictTrack {
   trackName: string
   fileConflict: boolean
   renameConflict: boolean
+  offsetConflict: boolean
   mainTrack: TrackSnapshot
   branchTrack: TrackSnapshot
   baseTrack: TrackSnapshot | null
 }
 
 export interface AutoMergeItem {
-  action: 'take_from_branch' | 'add_new' | 'apply_rename'
+  action: 'take_from_branch' | 'add_new' | 'apply_rename' | 'apply_offset'
   trackName: string
-  track: { id: string; name: string; display_name: string | null; original_filename: string | null }
+  track: { id: string; name: string; display_name: string | null; original_filename: string | null; start_bar?: number }
   newDisplayName?: string
+  newStartBar?: number
+  previousStartBar?: number
 }
 
 export interface CommentPreview {
@@ -144,15 +148,36 @@ export async function POST(
       const renamedInMain   = baseTrack && mainTrack ? mainDisplay !== baseDisplay : false
       const renameConflict  = renamedInBranch && renamedInMain && branchDisplay !== mainDisplay
 
+      // ── Start bar (track offset) detection ─────────────────────────────────
+      const baseStartBar = trackStartBar(baseTrack)
+      const branchStartBar = trackStartBar(bt)
+      const mainStartBar = mainTrack ? trackStartBar(mainTrack) : baseStartBar
+      const offsetChangedInBranch = !baseTrack || branchStartBar !== baseStartBar
+      const offsetChangedInMain = baseTrack && mainTrack ? mainStartBar !== baseStartBar : false
+      const offsetConflict = offsetChangedInBranch && offsetChangedInMain && branchStartBar !== mainStartBar
+
+      function toSnapshot(t: typeof bt): TrackSnapshot {
+        return {
+          id: t.id,
+          name: t.name,
+          display_name: t.display_name ?? null,
+          original_filename: t.original_filename ?? null,
+          file_size_bytes: t.file_size_bytes ?? null,
+          created_at: t.created_at,
+          start_bar: trackStartBar(t),
+        }
+      }
+
       // ── Categorise ────────────────────────────────────────────────────────
-      if (fileConflict || renameConflict) {
+      if (fileConflict || renameConflict || offsetConflict) {
         conflicts.push({
           trackName:    bt.name,
           fileConflict,
           renameConflict,
-          mainTrack:   mainTrack,
-          branchTrack: bt,
-          baseTrack:   baseTrack ?? null,
+          offsetConflict,
+          mainTrack:   toSnapshot(mainTrack ?? bt),
+          branchTrack: toSnapshot(bt),
+          baseTrack:   baseTrack ? toSnapshot(baseTrack) : null,
         })
       } else {
         if (fileChangedInBranch) {
@@ -166,6 +191,16 @@ export async function POST(
             trackName: bt.name,
             track: bt,
             newDisplayName: branchDisplay,
+          })
+        }
+        // Auto-offset: branch moved track, main didn't
+        if (offsetChangedInBranch && !offsetConflict) {
+          autoMerge.push({
+            action: 'apply_offset',
+            trackName: bt.name,
+            track: bt,
+            newStartBar: branchStartBar,
+            previousStartBar: baseStartBar,
           })
         }
       }

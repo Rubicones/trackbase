@@ -20,6 +20,28 @@ export interface TrackComment {
   replies?: CommentReply[]
 }
 
+// ─── MIDI types ───────────────────────────────────────────────────────────────
+
+export interface MidiNote {
+  id: string              // client-side only
+  pitch: number           // 0–127 MIDI note number
+  startSixteenth: number  // position in 16th notes from song start
+  durationSixteenths: number  // length in 16th notes, min 1
+  velocity: number        // 0–127, default 100
+}
+
+export interface MidiTrackData {
+  notes: MidiNote[]
+  name: string
+  instrument: number    // General MIDI program number 0-127
+  totalSixteenths: number
+  bpm: number
+  timeSignatureNumerator: number
+  timeSignatureDenominator: number
+}
+
+// ─── Track ────────────────────────────────────────────────────────────────────
+
 export interface Track {
   id: string
   version_id: string
@@ -33,6 +55,10 @@ export interface Track {
   position: number
   icon_emoji: string | null     // e.g. "🎸"
   icon_color: string | null     // background hex for icon square
+  file_type: 'audio' | 'midi'  // defaults to 'audio'
+  midi_data: MidiTrackData | null  // populated on first MIDI load
+  midi_start_bar: number           // bar offset in project timeline (0 = starts at bar 1) — legacy, use start_bar
+  start_bar: number                // bar offset for all track types (0 = starts at project bar 1)
   comments: TrackComment[]
 }
 

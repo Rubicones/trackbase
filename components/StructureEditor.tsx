@@ -200,6 +200,10 @@ function SectionEditPopover({
   const popoverRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Holds the latest unsaved chords value + section id so we can flush on unmount
+  const pendingRef = useRef<{ id: string; chords: string } | null>(null)
+  const onChordsAutoSaveRef = useRef(onChordsAutoSave)
+  onChordsAutoSaveRef.current = onChordsAutoSave
   const [customMode, setCustomMode] = useState(false)
   const [customName, setCustomName] = useState(section.custom_name ?? '')
   const [chords, setChords] = useState(section.chords ?? '')
@@ -212,17 +216,28 @@ function SectionEditPopover({
     setIsDirty(false)
   }, [section.id])
 
-  // Cleanup debounce timer on unmount
+  // Flush pending save on unmount (fire-and-forget)
   useEffect(() => {
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        if (pendingRef.current) {
+          const { id, chords: pendingChords } = pendingRef.current
+          onChordsAutoSaveRef.current(id, pendingChords).catch(() => { /* ignore on unmount */ })
+        }
+      }
+    }
   }, [])
 
   function handleChordsChange(val: string) {
     setChords(val)
     setIsDirty(true)
+    pendingRef.current = { id: section.id, chords: val }
     onChordsLocalChange(section.id, val)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
+      saveTimerRef.current = null
+      pendingRef.current = null
       setSaveStatus('saving')
       try {
         await onChordsAutoSave(section.id, val)
@@ -805,8 +820,7 @@ export default function StructureOverlay({
 
     // View mode — click anywhere on the strip to seek
     if (!editMode) {
-      const seekDuration = duration > 0 ? duration : totalDurationMs / 1000
-      if (seekDuration > 0) onSeek(ratio * seekDuration)
+      if (totalDurationMs > 0) onSeek((ratio * totalDurationMs) / 1000)
       return
     }
 

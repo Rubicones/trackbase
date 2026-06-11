@@ -9,6 +9,7 @@ import {
   calculateTotalBars,
   BarState,
 } from '@/lib/sectionMerge'
+import { trackStartBar } from '@/lib/trackMerge'
 
 // POST /api/projects/[id]/merge
 // Body: {
@@ -17,6 +18,7 @@ import {
 //     trackName: string,
 //     fileChoice?: 'main' | 'branch',   // required when fileConflict
 //     nameChoice?: 'main' | 'branch',   // required when renameConflict
+//     offsetChoice?: 'main' | 'branch', // required when offsetConflict
 //   }>,
 //   sectionResolutions: Array<{
 //     startBar: number,
@@ -43,7 +45,7 @@ export async function POST(
     const userId = (() => { const t = req.cookies.get('sb-at')?.value; return t ? getUserIdFromToken(t) : null })()
     const { branchVersionId, resolutions = [], sectionResolutions = [] } = await req.json() as {
       branchVersionId: string
-      resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch' }>
+      resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch'; offsetChoice?: 'main' | 'branch' }>
       sectionResolutions: Array<{ startBar: number; endBar: number; choice: 'main' | 'branch' }>
     }
 
@@ -141,7 +143,28 @@ export async function POST(
         finalDisplayName = mainTrack?.display_name ?? null
       }
 
-      mergedMap.set(bt.name, { ...fileSource, display_name: finalDisplayName })
+      const baseStartBar = trackStartBar(baseTrack)
+      const branchStartBar = trackStartBar(bt)
+      const mainStartBar = mainTrack ? trackStartBar(mainTrack) : baseStartBar
+      const offsetChangedInBranch = !baseTrack || branchStartBar !== baseStartBar
+      const offsetChangedInMain = baseTrack && mainTrack ? mainStartBar !== baseStartBar : false
+      const offsetConflict = offsetChangedInBranch && offsetChangedInMain && branchStartBar !== mainStartBar
+
+      let finalStartBar: number
+      if (offsetConflict) {
+        finalStartBar = resolution?.offsetChoice === 'branch' ? branchStartBar : mainStartBar
+      } else if (offsetChangedInBranch) {
+        finalStartBar = branchStartBar
+      } else {
+        finalStartBar = mainStartBar
+      }
+
+      mergedMap.set(bt.name, {
+        ...fileSource,
+        display_name: finalDisplayName,
+        start_bar: finalStartBar,
+        midi_start_bar: finalStartBar,
+      })
     }
 
     // Build final ordered track list

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import type { BarState, ConflictRange, AutoBarRange } from '@/lib/sectionMerge'
+import { formatTrackStartBar } from '@/lib/trackMerge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -13,22 +14,26 @@ interface TrackSnapshot {
   original_filename: string | null
   file_size_bytes: number | null
   created_at: string
+  start_bar: number
 }
 
 export interface ConflictTrack {
   trackName: string
   fileConflict: boolean
   renameConflict: boolean
+  offsetConflict: boolean
   mainTrack: TrackSnapshot
   branchTrack: TrackSnapshot
   baseTrack: TrackSnapshot | null
 }
 
 export interface AutoMergeItem {
-  action: 'take_from_branch' | 'add_new' | 'apply_rename'
+  action: 'take_from_branch' | 'add_new' | 'apply_rename' | 'apply_offset'
   trackName: string
-  track: { id: string; name: string; display_name: string | null; original_filename: string | null }
+  track: { id: string; name: string; display_name: string | null; original_filename: string | null; start_bar?: number }
   newDisplayName?: string
+  newStartBar?: number
+  previousStartBar?: number
 }
 
 export interface CommentPreview {
@@ -65,6 +70,7 @@ export interface MergePreview {
 type Resolution = {
   fileChoice?: 'main' | 'branch'
   nameChoice?: 'main' | 'branch'
+  offsetChoice?: 'main' | 'branch'
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -105,6 +111,32 @@ function sectionLabel(state: BarState | null): string {
 
 function rangeKey(r: { startBar: number; endBar: number }) {
   return `${r.startBar}-${r.endBar}`
+}
+
+function trackConflictKinds(conflict: ConflictTrack): string[] {
+  const kinds: string[] = []
+  if (conflict.fileConflict) kinds.push('FILE')
+  if (conflict.renameConflict) kinds.push('RENAME')
+  if (conflict.offsetConflict) kinds.push('OFFSET')
+  return kinds
+}
+
+function autoMergeDescription(item: AutoMergeItem): string {
+  if (item.action === 'add_new') return 'new track will be added'
+  if (item.action === 'apply_rename') return `renamed → "${item.newDisplayName}"`
+  if (item.action === 'apply_offset') {
+    const from = formatTrackStartBar(item.previousStartBar ?? 0)
+    const to = formatTrackStartBar(item.newStartBar ?? 0)
+    return `starts at ${from} → ${to}`
+  }
+  return 'replaced with branch version'
+}
+
+function autoMergeBadge(item: AutoMergeItem): string {
+  if (item.action === 'add_new') return 'AUTO · NEW'
+  if (item.action === 'apply_rename') return 'AUTO · RENAMED'
+  if (item.action === 'apply_offset') return 'AUTO · OFFSET'
+  return 'AUTO · FROM BRANCH'
 }
 
 const ACCENT       = '#6366F1'
@@ -246,6 +278,7 @@ function FileConflictCard({
         </div>
         <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
           {fmtDate(track.created_at)}{track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
+          {' · '}{formatTrackStartBar(track.start_bar)}
         </div>
       </div>
       <MiniWaveform trackId={track.id} color={color} />
@@ -303,6 +336,57 @@ function RenameConflictPills({
             </p>
             <p className="text-[14px] font-medium m-0" style={{ color: 'var(--text)' }}>
               &ldquo;{name}&rdquo;
+            </p>
+            <button
+              onClick={() => onChoose(side)}
+              className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
+              style={{
+                background: sel ? ACCENT : 'transparent',
+                border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
+                color: sel ? 'white' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT } }}
+              onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+            >
+              {sel ? '✓ Keep this' : 'Keep this'}
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Offset conflict pills ────────────────────────────────────────────────────
+
+function OffsetConflictPills({
+  mainStartBar, branchStartBar, chosen, onChoose,
+}: {
+  mainStartBar: number
+  branchStartBar: number
+  chosen: 'main' | 'branch' | undefined
+  onChoose: (c: 'main' | 'branch') => void
+}) {
+  return (
+    <div className="flex gap-3">
+      {(['main', 'branch'] as const).map(side => {
+        const label = side === 'main' ? 'FROM MAIN' : 'FROM BRANCH'
+        const bar = side === 'main' ? mainStartBar : branchStartBar
+        const sel = chosen === side
+        return (
+          <div
+            key={side}
+            className="flex-1 rounded-lg p-4 flex flex-col gap-3 transition-all duration-150"
+            style={{
+              background: sel ? 'color-mix(in srgb, var(--accent) 8%, var(--bg-card))' : 'var(--bg-card)',
+              border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
+            }}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-widest m-0"
+              style={{ color: sel ? ACCENT : 'var(--text-dim)' }}>{label}</p>
+            <p className="text-[14px] font-medium m-0" style={{ color: 'var(--text)' }}>
+              {formatTrackStartBar(bar)}
             </p>
             <button
               onClick={() => onChoose(side)}
@@ -536,13 +620,17 @@ export function MergeModal({
   function setNameChoice(trackName: string, choice: 'main' | 'branch') {
     setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], nameChoice: choice } }))
   }
+  function setOffsetChoice(trackName: string, choice: 'main' | 'branch') {
+    setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], offsetChoice: choice } }))
+  }
   function setSectionChoice(key: string, choice: 'main' | 'branch') {
     setSectionResolutions(r => ({ ...r, [key]: choice }))
   }
 
   const unresolvedTrackCount = preview.conflicts.filter(c =>
     (c.fileConflict   && !resolutions[c.trackName]?.fileChoice) ||
-    (c.renameConflict && !resolutions[c.trackName]?.nameChoice)
+    (c.renameConflict && !resolutions[c.trackName]?.nameChoice) ||
+    (c.offsetConflict && !resolutions[c.trackName]?.offsetChoice)
   ).length
 
   const sectionConflicts = preview.sectionBarConflicts ?? []
@@ -564,10 +652,11 @@ export function MergeModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           branchVersionId: preview.branchVersionId,
-          resolutions: Object.entries(resolutions).map(([trackName, { fileChoice, nameChoice }]) => ({
+          resolutions: Object.entries(resolutions).map(([trackName, { fileChoice, nameChoice, offsetChoice }]) => ({
             trackName,
             ...(fileChoice && { fileChoice }),
             ...(nameChoice && { nameChoice }),
+            ...(offsetChoice && { offsetChoice }),
           })),
           sectionResolutions: Object.entries(sectionResolutions).map(([key, choice]) => {
             const [startBar, endBar] = key.split('-').map(Number)
@@ -616,9 +705,7 @@ export function MergeModal({
                     <div>
                       <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
                       <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
-                        {item.action === 'add_new' ? 'new track will be added'
-                        : item.action === 'apply_rename' ? `renamed → "${item.newDisplayName}"`
-                        : 'replaced with branch version'}
+                        {autoMergeDescription(item)}
                       </span>
                     </div>
                   </div>
@@ -732,15 +819,26 @@ export function MergeModal({
                 const res = resolutions[conflict.trackName] ?? {}
                 const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
                 const renameResolved = !conflict.renameConflict || !!res.nameChoice
-                const fullyResolved  = fileResolved && renameResolved
-                const badgeLabel = conflict.fileConflict && conflict.renameConflict ? 'FILE + RENAME CONFLICT'
-                  : conflict.fileConflict ? 'FILE CONFLICT' : 'RENAME CONFLICT'
-                const badgeBg = fullyResolved ? 'rgba(34,197,94,0.12)'
-                  : conflict.fileConflict && conflict.renameConflict ? 'rgba(239,68,68,0.12)'
-                  : conflict.fileConflict ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.12)'
-                const badgeColor = fullyResolved ? 'var(--green)'
-                  : conflict.fileConflict && conflict.renameConflict ? CONFLICT_RED
-                  : conflict.fileConflict ? CONFLICT_AMB : ACCENT
+                const offsetResolved = !conflict.offsetConflict || !!res.offsetChoice
+                const fullyResolved  = fileResolved && renameResolved && offsetResolved
+                const kinds = trackConflictKinds(conflict)
+                const badgeLabel = fullyResolved
+                  ? 'RESOLVED'
+                  : kinds.length ? `${kinds.join(' + ')} CONFLICT` : 'CONFLICT'
+                const badgeBg = fullyResolved
+                  ? 'rgba(34,197,94,0.12)'
+                  : kinds.length > 1
+                  ? 'rgba(239,68,68,0.12)'
+                  : conflict.fileConflict ? 'rgba(245,158,11,0.12)'
+                  : conflict.offsetConflict ? 'rgba(245,158,11,0.12)'
+                  : 'rgba(99,102,241,0.12)'
+                const badgeColor = fullyResolved
+                  ? 'var(--green)'
+                  : kinds.length > 1
+                  ? CONFLICT_RED
+                  : conflict.fileConflict ? CONFLICT_AMB
+                  : conflict.offsetConflict ? CONFLICT_AMB
+                  : ACCENT
                 const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
                 const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
                 return (
@@ -774,6 +872,29 @@ export function MergeModal({
                         )}
                         <RenameConflictPills mainName={mainDisplayName} branchName={branchDisplayName}
                           chosen={res.nameChoice} onChoose={c => setNameChoice(conflict.trackName, c)} />
+                      </>
+                    )}
+                    {conflict.offsetConflict && (
+                      <>
+                        {(conflict.fileConflict || conflict.renameConflict) && (
+                          <>
+                            <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
+                            <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>
+                              This track was also moved on the timeline:
+                            </p>
+                          </>
+                        )}
+                        {!conflict.fileConflict && !conflict.renameConflict && (
+                          <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>
+                            Choose where this track starts on the timeline:
+                          </p>
+                        )}
+                        <OffsetConflictPills
+                          mainStartBar={conflict.mainTrack.start_bar}
+                          branchStartBar={conflict.branchTrack.start_bar}
+                          chosen={res.offsetChoice}
+                          onChoose={c => setOffsetChoice(conflict.trackName, c)}
+                        />
                       </>
                     )}
                   </div>
@@ -869,15 +990,19 @@ export function MergeModal({
                   </svg>
                   <div className="flex-1 min-w-0">
                     <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
-                    {item.action === 'apply_rename' && (
+                    {item.action === 'apply_rename' ? (
                       <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
                         Display name will change: &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
                       </p>
-                    )}
+                    ) : item.action === 'apply_offset' ? (
+                      <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
+                        Timeline position: {formatTrackStartBar(item.previousStartBar ?? 0)} → {formatTrackStartBar(item.newStartBar ?? 0)}
+                      </p>
+                    ) : null}
                   </div>
                   <span className="text-[10px] uppercase tracking-wide font-semibold shrink-0 px-[7px] py-[2px] rounded"
                     style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}>
-                    {item.action === 'add_new' ? 'AUTO · NEW' : item.action === 'apply_rename' ? 'AUTO · RENAMED' : 'AUTO · FROM BRANCH'}
+                    {autoMergeBadge(item)}
                   </span>
                 </div>
               ))}
