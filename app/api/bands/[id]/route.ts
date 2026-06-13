@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
+import { projectTimelineDurationMs } from '@/lib/trackMerge'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -37,7 +38,7 @@ export async function GET(
   const [bandRes, projectsRes, membersRes] = await Promise.all([
     supabase.from('bands').select('*').eq('id', bandId).single(),
     supabase.from('projects')
-      .select('id, name, bpm, key, created_at')
+      .select('id, name, bpm, key, time_signature, created_at')
       .eq('band_id', bandId)
       .order('created_at', { ascending: false }),
     adminSupabase.from('band_members')
@@ -73,9 +74,9 @@ export async function GET(
   const [tracksRes, commentsRes] = await Promise.all([
     allVersionIds.length > 0
       ? supabase.from('tracks')
-          .select('id, version_id, duration_ms, file_size_bytes, file_hash, position')
+          .select('id, version_id, duration_ms, file_size_bytes, file_hash, position, start_bar, midi_start_bar, file_type, midi_data')
           .in('version_id', allVersionIds)
-      : Promise.resolve({ data: [] as { id: string; version_id: string; duration_ms: number | null; file_size_bytes: number | null; file_hash: string | null; position: number }[] }),
+      : Promise.resolve({ data: [] as { id: string; version_id: string; duration_ms: number | null; file_size_bytes: number | null; file_hash: string | null; position: number; start_bar?: number | null; midi_start_bar?: number | null; file_type?: string | null; midi_data?: unknown }[] }),
     allVersionIds.length > 0
       ? supabase.from('track_comments')
           .select('id, version_id')
@@ -118,7 +119,7 @@ export async function GET(
     if (pid) commentsByProject.set(pid, (commentsByProject.get(pid) ?? 0) + 1)
   }
 
-  const enhancedProjects = projects.map((p: { id: string; name: string; bpm: number | null; key: string | null; created_at: string }) => {
+  const enhancedProjects = projects.map((p: { id: string; name: string; bpm: number | null; key: string | null; time_signature: string | null; created_at: string }) => {
     const mainVersionId = mainVersionByProject.get(p.id)
     const mainTracks = mainVersionId ? (tracksByVersion.get(mainVersionId) ?? []) : []
     const projectVersions = versionsByProject.get(p.id) ?? []
@@ -133,7 +134,7 @@ export async function GET(
     return {
       ...p,
       track_count: mainTracks.length,
-      total_duration_ms: mainTracks.reduce((sum, t) => sum + (t.duration_ms ?? 0), 0),
+      total_duration_ms: projectTimelineDurationMs(mainTracks, p.bpm, p.time_signature),
       version_count: projectVersions.length,
       comment_count: commentsByProject.get(p.id) ?? 0,
       last_updated_at: lastVersion?.created_at ?? p.created_at,

@@ -95,6 +95,10 @@ function fmtMs(ms: number) {
   return m > 0 ? `${m}:${String(s % 60).padStart(2, '0')}` : `0:${String(s).padStart(2, '0')}`
 }
 
+function trackTitle(t: { display_name?: string | null; name: string }): string {
+  return t.display_name?.trim() || t.name
+}
+
 function avatarColor(username: string | null): string {
   if (!username) return '#6b7280'
   const colors = ['#6366F1', '#10B981', '#A855F7', '#F59E0B', '#06B6D4', '#ef4444', '#3b82f6', '#f97316']
@@ -271,7 +275,7 @@ function FileConflictCard({
       </div>
       <div>
         <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-soft)' }}>
-          {track.original_filename ?? track.name}
+          {trackTitle(track)}
         </div>
         <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
           {fmtDate(track.created_at)}{track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
@@ -698,7 +702,7 @@ export function MergeModal({
                       <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                     <div>
-                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{trackTitle(item.track)}</span>
                       <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
                         {autoMergeDescription(item)}
                       </span>
@@ -867,7 +871,7 @@ export function MergeModal({
                       <div className="w-1.5 h-1.5 rounded-full shrink-0"
                         style={{ background: fullyResolved ? 'var(--green)' : CONFLICT_RED }} />
                       <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
-                        {conflict.trackName}
+                        {trackTitle(conflict.branchTrack)}
                       </span>
                       <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
                         style={{ background: badgeBg, color: badgeColor }}>
@@ -1035,10 +1039,10 @@ export function MergeModal({
                     <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <div className="flex-1 min-w-0">
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{item.trackName}</span>
+                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{trackTitle(item.track)}</span>
                     {item.action === 'apply_rename' ? (
                       <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
-                        Display name will change: &ldquo;{item.track.name}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
+                        Display name will change: &ldquo;{trackTitle(item.track)}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
                       </p>
                     ) : item.action === 'apply_offset' ? (
                       <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>

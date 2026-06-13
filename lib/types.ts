@@ -1,3 +1,43 @@
+// ─── Project resources ────────────────────────────────────────────────────────
+// Requires migration:
+//   create table project_resources (
+//     id uuid primary key default gen_random_uuid(),
+//     project_id uuid references projects(id) on delete cascade,
+//     type text not null,  -- 'file' | 'link' | 'lyrics'
+//     storage_path text, original_filename text,
+//     file_size_bytes bigint, mime_type text,
+//     url text, title text, content text,
+//     created_by uuid references auth.users(id),
+//     position integer default 0,
+//     created_at timestamptz default now(),
+//     updated_at timestamptz default now()
+//   );
+
+export type ResourceType = 'file' | 'link' | 'lyrics' | 'notes'
+
+export interface ProjectResource {
+  id: string
+  project_id: string
+  type: ResourceType
+  // file
+  storage_path: string | null
+  original_filename: string | null
+  file_size_bytes: number | null
+  mime_type: string | null
+  // link
+  url: string | null
+  // link + file
+  title: string | null
+  // lyrics
+  content: string | null
+  // meta
+  created_by: string | null
+  author_username?: string
+  position: number
+  created_at: string
+  updated_at: string
+}
+
 export interface CommentReply {
   id: string
   comment_id: string

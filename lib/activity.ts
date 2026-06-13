@@ -14,7 +14,9 @@ export async function logActivity({
 }: {
   bandId: string
   userId: string | null
-  action: 'merge' | 'branch' | 'comment' | 'upload' | 'export'
+  action:
+    | 'merge' | 'branch' | 'comment' | 'upload' | 'export'
+    | 'structure' | 'resource' | 'resource_update' | 'resource_remove' | 'meta'
   subject: string
   detail?: string | null
   projectId?: string | null
@@ -33,7 +35,18 @@ export async function logActivity({
   }
 }
 
-/** Format milliseconds as "1:24" for activity detail strings. */
+/** Human-readable label for a project resource row. */
+export function resourceSubject(r: {
+  type: string
+  title?: string | null
+  original_filename?: string | null
+  url?: string | null
+}): string {
+  if (r.type === 'lyrics') return 'Lyrics'
+  if (r.type === 'notes') return 'Notes'
+  if (r.type === 'link') return r.title?.trim() || r.url?.trim() || 'Link'
+  return r.title?.trim() || r.original_filename?.trim() || 'File'
+}
 export function fmtTimecode(ms: number): string {
   const s = Math.round(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`

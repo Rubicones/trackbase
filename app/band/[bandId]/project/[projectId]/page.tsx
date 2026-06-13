@@ -11,14 +11,31 @@ import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
+import { ProjectMetaFields } from '@/components/ProjectMetaFields'
+import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
-import { resolveTrackIconColor, TRACK_ICON_COLORS } from '@/lib/trackIcon'
+import { resolveTrackIconColor } from '@/lib/trackIcon'
+import { trackColorAt, getTrackIconSwatches } from '@/lib/trackPalette'
+import { usePalette } from '@/contexts/PaletteContext'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+// ── Upload state machine ──────────────────────────────────────────────────────
+
+type UploadStatus = 'pending' | 'presigning' | 'uploading' | 'processing' | 'done' | 'error'
+
+interface UploadItem {
+  id: string
+  file: File
+  status: UploadStatus
+  progress: number    // 0-100, meaningful during 'uploading'
+  error?: string
+  tempKey?: string    // saved after presign; if set on error, only processing failed
+}
 
 interface ActiveCommentInput {
   trackId: string
@@ -35,17 +52,48 @@ interface ActiveCommentInput {
 // ─── Audio caches ─────────────────────────────────────────────────────────────
 // Imported from @/lib/waveformCache (shared with StructureEditor).
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Upload helpers ───────────────────────────────────────────────────────────
 
-const TRACK_PALETTE = [
-  { bg: 'rgba(167,139,250,0.12)', bgLight: '#ede9ff', fg: '#a78bfa' },
-  { bg: 'rgba(52,211,153,0.12)', bgLight: '#d4eed4', fg: '#34d399' },
-  { bg: 'rgba(251,191,36,0.12)', bgLight: '#f5e6c8', fg: '#fbbf24' },
-  { bg: 'rgba(248,113,113,0.12)', bgLight: '#fde8e8', fg: '#f87171' },
-  { bg: 'rgba(96,165,250,0.12)', bgLight: '#dbeafe', fg: '#60a5fa' },
-  { bg: 'rgba(232,121,249,0.12)', bgLight: '#fce7f3', fg: '#e879f9' },
-]
-const palette = (i: number) => TRACK_PALETTE[i % TRACK_PALETTE.length]
+const MAX_CONCURRENT_UPLOADS = 3
+
+
+/**
+ * Upload a File directly to a presigned R2 URL via XHR.
+ * Uses XHR (not fetch) because fetch doesn't expose upload progress.
+ */
+function uploadToR2Direct(
+  file: File,
+  presignedUrl: string,
+  onProgress: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+      } else {
+        reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
+      }
+    }
+
+    xhr.onerror = () => reject(new Error('Network error during upload'))
+    xhr.ontimeout = () => reject(new Error('Upload timed out'))
+
+    xhr.open('PUT', presignedUrl)
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.timeout = 30 * 60 * 1000 // 30 min for very large files
+    xhr.send(file)
+  })
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtSize(b: number | null) {
   if (!b) return ''
@@ -450,18 +498,18 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
     >
       {/* Range fill */}
       <div
-        className="absolute inset-0 transition-colors duration-150"
-        style={{ background: tooltipVisible ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.08)' }}
+        className="absolute inset-0 transition-colors duration-150 waveform-accent-fill"
+        style={{ opacity: tooltipVisible ? 1 : 0.55 }}
       />
       {/* Left edge line */}
       <div
-        className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150"
-        style={{ left: 0, width: 1.5, background: '#6366F1', opacity: tooltipVisible ? 1.0 : 0.5 }}
+        className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150 waveform-accent-edge"
+        style={{ left: 0, width: 1.5, opacity: tooltipVisible ? 1.0 : 0.5 }}
       />
       {/* Right edge line */}
       <div
-        className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150"
-        style={{ right: 0, width: 1.5, background: '#6366F1', opacity: tooltipVisible ? 1.0 : 0.5 }}
+        className="absolute top-0 bottom-0 pointer-events-none transition-opacity duration-150 waveform-accent-edge"
+        style={{ right: 0, width: 1.5, opacity: tooltipVisible ? 1.0 : 0.5 }}
       />
       {tooltipVisible && (() => {
         const { left, top } = getAnchor()
@@ -830,31 +878,28 @@ function Waveform({
       {commentMode && dragRect !== null && dragSpan > 0 && (
         <>
           <div
-            className="absolute top-0 bottom-0 z-[4] pointer-events-none"
+            className="absolute top-0 bottom-0 z-[4] pointer-events-none waveform-accent-fill"
             style={{
               left: `${Math.min(dragRect.startX, dragRect.endX) * 100}%`,
               width: `${dragSpan * 100}%`,
-              background: 'rgba(99, 102, 241, 0.15)',
             }}
           />
           {/* Left edge */}
           <div
-            className="absolute top-0 bottom-0 z-[4] pointer-events-none"
+            className="absolute top-0 bottom-0 z-[4] pointer-events-none waveform-accent-edge"
             style={{
               left: `${Math.min(dragRect.startX, dragRect.endX) * 100}%`,
               width: 1.5,
-              background: '#6366F1',
               opacity: 0.8,
             }}
           />
           {/* Right edge */}
           {dragSpan > 0.01 && (
             <div
-              className="absolute top-0 bottom-0 z-[4] pointer-events-none"
+              className="absolute top-0 bottom-0 z-[4] pointer-events-none waveform-accent-edge"
               style={{
                 left: `${Math.max(dragRect.startX, dragRect.endX) * 100}%`,
                 width: 1.5,
-                background: '#6366F1',
                 opacity: 0.8,
               }}
             />
@@ -862,9 +907,8 @@ function Waveform({
           {/* Time label above right edge */}
           {dragSpan > 0.01 && (
             <div
-              className="absolute z-[4] pointer-events-none text-white text-[10px] px-1.5 py-0.5 rounded-[4px] whitespace-nowrap tabular-nums"
+              className="absolute z-[4] pointer-events-none text-[10px] px-1.5 py-0.5 rounded-[4px] whitespace-nowrap tabular-nums waveform-accent-label"
               style={{
-                background: '#6366F1',
                 left: `${Math.max(dragRect.startX, dragRect.endX) * 100}%`,
                 bottom: '100%',
                 transform: 'translateX(-50%)',
@@ -880,13 +924,12 @@ function Waveform({
       {/* z-index 4: active input range highlight (while comment bubble is open) */}
       {thisInputActive && activeInput && !dragRect && (
         <div
-          className="absolute top-0 bottom-0 z-[4] pointer-events-none"
+          className="absolute top-0 bottom-0 z-[4] pointer-events-none waveform-accent-fill"
           style={{
             left: `${activeInput.startXPercent * 100}%`,
             width: `${(activeInput.endXPercent - activeInput.startXPercent) * 100}%`,
-            background: 'rgba(99, 102, 241, 0.15)',
-            borderLeft: '1px solid rgba(99, 102, 241, 0.8)',
-            borderRight: '1px solid rgba(99, 102, 241, 0.8)',
+            borderLeft: '1px solid color-mix(in srgb, var(--accent) 80%, transparent)',
+            borderRight: '1px solid color-mix(in srgb, var(--accent) 80%, transparent)',
           }}
         />
       )}
@@ -929,6 +972,8 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   const [loaded, setLoaded] = useState(0)
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
   const mutedTracksRef = useRef<Set<string>>(new Set())
+  const [soloedTracks, setSoloedTracks] = useState<Set<string>>(new Set())
+  const soloedTracksRef = useRef<Set<string>>(new Set())
   const playingRef = useRef(playing)
   playingRef.current = playing
   const [trackDurations, setTrackDurations] = useState<Map<string, number>>(new Map())
@@ -1056,7 +1101,8 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
     const projBarDurationSec = projSpb * sixthSec
 
     for (const midiTrack of midiTracksRef.current) {
-      if (mutedTracksRef.current.has(midiTrack.id)) continue
+      const hasSolosMidi = soloedTracksRef.current.size > 0
+      if (hasSolosMidi ? !soloedTracksRef.current.has(midiTrack.id) : mutedTracksRef.current.has(midiTrack.id)) continue
       const data = midiTrack.midi_data
       if (!data || !data.notes.length) continue
       try {
@@ -1108,7 +1154,8 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
       // Skip tracks that end before the playback position
       if (trackEndSec <= offset) return
       const g = ctx.createGain()
-      g.gain.value = mutedTracksRef.current.has(id) ? 0 : 1
+      const hasSolos = soloedTracksRef.current.size > 0
+      g.gain.value = (hasSolos ? !soloedTracksRef.current.has(id) : mutedTracksRef.current.has(id)) ? 0 : 1
       g.connect(masterGainRef.current ?? ctx.destination)
       newGains.set(id, g)
       const src = ctx.createBufferSource()
@@ -1176,13 +1223,38 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
     }
   }, [scheduleMidiNotes])
 
+  const toggleSolo = useCallback((id: string) => {
+    const next = new Set(soloedTracksRef.current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    soloedTracksRef.current = next
+    setSoloedTracks(next)
+
+    // Soloing one track affects ALL gain nodes — update them all at once.
+    const hasSolos = next.size > 0
+    gainsRef.current.forEach((g, trackId) => {
+      g.gain.value = (hasSolos ? !next.has(trackId) : mutedTracksRef.current.has(trackId)) ? 0 : 1
+    })
+
+    // Reschedule MIDI notes while playing so solo state takes effect immediately.
+    if (playingRef.current) {
+      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+      midiScheduledRef.current = []
+      const ctx = actxRef.current
+      if (ctx) {
+        const elapsed = ctx.currentTime - startRef.current
+        scheduleMidiNotes(elapsed, ctx.currentTime).catch(console.warn)
+      }
+    }
+  }, [scheduleMidiNotes])
+
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
     if (masterGainRef.current) masterGainRef.current.gain.value = v
     if (typeof window !== 'undefined') localStorage.setItem('trackbase_volume', String(v))
   }, [])
 
-  return { playing, currentTime, duration, loaded, total: audioTracks.length, mutedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute, audioContext: actxRef, trackDurations }
+  return { playing, currentTime, duration, loaded, total: audioTracks.length, mutedTracks, soloedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute, toggleSolo, audioContext: actxRef, trackDurations }
 }
 
 // ─── Action button ────────────────────────────────────────────────────────────
@@ -1243,7 +1315,6 @@ function ActionButton({
 // ─── Icon picker popover ──────────────────────────────────────────────────────
 
 const ICON_EMOJIS = ['🥁','🎸','🎹','🎤','🎵','🎷','🎺','🎻','🪗','🎙','🔊','✨']
-const ICON_COLORS = TRACK_ICON_COLORS
 
 function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   trackId: string
@@ -1253,7 +1324,9 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   onClose: () => void
 }) {
   const { resolvedTheme } = useTheme()
+  const { palette: colorPalette } = usePalette()
   const isDark = resolvedTheme !== 'light'
+  const iconColors = getTrackIconSwatches(colorPalette)
   const [emoji, setEmoji] = useState(initialEmoji ?? '🎵')
   const [color, setColor] = useState(() => resolveTrackIconColor(initialColor))
   const [saving, setSaving] = useState(false)
@@ -1313,10 +1386,10 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
       {/* Color row */}
       <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', margin: '0 0 8px' }}>Color</p>
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {ICON_COLORS.map(c => (
+        {iconColors.map(c => (
           <button key={c} onClick={() => setColor(c)} style={{
             width: 22, height: 22, borderRadius: '50%', background: resolveTrackIconColor(c, isDark),
-            border: `2px solid ${color === c ? 'white' : 'transparent'}`,
+            border: `2px solid ${color === c ? 'var(--accent)' : 'transparent'}`,
             cursor: 'pointer', flexShrink: 0,
             transform: color === c ? 'scale(1.1)' : 'scale(1)',
             transition: 'transform 0.12s, border-color 0.12s',
@@ -1341,7 +1414,7 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
         }}>Cancel</button>
         <button onClick={handleApply} disabled={saving} style={{
           background: 'var(--accent)', border: 'none',
-          borderRadius: 6, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+          borderRadius: 6, padding: '4px 12px', color: 'var(--on-accent)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
           opacity: saving ? 0.6 : 1,
         }}>{saving ? '…' : 'Apply'}</button>
       </div>
@@ -1352,19 +1425,19 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
 
 function TrackRow({
-  track, index, muted, changed, currentTimeMs,
+  track, index, muted, soloed, changed, currentTimeMs,
   commentMode, activeInput, audioReady,
-  onToggleMute, onReplace,
+  onToggleMute, onToggleSolo, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onIconUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
 }: {
-  track: Track; index: number; muted: boolean; changed: boolean
+  track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   currentTimeMs: number; commentMode: boolean
   activeInput: ActiveCommentInput | null; audioReady: boolean
-  onToggleMute: () => void; onReplace: (f: File) => void
+  onToggleMute: () => void; onToggleSolo: () => void; onReplace: (f: File) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
@@ -1388,9 +1461,10 @@ function TrackRow({
   runtimeDurationMs: number
 }) {
   const { resolvedTheme } = useTheme()
+  const { palette: colorPalette } = usePalette()
   const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
-  const col = palette(index)
+  const col = trackColorAt(index, colorPalette, isDark)
   const instrument = detectInstrument(track.name)
   const isMidi = track.file_type === 'midi'
 
@@ -1545,7 +1619,7 @@ function TrackRow({
       data-track-row
       className="relative grid items-center h-[62px] gap-3 px-[22px] overflow-visible"
       style={{
-        gridTemplateColumns: '20px 32px 118px 1fr 22px auto',
+        gridTemplateColumns: '20px 32px 118px 1fr 22px 22px auto',
         background: rowBg,
         boxShadow: isOffsetDragging
           ? '0 2px 8px rgba(0,0,0,0.15)'
@@ -1750,7 +1824,7 @@ function TrackRow({
               <div style={{
                 position: 'absolute', left: `${snapPct}%`, top: 2, zIndex: 10,
                 transform: 'translateX(-50%)', pointerEvents: 'none',
-                background: 'var(--accent)', color: 'white',
+                background: 'var(--accent)', color: 'var(--on-accent)',
                 fontSize: 10, padding: '2px 6px', borderRadius: 4, whiteSpace: 'nowrap',
               }}>Bar {dragPreviewBar + 1}</div>
             </>
@@ -1763,6 +1837,16 @@ function TrackRow({
         className={`w-[22px] h-[22px] rounded-md text-[10px] font-medium transition-all duration-150 ${muted ? 'text-accent' : 'text-dim hover:text-muted'}`}
         style={{ border: muted ? '0.5px solid var(--accent)' : '0.5px solid var(--border-light)', background: muted ? 'rgba(99,102,241,0.1)' : 'transparent' }}
       >M</button>
+
+      <button
+        onClick={onToggleSolo}
+        className={`w-[22px] h-[22px] rounded-md text-[10px] font-medium transition-all duration-150 ${soloed ? '' : 'text-dim hover:text-muted'}`}
+        style={{
+          border: soloed ? '0.5px solid var(--amber, #f59e0b)' : '0.5px solid var(--border-light)',
+          background: soloed ? 'rgba(245,158,11,0.12)' : 'transparent',
+          color: soloed ? 'var(--amber, #f59e0b)' : undefined,
+        }}
+      >S</button>
 
       {/* Action buttons / inline delete confirm */}
       <div className="flex items-center gap-1 shrink-0">
@@ -1812,9 +1896,9 @@ function TrackRow({
             )}
             <ActionButton
               tooltip="Replace track"
-              color="#6366F1"
-              hoverBg="rgba(99,102,241,0.10)"
-              hoverBorderColor="rgba(99,102,241,0.30)"
+              color="var(--accent)"
+              hoverBg="color-mix(in srgb, var(--accent) 10%, transparent)"
+              hoverBorderColor="color-mix(in srgb, var(--accent) 30%, transparent)"
               onClick={() => fileRef.current?.click()}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1892,57 +1976,143 @@ function TrackRow({
   )
 }
 
-// ─── Skeleton track row (DnD uploads) ────────────────────────────────────────
+// ─── Upload progress row ──────────────────────────────────────────────────────
 
-function SkeletonTrackRow({ name, progress, error, errorMsg, onRetry }: {
-  name: string; progress: number; error: boolean; errorMsg: string; onRetry: () => void
+function UploadRow({ upload, onRetry, onDismiss }: {
+  upload: UploadItem
+  onRetry: () => void
+  onDismiss: () => void
 }) {
+  const { file, status, progress, error } = upload
+  const name = file.name.replace(/\.[^.]+$/, '')
+  const isMidi = file.name.endsWith('.mid') || file.name.endsWith('.midi')
+
+  // Subtitle line shown under the track name
+  let subtitle: React.ReactNode = null
+  if (status === 'pending') {
+    subtitle = <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Waiting…</span>
+  } else if (status === 'presigning') {
+    subtitle = <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Preparing upload…</span>
+  } else if (status === 'uploading') {
+    const loaded = Math.round(file.size * progress / 100)
+    subtitle = (
+      <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+        {formatBytes(loaded)} / {formatBytes(file.size)}
+      </span>
+    )
+  } else if (status === 'processing') {
+    subtitle = (
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+        {isMidi ? 'Parsing MIDI…' : 'Converting to FLAC…'}
+      </span>
+    )
+  } else if (status === 'done') {
+    subtitle = <span style={{ fontSize: 11, color: '#22c55e' }}>✓ Done</span>
+  } else if (status === 'error') {
+    subtitle = <span style={{ fontSize: 11, color: '#ef4444' }}>{error || 'Upload failed'}</span>
+  }
+
+  // Waveform-area progress bar (1fr column)
+  let waveformArea: React.ReactNode = null
+  if (status === 'uploading') {
+    waveformArea = (
+      <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+        <div style={{
+          width: `${progress}%`, height: '100%',
+          background: 'var(--accent)', borderRadius: 3,
+          transition: 'width 0.2s ease',
+        }} />
+      </div>
+    )
+  } else if (status === 'processing') {
+    // Bar is 100% filled (upload done); shimmer overlay indicates ongoing work
+    waveformArea = (
+      <div style={{ height: 6, borderRadius: 3, background: 'var(--accent)', overflow: 'hidden', position: 'relative' }}>
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
+          backgroundSize: '200% 100%',
+          animation: 'shimmer 1.2s infinite linear',
+        }} />
+      </div>
+    )
+  } else if (status === 'pending' || status === 'presigning') {
+    waveformArea = (
+      <div className="animate-pulse" style={{ height: 6, borderRadius: 3, background: 'var(--border)' }} />
+    )
+  }
+
   return (
+    // Same grid columns as TrackRow so elements align with real track rows
     <div
-      className="flex items-center h-[72px] px-[22px] gap-3"
+      className="grid items-center h-[62px] gap-3 px-[22px]"
       style={{
+        gridTemplateColumns: '20px 32px 118px 1fr 22px 22px auto',
         borderBottom: '0.5px solid var(--border)',
-        borderLeft: error ? '3px solid #ef4444' : undefined,
+        borderLeft: status === 'error' ? '3px solid #ef4444' : undefined,
       }}
     >
+      {/* Index placeholder */}
+      <div />
+
       {/* Icon placeholder */}
-      <div className="w-8 h-8 rounded-lg shrink-0 animate-pulse" style={{ background: 'var(--bg-card)' }} />
-      {/* Name + progress */}
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium truncate mb-1" style={{ color: 'var(--text-sec)' }}>{name}</div>
-        {error ? (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px]" style={{ color: '#ef4444' }}>Upload failed{errorMsg ? ` — ${errorMsg}` : ''}</span>
+      <div className="w-8 h-8 rounded-lg animate-pulse" style={{ background: 'var(--bg-card)' }} />
+
+      {/* Name + status line */}
+      <div style={{ minWidth: 0 }}>
+        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-sec)', marginBottom: 3 }}>
+          {name}
+        </div>
+        {subtitle}
+      </div>
+
+      {/* Progress bar — occupies the same 1fr waveform column */}
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ flex: 1 }}>
+          {waveformArea}
+        </div>
+        {status === 'uploading' && (
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 8, flexShrink: 0 }}>
+            {progress}%
+          </span>
+        )}
+      </div>
+
+      {/* M / S button placeholders */}
+      <div />
+      <div />
+
+      {/* Error actions or empty */}
+      <div>
+        {status === 'error' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <button
               onClick={onRetry}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 11 }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 8px', borderRadius: 6,
+                border: '0.5px solid #ef4444', color: '#ef4444',
+                background: 'transparent', cursor: 'pointer', fontSize: 11,
+              }}
             >
-              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 5.5a4 4 0 1 0 .5-2" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M1.5 2v3.5H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M1.5 5.5a4 4 0 1 0 .5-2" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                <path d="M1.5 2v3.5H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
               Retry
             </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-[3px] rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
-              <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progress}%`, background: 'var(--accent)' }} />
-            </div>
-            <span className="text-[11px] shrink-0" style={{ color: 'var(--text-dim)' }}>
-              {progress > 0 ? `${progress}%` : 'Uploading…'}
-            </span>
+            <button
+              onClick={onDismiss}
+              style={{
+                width: 22, height: 22, borderRadius: 6,
+                border: '0.5px solid var(--border)', background: 'transparent',
+                cursor: 'pointer', color: 'var(--text-dim)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
+              }}
+            >×</button>
           </div>
         )}
       </div>
-      {/* Waveform shimmer */}
-      {!error && (
-        <div className="rounded-md shrink-0 overflow-hidden" style={{ width: 160, height: 40, background: 'var(--bg-card)', position: 'relative' }}>
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--accent) 20%, transparent) 50%, transparent 100%)',
-            backgroundSize: '200% 100%',
-            animation: 'shimmer 1.5s infinite linear',
-          }} />
-        </div>
-      )}
     </div>
   )
 }
@@ -2018,13 +2188,13 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
       <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play" style={{ flexShrink: 0, marginLeft: 0 }}>
         {isLoading ? (
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
-            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.25" />
+            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         ) : playing ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
         ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><path d="M3.5 2l8 5-8 5V2z" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2l8 5-8 5V2z" /></svg>
         )}
       </button>
 
@@ -2124,13 +2294,15 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
   storageUsed: number
   storageLimit: number
   commentCounts: Record<string, number>
+  projectId: string
+  projectName: string
 }) {
   function dotColor(v: Version) {
     return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
@@ -2238,7 +2410,9 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
         ))}
       </div>
 
-      <div style={{ height: '0.5px', background: 'var(--border)', margin: '0 10px' }} />
+      <ProjectSidebarResources projectId={projectId} projectName={projectName} />
+
+      <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 10px 0' }} />
       <div className="px-4 py-3">
         <div className="flex justify-between mb-1.5">
           <span className="text-[10px] text-dim">Storage</span>
@@ -2304,7 +2478,7 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showBranchModal, setShowBranchModal] = useState(false)
-  const [uploading, setUploading] = useState(false)
+  const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [commentMode, setCommentMode] = useState(false)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
@@ -2323,8 +2497,8 @@ export default function ProjectPage() {
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false)
   const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
-  const [skeletonTracks, setSkeletonTracks] = useState<Array<{ id: string; name: string; progress: number; error: boolean; errorMsg: string }>>([])
-  const [dndProgress, setDndProgress] = useState<{ done: number; total: number } | null>(null)
+  const [uploads, setUploads] = useState<UploadItem[]>([])
+  const uploadsRef = useRef<UploadItem[]>([])
   // Track being dragged (for dimming others)
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null)
 
@@ -2620,83 +2794,185 @@ export default function ProjectPage() {
     if (player.playing) player.seek(player.currentTime, updatedTracks)
   }
 
-  async function doUploadTrack(file: File, position: number) {
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('name', file.name.replace(/\.[^/.]+$/, ''))
-    fd.append('position', String(position))
-    const res = await fetch(`/api/versions/${activeVersionId}/tracks/upload`, { method: 'POST', body: fd })
-    if (!res.ok) throw new Error((await res.json()).error ?? res.statusText)
+  // ── Upload state helpers ────────────────────────────────────────────────────
+
+  function mutUploads(fn: (prev: UploadItem[]) => UploadItem[]) {
+    // Compute next from ref (synchronous), update ref immediately so subsequent
+    // reads in the same tick see the latest value, then enqueue a React re-render.
+    const next = fn(uploadsRef.current)
+    uploadsRef.current = next
+    setUploads(next)
   }
 
-  async function handleAddTrack(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    if (!files.length || !activeVersionId) return
-    e.target.value = ''
-    setUploading(true)
-    const errors: string[] = []
+  function updateUpload(id: string, patch: Partial<UploadItem>) {
+    mutUploads(prev => prev.map(u => u.id === id ? { ...u, ...patch } : u))
+  }
+
+  function removeUpload(id: string) {
+    mutUploads(prev => prev.filter(u => u.id !== id))
+  }
+
+  // ── Core upload flow ────────────────────────────────────────────────────────
+
+  async function uploadFile(upload: UploadItem) {
+    if (!activeVersionId) return
     try {
-      for (let i = 0; i < files.length; i++) {
-        try {
-          await doUploadTrack(files[i], activeTracks.length + i)
-        } catch (err) {
-          errors.push(`${files[i].name}: ${err instanceof Error ? err.message : 'Upload failed'}`)
-        }
+      // Step 1: Get presigned URL
+      updateUpload(upload.id, { status: 'presigning', error: undefined })
+
+      const presignRes = await fetch(`/api/versions/${activeVersionId}/tracks/presign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: upload.file.name,
+          fileSize: upload.file.size,
+          contentType: upload.file.type || 'application/octet-stream',
+        }),
+      })
+      if (!presignRes.ok) {
+        const msg = (await presignRes.json().catch(() => ({}))).error ?? 'Failed to prepare upload'
+        throw new Error(msg)
       }
+      const { presignedUrl, tempKey } = await presignRes.json()
+
+      // Step 2: Upload directly to R2
+      updateUpload(upload.id, { status: 'uploading', tempKey, progress: 0 })
+
+      await uploadToR2Direct(upload.file, presignedUrl, (percent) => {
+        updateUpload(upload.id, { progress: percent })
+      })
+
+      // Step 3: Process on server (convert, hash, dedup, insert DB)
+      updateUpload(upload.id, { status: 'processing', progress: 100 })
+
+      const isMidi = upload.file.name.endsWith('.mid') || upload.file.name.endsWith('.midi')
+      const processRes = await fetch(`/api/versions/${activeVersionId}/tracks/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tempKey,
+          originalFilename: upload.file.name,
+          fileSize: upload.file.size,
+          mimetype: upload.file.type || 'application/octet-stream',
+          ...(isMidi ? { midiStartBar: 0 } : {}),
+        }),
+      })
+      if (!processRes.ok) {
+        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        throw new Error(msg)
+      }
+
+      updateUpload(upload.id, { status: 'done' })
       cache.invalidate(activeVersionId)
       await loadProject()
-      if (errors.length) alert(errors.join('\n'))
+      setTimeout(() => removeUpload(upload.id), 1500)
+
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Upload failed')
+      updateUpload(upload.id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Upload failed',
+      })
     } finally {
-      setUploading(false)
+      // After this upload finishes/errors, start any queued uploads
+      setTimeout(() => processUploadQueue(), 0)
     }
   }
 
-  // Sequential upload with per-file skeleton rows (used by DnD)
-  async function handleUploadFiles(files: File[]) {
-    if (!files.length || !activeVersionId) return
-    setDndProgress({ done: 0, total: files.length })
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      const skeletonId = crypto.randomUUID()
-      const baseName = file.name.replace(/\.[^.]+$/, '')
-      setSkeletonTracks(prev => [...prev, { id: skeletonId, name: baseName, progress: 0, error: false, errorMsg: '' }])
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          xhr.upload.addEventListener('progress', ev => {
-            if (ev.lengthComputable) {
-              const p = Math.round((ev.loaded / ev.total) * 100)
-              setSkeletonTracks(prev => prev.map(s => s.id === skeletonId ? { ...s, progress: p } : s))
-            }
-          })
-          xhr.addEventListener('load', () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve()
-            else {
-              try { reject(new Error(JSON.parse(xhr.responseText).error ?? 'Upload failed')) }
-              catch { reject(new Error('Upload failed')) }
-            }
-          })
-          xhr.addEventListener('error', () => reject(new Error('Network error')))
-          const fd = new FormData()
-          fd.append('file', file)
-          fd.append('name', baseName)
-          fd.append('position', String(activeTracks.length + i))
-          xhr.open('POST', `/api/versions/${activeVersionId}/tracks/upload`)
-          xhr.send(fd)
-        })
-        setSkeletonTracks(prev => prev.filter(s => s.id !== skeletonId))
-        setDndProgress(d => d ? { done: d.done + 1, total: d.total } : null)
-        cache.invalidate(activeVersionId)
-        await loadProject()
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Upload failed'
-        setSkeletonTracks(prev => prev.map(s => s.id === skeletonId ? { ...s, error: true, errorMsg: msg } : s))
-        setDndProgress(d => d ? { done: d.done + 1, total: d.total } : null)
+  function processUploadQueue() {
+    const current = uploadsRef.current
+    const active = current.filter(u =>
+      u.status === 'presigning' || u.status === 'uploading' || u.status === 'processing'
+    )
+    const pending = current.filter(u => u.status === 'pending')
+    const slots = Math.max(0, MAX_CONCURRENT_UPLOADS - active.length)
+    pending.slice(0, slots).forEach(u => uploadFile(u))
+  }
+
+  // ── Retry logic ─────────────────────────────────────────────────────────────
+
+  async function retryProcessing(upload: UploadItem) {
+    if (!activeVersionId || !upload.tempKey) return
+    try {
+      updateUpload(upload.id, { status: 'processing', progress: 100, error: undefined })
+      const processRes = await fetch(`/api/versions/${activeVersionId}/tracks/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tempKey: upload.tempKey,
+          originalFilename: upload.file.name,
+          fileSize: upload.file.size,
+          mimetype: upload.file.type || 'application/octet-stream',
+        }),
+      })
+      if (!processRes.ok) {
+        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        throw new Error(msg)
       }
+      updateUpload(upload.id, { status: 'done' })
+      cache.invalidate(activeVersionId)
+      await loadProject()
+      setTimeout(() => removeUpload(upload.id), 1500)
+    } catch (err) {
+      updateUpload(upload.id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Processing failed',
+      })
     }
-    setDndProgress(null)
+  }
+
+  function retryUpload(uploadId: string) {
+    const upload = uploadsRef.current.find(u => u.id === uploadId)
+    if (!upload) return
+
+    if (upload.tempKey) {
+      // R2 upload succeeded — only processing failed; skip re-upload
+      retryProcessing(upload)
+    } else {
+      // Full retry from scratch
+      const reset: UploadItem = { ...upload, status: 'pending', progress: 0, error: undefined }
+      updateUpload(uploadId, { status: 'pending', progress: 0, error: undefined })
+      const active = uploadsRef.current.filter(u =>
+        u.status === 'presigning' || u.status === 'uploading' || u.status === 'processing'
+      )
+      if (active.length < MAX_CONCURRENT_UPLOADS) {
+        uploadFile(reset)
+      }
+      // else processUploadQueue() will pick it up when a slot opens
+    }
+  }
+
+  // ── Entry points ─────────────────────────────────────────────────────────────
+
+  const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200 MB
+
+  function handleUploadFiles(files: File[]) {
+    if (!files.length || !activeVersionId) return
+
+    const newUploads: UploadItem[] = []
+    for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        setToast(`${file.name} is too large (max 200MB)`)
+        setTimeout(() => setToast(null), 4000)
+        continue
+      }
+      newUploads.push({ id: crypto.randomUUID(), file, status: 'pending', progress: 0 })
+    }
+    if (!newUploads.length) return
+
+    mutUploads(prev => [...prev, ...newUploads])
+
+    // Kick off up to MAX_CONCURRENT_UPLOADS immediately
+    const active = uploadsRef.current.filter(u =>
+      u.status === 'presigning' || u.status === 'uploading' || u.status === 'processing'
+    )
+    const slots = Math.max(0, MAX_CONCURRENT_UPLOADS - active.length)
+    newUploads.slice(0, slots).forEach(u => uploadFile(u))
+  }
+
+  function handleAddTrack(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []).filter(isAcceptedFile)
+    e.target.value = ''
+    if (files.length) handleUploadFiles(files)
   }
 
   // Drag-and-drop helpers
@@ -2882,7 +3158,7 @@ export default function ProjectPage() {
           Export WAV
         </a>
         <button onClick={() => setShowBranchModal(true)} className="btn-accent">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="white" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="white" strokeWidth="1" strokeLinecap="round"/></svg>
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
           Save version
         </button>
         <ThemeToggle />
@@ -2900,6 +3176,8 @@ export default function ProjectPage() {
           storageUsed={storageUsed}
           storageLimit={storageLimit}
           commentCounts={commentCounts}
+          projectId={projectId}
+          projectName={project.name}
         />
 
         <main
@@ -2982,28 +3260,8 @@ export default function ProjectPage() {
               <button
                 onClick={() => setEditStructure(p => !p)}
                 disabled={activeTracks.length === 0}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  padding: '4px 10px', borderRadius: 6, fontSize: 11,
-                  background: sections.length > 0 ? 'rgba(99,102,241,0.08)' : 'transparent',
-                  border: sections.length > 0
-                    ? '0.5px solid rgba(99,102,241,0.3)'
-                    : '0.5px solid var(--border-light)',
-                  color: sections.length > 0 ? 'var(--accent)' : 'var(--text-muted)',
-                  cursor: activeTracks.length === 0 ? 'not-allowed' : 'pointer',
-                  opacity: activeTracks.length === 0 ? 0.4 : 1,
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => {
-                  if (activeTracks.length > 0) {
-                    e.currentTarget.style.borderColor = 'var(--accent)'
-                    e.currentTarget.style.color = 'var(--accent)'
-                  }
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = sections.length > 0 ? 'rgba(99,102,241,0.3)' : 'var(--border-light)'
-                  e.currentTarget.style.color = sections.length > 0 ? 'var(--accent)' : 'var(--text-muted)'
-                }}
+                className="btn-structure-toggle"
+                data-active={sections.length > 0 ? 'true' : 'false'}
               >
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                   <rect x="1" y="1" width="9" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
@@ -3117,11 +3375,12 @@ export default function ProjectPage() {
               ) : activeTracks.map((t, i) => (
                 <TrackRow
                   key={t.id} track={t} index={i}
-                  muted={player.mutedTracks.has(t.id)} changed={isChanged(t)}
+                  muted={player.mutedTracks.has(t.id)} soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
                   currentTimeMs={player.currentTime * 1000}
                   commentMode={commentMode} activeInput={activeCommentInput}
                   audioReady={player.loaded >= player.total && player.total > 0}
                   onToggleMute={() => player.toggleMute(t.id)}
+                  onToggleSolo={() => player.toggleSolo(t.id)}
                   onReplace={f => handleReplaceTrack(t, f)}
                   onCommentPlace={setActiveCommentInput}
                   onCommentDelete={handleCommentDelete}
@@ -3146,15 +3405,26 @@ export default function ProjectPage() {
                   runtimeDurationMs={effectiveTrackDurationMs(t)}
                 />
               ))}
-              {/* Skeleton track rows for DnD uploads */}
-              {skeletonTracks.map(s => (
-                <SkeletonTrackRow
-                  key={s.id}
-                  name={s.name}
-                  progress={s.progress}
-                  error={s.error}
-                  errorMsg={s.errorMsg}
-                  onRetry={() => {/* retry handled by re-triggering upload */}}
+              {/* Upload progress rows */}
+              {uploads.length >= 2 && uploads.some(u => u.status !== 'done' && u.status !== 'error') && (
+                <div style={{ padding: '6px 22px', background: 'var(--bg-card)', borderBottom: '0.5px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>
+                    Uploading {uploads.filter(u => u.status !== 'done' && u.status !== 'error').length} files…
+                  </span>
+                  <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${uploads.reduce((s, u) => s + u.progress, 0) / Math.max(uploads.length, 1)}%`,
+                      height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s ease',
+                    }} />
+                  </div>
+                </div>
+              )}
+              {uploads.map(u => (
+                <UploadRow
+                  key={u.id}
+                  upload={u}
+                  onRetry={() => retryUpload(u.id)}
+                  onDismiss={() => removeUpload(u.id)}
                 />
               ))}
             </div>
@@ -3185,12 +3455,20 @@ export default function ProjectPage() {
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
                 )}
                 <span className="text-[12px]">
-                  {isDraggingAddRow ? 'Drop to add track' : uploading ? 'Uploading…' : 'Add track (WAV / MP3 / MIDI)'}
+                  {isDraggingAddRow ? 'Drop to add track' : 'Add track (WAV / MP3 / MIDI)'}
                 </span>
               </button>
-              {dndProgress && dndProgress.total > 1 && (
+              {uploads.some(u => u.status !== 'done' && u.status !== 'error') && (
                 <p className="text-[11px] mt-1" style={{ color: 'var(--text-dim)' }}>
-                  Uploading {dndProgress.done + 1} of {dndProgress.total} files…
+                  {uploads.filter(u => u.status !== 'done' && u.status !== 'error').length > 1
+                    ? `Uploading ${uploads.filter(u => u.status !== 'done' && u.status !== 'error').length} files…`
+                    : (() => {
+                        const u = uploads.find(u => u.status !== 'done' && u.status !== 'error')
+                        return u?.status === 'uploading'
+                          ? `Uploading… ${u.progress}%`
+                          : u?.status === 'processing' ? 'Processing…' : 'Preparing…'
+                      })()
+                  }
                 </p>
               )}
               <input ref={fileInputRef} type="file"
@@ -3203,9 +3481,15 @@ export default function ProjectPage() {
 
           {/* Footer */}
           <div className="flex items-center justify-between px-[22px] py-3 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
-            <div className="flex items-center gap-5">
-              {project.bpm && <span className="text-[11px] text-dim">BPM <span className="text-soft font-medium">{project.bpm}</span></span>}
-              {project.key && <span className="text-[11px] text-dim">Key <span className="text-soft font-medium">{project.key}</span></span>}
+            <div className="flex items-center gap-5 flex-wrap">
+              {project && (
+                <ProjectMetaFields
+                  projectId={projectId}
+                  bpm={project.bpm}
+                  keySig={project.key}
+                  onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
+                />
+              )}
               <span className="text-[11px] text-dim">Tracks <span className="text-soft font-medium">{activeTracks.length}</span></span>
             </div>
             <div className="flex items-center gap-2">

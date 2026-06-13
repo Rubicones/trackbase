@@ -56,6 +56,68 @@ export function getBarMath(project: Project, totalDurationMs: number) {
   return { beatsPerBar, barDurationMs, totalBars }
 }
 
+/** Bordered popover caret — outer triangle for stroke, inner for fill. */
+function PopoverCaret({
+  side,
+  left,
+  borderColor = 'var(--accent)',
+  fillColor = 'var(--bg-surface)',
+}: {
+  side: 'top' | 'bottom'
+  left: number
+  borderColor?: string
+  fillColor?: string
+}) {
+  const fill = 5
+  const stroke = 6
+  const shared = {
+    position: 'absolute' as const,
+    width: 0,
+    height: 0,
+    pointerEvents: 'none' as const,
+  }
+  const borderTri = side === 'top'
+    ? {
+        ...shared,
+        top: -stroke,
+        left: left - stroke,
+        borderLeft: `${stroke}px solid transparent`,
+        borderRight: `${stroke}px solid transparent`,
+        borderBottom: `${stroke}px solid ${borderColor}`,
+      }
+    : {
+        ...shared,
+        bottom: -stroke,
+        left: left - stroke,
+        borderLeft: `${stroke}px solid transparent`,
+        borderRight: `${stroke}px solid transparent`,
+        borderTop: `${stroke}px solid ${borderColor}`,
+      }
+  const fillTri = side === 'top'
+    ? {
+        ...shared,
+        top: -fill,
+        left: left - fill,
+        borderLeft: `${fill}px solid transparent`,
+        borderRight: `${fill}px solid transparent`,
+        borderBottom: `${fill}px solid ${fillColor}`,
+      }
+    : {
+        ...shared,
+        bottom: -fill,
+        left: left - fill,
+        borderLeft: `${fill}px solid transparent`,
+        borderRight: `${fill}px solid transparent`,
+        borderTop: `${fill}px solid ${fillColor}`,
+      }
+  return (
+    <>
+      <div style={borderTri} />
+      <div style={fillTri} />
+    </>
+  )
+}
+
 // ─── Name picker portal (new section placement) ───────────────────────────────
 
 function NamePickerPortal({
@@ -118,19 +180,9 @@ function NamePickerPortal({
       zIndex: 200, boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
     }}>
       {flippedPicker ? (
-        <div style={{
-          position: 'absolute', top: -5, left: caret - 5,
-          width: 0, height: 0,
-          borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-          borderBottom: '5px solid var(--bg-surface)', pointerEvents: 'none',
-        }} />
+        <PopoverCaret side="top" left={caret} />
       ) : (
-        <div style={{
-          position: 'absolute', bottom: -5, left: caret - 5,
-          width: 0, height: 0,
-          borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-          borderTop: '5px solid var(--bg-surface)', pointerEvents: 'none',
-        }} />
+        <PopoverCaret side="bottom" left={caret} />
       )}
       <div style={{ fontSize: 10, color: 'var(--accent)', marginBottom: 8, fontWeight: 500 }}>
         Bars {selectionStart + 1}–{selectionEnd}
@@ -180,7 +232,7 @@ function NamePickerPortal({
               disabled={!customName.trim()}
               style={{
                 flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11, fontWeight: 500,
-                background: 'var(--accent)', border: 'none', color: 'white', cursor: 'pointer',
+                background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', cursor: 'pointer',
                 opacity: customName.trim() ? 1 : 0.4,
               }}
             >Confirm</button>
@@ -364,19 +416,9 @@ function SectionEditPopover({
     }}>
       {/* caret */}
       {flippedEdit ? (
-        <div style={{
-          position: 'absolute', top: -5, left: caret - 5,
-          width: 0, height: 0,
-          borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-          borderBottom: '5px solid var(--bg-surface)', pointerEvents: 'none',
-        }} />
+        <PopoverCaret side="top" left={caret} />
       ) : (
-        <div style={{
-          position: 'absolute', bottom: -5, left: caret - 5,
-          width: 0, height: 0,
-          borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-          borderTop: '5px solid var(--bg-surface)', pointerEvents: 'none',
-        }} />
+        <PopoverCaret side="bottom" left={caret} />
       )}
 
       {/* bar range */}
@@ -511,7 +553,7 @@ function SectionEditPopover({
                     onClick={handleRunDetection}
                     style={{
                       padding: '3px 10px', borderRadius: 5, fontSize: 10, fontWeight: 500,
-                      background: 'var(--accent)', border: 'none', color: '#fff',
+                      background: 'var(--accent)', border: 'none', color: 'var(--on-accent)',
                       cursor: selectedTrackIds.size === 0 ? 'not-allowed' : 'pointer',
                       opacity: selectedTrackIds.size === 0 ? 0.45 : 1,
                     }}
@@ -571,7 +613,7 @@ function SectionEditPopover({
             }}>Back</button>
             <button onClick={handleCustomConfirm} disabled={!customName.trim()} style={{
               flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11, fontWeight: 500,
-              background: 'var(--accent)', border: 'none', color: 'white', cursor: 'pointer',
+              background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', cursor: 'pointer',
               opacity: customName.trim() ? 1 : 0.4,
             }}>Save</button>
           </div>
@@ -643,13 +685,13 @@ function StructureTransport({
       <button onClick={playing ? onPause : onPlay} disabled={totalTracks === 0} className="btn-play">
         {isLoading ? (
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
-            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.25" />
+            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         ) : playing ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
         ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><path d="M3.5 2l8 5-8 5V2z" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2l8 5-8 5V2z" /></svg>
         )}
       </button>
       <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
@@ -715,13 +757,7 @@ function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
       zIndex: 300, boxShadow: '0 4px 20px rgba(0,0,0,0.28)',
       pointerEvents: 'none',
     }}>
-      <div style={{
-        position: 'absolute', bottom: -5, left: caret - 5,
-        width: 0, height: 0,
-        borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-        borderTop: `5px solid ${c.fg}`,
-        pointerEvents: 'none',
-      }} />
+      <PopoverCaret side="bottom" left={caret} borderColor={c.fg} />
       <div style={{ fontSize: 10, color: c.fg, fontWeight: 600, marginBottom: 5 }}>
         {sectionLabel(section)}
       </div>
@@ -1160,6 +1196,11 @@ export default function StructureOverlay({
         )
       )
     }
+    try {
+      await fetch(`/api/versions/${versionId}/structure/submit`, { method: 'POST' })
+    } catch {
+      // non-fatal
+    }
     onEditModeChange(false)
   }
 
@@ -1224,10 +1265,7 @@ export default function StructureOverlay({
                   color: 'var(--text-muted)', cursor: 'pointer',
                 }}>Cancel</button>
               )}
-              <button onClick={handleDone} style={{
-                padding: '0 14px', height: 26, borderRadius: 5, fontSize: 11, fontWeight: 500,
-                background: 'var(--accent)', border: 'none', color: 'white', cursor: 'pointer',
-              }}>Done</button>
+              <button onClick={handleDone} className="btn-accent-sm">Done</button>
             </div>
           </div>
         )}

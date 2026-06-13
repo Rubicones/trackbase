@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
+import { projectTimelineDurationMs } from '@/lib/trackMerge'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -58,7 +59,7 @@ export async function GET(
         .order('start_bar', { ascending: true }),
       supabase
         .from('tracks')
-        .select('duration_ms')
+        .select('duration_ms, start_bar, midi_start_bar, file_type, midi_data')
         .eq('version_id', mainVersion.id),
     ])
 
@@ -66,9 +67,10 @@ export async function GET(
     if (tracksRes.error) throw tracksRes.error
 
     const tracks = tracksRes.data ?? []
-    const totalDurationMs = tracks.reduce(
-      (sum, t) => sum + (t.duration_ms ?? 0),
-      0
+    const totalDurationMs = projectTimelineDurationMs(
+      tracks,
+      project.bpm,
+      project.time_signature,
     )
 
     return NextResponse.json({

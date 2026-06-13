@@ -11,6 +11,9 @@ import { resolveTrackIconColor } from '@/lib/trackIcon'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import { ResourcesCard } from '@/components/ResourcesCard'
+import { ProjectMetaFields } from '@/components/ProjectMetaFields'
+import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1093,13 +1096,13 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, onPlay, onPa
       <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play" style={{ flexShrink: 0, marginLeft: 0 }}>
         {isLoading ? (
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="white" strokeWidth="1.5" strokeOpacity="0.25" />
-            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.25" />
+            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         ) : playing ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
         ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="white"><path d="M3.5 2l8 5-8 5V2z" /></svg>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2l8 5-8 5V2z" /></svg>
         )}
       </button>
 
@@ -1147,12 +1150,14 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, projectId, projectName }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
   storageUsed: number
   storageLimit: number
+  projectId: string
+  projectName: string
 }) {
   function dotColor(v: Version) {
     return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
@@ -1251,6 +1256,8 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
           </button>
         ))}
       </div>
+
+      <ProjectSidebarResources projectId={projectId} projectName={projectName} />
 
       <div style={{ height: '0.5px', background: 'var(--border)', margin: '0 10px' }} />
       <div className="px-4 py-3">
@@ -1584,7 +1591,7 @@ export default function ProjectPage() {
           Export WAV
         </a>
         <button onClick={() => setShowBranchModal(true)} className="btn-accent">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="white" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="white" strokeWidth="1" strokeLinecap="round"/></svg>
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
           Save version
         </button>
         <ThemeToggle />
@@ -1601,6 +1608,8 @@ export default function ProjectPage() {
           mergeCheckingId={mergeCheckingId}
           storageUsed={storageUsed}
           storageLimit={storageLimit}
+          projectId={projectId}
+          projectName={project.name}
         />
 
         <main className="flex flex-col flex-1 overflow-hidden min-w-0" style={{ background: 'var(--bg)' }}>
@@ -1690,13 +1699,18 @@ export default function ProjectPage() {
                 multiple className="hidden" onChange={handleAddTrack}
               />
             </div>
-          </div>
 
           {/* Footer */}
           <div className="flex items-center justify-between px-[22px] py-3 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
-            <div className="flex items-center gap-5">
-              {project.bpm && <span className="text-[11px] text-dim">BPM <span className="text-soft font-medium">{project.bpm}</span></span>}
-              {project.key && <span className="text-[11px] text-dim">Key <span className="text-soft font-medium">{project.key}</span></span>}
+            <div className="flex items-center gap-5 flex-wrap">
+              {project && (
+                <ProjectMetaFields
+                  projectId={projectId}
+                  bpm={project.bpm}
+                  keySig={project.key}
+                  onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
+                />
+              )}
               <span className="text-[11px] text-dim">Tracks <span className="text-soft font-medium">{activeTracks.length}</span></span>
             </div>
             <div className="flex items-center gap-2">
@@ -1709,6 +1723,12 @@ export default function ProjectPage() {
               </button>
             </div>
           </div>
+
+          {/* Resources */}
+          <div className="px-[22px] pb-8">
+            <ResourcesCard projectId={projectId} projectName={project.name} />
+          </div>
+        </div>
         </main>
       </div>
 

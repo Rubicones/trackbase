@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { logActivity } from '@/lib/activity'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 const adminSupabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
@@ -9,7 +10,7 @@ function getUserId(req: NextRequest): string | null {
   return token ? getUserIdFromToken(token) : null
 }
 
-// PATCH /api/projects/[id] — rename project
+// PATCH /api/projects/[id] — update project metadata (name, bpm, key)
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -19,37 +20,89 @@ export async function PATCH(
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { id: projectId } = await params
-    const { name } = await req.json()
+    const body = await req.json()
+    const { name, bpm, key } = body as { name?: string; bpm?: number | null; key?: string | null }
 
-    if (typeof name !== 'string' || !name.trim()) {
-      return NextResponse.json({ error: 'name is required' }, { status: 400 })
+    const updates: Record<string, unknown> = {}
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) {
+        return NextResponse.json({ error: 'name must be a non-empty string' }, { status: 400 })
+      }
+      if (name.trim().length > 80) {
+        return NextResponse.json({ error: 'name must be 80 characters or fewer' }, { status: 400 })
+      }
+      updates.name = name.trim()
     }
-    if (name.trim().length > 80) {
-      return NextResponse.json({ error: 'name must be 80 characters or fewer' }, { status: 400 })
+    if (bpm !== undefined) {
+      if (bpm == null || String(bpm).trim() === '') {
+        updates.bpm = null
+      } else {
+        const n = typeof bpm === 'number' ? bpm : parseInt(String(bpm), 10)
+        if (!Number.isFinite(n) || n < 40 || n > 300) {
+          return NextResponse.json({ error: 'bpm must be between 40 and 300' }, { status: 400 })
+        }
+        updates.bpm = Math.round(n)
+      }
+    }
+    if (key !== undefined) {
+      if (key === null || key === '') {
+        updates.key = null
+      } else if (typeof key !== 'string') {
+        return NextResponse.json({ error: 'key must be a string' }, { status: 400 })
+      } else if (key.trim().length > 40) {
+        return NextResponse.json({ error: 'key must be 40 characters or fewer' }, { status: 400 })
+      } else {
+        updates.key = key.trim()
+      }
     }
 
-    const { data: project } = await supabase
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
+    }
+
+    const { data: existing } = await supabase
       .from('projects')
-      .select('band_id')
+      .select('band_id, bpm, key')
       .eq('id', projectId)
       .single()
-    if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const { data: membership } = await supabase
       .from('band_members')
       .select('role')
-      .eq('band_id', project.band_id)
+      .eq('band_id', existing.band_id)
       .eq('user_id', userId)
       .maybeSingle()
     if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const { data, error } = await supabase
       .from('projects')
-      .update({ name: name.trim() })
+      .update(updates)
       .eq('id', projectId)
       .select('*, bands(name)')
       .single()
     if (error) throw error
+
+    if (updates.bpm !== undefined && updates.bpm !== existing.bpm) {
+      void logActivity({
+        bandId: existing.band_id,
+        userId,
+        action: 'meta',
+        subject: 'BPM',
+        detail: updates.bpm != null ? String(updates.bpm) : 'cleared',
+        projectId,
+      })
+    }
+    if (updates.key !== undefined && updates.key !== existing.key) {
+      void logActivity({
+        bandId: existing.band_id,
+        userId,
+        action: 'meta',
+        subject: 'Key',
+        detail: updates.key != null ? String(updates.key) : 'cleared',
+        projectId,
+      })
+    }
 
     if (data.bands) {
       data.band_name = (data.bands as { name: string }).name

@@ -10,6 +10,7 @@
   --progress-track: #E5E5E2;
   --text:         #1A1A1A;
   --text-sec:     #3D3D3D;
+  --text-soft:    var(--text-sec);
   --text-muted:   #888888;
   --text-dim:     #AAAAAA;
   --accent:       #6366F1;
@@ -17,6 +18,16 @@
   --amber:        #D97706;
   --green:        #059669;
   --danger:       #dc2626;
+  --on-accent:    #ffffff;
+  /* Activity / status dot colors */
+  --dot-merge:     #059669;
+  --dot-branch:    #D97706;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #7c3aed;
+  --dot-structure: #0891b2;
+  --dot-resource:  #db2777;
+  --dot-meta:      #8b5cf6;
+  --dot-export:    var(--text-dim);
   /* Badge pill backgrounds */
   --badge-current-bg: #e8e8ff;
   --badge-branch-bg:  #fff3d4;
@@ -27,13 +38,14 @@
 /* ── Dark theme ────────────────────────────────────────────── */
 .dark {
   --bg:           #0A0A0A;
-  --bg-surface:   #080808;
+  --bg-surface:   #111111;
   --bg-card:      #111111;
-  --border:       #141414;
+  --border:       #1e1e1e;
   --border-light: #323232;
   --progress-track: #282828;
   --text:         #FFFFFF;
   --text-sec:     #AAAAAA;
+  --text-soft:    var(--text-sec);
   --text-muted:   #7f7f7f;
   --text-dim:     #504f4f;
   --accent:       #6366F1;
@@ -41,11 +53,284 @@
   --amber:        #F59E0B;
   --green:        #10B981;
   --danger:       #f87171;
+  --dot-merge:     #10B981;
+  --dot-branch:    #F59E0B;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #a78bfa;
+  --dot-structure: #22d3ee;
+  --dot-resource:  #f472b6;
+  --dot-meta:      #c4b5fd;
+  --dot-export:    var(--text-dim);
   /* Badge pill backgrounds */
   --badge-current-bg: #1a1a40;
   --badge-branch-bg:  #221800;
   --badge-merged-bg:  #081a10;
   --play-btn-bg:      #111111;
+  --on-accent:        #ffffff;
+}
+
+/* ── Monochrome palette ─────────────────────────────────────── */
+html:not(.dark)[data-palette="mono"] {
+  --bg:           #F4F4F2;
+  --bg-surface:   #ECECEA;
+  --bg-card:      #E4E4E1;
+  --border:       #D4D4D0;
+  --border-light: #BFBFBA;
+  --progress-track: #DADAD6;
+  --accent:       #1A1A1A;
+  --accent-hover: #333333;
+  --amber:        var(--accent);
+  --green:        var(--accent);
+  --danger:       #555555;
+  --dot-merge:     var(--accent);
+  --dot-branch:    var(--accent);
+  --dot-comment:   var(--accent);
+  --dot-upload:    var(--accent);
+  --dot-structure: var(--accent);
+  --dot-resource:  var(--accent);
+  --dot-meta:      var(--accent);
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  --badge-branch-bg:  color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+  --badge-merged-bg:  color-mix(in srgb, var(--accent) 6%, var(--bg-card));
+  --on-accent:        #ffffff;
+}
+
+html.dark[data-palette="mono"] {
+  --bg:           #0A0A0A;
+  --bg-surface:   #111111;
+  --bg-card:      #161616;
+  --border:       #242424;
+  --border-light: #383838;
+  --progress-track: #2A2A2A;
+  --accent:       #F5F5F5;
+  --accent-hover: #DDDDDD;
+  --amber:        var(--accent);
+  --green:        var(--accent);
+  --danger:       #737373;
+  --dot-merge:     var(--accent);
+  --dot-branch:    var(--accent);
+  --dot-comment:   var(--accent);
+  --dot-upload:    var(--accent);
+  --dot-structure: var(--accent);
+  --dot-resource:  var(--accent);
+  --dot-meta:      var(--accent);
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+  --badge-branch-bg:  color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  --badge-merged-bg:  color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+  --on-accent:        #111111;
+}
+
+/* ── Blue palette (warm pastel) ─────────────────────────────── */
+html:not(.dark)[data-palette="blue"] {
+  --bg:           #F5F3EF;
+  --bg-surface:   #EDEAE4;
+  --bg-card:      #E5E1DA;
+  --border:       #D8D3CB;
+  --border-light: #C4BFB6;
+  --progress-track: #DDD8D0;
+  --accent:       #6B9DC9;
+  --accent-hover: #5A89B5;
+  --amber:        #93B8D9;
+  --green:        #4A7A9B;
+  --danger:       #8B6B7A;
+  --dot-merge:     #5A8AAD;
+  --dot-branch:    #93B8D9;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #7BAFD4;
+  --dot-structure: #4A8AB5;
+  --dot-resource:  #A8CCE8;
+  --dot-meta:      #B5D4EA;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #E4EDF5;
+  --badge-branch-bg:  #E8F0F8;
+  --badge-merged-bg:  #DCE8F2;
+}
+
+html.dark[data-palette="blue"] {
+  --bg:           #0C0E12;
+  --bg-surface:   #12151A;
+  --bg-card:      #161A21;
+  --border:       #1E2430;
+  --border-light: #2A3344;
+  --progress-track: #1A2030;
+  --accent:       #8CB4D9;
+  --accent-hover: #A8C8E8;
+  --amber:        #6B9DC9;
+  --green:        #5A8AB8;
+  --danger:       #B89098;
+  --dot-merge:     #7BAFD4;
+  --dot-branch:    #A8CCE8;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #93B8D9;
+  --dot-structure: #6B9DC9;
+  --dot-resource:  #B5D4EA;
+  --dot-meta:      #C4DFF5;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #141C28;
+  --badge-branch-bg:  #121820;
+  --badge-merged-bg:  #101820;
+}
+
+/* ── Sepia palette (warm pastel) ────────────────────────────── */
+html:not(.dark)[data-palette="sepia"] {
+  --bg:           #F7F2EA;
+  --bg-surface:   #EFE8DC;
+  --bg-card:      #E8DFD0;
+  --border:       #DDD2C2;
+  --border-light: #C9BCA8;
+  --progress-track: #E5DACE;
+  --accent:       #C4956A;
+  --accent-hover: #B08055;
+  --amber:        #D4B896;
+  --green:        #A08060;
+  --danger:       #B87868;
+  --dot-merge:     #A8856A;
+  --dot-branch:    #D4B896;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #C9A882;
+  --dot-structure: #B89570;
+  --dot-resource:  #E0C4A8;
+  --dot-meta:      #E8D0B8;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #F0E4D4;
+  --badge-branch-bg:  #F5EBDC;
+  --badge-merged-bg:  #EBE0D0;
+}
+
+html.dark[data-palette="sepia"] {
+  --bg:           #100E0C;
+  --bg-surface:   #161310;
+  --bg-card:      #1C1814;
+  --border:       #28221C;
+  --border-light: #3A3228;
+  --progress-track: #221E18;
+  --accent:       #D4B896;
+  --accent-hover: #E0C4A8;
+  --amber:        #C4956A;
+  --green:        #A8856A;
+  --danger:       #C89080;
+  --dot-merge:     #B89570;
+  --dot-branch:    #D4B896;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #C9A882;
+  --dot-structure: #A8856A;
+  --dot-resource:  #E0C4A8;
+  --dot-meta:      #E8D0B8;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #1E1810;
+  --badge-branch-bg:  #221C14;
+  --badge-merged-bg:  #1A1610;
+}
+
+/* ── Green palette (warm pastel sage) ───────────────────────── */
+html:not(.dark)[data-palette="green"] {
+  --bg:           #F2F5F0;
+  --bg-surface:   #E8EDE5;
+  --bg-card:      #DFE6DA;
+  --border:       #D0D9CA;
+  --border-light: #B8C4B0;
+  --progress-track: #D8E0D2;
+  --accent:       #7DAF88;
+  --accent-hover: #6A9A75;
+  --amber:        #A5C9AD;
+  --green:        #5A8A68;
+  --danger:       #B88878;
+  --dot-merge:     #6A9A75;
+  --dot-branch:    #A5C9AD;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #8FB996;
+  --dot-structure: #5A8A68;
+  --dot-resource:  #B5D4BC;
+  --dot-meta:      #C4DFC8;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #E4F0E6;
+  --badge-branch-bg:  #EAF2EC;
+  --badge-merged-bg:  #DCE8DE;
+}
+
+html.dark[data-palette="green"] {
+  --bg:           #0C100E;
+  --bg-surface:   #111612;
+  --bg-card:      #161C18;
+  --border:       #1E2820;
+  --border-light: #2A3830;
+  --progress-track: #182018;
+  --accent:       #7da987;
+  --accent-hover: #B5D4BC;
+  --amber:        #8FB996;
+  --green:        #7DAF88;
+  --danger:       #C89888;
+  --dot-merge:     #8FB996;
+  --dot-branch:    #B5D4BC;
+  --dot-comment:   var(--accent);
+  --dot-upload:    #A5C9AD;
+  --dot-structure: #7DAF88;
+  --dot-resource:  #C4DFC8;
+  --dot-meta:      #D4E8D8;
+  --dot-export:    var(--text-dim);
+  --badge-current-bg: #141C16;
+  --badge-branch-bg:  #121A14;
+  --badge-merged-bg:  #101810;
+}
+
+/* Monochrome avatars — greyscale only */
+html:not(.dark)[data-palette="mono"] .theme-avatar {
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--text-muted) 44%, #ffffff) 0%,
+    color-mix(in srgb, var(--text-sec) 32%, #ffffff) 45%,
+    color-mix(in srgb, var(--text) 24%, var(--bg-surface)) 100%
+  );
+  border-color: color-mix(in srgb, var(--text-sec) 62%, var(--border-light));
+  color: color-mix(in srgb, var(--text) 88%, var(--text-muted));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-sec) 12%, transparent);
+}
+
+html.dark[data-palette="mono"] .theme-avatar {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--text-muted) 35%, transparent) 0%,
+    color-mix(in srgb, var(--text-sec) 22%, transparent) 48%,
+    color-mix(in srgb, var(--text-dim) 18%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--text-sec) 70%, transparent);
+  color: color-mix(in srgb, var(--text) 95%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 15%, transparent),
+    0 0 12px color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+/* Themed avatars — accent family instead of rainbow (light) */
+html:not(.dark)[data-palette="blue"] .theme-avatar,
+html:not(.dark)[data-palette="sepia"] .theme-avatar,
+html:not(.dark)[data-palette="green"] .theme-avatar {
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--accent) 50%, #ffffff) 0%,
+    color-mix(in srgb, var(--accent) 36%, #ffffff) 45%,
+    color-mix(in srgb, var(--green) 28%, var(--accent)) 100%
+  );
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--amber));
+  color: color-mix(in srgb, var(--accent-hover) 78%, var(--text));
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+html.dark[data-palette="blue"] .theme-avatar,
+html.dark[data-palette="sepia"] .theme-avatar,
+html.dark[data-palette="green"] .theme-avatar {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--accent) 38%, transparent) 0%,
+    color-mix(in srgb, var(--green) 28%, transparent) 48%,
+    color-mix(in srgb, var(--accent) 16%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--amber) 75%, transparent);
+  color: color-mix(in srgb, var(--accent) 95%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 14px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* ── Tailwind color utilities → reference CSS vars ─────────── */
@@ -106,6 +391,48 @@
       stroke 0.15s ease !important;
   }
 
+  /* Gradient avatar / band icon placeholder — light + dark via .dark on html */
+  .theme-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    user-select: none;
+    line-height: 1;
+    box-sizing: border-box;
+    overflow: hidden;
+    background: linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--av-light) 56%, #ffffff) 0%,
+      color-mix(in srgb, var(--av-main) 40%, #ffffff) 45%,
+      color-mix(in srgb, var(--av-dark) 30%, var(--av-main)) 100%
+    );
+    border: 1.5px solid color-mix(in srgb, var(--av-main) 60%, var(--av-light));
+    color: color-mix(in srgb, var(--av-dark) 82%, var(--text));
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--av-main) 16%, transparent);
+    transition:
+      background 0.2s ease,
+      border-color 0.2s ease,
+      color 0.15s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .dark .theme-avatar {
+    background: linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--av-main) 38%, transparent) 0%,
+      color-mix(in srgb, var(--av-dark) 28%, transparent) 48%,
+      color-mix(in srgb, var(--av-main) 16%, transparent) 100%
+    );
+    border-color: color-mix(in srgb, var(--av-light) 72%, transparent);
+    color: color-mix(in srgb, var(--av-light) 94%, white);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--av-light) 22%, transparent),
+      0 0 14px color-mix(in srgb, var(--av-main) 18%, transparent);
+  }
+
   .btn-topbar {
     display: inline-flex;
     align-items: center;
@@ -134,11 +461,12 @@
     font-size: 13px;
     font-weight: 500;
     background: var(--accent);
-    color: #ffffff;
+    color: var(--on-accent);
     border: none;
     transition: background-color 0.15s ease;
   }
   .btn-accent:hover { background: var(--accent-hover); }
+  .btn-accent svg { stroke: currentColor; }
 
   .btn-play {
     width: 36px;
@@ -149,11 +477,166 @@
     justify-content: center;
     flex-shrink: 0;
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
     transition: background-color 0.15s ease;
   }
   .btn-play:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn-play:disabled { background: var(--border); cursor: not-allowed; }
+  .btn-play:disabled { background: var(--border); color: var(--text-dim); cursor: not-allowed; }
+  .btn-play svg:not(.animate-spin) { fill: currentColor; }
+  .btn-play svg.animate-spin,
+  .btn-play svg.animate-spin circle,
+  .btn-play svg.animate-spin path {
+    fill: none;
+    stroke: currentColor;
+  }
+
+  /* Filled accent pill (tab counts, primary CTAs) */
+  .accent-pill {
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 1px 6px;
+    line-height: 1.5;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .accent-pill-muted {
+    background: var(--bg-card);
+    color: var(--text-muted);
+  }
+
+  /* Project card play — filled accent circle */
+  .btn-play-card {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--accent);
+    color: var(--on-accent);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-play-card:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-play-card:disabled { opacity: 0.4; cursor: default; }
+  .btn-play-card[data-playing="true"] {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .btn-play-card svg:not(.animate-spin) { fill: currentColor; }
+  .btn-play-card svg.animate-spin,
+  .btn-play-card svg.animate-spin circle,
+  .btn-play-card svg.animate-spin path {
+    fill: none;
+    stroke: currentColor;
+  }
+
+  /* Structure edit toggle on project page */
+  .btn-structure-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    background: transparent;
+    border: 0.5px solid var(--border-light);
+    color: var(--text-muted);
+  }
+  .btn-structure-toggle[data-active="true"] {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    color: var(--accent);
+  }
+  .btn-structure-toggle:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn-structure-toggle:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-structure-toggle svg { stroke: currentColor; fill: none; }
+
+  /* Small accent button (structure editor Done, etc.) */
+  .btn-accent-sm {
+    padding: 0 14px;
+    height: 26px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--accent);
+    border: none;
+    color: var(--on-accent);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+  .btn-accent-sm:hover { background: var(--accent-hover); }
+
+  /* Primary CTA — accent fill with readable label */
+  .btn-accent-fill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: var(--on-accent);
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+  .btn-accent-fill:hover { background: var(--accent-hover); }
+  .btn-accent-fill svg { stroke: currentColor; fill: currentColor; }
+
+  /* Theme toggle pill in avatar dropdown */
+  .theme-toggle-track {
+    display: flex;
+    align-items: center;
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    padding: 2px;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .theme-toggle-track[data-on="true"] {
+    background: var(--accent);
+  }
+  .theme-toggle-track[data-on="false"] {
+    background: var(--border-light);
+  }
+  .theme-toggle-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .theme-toggle-track[data-on="true"] .theme-toggle-thumb {
+    background: var(--on-accent);
+    transform: translateX(14px);
+  }
+  .theme-toggle-track[data-on="false"] .theme-toggle-thumb {
+    background: var(--bg-surface);
+    transform: translateX(0);
+  }
+
+  /* Comment / selection overlays on waveforms */
+  .waveform-accent-fill {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .waveform-accent-edge {
+    background: var(--accent);
+  }
+  .waveform-accent-label {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
 
   .btn-icon {
     display: flex;
@@ -1013,7 +1496,7 @@
       flex-direction: column;
     }
 
-    .band-avatar-lg {
+    .band-avatar-lg.theme-avatar {
       width: 64px !important;
       height: 64px !important;
       font-size: 22px !important;
@@ -1021,14 +1504,6 @@
 
     .band-title-lg {
       font-size: 22px !important;
-    }
-
-    .band-invite-full {
-      display: none !important;
-    }
-
-    .band-invite-short {
-      display: inline !important;
     }
 
     .page-title-lg {
@@ -1043,10 +1518,6 @@
     .auth-card-inner {
       padding: 1.25rem !important;
     }
-  }
-
-  .band-invite-short {
-    display: none;
   }
 
   @media (min-width: 768px) {

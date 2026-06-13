@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import { activityDotColor, formatActivityLine } from '@/lib/activityFormat'
+import { avatarColor } from '@/lib/avatarTheme'
+import { ThemeAvatar } from '@/components/ThemeAvatar'
+import { usePalette } from '@/contexts/PaletteContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,13 +26,6 @@ interface DashboardBand {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function avatarColor(str: string): string {
-  const colors = ['#6366F1', '#10B981', '#F59E0B', '#EC4899', '#06B6D4', '#8B5CF6', '#F97316', '#14B8A6']
-  let h = 0
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff
-  return colors[Math.abs(h) % colors.length]
-}
 
 function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -49,29 +46,6 @@ function formatBytes(bytes: number): string {
 
 function formatLimit(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
-}
-
-function activityDotColor(action: string): string {
-  switch (action) {
-    case 'merge':   return '#10B981'
-    case 'branch':  return '#F59E0B'
-    case 'comment': return 'var(--accent)'
-    case 'upload':  return '#8B5CF6'
-    case 'export':  return 'var(--text-dim)'
-    default:        return 'var(--text-dim)'
-  }
-}
-
-function formatActivityLine(action: string, subject: string, detail?: string | null, projectName?: string | null): string {
-  const proj = action !== 'comment' && projectName ? ` · ${projectName}` : ''
-  switch (action) {
-    case 'merge':   return subject.replace(' → ', ' merged into ') + proj
-    case 'branch':  return `branch '${subject}' opened` + proj
-    case 'comment': return detail ? `comment in '${subject}' at ${detail}` : `comment in '${subject}'`
-    case 'upload':  return (detail ? `${subject} · ${detail} uploaded` : `${subject} uploaded`) + proj
-    case 'export':  return `${subject} exported` + proj
-    default:        return subject + proj
-  }
 }
 
 function storageBarColor(bytes: number, limit: number): string {
@@ -222,9 +196,9 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
   const [hov, setHov] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const { palette } = usePalette()
   const isOwner = band.userRole === 'owner'
-  const color = avatarColor(band.name)
-  const initials = band.name.split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('')
+  const color = avatarColor(band.name, palette)
   const roleLabel = band.userRoleLabel ?? (isOwner ? 'Owner' : 'Member')
   const storagePct = band.storageBytes / band.storageLimitBytes
   const activityLine = band.latestActivity
@@ -253,15 +227,9 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
       style={{
         cursor: 'pointer',
         background: 'var(--bg-surface)',
-        borderTopWidth: '0.5px',    borderTopStyle: 'solid',
-        borderRightWidth: '0.5px',  borderRightStyle: 'solid',
-        borderBottomWidth: '0.5px', borderBottomStyle: 'solid',
-        borderLeftWidth: '4px',     borderLeftStyle: 'solid',
-        borderTopColor:    hov ? color : `${color}33`,
-        borderRightColor:  hov ? color : `${color}33`,
-        borderBottomColor: hov ? color : `${color}33`,
-        borderLeftColor:   color,
-        borderRadius: 14,
+        borderWidth: '0.5px',    borderTopStyle: 'solid',
+        borderColor: hov ? 'var(--border-light)' : 'var(--border)',
+        borderRadius: 10,
         padding: '18px 18px 16px 16px',
         transition: 'border-color 0.15s',
         position: 'relative',
@@ -269,16 +237,11 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
         overflow: 'hidden',
       }}
     >
+      <div className={`absolute left-0 top-1/2 -translate-y-1/2 h-[80%] w-[2px] rounded-full`} style={{backgroundColor: color}}></div>
       {/* Card header row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
         {/* Avatar */}
-        <div style={{
-          width: 44, height: 44, borderRadius: 10, background: color, flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.02em',
-        }}>
-          {initials}
-        </div>
+        <ThemeAvatar seed={band.name} size={44} radius={10} kind="band" />
 
         {/* Name + role */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -328,7 +291,7 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
         ].map(({ label, value }) => (
           <div key={label} style={{
             background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-            borderRadius: 8, padding: '10px 14px',
+            borderRadius: 10, padding: '10px 14px',
           }}>
             <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-dim)', margin: '0 0 4px' }}>
               {label}
@@ -652,14 +615,8 @@ export default function DashboardPage() {
             {/* New band button */}
             <button
               onClick={() => setShowNewBand(true)}
-              className="btn-new-band"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                height: 34, padding: '0 14px',
-                background: 'var(--accent)', border: 'none',
-                borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 500,
-                cursor: 'pointer', whiteSpace: 'nowrap',
-              }}
+              className="btn-accent-fill btn-new-band"
+              style={{ height: 34, padding: '0 14px', whiteSpace: 'nowrap' }}
             >
               <PlusIcon size={12} />
               New band
@@ -679,7 +636,7 @@ export default function DashboardPage() {
               key={tab.id}
               onClick={() => setFilter(tab.id)}
               style={{
-                padding: '6px 14px', borderRadius: 20, border: `0.5px solid ${filter === tab.id ? 'var(--border-light)' : 'var(--border)'}`,
+                padding: '6px 14px', borderRadius: 10, border: `0.5px solid ${filter === tab.id ? 'var(--border-light)' : 'var(--border)'}`,
                 background: filter === tab.id ? 'var(--bg-surface)' : 'var(--bg-card)',
                 color: filter === tab.id ? 'var(--text)' : 'var(--text-muted)',
                 fontWeight: filter === tab.id ? 500 : 400,
@@ -708,7 +665,8 @@ export default function DashboardPage() {
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
               <button
                 onClick={() => setShowNewBand(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
+                className="btn-accent-fill"
+                style={{ height: 36, padding: '0 16px' }}
               >
                 <PlusIcon /> Create a band
               </button>
@@ -805,5 +763,5 @@ const cancelBtnStyle: React.CSSProperties = {
 }
 const confirmBtnStyle: React.CSSProperties = {
   background: 'var(--accent)', border: 'none', borderRadius: 8,
-  padding: '6px 14px', color: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+  padding: '6px 14px', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
 }

@@ -4,14 +4,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePalette } from '@/contexts/PaletteContext'
 import { Avatar } from '@/components/Avatar'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { PALETTE_OPTIONS, type PaletteId } from '@/lib/palettes'
 
 type ActiveSection = null | 'email' | 'username'
 
 export function AvatarDropdown() {
   const router = useRouter()
   const { theme, setTheme } = useTheme()
+  const { palette, setPalette } = usePalette()
   const { user, profile, signOut, refreshProfile } = useAuth()
   const [open, setOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<ActiveSection>(null)
@@ -245,8 +248,15 @@ export function AvatarDropdown() {
             </div>
           )}
 
-          {/* Theme toggle */}
-          <ThemeRow theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+          {/* Appearance */}
+          <ThemeRow theme={theme} onToggle={() => {
+            document.documentElement.classList.add('theme-transition')
+            setTheme(theme === 'dark' ? 'light' : 'dark')
+            window.setTimeout(() => document.documentElement.classList.remove('theme-transition'), 300)
+          }} />
+
+          {/* Color palette */}
+          <PalettePicker palette={palette} onSelect={setPalette} />
 
           {/* Divider + sign out */}
           <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
@@ -318,19 +328,72 @@ function ThemeRow({ theme, onToggle }: { theme: string | undefined; onToggle: ()
         {isDark ? <MoonIcon /> : <SunIcon />}
         {isDark ? 'Dark mode' : 'Light mode'}
       </span>
-      {/* Toggle pill */}
-      <span style={{
-        display: 'flex', alignItems: 'center',
-        width: 32, height: 18, borderRadius: 9,
-        background: isDark ? 'var(--accent)' : 'var(--border-light)',
-        padding: 2, transition: 'background 0.2s', flexShrink: 0,
-      }}>
-        <span style={{
-          width: 14, height: 14, borderRadius: '50%', background: '#fff',
-          transform: isDark ? 'translateX(14px)' : 'translateX(0)',
-          transition: 'transform 0.2s',
-        }} />
+      <span className="theme-toggle-track" data-on={isDark ? 'true' : 'false'}>
+        <span className="theme-toggle-thumb" />
       </span>
+    </button>
+  )
+}
+
+function PalettePicker({ palette, onSelect }: { palette: PaletteId; onSelect: (id: PaletteId) => void }) {
+  return (
+    <div style={{ padding: '4px 8px 8px' }}>
+      <p style={{
+        fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)',
+        letterSpacing: '0.6px', fontWeight: 500, margin: '0 2px 8px',
+      }}>
+        Color theme
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {PALETTE_OPTIONS.map(opt => (
+          <PaletteRow
+            key={opt.id}
+            option={opt}
+            active={palette === opt.id}
+            onSelect={() => onSelect(opt.id)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PaletteRow({ option, active, onSelect }: {
+  option: typeof PALETTE_OPTIONS[number]
+  active: boolean
+  onSelect: () => void
+}) {
+  const [hov, setHov] = useState(false)
+  return (
+    <button
+      onClick={onSelect}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '7px 10px', borderRadius: 7, width: '100%',
+        background: active ? 'var(--bg-card)' : hov ? 'var(--bg-card)' : 'transparent',
+        border: active ? '0.5px solid var(--border-light)' : '0.5px solid transparent',
+        color: 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
+        transition: 'background 0.12s, border-color 0.12s', textAlign: 'left',
+      }}
+    >
+      <span style={{
+        width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+        background: option.id === 'mono'
+          ? `linear-gradient(135deg, ${option.swatchAlt} 0%, ${option.swatch} 100%)`
+          : option.id === 'default-mono-tracks'
+          ? `linear-gradient(135deg, ${option.swatch} 50%, ${option.swatchAlt ?? option.swatch} 50%)`
+          : `linear-gradient(135deg, ${option.swatch} 0%, ${option.swatchAlt ?? option.swatch} 100%)`,
+        border: '1.5px solid color-mix(in srgb, var(--border-light) 40%, transparent)',
+        boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
+      }} />
+      <span style={{ flex: 1, color: active ? 'var(--text)' : 'var(--text-sec)', fontWeight: active ? 500 : 400 }}>
+        {option.label}
+      </span>
+      {active && (
+        <span style={{ fontSize: 12, color: 'var(--accent)' }}>✓</span>
+      )}
     </button>
   )
 }
@@ -394,6 +457,6 @@ const inlineInputStyle: React.CSSProperties = {
 }
 const inlineSaveBtn: React.CSSProperties = {
   background: 'var(--accent)', border: 'none', borderRadius: 6,
-  padding: '5px 12px', color: 'white', fontSize: 12, fontWeight: 500,
+  padding: '5px 12px', color: 'var(--on-accent)', fontSize: 12, fontWeight: 500,
   cursor: 'pointer', transition: 'opacity 0.15s',
 }

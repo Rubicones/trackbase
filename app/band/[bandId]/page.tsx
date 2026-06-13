@@ -6,6 +6,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { StructurePreviewPanel, IconFileDescription } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import { activityDotColor, activityVerb } from '@/lib/activityFormat'
+import { avatarColor } from '@/lib/avatarTheme'
+import { ThemeAvatar } from '@/components/ThemeAvatar'
+import { usePalette } from '@/contexts/PaletteContext'
+import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,13 +40,6 @@ interface BandStats {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function avatarColor(str: string): string {
-  const colors = ['#6366F1', '#10B981', '#F59E0B', '#EC4899', '#06B6D4', '#8B5CF6', '#F97316', '#14B8A6']
-  let h = 0
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff
-  return colors[Math.abs(h) % colors.length]
-}
 
 function formatDuration(ms: number): string {
   if (!ms) return '0:00'
@@ -92,30 +90,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
-
-function activityDotColor(action: string): string {
-  switch (action) {
-    case 'merge':   return '#10B981'
-    case 'branch':  return '#F59E0B'
-    case 'comment': return 'var(--accent)'
-    case 'upload':  return '#8B5CF6'
-    case 'export':  return 'var(--text-dim)'
-    default:        return 'var(--text-dim)'
-  }
-}
-
-function activityVerb(action: string): string {
-  switch (action) {
-    case 'merge':   return 'merged'
-    case 'branch':  return 'opened branch'
-    case 'comment': return 'commented on'
-    case 'upload':  return 'uploaded'
-    case 'export':  return 'exported'
-    default:        return action
-  }
-}
-
-// ─── Inline SVG icons ─────────────────────────────────────────────────────────
 
 function IconPlay({ size = 14 }: { size?: number }) {
   return (
@@ -174,23 +148,6 @@ function IconComment({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
       <path d="M1.5 2.5h9a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5H7L4.5 11V8.5H2a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round"/>
-    </svg>
-  )
-}
-
-function IconBpm({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
-      <path d="M6 1v10M3 4v4M9 3v6M1 6h1M10 6h1" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/>
-    </svg>
-  )
-}
-
-function IconKey({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" aria-hidden="true">
-      <circle cx="6" cy="3.25" r="2" stroke="currentColor" strokeWidth="0.9" />
-      <path d="M6 5.25v5M4.5 8h3M4.5 9.75h2" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -269,7 +226,7 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
             <button type="button" onClick={onClose} style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.4rem 1rem', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
             <button type="submit" disabled={loading || !name.trim()}
-              style={{ background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '0.4rem 1rem', color: 'white', cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: loading || !name.trim() ? 0.5 : 1 }}>
+              style={{ background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '0.4rem 1rem', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: loading || !name.trim() ? 0.5 : 1 }}>
               {loading ? 'Creating…' : 'Create project'}
             </button>
           </div>
@@ -282,7 +239,7 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
 // ─── Project card ─────────────────────────────────────────────────────────────
 
 function ProjectCard({
-  project, playing, loading, onPlay, onClick, onPreview, onDelete, isOwner,
+  project, playing, loading, onPlay, onClick, onPreview, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
   playing: boolean
@@ -291,6 +248,7 @@ function ProjectCard({
   onClick: () => void
   onPreview: (e: React.MouseEvent) => void
   onDelete?: () => void
+  onMetaUpdated: (patch: { bpm: number | null; key: string | null }) => void
   isOwner: boolean
 }) {
   const [hovered, setHovered] = useState(false)
@@ -327,17 +285,9 @@ function ProjectCard({
         <button
           onClick={onPlay}
           disabled={loading && !playing}
-          style={{
-            width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-            background: 'var(--play-btn-bg)',
-            border: '1.5px solid var(--accent)',
-            color: 'var(--accent)',
-            cursor: loading ? 'default' : 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: playing ? '0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent)' : 'none',
-            transition: 'box-shadow 0.15s',
-            opacity: !project.first_track_id ? 0.4 : 1,
-          }}
+          className="btn-play-card"
+          data-playing={playing ? 'true' : 'false'}
+          style={{ opacity: !project.first_track_id ? 0.4 : 1 }}
         >
           {loading ? <IconSpinner /> : playing ? <IconPause /> : <IconPlay />}
         </button>
@@ -360,7 +310,7 @@ function ProjectCard({
               type="button"
               className="project-card-ghost-btn"
               onClick={onPreview}
-              aria-label="Structure"
+              aria-label="Resources"
               onMouseEnter={() => setPreviewTip(true)}
               onMouseLeave={() => setPreviewTip(false)}
             >
@@ -378,11 +328,10 @@ function ProjectCard({
                   fontSize: 11, color: 'var(--text-sec)',
                   whiteSpace: 'nowrap', zIndex: 20,
                 }}
-              >Structure</div>
+              >Resources</div>
             )}
           </div>
 
-          {isOwner && (
           <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
             <button
               onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
@@ -395,7 +344,7 @@ function ProjectCard({
               <div style={{
                 position: 'absolute', right: 0, top: '100%', zIndex: 20,
                 background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-                borderRadius: 8, padding: 4, minWidth: 160,
+                borderRadius: 8, padding: 4, minWidth: 200,
                 boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
               }}>
                 <button
@@ -405,31 +354,40 @@ function ProjectCard({
                   onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
                 >Open project</button>
                 <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
-                <button
-                  onClick={() => { setMenuOpen(false); onDelete?.() }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', borderRadius: 6 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; e.currentTarget.style.color = '#ef4444' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--text-muted)' }}
-                >Delete project</button>
+                <div style={{ padding: '4px 8px 8px' }} onClick={e => e.stopPropagation()}>
+                  <ProjectMetaFields
+                    projectId={project.id}
+                    bpm={project.bpm}
+                    keySig={project.key}
+                    onUpdated={onMetaUpdated}
+                    variant="menu"
+                  />
+                </div>
+                {isOwner && (
+                  <>
+                    <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
+                    <button
+                      onClick={() => { setMenuOpen(false); onDelete?.() }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', borderRadius: 6 }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; e.currentTarget.style.color = '#ef4444' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--text-muted)' }}
+                    >Delete project</button>
+                  </>
+                )}
               </div>
             )}
           </div>
-          )}
         </div>
       </div>
 
       {/* Meta row */}
       <div className="project-card-meta">
         <div className="project-card-meta-left">
-          {project.bpm && (
-            <span className="project-card-meta-item">
-              <IconBpm />{project.bpm} BPM
-            </span>
+          {project.bpm != null && (
+            <span className="project-card-meta-item">{project.bpm} BPM</span>
           )}
           {project.key && (
-            <span className="project-card-meta-item">
-              <IconKey />{project.key}
-            </span>
+            <span className="project-card-meta-item">{project.key}</span>
           )}
         </div>
         <div className="project-card-meta-right">
@@ -493,6 +451,7 @@ export default function BandPage() {
   const { bandId } = useParams<{ bandId: string }>()
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
+  const { palette } = usePalette()
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [band, setBand] = useState<Band | null>(null)
@@ -686,9 +645,6 @@ export default function BandPage() {
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const bandInitials = (band?.name ?? '??')
-    .split(/\s+/).map(w => w[0] ?? '').join('').slice(0, 2).toUpperCase()
-  const bandColor = band ? avatarColor(band.name) : '#6366F1'
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
   const storageBarColor = storagePct > 95 ? '#ef4444' : storagePct > 80 ? '#F59E0B' : 'var(--accent)'
 
@@ -738,15 +694,13 @@ export default function BandPage() {
           <div className="band-header-row">
             <div className="band-header-identity">
               {/* Avatar */}
-              <div className="band-avatar-lg" style={{
-                width: 80, height: 80, borderRadius: 16, flexShrink: 0,
-                background: `${bandColor}33`, border: `1.5px solid ${bandColor}66`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 28, fontWeight: 500, color: bandColor,
-                letterSpacing: '-0.02em',
-              }}>
-                {bandInitials}
-              </div>
+              <ThemeAvatar
+                seed={band?.name ?? '??'}
+                size={80}
+                radius={16}
+                kind="band"
+                className="band-avatar-lg"
+              />
 
               {/* Info */}
               <div style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
@@ -770,30 +724,11 @@ export default function BandPage() {
             {/* Action buttons */}
             <div className="band-header-actions">
               <button
-                onClick={handleCopyInvite}
-                disabled={inviteCopying}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'transparent',
-                  border: `0.5px solid ${inviteCopied ? '#10B981' : 'var(--border)'}`,
-                  borderRadius: 8, padding: '7px 12px',
-                  color: inviteCopied ? '#10B981' : 'var(--text-muted)',
-                  fontSize: 13, cursor: inviteCopying ? 'not-allowed' : 'pointer',
-                  whiteSpace: 'nowrap', transition: 'all 0.15s',
-                }}
-              >
-                {inviteCopied ? <IconCheck /> : <IconCopy />}
-                <span className="band-invite-full">{inviteCopied ? 'Copied!' : 'Copy invite link'}</span>
-                <span className="band-invite-short">{inviteCopied ? 'Copied' : 'Invite'}</span>
-              </button>
-              <button
                 onClick={() => setShowNewProject(true)}
+                className="btn-accent"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  background: 'var(--accent)', border: 'none',
-                  borderRadius: 8, padding: '7px 14px',
-                  color: 'white', fontSize: 13, fontWeight: 500,
-                  cursor: 'pointer', whiteSpace: 'nowrap',
+                  padding: '7px 14px', whiteSpace: 'nowrap',
                 }}
               >
                 <IconPlus size={13} />
@@ -818,12 +753,9 @@ export default function BandPage() {
                   <span className="tab-bar-label">
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                     {count > 0 && (
-                      <span style={{
-                        fontSize: 11, fontWeight: 600,
-                        background: isActive ? 'var(--accent)' : 'var(--bg-card)',
-                        color: isActive ? 'white' : 'var(--text-muted)',
-                        borderRadius: 10, padding: '1px 6px', lineHeight: 1.5,
-                      }}>{count}</span>
+                      <span className={isActive ? 'accent-pill' : 'accent-pill accent-pill-muted'}>
+                        {count}
+                      </span>
                     )}
                   </span>
                 </button>
@@ -844,6 +776,7 @@ export default function BandPage() {
                   onClick={() => router.push(`/band/${bandId}/project/${p.id}`)}
                   onPreview={e => { e.stopPropagation(); setPreviewProject(p) }}
                   onDelete={() => { setDeleteModal({ id: p.id, name: p.name }); setDeleteConfirmName(''); setDeleteError('') }}
+                  onMetaUpdated={patch => setProjects(prev => prev.map(x => x.id === p.id ? { ...x, ...patch } : x))}
                   isOwner={myRole === 'owner'}
                 />
               ))}
@@ -910,10 +843,9 @@ export default function BandPage() {
 
             {members.map((m, idx) => {
               const username = m.profiles?.username ?? 'user'
-              const color = avatarColor(username)
               const isMe = m.user_id === user?.id
               const isOwner = m.role === 'owner'
-              const roleLabelColor = m.role_label ? avatarColor(m.role_label) : null
+              const roleLabelColor = m.role_label ? avatarColor(m.role_label, palette) : null
               const isLast = idx === members.length - 1
 
               return (
@@ -924,14 +856,7 @@ export default function BandPage() {
                   >
                     {/* Avatar */}
                     <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <div style={{
-                        width: 36, height: 36, borderRadius: '50%',
-                        background: `${color}33`, border: `1.5px solid ${color}66`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 12, fontWeight: 600, color,
-                      }}>
-                        {username.slice(0, 2).toUpperCase()}
-                      </div>
+                      <ThemeAvatar seed={username} size={36} shape="circle" kind="user" />
                       {/* Online dot */}
                       <div style={{
                         position: 'absolute', bottom: 0, right: 0,
@@ -1170,7 +1095,7 @@ export default function BandPage() {
 
       <StructurePreviewPanel
         projectId={previewProject?.id ?? null}
-        accentColor={previewProject ? avatarColor(previewProject.name) : '#6366F1'}
+        accentColor={previewProject ? avatarColor(previewProject.name, palette) : 'var(--accent)'}
         bandId={bandId}
         onClose={() => setPreviewProject(null)}
       />
