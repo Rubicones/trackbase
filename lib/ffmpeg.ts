@@ -24,12 +24,20 @@ function resolveFfmpegPath(): string {
   )
 }
 
-ffmpeg.setFfmpegPath(resolveFfmpegPath())
+let ffmpegPathConfigured = false
+
+/** Resolve and configure ffmpeg only when a conversion runs (not at import time). */
+export function ensureFfmpegConfigured(): void {
+  if (ffmpegPathConfigured) return
+  ffmpeg.setFfmpegPath(resolveFfmpegPath())
+  ffmpegPathConfigured = true
+}
 
 export async function audioToFlac(
   buffer: Buffer,
   inputFormat: 'wav' | 'mp3'
 ): Promise<{ flac: Buffer; durationMs: number }> {
+  ensureFfmpegConfigured()
   const id = randomUUID()
   const inPath = path.join(tmpdir(), `${id}.${inputFormat}`)
   const outPath = path.join(tmpdir(), `${id}.flac`)
@@ -72,6 +80,7 @@ export async function audioToFlacFromFile(
   inPath: string,
   inputFormat: 'wav' | 'mp3',
 ): Promise<{ flac: Buffer; durationMs: number }> {
+  ensureFfmpegConfigured()
   const id = randomUUID()
   const outPath = path.join(tmpdir(), `${id}.flac`)
 
@@ -99,6 +108,7 @@ export async function audioToFlacFromFile(
 }
 
 export async function flacToWav(flacBuffer: Buffer): Promise<Buffer> {
+  ensureFfmpegConfigured()
   const id = randomUUID()
   const inPath = path.join(tmpdir(), `${id}.flac`)
   const outPath = path.join(tmpdir(), `${id}.wav`)

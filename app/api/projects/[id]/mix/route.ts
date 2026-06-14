@@ -1,24 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
+import { ensureFfmpegConfigured } from '@/lib/ffmpeg'
 import ffmpeg from 'fluent-ffmpeg'
-import ffmpegStatic from 'ffmpeg-static'
-import { execSync } from 'child_process'
-import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { writeFile, readFile, unlink } from 'fs/promises'
 import path from 'path'
-
-function getFfmpegPath(): string {
-  if (ffmpegStatic && existsSync(ffmpegStatic)) return ffmpegStatic
-  try {
-    const p = execSync('which ffmpeg', { encoding: 'utf8' }).trim()
-    if (p && existsSync(p)) return p
-  } catch { /* not in PATH */ }
-  throw new Error('ffmpeg binary not found')
-}
-ffmpeg.setFfmpegPath(getFfmpegPath())
 
 // GET /api/projects/[id]/mix
 // Downloads all tracks from the project's main version, mixes them with ffmpeg
@@ -68,6 +56,7 @@ export async function GET(
   // Download all FLAC buffers in parallel
   const buffers = await Promise.all(tracks.map(t => downloadFromR2(t.storage_path)))
 
+  ensureFfmpegConfigured()
   const id = randomUUID()
   const tmpPaths: string[] = []
   const outPath = path.join(tmpdir(), `${id}-mix.mp3`)
