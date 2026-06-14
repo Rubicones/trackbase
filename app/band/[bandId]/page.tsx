@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
 import { StructurePreviewPanel, IconFileDescription } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { activityDotColor, activityVerb } from '@/lib/activityFormat'
@@ -162,6 +163,16 @@ function IconSpinner({ size = 14 }: { size?: number }) {
   )
 }
 
+function IconPlayError({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" style={{ color: '#f87171' }}>
+      <circle cx="7" cy="7" r="5.5" stroke="#f87171" strokeWidth="1.5" />
+      <path d="M7 4.5v3" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="7" cy="9.5" r="0.75" fill="#f87171" />
+    </svg>
+  )
+}
+
 function IconDotsV({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
@@ -239,11 +250,12 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
 // ─── Project card ─────────────────────────────────────────────────────────────
 
 function ProjectCard({
-  project, playing, loading, onPlay, onClick, onPreview, onDelete, onMetaUpdated, isOwner,
+  project, playing, loading, error, onPlay, onClick, onPreview, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
   playing: boolean
   loading: boolean
+  error: boolean
   onPlay: (e: React.MouseEvent) => void
   onClick: () => void
   onPreview: (e: React.MouseEvent) => void
@@ -289,7 +301,13 @@ function ProjectCard({
           data-playing={playing ? 'true' : 'false'}
           style={{ opacity: !project.first_track_id ? 0.4 : 1 }}
         >
-          {loading ? <IconSpinner /> : playing ? <IconPause /> : <IconPlay />}
+          {error
+            ? <IconPlayError />
+            : loading
+              ? <IconSpinner />
+              : playing
+                ? <IconPause />
+                : <IconPlay />}
         </button>
 
         {/* Name + tracks */}
@@ -450,7 +468,7 @@ function NewProjectCard({ onClick }: { onClick: () => void }) {
 export default function BandPage() {
   const { bandId } = useParams<{ bandId: string }>()
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+  const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
   const { palette } = usePalette()
 
   // ── Data state ──────────────────────────────────────────────────────────────
@@ -471,6 +489,7 @@ export default function BandPage() {
   const [activityLoading, setActivityLoading] = useState(false)
   const [playingProjectId, setPlayingProjectId] = useState<string | null>(null)
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null)
+  const [errorProjectId, setErrorProjectId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [showNewProject, setShowNewProject] = useState(false)
   const [inviteCopied, setInviteCopied] = useState(false)
@@ -483,6 +502,7 @@ export default function BandPage() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [previewProject, setPreviewProject] = useState<EnhancedProject | null>(null)
+  const [showBandWelcome, setShowBandWelcome] = useState(false)
 
   // ── Cleanup audio on unmount ────────────────────────────────────────────────
   useEffect(() => {
@@ -505,7 +525,10 @@ export default function BandPage() {
     const url = new URL(window.location.href)
     url.searchParams.set('tab', tab)
     history.replaceState({}, '', url.toString())
-    if (tab === 'activity' && activityItems.length === 0) loadActivity()
+    if (tab === 'activity') {
+      if (activityItems.length === 0) loadActivity()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
   }
 
   // ── Load data ────────────────────────────────────────────────────────────────
@@ -543,6 +566,13 @@ export default function BandPage() {
       loadBand()
     }
   }, [authLoading, user, bandId]) // eslint-disable-line
+
+  // Show band welcome modal once
+  useEffect(() => {
+    if (!authLoading && profile && !profile.onboarding?.band_seen) {
+      setShowBandWelcome(true)
+    }
+  }, [authLoading, profile])
 
   // Close member menu on outside click
   useEffect(() => {
@@ -602,7 +632,7 @@ export default function BandPage() {
     // No tracks → nothing to play
     if (!project.first_track_id) return
 
-    // Pause / stop if clicking currently playing project
+    // Pause / stop if clicking currently playing or loading project
     if (playingProjectId === project.id || loadingProjectId === project.id) {
       audioRef.current?.pause()
       setPlayingProjectId(null)
@@ -621,26 +651,45 @@ export default function BandPage() {
     }
     setPlayingProjectId(null)
     setLoadingProjectId(project.id)
+    setErrorProjectId(null)
 
     const audio = new Audio()
     audioRef.current = audio
+    const pid = project.id
+    console.log('[play] starting mix for project', pid)
 
-    audio.onplaying = () => {
+    function showError(reason: string) {
+      console.error('[play] playback failed:', reason, 'project:', pid)
       setLoadingProjectId(null)
-      setPlayingProjectId(project.id)
+      setPlayingProjectId(null)
+      setErrorProjectId(pid)
+      setTimeout(() => setErrorProjectId(prev => prev === pid ? null : prev), 2000)
+    }
+
+    audio.oncanplay = () => {
+      console.log('[play] canplay fired — resuming')
+    }
+    audio.onplaying = () => {
+      console.log('[play] playing — audio started')
+      setLoadingProjectId(null)
+      setPlayingProjectId(pid)
     }
     audio.onended = () => {
+      console.log('[play] ended')
       setPlayingProjectId(null)
     }
     audio.onerror = () => {
-      setLoadingProjectId(null)
-      setPlayingProjectId(null)
+      const err = audio.error
+      showError(err ? `MediaError code=${err.code} msg="${err.message}"` : 'unknown')
+    }
+    audio.onstalled = () => {
+      console.warn('[play] stalled — network may be slow, waiting...')
     }
 
-    audio.src = `/api/projects/${project.id}/mix`
-    audio.play().catch(() => {
-      setLoadingProjectId(null)
-      setPlayingProjectId(null)
+    audio.src = `/api/projects/${pid}/mix`
+    console.log('[play] set src, calling play()')
+    audio.play().catch(err => {
+      showError(err instanceof Error ? err.message : String(err))
     })
   }
 
@@ -772,6 +821,7 @@ export default function BandPage() {
                   project={p}
                   playing={playingProjectId === p.id}
                   loading={loadingProjectId === p.id}
+                  error={errorProjectId === p.id}
                   onPlay={e => handlePlay(e, p)}
                   onClick={() => router.push(`/band/${bandId}/project/${p.id}`)}
                   onPreview={e => { e.stopPropagation(); setPreviewProject(p) }}
@@ -1099,6 +1149,16 @@ export default function BandPage() {
         bandId={bandId}
         onClose={() => setPreviewProject(null)}
       />
+
+      {/* Onboarding welcome modal */}
+      {showBandWelcome && (
+        <BandWelcomeModal
+          onDismiss={() => {
+            setShowBandWelcome(false)
+            updateOnboarding('band_seen', true)
+          }}
+        />
+      )}
     </div>
   )
 }

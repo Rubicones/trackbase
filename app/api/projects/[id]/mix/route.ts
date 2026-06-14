@@ -29,23 +29,40 @@ export async function GET(
     return NextResponse.json({ error: 'No main version found' }, { status: 404 })
   }
 
-  // Get all tracks ordered by position
-  const { data: tracks, error: trkErr } = await supabase
+  // Get all tracks ordered by position — exclude MIDI (not mixable audio)
+  const { data: allTracks, error: trkErr } = await supabase
     .from('tracks')
-    .select('id, storage_path, position')
+    .select('id, storage_path, position, file_type')
     .eq('version_id', mainVersion.id)
     .order('position', { ascending: true })
 
-  if (trkErr || !tracks?.length) {
+  if (trkErr || !allTracks?.length) {
     return NextResponse.json({ error: 'No tracks found' }, { status: 404 })
   }
 
-  // Single track — skip ffmpeg, just proxy it directly
+  // Filter to audio-only tracks (skip MIDI files — ffmpeg can't amix them as audio)
+  const tracks = allTracks.filter(t =>
+    t.file_type !== 'midi' &&
+    !t.storage_path?.toLowerCase().endsWith('.mid') &&
+    !t.storage_path?.toLowerCase().endsWith('.midi')
+  )
+
+  if (!tracks.length) {
+    return NextResponse.json({ error: 'No audio tracks found' }, { status: 404 })
+  }
+
+  // Single audio track — skip ffmpeg, proxy directly
   if (tracks.length === 1) {
     const buffer = await downloadFromR2(tracks[0].storage_path)
+    // Detect type by extension so the browser picks the right decoder
+    const ext = tracks[0].storage_path.split('.').pop()?.toLowerCase()
+    const contentType = ext === 'mp3' ? 'audio/mpeg'
+      : ext === 'wav' ? 'audio/wav'
+      : ext === 'ogg' ? 'audio/ogg'
+      : 'audio/flac'
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
-        'Content-Type': 'audio/flac',
+        'Content-Type': contentType,
         'Content-Length': String(buffer.byteLength),
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
@@ -53,7 +70,7 @@ export async function GET(
     })
   }
 
-  // Download all FLAC buffers in parallel
+  // Download all audio buffers in parallel
   const buffers = await Promise.all(tracks.map(t => downloadFromR2(t.storage_path)))
 
   ensureFfmpegConfigured()
@@ -63,7 +80,9 @@ export async function GET(
 
   try {
     for (let i = 0; i < buffers.length; i++) {
-      const p = path.join(tmpdir(), `${id}-track${i}.flac`)
+      // Preserve original extension so ffmpeg reads the correct container format
+      const origExt = tracks[i].storage_path.split('.').pop()?.toLowerCase() ?? 'flac'
+      const p = path.join(tmpdir(), `${id}-track${i}.${origExt}`)
       await writeFile(p, buffers[i])
       tmpPaths.push(p)
     }

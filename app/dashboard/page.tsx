@@ -9,6 +9,7 @@ import { activityDotColor, formatActivityLine } from '@/lib/activityFormat'
 import { avatarColor } from '@/lib/avatarTheme'
 import { ThemeAvatar } from '@/components/ThemeAvatar'
 import { usePalette } from '@/contexts/PaletteContext'
+import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -471,7 +472,7 @@ type FilterTab = 'all' | 'owner' | 'member' | 'recent'
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+  const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
 
   const [bands, setBands] = useState<DashboardBand[]>([])
   const [totalBands, setTotalBands] = useState(0)
@@ -486,6 +487,7 @@ export default function DashboardPage() {
   const [deletingBand, setDeletingBand] = useState<DashboardBand | null>(null)
   const [leavingBand, setLeavingBand] = useState<DashboardBand | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [showWelcome, setShowWelcome] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -493,6 +495,13 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!authLoading && !user) router.replace('/auth')
   }, [authLoading, user, router])
+
+  // Show welcome modal once
+  useEffect(() => {
+    if (!authLoading && profile && !profile.onboarding?.dashboard_seen) {
+      setShowWelcome(true)
+    }
+  }, [authLoading, profile])
 
   // Fetch dashboard data
   useEffect(() => {
@@ -745,6 +754,16 @@ export default function DashboardPage() {
         }}>
           <span style={{ color: 'var(--green)' }}>✓</span>{toast}
         </div>
+      )}
+
+      {/* Onboarding welcome modal */}
+      {showWelcome && (
+        <DashboardWelcomeModal
+          onDismiss={() => {
+            setShowWelcome(false)
+            updateOnboarding('dashboard_seen', true)
+          }}
+        />
       )}
     </div>
   )

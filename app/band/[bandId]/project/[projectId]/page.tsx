@@ -8,12 +8,14 @@ import type { TrackComment, CommentReply, Track, Version, Project, Section, Midi
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
+import { ReadingMode } from '@/components/ReadingMode'
 import { resolveTrackIconColor } from '@/lib/trackIcon'
 import { trackColorAt, getTrackIconSwatches } from '@/lib/trackPalette'
 import { usePalette } from '@/contexts/PaletteContext'
@@ -55,6 +57,14 @@ interface ActiveCommentInput {
 // ─── Upload helpers ───────────────────────────────────────────────────────────
 
 const MAX_CONCURRENT_UPLOADS = 3
+
+// Style for bottom sheet action buttons (short landscape topbar overflow)
+const sheetBtnStyle: import('react').CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 10,
+  width: '100%', padding: '11px 20px', background: 'none', border: 'none',
+  textAlign: 'left', cursor: 'pointer', fontSize: 14,
+  color: 'var(--text-sec)',
+}
 
 
 /**
@@ -817,26 +827,48 @@ function Waveform({
   // Update the ref each render so the window listener uses the latest closure
   finalizeDragFnRef.current = finalizeRange
 
-  // Attach window-level mouseup so releasing outside the waveform still finalizes
+  // Attach window-level mouseup/touchend so releasing outside waveform still finalizes
   useEffect(() => {
     const handler = () => finalizeDragFnRef.current()
     window.addEventListener('mouseup', handler)
-    return () => window.removeEventListener('mouseup', handler)
+    window.addEventListener('touchend', handler)
+    return () => {
+      window.removeEventListener('mouseup', handler)
+      window.removeEventListener('touchend', handler)
+    }
   }, [])
 
-  function handleMouseDown(e: React.MouseEvent) {
+  function handleDragStart(clientX: number) {
     if (!commentMode) return
-    e.preventDefault() // prevent text selection
-    const pct = getXPercent(e.clientX)
+    const pct = getXPercent(clientX)
     dragRef.current = { active: true, startPct: pct, currentPct: pct }
     setDragRect({ startX: pct, endX: pct })
   }
 
-  function handleMouseMove(e: React.MouseEvent) {
+  function handleDragMove(clientX: number) {
     if (!commentMode || !dragRef.current?.active) return
-    const pct = Math.max(0, Math.min(1, getXPercent(e.clientX)))
+    const pct = Math.max(0, Math.min(1, getXPercent(clientX)))
     dragRef.current.currentPct = pct
     setDragRect({ startX: dragRef.current.startPct, endX: pct })
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    handleDragStart(e.clientX)
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    handleDragMove(e.clientX)
+  }
+
+  function handleTouchStart(e: React.TouchEvent) {
+    e.preventDefault()
+    handleDragStart(e.touches[0].clientX)
+  }
+
+  function handleTouchMove(e: React.TouchEvent) {
+    e.preventDefault()
+    handleDragMove(e.touches[0].clientX)
   }
 
   const overlapOffsets = computeOverlapOffsets(comments)
@@ -852,9 +884,11 @@ function Waveform({
     <div
       ref={containerRef}
       className="relative overflow-visible"
-      style={{ cursor, userSelect: 'none', WebkitUserSelect: 'none' } as React.CSSProperties}
+      style={{ cursor, userSelect: 'none', WebkitUserSelect: 'none', touchAction: commentMode ? 'none' : 'auto' } as React.CSSProperties}
       onMouseDown={handleMouseDown}
       onMouseMove={commentMode ? handleMouseMove : undefined}
+      onTouchStart={commentMode ? handleTouchStart : undefined}
+      onTouchMove={commentMode ? handleTouchMove : undefined}
     >
       {/* z-index 1: waveform bars (dots while loading, grows to full on ready) */}
       <canvas ref={canvasRef} className="w-full block relative z-[1]" style={{ height: 34 }} />
@@ -1516,11 +1550,10 @@ function TrackRow({
     ? Math.max(widthPercent, 100 - startPercent)
     : widthPercent
 
-  // Drag-to-offset mouse handlers
-  function handleOffsetMouseDown(e: React.MouseEvent) {
+  // Drag-to-offset handlers (mouse + touch)
+  function startOffsetDrag(clientX: number) {
     if (commentMode) return
-    e.preventDefault()
-    dragStartXRef.current = e.clientX
+    dragStartXRef.current = clientX
     origStartBarRef.current = track.start_bar ?? 0
     const initialBar = track.start_bar ?? 0
     setIsOffsetDragging(true)
@@ -1529,19 +1562,31 @@ function TrackRow({
     onDragStartOffset()
   }
 
+  function handleOffsetMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    startOffsetDrag(e.clientX)
+  }
+
+  function handleOffsetTouchStart(e: React.TouchEvent) {
+    e.preventDefault()
+    startOffsetDrag(e.touches[0].clientX)
+  }
+
   useEffect(() => {
     if (!isOffsetDragging) return
-    function onMouseMove(e: MouseEvent) {
+    function moveAt(clientX: number) {
       const colEl = waveformColRef.current
       if (!colEl) return
       const containerWidth = colEl.offsetWidth
       const barsPerPixel = totalBars / containerWidth
-      const deltaX = e.clientX - dragStartXRef.current
+      const deltaX = clientX - dragStartXRef.current
       const newStartBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
       dragPreviewBarRef.current = newStartBar
       setDragPreviewBar(newStartBar)
     }
-    async function onMouseUp() {
+    function onMouseMove(e: MouseEvent) { moveAt(e.clientX) }
+    function onTouchMove(e: TouchEvent) { e.preventDefault(); moveAt(e.touches[0].clientX) }
+    async function onDragEnd() {
       setIsOffsetDragging(false)
       onDragEndOffset()
       const newBar = dragPreviewBarRef.current
@@ -1554,10 +1599,14 @@ function TrackRow({
       setDragPreviewBar(null)
     }
     window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('mouseup', onDragEnd)
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    window.addEventListener('touchend', onDragEnd)
     return () => {
       window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mouseup', onDragEnd)
+      window.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('touchend', onDragEnd)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOffsetDragging, dragPreviewBar, totalBars])
@@ -1765,8 +1814,10 @@ function TrackRow({
             borderLeft: effectiveStartBar > 0 ? '1px solid var(--border-light)' : 'none',
             zIndex: 1,
             transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
+            touchAction: 'none',
           }}
           onMouseDown={handleOffsetMouseDown}
+          onTouchStart={handleOffsetTouchStart}
         >
           {isMidi ? (
             track.midi_data ? (
@@ -2294,7 +2345,7 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName, isOpen }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
@@ -2303,6 +2354,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   commentCounts: Record<string, number>
   projectId: string
   projectName: string
+  isOpen?: boolean
 }) {
   function dotColor(v: Version) {
     return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
@@ -2329,7 +2381,11 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   const isChecking = mergeCheckingId === activeId
 
   return (
-    <aside className="w-[208px] shrink-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg-surface)', borderRight: '0.5px solid var(--border)' }}>
+    <aside
+      data-tour="versions-sidebar"
+      className={`project-mixer-sidebar w-[208px] shrink-0 flex flex-col overflow-hidden${isOpen ? ' sidebar-open' : ''}`}
+      style={{ background: 'var(--bg-surface)', borderRight: '0.5px solid var(--border)' }}
+    >
       <div className="flex-1 overflow-y-auto px-3 pt-4 pb-2">
 
         <p className="text-[10px] font-medium uppercase px-[10px] mb-[10px]" style={{ color: 'var(--text-muted)', letterSpacing: '1px' }}>Versions</p>
@@ -2399,6 +2455,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
           <button
             key={label}
             onClick={action}
+            data-tour="new-branch-button"
             className="w-full flex items-center gap-2 rounded-lg mb-0.5 transition-colors duration-150 text-[13px]"
             style={{ padding: '8px 10px', color: 'var(--text-muted)' }}
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-sec)' }}
@@ -2410,7 +2467,9 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
         ))}
       </div>
 
-      <ProjectSidebarResources projectId={projectId} projectName={projectName} />
+      <div data-tour="resources-card">
+        <ProjectSidebarResources projectId={projectId} projectName={projectName} />
+      </div>
 
       <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 10px 0' }} />
       <div className="px-4 py-3">
@@ -2470,7 +2529,8 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => voi
 export default function ProjectPage() {
   const { bandId, projectId } = useParams<{ bandId: string; projectId: string }>()
   const cache = useVersionCache()
-  const { user, profile } = useAuth()
+  const { user, profile, updateOnboarding } = useAuth()
+  const { resolvedTheme, setTheme } = useTheme()
 
   const [project, setProject] = useState<Project | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
@@ -2491,7 +2551,23 @@ export default function ProjectPage() {
   const [shareCopied, setShareCopied] = useState(false)
   const [sections, setSections] = useState<Section[]>([])
   const [editStructure, setEditStructure] = useState(false)
+  const [showTour, setShowTour] = useState(false)
   const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
+  // Responsive sidebar (collapsed by default on tablet/mobile)
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+  )
+  // Portrait detection — drives ReadingMode vs mixer (pure dimension check, no touch gate)
+  const [isMobilePortrait, setIsMobilePortrait] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.innerWidth < 768 && window.innerHeight > window.innerWidth
+  })
+  // Short landscape: landscape + height < 420px + not a full desktop window
+  const [isShortLandscape, setIsShortLandscape] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.innerWidth > window.innerHeight && window.innerHeight < 420 && window.innerWidth < 1024
+  })
+  const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
   const trackListRef = useRef<HTMLDivElement>(null)
   const tracksBodyRef = useRef<HTMLDivElement>(null)
   // Drag-and-drop state
@@ -2576,6 +2652,15 @@ export default function ProjectPage() {
 
   useEffect(() => { loadProject(false) }, [projectId]) // eslint-disable-line
 
+  // Auto-start tour for first-time visitors
+  useEffect(() => {
+    if (!loading && profile && !profile.onboarding?.project_tour_completed && !profile.onboarding?.project_tour_skipped) {
+      // Small delay to let the page settle
+      const t = setTimeout(() => setShowTour(true), 400)
+      return () => clearTimeout(t)
+    }
+  }, [loading, profile])
+
   // On version switch: serve from cache if available, otherwise fetch fresh data.
   async function loadVersionData(versionId: string) {
     if (!versionId) return
@@ -2604,6 +2689,8 @@ export default function ProjectPage() {
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+  const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
+  const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
   // Measure waveform column bounds for structure overlay alignment.
   // Uses [data-waveform-col] from an actual track row so the right offset
@@ -2630,6 +2717,21 @@ export default function ProjectPage() {
     return () => obs.disconnect()
   }, [activeTracks.length])
 
+  // Orientation detection — switches between ReadingMode and mixer, collapses topbar on short landscape
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    function check() {
+      const w = window.innerWidth, h = window.innerHeight
+      setIsMobilePortrait(w < 768 && h > w)
+      setIsShortLandscape(w > h && h < 420 && w < 1024)
+    }
+    window.addEventListener('resize', check)
+    window.addEventListener('orientationchange', check)
+    return () => {
+      window.removeEventListener('resize', check)
+      window.removeEventListener('orientationchange', check)
+    }
+  }, [])
 
   const mainVersion = versions.find(v => v.type === 'main')
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
@@ -3127,15 +3229,57 @@ export default function ProjectPage() {
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
 
+      {/* Reading mode — full portrait mobile experience */}
+      <ReadingMode
+        project={project}
+        player={{
+          playing: player.playing,
+          currentTime: player.currentTime,
+          duration: player.duration,
+          loaded: player.loaded,
+          total: player.total,
+          play: player.play,
+          pause: player.pause,
+          seek: player.seek,
+        }}
+        sections={sections}
+        versions={versions}
+        activeVersionId={activeVersionId}
+        onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+        projectId={projectId}
+        activeTracks={activeTracks}
+        barDurationMs={projBarDurationMs}
+        visible={isMobilePortrait}
+      />
+
       {/* Topbar */}
-      <header className="flex items-center h-[56px] shrink-0 px-[18px] gap-2.5" style={{ background: 'var(--bg-surface)', borderBottom: '0.5px solid var(--border)' }}>
-        <a href="/dashboard" className="flex items-center no-underline mr-1.5">
-          <span className="text-[14px] font-semibold tracking-tight" style={{ color: 'var(--text-sec)' }}>track</span>
-          <span className="text-[14px] font-semibold text-accent tracking-tight">base</span>
-        </a>
-        <span className="text-lg leading-none" style={{ color: 'var(--border-light)' }}>·</span>
-        <a href={`/band/${bandId}`} className="text-[13px] no-underline hover:underline" style={{ color: 'var(--text-muted)' }}>{project.band_name ?? 'Band'}</a>
-        <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
+      <header
+        className={`flex items-center shrink-0 px-[18px] gap-2.5 mixer-topbar${isShortLandscape ? ' topbar-compact' : ''}`}
+        style={{ height: isShortLandscape ? 36 : 56, background: 'var(--bg-surface)', borderBottom: '0.5px solid var(--border)' }}
+      >
+        {/* Sidebar toggle — only visible at tablet/mobile widths via CSS */}
+        <button
+          className="project-sidebar-toggle"
+          onClick={() => setSidebarOpen(v => !v)}
+          title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          aria-label="Toggle sidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="3.5" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+            <rect x="2" y="7.375" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+            <rect x="2" y="11.25" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+          </svg>
+        </button>
+        {/* Logo + breadcrumb — hidden in short landscape */}
+        {!isShortLandscape && <>
+          <a href="/dashboard" className="flex items-center no-underline mr-1.5">
+            <span className="text-[14px] font-semibold tracking-tight" style={{ color: 'var(--text-sec)' }}>track</span>
+            <span className="text-[14px] font-semibold text-accent tracking-tight">base</span>
+          </a>
+          <span className="text-lg leading-none" style={{ color: 'var(--border-light)' }}>·</span>
+          <a href={`/band/${bandId}`} className="text-[13px] no-underline hover:underline" style={{ color: 'var(--text-muted)' }}>{project.band_name ?? 'Band'}</a>
+          <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
+        </>}
         <span
           className="text-[13px] truncate max-w-[200px]"
           style={{ color: projectNameFlash ? 'var(--accent)' : 'var(--text-sec)', transition: 'color 0.3s' }}
@@ -3143,33 +3287,119 @@ export default function ProjectPage() {
           {projectNameEditing ? projectNameValue || project.name : project.name}
         </span>
         <div className="flex-1" />
-        <button onClick={handleShare} className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
-          {shareCopied ? (
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <path d="M2.5 6.5l3 3 5-5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+        {/* Short landscape: dots button opens bottom sheet */}
+        {isShortLandscape ? (
+          <button
+            onClick={() => setTopbarSheetOpen(true)}
+            aria-label="More actions"
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="3" cy="8" r="1.5"/>
+              <circle cx="8" cy="8" r="1.5"/>
+              <circle cx="13" cy="8" r="1.5"/>
             </svg>
-          ) : (
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          )}
-          {shareCopied ? 'Copied!' : 'Share'}
-        </button>
-        <a href={`/api/versions/${activeVersionId}/export`} className="btn-topbar">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          Export WAV
-        </a>
-        <button onClick={() => setShowBranchModal(true)} className="btn-accent">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          Save version
-        </button>
-        <ThemeToggle />
-        <AvatarDropdown />
+          </button>
+        ) : <>
+          <TourHelpButton onClick={() => setShowTour(true)} />
+          <button onClick={handleShare} data-tour="share-button" className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
+            {shareCopied ? (
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <path d="M2.5 6.5l3 3 5-5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+            )}
+            {shareCopied ? 'Copied!' : 'Share'}
+          </button>
+          <a href={`/api/versions/${activeVersionId}/export`} className="btn-topbar">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+            Export WAV
+          </a>
+          <button
+            onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
+            disabled={!canSaveVersion || isSaveVersionChecking}
+            data-tour="save-version-button"
+            className="btn-accent"
+            title={canSaveVersion ? 'Merge this branch into main' : 'Switch to a branch to merge changes into main'}
+            style={{
+              opacity: !canSaveVersion ? 0.45 : 1,
+              cursor: !canSaveVersion ? 'not-allowed' : isSaveVersionChecking ? 'wait' : 'pointer',
+            }}
+          >
+            {isSaveVersionChecking ? (
+              <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
+                <path d="M6.5 2A4.5 4.5 0 0 1 11 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+            )}
+            {isSaveVersionChecking ? 'Checking…' : 'Save version'}
+          </button>
+          <ThemeToggle />
+          <AvatarDropdown />
+        </>}
       </header>
+
+      {/* Short-landscape bottom sheet — all topbar actions */}
+      {topbarSheetOpen && (
+        <>
+          <div
+            onClick={() => setTopbarSheetOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 300 }}
+          />
+          <div style={{
+            position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 301,
+            background: 'var(--bg-surface)',
+            borderTop: '0.5px solid var(--border)',
+            borderRadius: '12px 12px 0 0',
+            padding: '8px 0 12px',
+          }}>
+            {/* Sheet handle */}
+            <div style={{ width: 32, height: 3, borderRadius: 2, background: 'var(--border-light)', margin: '0 auto 8px' }} />
+            <button onClick={() => { handleShare(); setTopbarSheetOpen(false) }} style={sheetBtnStyle}>
+              <svg width="16" height="16" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+              Share link
+            </button>
+            <a href={`/api/versions/${activeVersionId}/export`} style={sheetBtnStyle} onClick={() => setTopbarSheetOpen(false)}>
+              <svg width="16" height="16" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+              Export WAV
+            </a>
+            <button
+              onClick={() => { if (canSaveVersion) { handleMergeClick(activeVersionId); setTopbarSheetOpen(false) } }}
+              disabled={!canSaveVersion}
+              style={{ ...sheetBtnStyle, opacity: !canSaveVersion ? 0.4 : 1 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+              Save version
+            </button>
+            <button onClick={() => { setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'); setTopbarSheetOpen(false) }} style={sheetBtnStyle}>
+              {resolvedTheme === 'dark'
+                ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                : <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              }
+              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </button>
+            <button onClick={() => { setShowTour(true); setTopbarSheetOpen(false) }} style={sheetBtnStyle}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.2"/><path d="M8 11V8M8 5.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+              Help
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
+        {/* Backdrop — only visible on tablet/mobile when sidebar is open */}
+        <div
+          className={`sidebar-backdrop${sidebarOpen ? ' sidebar-open' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden
+        />
         <Sidebar
           versions={versions} activeId={activeVersionId}
-          onSelect={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          onSelect={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null); if (window.innerWidth < 1024) setSidebarOpen(false) }}
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
           mergeCheckingId={mergeCheckingId}
@@ -3178,6 +3408,7 @@ export default function ProjectPage() {
           commentCounts={commentCounts}
           projectId={projectId}
           projectName={project.name}
+          isOpen={sidebarOpen}
         />
 
         <main
@@ -3262,6 +3493,7 @@ export default function ProjectPage() {
                 disabled={activeTracks.length === 0}
                 className="btn-structure-toggle"
                 data-active={sections.length > 0 ? 'true' : 'false'}
+                data-tour="edit-structure-button"
               >
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                   <rect x="1" y="1" width="9" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
@@ -3430,6 +3662,7 @@ export default function ProjectPage() {
             </div>
 
             <div className="px-[22px] py-3"
+              data-tour="add-track-row"
               onDragOver={handleAddRowDragOver}
               onDragLeave={handleAddRowDragLeave}
               onDrop={handleAddRowDrop}
@@ -3495,6 +3728,7 @@ export default function ProjectPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+                data-tour="comments-toggle"
                 className={`inline-flex items-center gap-1.5 px-3 h-[34px] rounded-lg text-[12px] font-medium transition-all duration-150 ${commentMode ? 'btn-accent' : 'btn-topbar'}`}
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2.5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H5L1 11V2.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round"/></svg>
@@ -3506,6 +3740,22 @@ export default function ProjectPage() {
           </div>{/* end content dim wrapper */}
         </main>
       </div>
+
+      {/* Onboarding tour */}
+      <ProjectTour
+        projectName={project?.name ?? 'this project'}
+        show={showTour}
+        onFinish={() => {
+          setShowTour(false)
+          updateOnboarding('project_tour_completed', true)
+          setToast("You're all set! Click the ? icon anytime for a refresher.")
+          setTimeout(() => setToast(null), 4000)
+        }}
+        onSkip={() => {
+          setShowTour(false)
+          updateOnboarding('project_tour_skipped', true)
+        }}
+      />
 
       {showBranchModal && <NewBranchModal onConfirm={handleNewBranch} onCancel={() => setShowBranchModal(false)} />}
 

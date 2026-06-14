@@ -6,11 +6,19 @@ import { getSupabaseClient } from '@/lib/supabase/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface OnboardingData {
+  dashboard_seen?: boolean
+  band_seen?: boolean
+  project_tour_completed?: boolean
+  project_tour_skipped?: boolean
+}
+
 export interface Profile {
   id: string
   username: string
   display_name: string | null
   avatar_color: string | null
+  onboarding: OnboardingData
 }
 
 interface AuthState {
@@ -23,6 +31,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
+  updateOnboarding: (key: keyof OnboardingData, value: boolean) => Promise<void>
 }
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
@@ -46,6 +55,7 @@ const AuthContext = createContext<AuthContextValue>({
   loading: true,
   signOut: async () => {},
   refreshProfile: async () => {},
+  updateOnboarding: async () => {},
 })
 
 export function useAuth() {
@@ -67,10 +77,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
     const { data } = await supabase
       .from('profiles')
-      .select('id, username, display_name, avatar_color')
+      .select('id, username, display_name, avatar_color, onboarding')
       .eq('id', userId)
       .single()
-    return data ?? null
+    if (!data) return null
+    return {
+      ...data,
+      onboarding: (data.onboarding as OnboardingData) ?? {},
+    }
   }, [supabase])
 
   const refreshProfile = useCallback(async () => {
@@ -79,6 +93,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const profile = await fetchProfile(user.id)
     setState(prev => ({ ...prev, profile }))
   }, [supabase, fetchProfile])
+
+  const updateOnboarding = useCallback(async (key: keyof OnboardingData, value: boolean) => {
+    // Optimistic local update
+    setState(prev => {
+      if (!prev.profile) return prev
+      return {
+        ...prev,
+        profile: {
+          ...prev.profile,
+          onboarding: { ...prev.profile.onboarding, [key]: value },
+        },
+      }
+    })
+    // Persist to server
+    await fetch('/api/profile/onboarding', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    })
+  }, [])
 
   const signOut = useCallback(async () => {
     clearAuthCookie()
@@ -116,7 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [supabase, fetchProfile])
 
   return (
-    <AuthContext.Provider value={{ ...state, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ ...state, signOut, refreshProfile, updateOnboarding }}>
       {children}
     </AuthContext.Provider>
   )

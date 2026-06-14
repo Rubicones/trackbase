@@ -823,6 +823,9 @@ export default function StructureOverlay({
   const [hint, setHint] = useState<{ text: string; isError: boolean } | null>(null)
   const [activeEdit, setActiveEdit] = useState<ActiveEdit | null>(null)
   const [hoveredChords, setHoveredChords] = useState<{ section: Section; rect: DOMRect } | null>(null)
+  const [isMobileWidth, setIsMobileWidth] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768
+  )
 
   const stripRef = useRef<HTMLDivElement>(null)
   const sectionsRef = useRef(sections)
@@ -835,6 +838,13 @@ export default function StructureOverlay({
   activeEditRef.current = activeEdit
 
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+
+  // Track viewport width for bar label density
+  useEffect(() => {
+    function check() { setIsMobileWidth(window.innerWidth < 768) }
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   // Reset when leaving edit mode
   useEffect(() => {
@@ -865,7 +875,8 @@ export default function StructureOverlay({
     ? { ...project, time_signature: timeSignature }
     : project
   const { barDurationMs, totalBars } = getBarMath(effectiveProject, totalDurationMs)
-  const labelStep = totalBars <= 32 ? 1 : totalBars <= 64 ? 2 : 4
+  const labelStepBase = totalBars <= 32 ? 1 : totalBars <= 64 ? 2 : 4
+  const labelStep = isMobileWidth ? Math.max(labelStepBase, 10) : labelStepBase
 
   // Time-based position: maps bar → 0..1 fraction, matching waveform scale
   const tp = (bar: number) =>

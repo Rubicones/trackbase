@@ -1397,6 +1397,8 @@ export default function ProjectPage() {
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+  const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
+  const isSaveVersionChecking = mergeCheckingId === activeVersionId
   const mainVersion = versions.find(v => v.type === 'main')
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
@@ -1590,9 +1592,25 @@ export default function ProjectPage() {
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
           Export WAV
         </a>
-        <button onClick={() => setShowBranchModal(true)} className="btn-accent">
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-          Save version
+        <button
+          onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
+          disabled={!canSaveVersion || isSaveVersionChecking}
+          className="btn-accent"
+          title={canSaveVersion ? 'Merge this branch into main' : 'Switch to a branch to merge changes into main'}
+          style={{
+            opacity: !canSaveVersion ? 0.45 : 1,
+            cursor: !canSaveVersion ? 'not-allowed' : isSaveVersionChecking ? 'wait' : 'pointer',
+          }}
+        >
+          {isSaveVersionChecking ? (
+            <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
+              <path d="M6.5 2A4.5 4.5 0 0 1 11 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+          )}
+          {isSaveVersionChecking ? 'Checking…' : 'Save version'}
         </button>
         <ThemeToggle />
         <AvatarDropdown />
