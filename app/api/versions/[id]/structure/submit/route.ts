@@ -22,7 +22,11 @@ export async function POST(
       .single()
     if (vErr || !version) return NextResponse.json({ error: 'Version not found' }, { status: 404 })
 
-    const project = version.projects as { id: string; name: string; band_id: string } | null
+    const raw = version.projects as
+      | { id: string; name: string; band_id: string }
+      | { id: string; name: string; band_id: string }[]
+      | null
+    const project = Array.isArray(raw) ? (raw[0] ?? null) : raw
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
     const { data: membership } = await supabase

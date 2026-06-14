@@ -30,7 +30,7 @@ export async function GET(
 
     // Fetch raw MIDI from R2, parse, and cache
     const buffer = await downloadFromR2(track.storage_path)
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
     const midiData = parseMidiFile(arrayBuffer)
 
     // Cache in DB (fire and forget errors)

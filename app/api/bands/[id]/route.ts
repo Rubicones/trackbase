@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
-import { projectTimelineDurationMs } from '@/lib/trackMerge'
+import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -10,6 +10,15 @@ function getUserId(req: NextRequest): string | null {
 }
 
 const BAND_STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024 // 10 GB
+
+type TrackRow = TimelineTrack & {
+  id: string
+  version_id: string
+  duration_ms: number | null
+  file_size_bytes: number | null
+  file_hash: string | null
+  position: number
+}
 
 // GET /api/bands/[id] — full band detail: projects (enhanced), members, stats, recentActivity
 export async function GET(
@@ -76,7 +85,7 @@ export async function GET(
       ? supabase.from('tracks')
           .select('id, version_id, duration_ms, file_size_bytes, file_hash, position, start_bar, midi_start_bar, file_type, midi_data')
           .in('version_id', allVersionIds)
-      : Promise.resolve({ data: [] as { id: string; version_id: string; duration_ms: number | null; file_size_bytes: number | null; file_hash: string | null; position: number; start_bar?: number | null; midi_start_bar?: number | null; file_type?: string | null; midi_data?: unknown }[] }),
+      : Promise.resolve({ data: [] as TrackRow[] }),
     allVersionIds.length > 0
       ? supabase.from('track_comments')
           .select('id, version_id')
@@ -84,7 +93,7 @@ export async function GET(
       : Promise.resolve({ data: [] as { id: string; version_id: string }[] }),
   ])
 
-  const allTracks = tracksRes.data ?? []
+  const allTracks: TrackRow[] = tracksRes.data ?? []
   const allComments = commentsRes.data ?? []
 
   // ── Aggregate per-project data ────────────────────────────────────────────
@@ -99,7 +108,7 @@ export async function GET(
       .map((v: { id: string; project_id: string }) => [v.project_id, v.id])
   )
 
-  const tracksByVersion = new Map<string, typeof allTracks>()
+  const tracksByVersion = new Map<string, TrackRow[]>()
   for (const t of allTracks) {
     const arr = tracksByVersion.get(t.version_id) ?? []
     arr.push(t)
@@ -181,12 +190,18 @@ export async function GET(
         ? await adminSupabase.from('profiles').select('id, username').in('id', actUserIds)
         : { data: [] as { id: string; username: string }[] }
       const actProfileMap = new Map((actProfiles ?? []).map((p: { id: string; username: string }) => [p.id, p.username]))
-      recentActivity = actRes.data.map((a: { user_id: string; projects?: { name: string } | null }) => ({
-        ...a,
-        username: actProfileMap.get(a.user_id) ?? 'unknown',
-        project_name: a.projects?.name ?? null,
-        projects: undefined,
-      }))
+      recentActivity = actRes.data.map((a) => {
+        const p = a.projects
+        const project_name = Array.isArray(p)
+          ? (p[0]?.name ?? null)
+          : ((p as { name?: string } | null)?.name ?? null)
+        return {
+          ...a,
+          username: actProfileMap.get(a.user_id) ?? 'unknown',
+          project_name,
+          projects: undefined,
+        }
+      })
       totalActivity = countRes.count ?? 0
     }
   } catch { /* band_activity table may not exist yet */ }

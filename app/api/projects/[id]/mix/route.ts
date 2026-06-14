@@ -87,7 +87,7 @@ export async function GET(
         .audioCodec('libmp3lame')
         .audioBitrate('192k')
         .output(outPath)
-        .on('end', resolve)
+        .on('end', () => resolve())
         .on('error', reject)
         .run()
     })

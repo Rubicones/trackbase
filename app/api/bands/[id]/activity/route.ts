@@ -47,12 +47,18 @@ export async function GET(
       : { data: [] as { id: string; username: string }[] }
 
     const profileMap = new Map((profiles ?? []).map((p: { id: string; username: string }) => [p.id, p.username]))
-    const items = (data ?? []).map((a: { user_id: string; projects?: { name: string } | null }) => ({
-      ...a,
-      username: profileMap.get(a.user_id) ?? 'unknown',
-      project_name: a.projects?.name ?? null,
-      projects: undefined,
-    }))
+    const items = (data ?? []).map((a) => {
+      const p = a.projects
+      const project_name = Array.isArray(p)
+        ? (p[0]?.name ?? null)
+        : ((p as { name?: string } | null)?.name ?? null)
+      return {
+        ...a,
+        username: profileMap.get(a.user_id) ?? 'unknown',
+        project_name,
+        projects: undefined,
+      }
+    })
 
     return NextResponse.json({ items })
   } catch {

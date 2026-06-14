@@ -959,7 +959,7 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
   // MIDI playback refs — soundfont notes scheduled via AudioContext
-  const midiScheduledRef = useRef<AudioNode[]>([])
+  const midiScheduledRef = useRef<{ stop: () => void }[]>([])
   const [volume, setVolumeState] = useState<number>(() => {
     if (typeof window === 'undefined') return 1
     const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')

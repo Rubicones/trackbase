@@ -56,7 +56,7 @@ export async function GET(
   const filename = resource.original_filename ?? 'download'
   const contentType = resource.mime_type ?? 'application/octet-stream'
 
-  return new NextResponse(fileBuffer, {
+  return new NextResponse(new Uint8Array(fileBuffer), {
     status: 200,
     headers: {
       'Content-Type': contentType,
