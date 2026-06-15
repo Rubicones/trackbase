@@ -2,18 +2,21 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
-import { AvatarDropdown } from '@/components/AvatarDropdown'
-import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
+import { ProjectTour } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
+import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { TactGrid } from '@/components/design/TactGrid'
+import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
 import { resolveTrackIconColor } from '@/lib/trackIcon'
@@ -274,6 +277,29 @@ function InstrumentSVG({ type, color }: { type: InstrumentType; color: string })
         </svg>
       )
   }
+}
+
+// ─── Uikit buttons ────────────────────────────────────────────────────────────
+
+function TbBtn({
+  children,
+  variant = 'ghost',
+  className = '',
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'ghost' | 'primary' | 'solid'
+}) {
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5'
+  const styles = {
+    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
+    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
+    solid: 'bg-foreground text-background px-3 py-1.5 font-bold hover:bg-ember',
+  }
+  return (
+    <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
+      {children}
+    </button>
+  )
 }
 
 // ─── Theme toggle ─────────────────────────────────────────────────────────────
@@ -637,6 +663,11 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
   )
 }
 
+// ─── Track row layout ─────────────────────────────────────────────────────────
+
+const TRACK_LABEL_W = 192
+const TRACK_ROW_H = 80
+
 // ─── Waveform ─────────────────────────────────────────────────────────────────
 
 function Waveform({
@@ -657,26 +688,9 @@ function Waveform({
   onReplyCreate: (commentId: string, content: string) => Promise<void>
   currentUser: { username: string } | null
 }) {
-  const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme !== 'light'
-
   const containerRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const barsRef = useRef<number[]>([])
   const [ready, setReady] = useState(false)
-  const [animProgress, setAnimProgress] = useState(0) // 0 = flat dots, 1 = full bars
-  const animRafRef = useRef(0)
-  const [containerWidth, setContainerWidth] = useState(0)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const ro = new ResizeObserver(entries => {
-      setContainerWidth(entries[0]?.contentRect.width ?? 0)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
 
   // Drag state — ref to avoid re-renders during drag
   const dragRef = useRef<{
@@ -715,7 +729,7 @@ function Waveform({
         }
         const decoded = await actx.decodeAudioData(ab)
         const raw = decoded.getChannelData(0)
-        const N = 72
+        const N = 96
         const block = Math.floor(raw.length / N)
         const amps: number[] = []
         for (let i = 0; i < N; i++) {
@@ -736,55 +750,7 @@ function Waveform({
     }
     load()
     return () => { cancelled = true }
-  }, [trackId])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    const w = canvas.offsetWidth || 200
-    const h = canvas.offsetHeight || 34
-    canvas.width = w * dpr
-    canvas.height = h * dpr
-    ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, w, h)
-    const barW = 3
-    const gap = 3
-    const step = barW + gap
-    const count = Math.floor((w + gap) / step)
-    const pivot = Math.floor(count * playedRatio)
-    const unplayedOpacity = isDark ? 0.25 : 0.35
-    const bars = barsRef.current
-    for (let i = 0; i < count; i++) {
-      // Lerp from minimum dot height (2px) to full amplitude height
-      const amp = bars.length ? (bars[Math.floor(i * bars.length / count)] ?? 0) : 0
-      const targetBh = Math.max(2, amp * h * 0.88)
-      const bh = 2 + (targetBh - 2) * animProgress
-      ctx.globalAlpha = muted ? 0.12 : (i < pivot ? 1.0 : unplayedOpacity)
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.roundRect(i * step, (h - bh) / 2, barW, bh, barW / 2)
-      ctx.fill()
-    }
-  }, [animProgress, muted, playedRatio, color, isDark, containerWidth, ready])
-
-  // When audio becomes ready, animate bars from flat dots → full height (ease-out cubic, 320 ms).
-  useEffect(() => {
-    cancelAnimationFrame(animRafRef.current)
-    if (!ready) { setAnimProgress(0); return }
-    setAnimProgress(0)
-    const start = performance.now()
-    const DURATION = 320
-    function tick(now: number) {
-      const t = Math.min((now - start) / DURATION, 1)
-      setAnimProgress(1 - (1 - t) ** 3)
-      if (t < 1) animRafRef.current = requestAnimationFrame(tick)
-    }
-    animRafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(animRafRef.current)
-  }, [ready])
+  }, [trackId, onReady])
 
   function getXPercent(clientX: number): number {
     const rect = containerRef.current!.getBoundingClientRect()
@@ -880,20 +846,47 @@ function Waveform({
 
   const dragSpan = dragRect ? Math.abs(dragRect.endX - dragRect.startX) : 0
 
+  const bars = ready
+    ? barsRef.current
+    : Array.from({ length: 64 }, () => 0.12)
+
   return (
     <div
       ref={containerRef}
-      className="relative overflow-visible"
+      className="relative w-full h-full overflow-visible px-1 py-2"
       style={{ cursor, userSelect: 'none', WebkitUserSelect: 'none', touchAction: commentMode ? 'none' : 'auto' } as React.CSSProperties}
       onMouseDown={handleMouseDown}
       onMouseMove={commentMode ? handleMouseMove : undefined}
       onTouchStart={commentMode ? handleTouchStart : undefined}
       onTouchMove={commentMode ? handleTouchMove : undefined}
     >
-      {/* z-index 1: waveform bars (dots while loading, grows to full on ready) */}
-      <canvas ref={canvasRef} className="w-full block relative z-[1]" style={{ height: 34 }} />
+      <div className="absolute inset-x-1 top-2 bottom-2 flex items-center gap-px z-[1]">
+        {bars.map((h, i) => {
+          const played = (i / bars.length) < playedRatio
+          return (
+            <div
+              key={i}
+              className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
+              style={{
+                height: `${Math.max(8, h * 100)}%`,
+                background: color,
+                opacity: muted ? 0.12 : played ? 0.95 : 0.4,
+                animationDelay: ready ? `${i * 4}ms` : undefined,
+              }}
+            />
+          )
+        })}
+      </div>
 
-      {/* z-index 3: saved comment ranges (only after audio is decoded) */}
+      {commentMode && !dragRect && (
+        <div className="absolute inset-0 z-[2] pointer-events-none bg-ember/5 border-2 border-dashed border-ember/40 grid place-items-center">
+          <div className="text-[10px] uppercase tracking-widest text-ember bg-background border border-ember/40 px-2 py-1">
+            Click-drag to comment
+          </div>
+        </div>
+      )}
+
+      {/* Saved comment ranges (only after audio is decoded) */}
       {audioReady && comments.map(c => (
         <CommentRangeMarker
           key={c.id}
@@ -1291,57 +1284,78 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   return { playing, currentTime, duration, loaded, total: audioTracks.length, mutedTracks, soloedTracks, volume, setVolume, play: () => play(), pause, seek, toggleMute, toggleSolo, audioContext: actxRef, trackDurations }
 }
 
+// ─── Track letter buttons ─────────────────────────────────────────────────────
+
+function TrackLetterBtn({
+  letter, tooltip, active, onClick, activeClass,
+}: {
+  letter: string
+  tooltip: string
+  active?: boolean
+  onClick?: () => void
+  activeClass?: string
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        title={tooltip}
+        onClick={onClick}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className={`size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
+          active && activeClass ? activeClass : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+        }`}
+      >
+        {letter}
+      </button>
+      {hovered && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] whitespace-nowrap z-30 border border-border bg-popover shadow-lg pointer-events-none">
+          {tooltip}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Action button ────────────────────────────────────────────────────────────
 
 function ActionButton({
-  onClick, href, tooltip, color, hoverBg, hoverBorderColor, hoverColor, children,
+  label, onClick, href, tooltip, danger,
 }: {
+  label: string
   onClick?: () => void
   href?: string
   tooltip: string
-  color: string
-  hoverBg?: string
-  hoverBorderColor?: string
-  hoverColor?: string
-  children: React.ReactNode
+  danger?: boolean
 }) {
   const [hovered, setHovered] = useState(false)
 
-  const buttonStyle: React.CSSProperties = {
-    width: 28, height: 28, borderRadius: 6, flexShrink: 0,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s, color 0.15s',
-    border: `0.5px solid ${hovered && hoverBorderColor ? hoverBorderColor : 'var(--border)'}`,
-    background: hovered && hoverBg ? hoverBg : 'transparent',
-    color: hovered && hoverColor ? hoverColor : color,
-    textDecoration: 'none',
-  }
+  const className = `size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
+    danger
+      ? hovered ? 'border-destructive text-destructive bg-destructive/10' : 'border-border text-muted-foreground'
+      : hovered ? 'border-ember text-ember bg-ember-soft' : 'border-border text-muted-foreground'
+  }`
 
   const handlers = {
     onMouseEnter: () => setHovered(true),
     onMouseLeave: () => setHovered(false),
+    title: tooltip,
   }
 
   return (
     <div className="relative shrink-0">
       {href ? (
-        <a href={href} download style={buttonStyle} {...handlers}>{children}</a>
+        <a href={href} download className={className} {...handlers}>{label}</a>
       ) : (
-        <button onClick={onClick} style={buttonStyle} {...handlers}>{children}</button>
+        <button type="button" onClick={onClick} className={className} {...handlers}>{label}</button>
       )}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          bottom: '100%', left: '50%',
-          transform: `translateX(-50%) translateY(${hovered ? 0 : 4}px)`,
-          opacity: hovered ? 1 : 0, marginBottom: 4,
-          transition: 'opacity 0.15s, transform 0.15s',
-          background: 'var(--bg-card)', border: '0.5px solid var(--border-light)',
-          borderRadius: 6, padding: '4px 8px',
-          fontSize: 11, color: 'var(--text-sec)',
-          whiteSpace: 'nowrap', zIndex: 20,
-        }}
-      >{tooltip}</div>
+      {hovered && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] whitespace-nowrap z-30 border border-border bg-popover shadow-lg pointer-events-none">
+          {tooltip}
+        </div>
+      )}
     </div>
   )
 }
@@ -1499,10 +1513,7 @@ function TrackRow({
   const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
   const col = trackColorAt(index, colorPalette, isDark)
-  const instrument = detectInstrument(track.name)
   const isMidi = track.file_type === 'midi'
-
-  const iconBg = resolveTrackIconColor(track.icon_color, isDark)
 
   // All state/refs must come before computed values that read state
   const [waveformReady, setWaveformReady] = useState(false)
@@ -1662,148 +1673,140 @@ function TrackRow({
     }
   }
 
+  const trackLetter = (displayName.trim()[0] ?? '?').toUpperCase()
+
   return (
     <>
     <div
       data-track-row
-      className="relative grid items-center h-[62px] gap-3 px-[22px] overflow-visible"
+      className="flex group/track hover:bg-surface/30 overflow-visible border-b border-border"
       style={{
-        gridTemplateColumns: '20px 32px 118px 1fr 22px 22px auto',
+        minHeight: TRACK_ROW_H,
         background: rowBg,
         boxShadow: isOffsetDragging
           ? '0 2px 8px rgba(0,0,0,0.15)'
           : confirmDelete || deleteError
           ? 'inset 0 0 0 0.5px rgba(239,68,68,0.2)'
           : 'none',
-        borderBottom: pianoRollOpen ? 'none' : '0.5px solid var(--border)',
+        borderBottom: pianoRollOpen ? 'none' : undefined,
         transition: 'background 0.15s, box-shadow 0.15s, opacity 0.15s',
         opacity: rowOpacity,
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
     >
-      <span className="text-center text-[11px] text-dim tabular-nums">{index + 1}</span>
-
-      {/* Icon square — click to open picker */}
-      <div className="relative">
-        <button
-          onClick={() => setShowIconPicker(p => !p)}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-opacity duration-150 hover:opacity-80"
-          style={{ background: iconBg, border: 'none', cursor: 'pointer', padding: 0 }}
-          title="Change icon"
-        >
-          {track.icon_emoji ? (
-            <span style={{ fontSize: 15, lineHeight: 1 }}>{track.icon_emoji}</span>
-          ) : waveformReady ? (
-            <InstrumentSVG type={instrument} color={col.fg} />
-          ) : (
-            <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <circle cx="6.5" cy="6.5" r="5" stroke={col.fg} strokeWidth="1.5" strokeOpacity="0.2" />
-              <path d="M6.5 1.5A5 5 0 0 1 11.5 6.5" stroke={col.fg} strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          )}
-        </button>
-        {showIconPicker && (
-          <IconPicker
-            trackId={track.id}
-            initialEmoji={track.icon_emoji}
-            initialColor={track.icon_color}
-            onApply={(e, c) => { onIconUpdate(track.id, e, c); setShowIconPicker(false) }}
-            onClose={() => setShowIconPicker(false)}
-          />
-        )}
-      </div>
-
-      {/* Track name — double-click or pencil to rename */}
-      <div className="min-w-0">
-        {editing ? (
-          <input
-            ref={renameInputRef}
-            value={editValue}
-            onChange={e => setEditValue(e.target.value.slice(0, 40))}
-            onKeyDown={e => {
-              if (e.key === 'Enter') commitRename()
-              if (e.key === 'Escape') { setEditing(false) }
-            }}
-            onBlur={commitRename}
-            style={{
-              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-              borderRadius: 5, padding: '2px 6px', fontSize: 13, color: 'var(--text)',
-              width: 120, outline: 'none',
-            }}
-          />
-        ) : (
-          <div
-            className="flex items-center gap-1 group"
-            onDoubleClick={startEdit}
-          >
-            <div
-              className="text-[13px] text-soft truncate"
-              style={{ color: nameFlash ? 'var(--accent)' : undefined, transition: 'color 0.3s' }}
+      {/* Label column */}
+      <div
+        className="shrink-0 border-r border-border p-3 flex flex-col justify-between"
+        style={{ width: TRACK_LABEL_W }}
+      >
+        <div className="flex items-start gap-2 min-w-0">
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowIconPicker(p => !p)}
+              title="Change track color"
+              className="size-6 grid place-items-center text-[10px] font-bold text-background transition-opacity hover:opacity-80"
+              style={{ background: col.fg }}
             >
-              {displayName}
-            </div>
-            {/* MIDI badge */}
-            {isMidi && (
-              <span style={{
-                background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-                color: 'var(--accent)', fontSize: 9, textTransform: 'uppercase',
-                letterSpacing: '0.5px', padding: '1px 5px', borderRadius: 3,
-                flexShrink: 0, lineHeight: 1.5,
-              }}>MIDI</span>
-            )}
-            {rowHovered && (
-              <button
-                onClick={startEdit}
-                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--text-dim)', padding: 0, lineHeight: 1,
-                  display: 'flex', alignItems: 'center',
-                }}
-                title="Rename"
-              >
-                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                  <path d="M7.5 1.5l2 2-6 6H1.5v-2l6-6z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-                </svg>
-              </button>
+              {!isMidi && !waveformReady ? (
+                <span className="animate-pulse opacity-60">·</span>
+              ) : trackLetter}
+            </button>
+            {showIconPicker && (
+              <IconPicker
+                trackId={track.id}
+                initialEmoji={track.icon_emoji}
+                initialColor={track.icon_color}
+                onApply={(e, c) => { onIconUpdate(track.id, e, c); setShowIconPicker(false) }}
+                onClose={() => setShowIconPicker(false)}
+              />
             )}
           </div>
-        )}
-        <div className="mt-0.5">
-          {changed ? (
-            <span className="text-[10px] text-amber flex items-center gap-1">
-              <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><circle cx="2" cy="2" r="1" fill="currentColor" /><circle cx="7" cy="2" r="1" fill="currentColor" /><circle cx="2" cy="7" r="1" fill="currentColor" /><path d="M3 2h3M2 3v3M7 3l-5 5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" /></svg>
-              modified
-            </span>
-          ) : isMidi && track.midi_data ? (
-            <span className="text-[11px] text-dim truncate block">
-              {track.midi_data.notes.length} notes
-              {' · '}
-              {trackDurationBars} bars
-              {(track.start_bar ?? 0) > 0 ? ` · starts at bar ${(track.start_bar ?? 0) + 1}` : ''}
-              {' · '}
-              {gmProgramLabel(track.midi_data.instrument)}
-            </span>
-          ) : (
-            <span className="text-[11px] text-dim truncate block">
-              {track.original_filename ?? '—'}
-              {track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
-              {(track.start_bar ?? 0) > 0 ? ` · starts at bar ${(track.start_bar ?? 0) + 1}` : ''}
-            </span>
+          <div className="min-w-0 flex-1">
+            {editing ? (
+              <input
+                ref={renameInputRef}
+                value={editValue}
+                onChange={e => setEditValue(e.target.value.slice(0, 40))}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitRename()
+                  if (e.key === 'Escape') { setEditing(false) }
+                }}
+                onBlur={commitRename}
+                className="w-full bg-background border border-ember px-1.5 py-0.5 text-xs uppercase outline-none"
+              />
+            ) : (
+              <div className="flex items-center gap-1 min-w-0" onDoubleClick={startEdit}>
+                <div
+                  className={`text-xs font-bold uppercase tracking-tight truncate transition-colors ${
+                    nameFlash ? 'text-ember' : 'text-foreground'
+                  }`}
+                >
+                  {displayName}
+                </div>
+                {isMidi && (
+                  <span className="text-[8px] uppercase tracking-widest text-ember border border-ember/40 px-1 shrink-0">
+                    MIDI
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="mt-0.5">
+              {changed ? (
+                <span className="text-[9px] uppercase tracking-widest text-amber">Modified</span>
+              ) : isMidi && track.midi_data ? (
+                <span className="text-[9px] text-muted-foreground truncate block font-mono">
+                  {track.midi_data.notes.length} notes · {trackDurationBars} bars
+                  {(track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
+                </span>
+              ) : (
+                <span className="text-[9px] text-muted-foreground truncate block font-mono">
+                  {track.original_filename ?? '—'}
+                  {track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
+                  {(track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 mt-2 flex-wrap">
+          <TrackLetterBtn
+            letter="M"
+            tooltip="Mute"
+            active={muted}
+            activeClass="bg-ember text-white border-ember"
+            onClick={onToggleMute}
+          />
+          <TrackLetterBtn
+            letter="S"
+            tooltip="Solo"
+            active={soloed}
+            activeClass="bg-chart-4 text-background border-chart-4"
+            onClick={onToggleSolo}
+          />
+          {isMidi && (
+            <TrackLetterBtn
+              letter="E"
+              tooltip="Edit MIDI"
+              active={pianoRollOpen}
+              activeClass="bg-ember text-white border-ember"
+              onClick={() => setPianoRollOpen(p => !p)}
+            />
+          )}
+          {rowHovered && !editing && (
+            <TrackLetterBtn letter="N" tooltip="Rename" onClick={startEdit} />
           )}
         </div>
       </div>
 
-      <div ref={waveformColRef} className="relative min-w-0 overflow-hidden" style={{ height: 34 }} data-waveform-col>
-        {/* Subtle diagonal stripe pattern for empty space */}
-        <div style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none',
-          backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 4px, var(--border) 4px, var(--border) 5px)',
-          opacity: 0.3,
-        }} />
-
-        {/* Waveform/MIDI content — absolutely positioned at start_bar */}
+      {/* Waveform column */}
+      <div
+        ref={waveformColRef}
+        data-waveform-col
+        className="relative flex-1 min-w-0 overflow-hidden"
+        style={{ minHeight: TRACK_ROW_H }}
+      >
         <div
           style={{
             position: 'absolute',
@@ -1811,7 +1814,7 @@ function TrackRow({
             width: `${layoutWidthPercent}%`,
             height: '100%',
             cursor: isOffsetDragging ? 'grabbing' : 'grab',
-            borderLeft: effectiveStartBar > 0 ? '1px solid var(--border-light)' : 'none',
+            borderLeft: effectiveStartBar > 0 ? '1px solid var(--border)' : 'none',
             zIndex: 1,
             transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
             touchAction: 'none',
@@ -1821,19 +1824,19 @@ function TrackRow({
         >
           {isMidi ? (
             track.midi_data ? (
-              <div style={{ width: '100%', height: '100%', opacity: muted ? 0.35 : 1 }}>
+              <div className="w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
                 <MiniPianoRoll
                   midiData={track.midi_data}
                   color={col.fg}
                   projectBpm={project.bpm ?? undefined}
                   totalProjectMs={trackOwnDurationMs}
-                  height={34}
+                  height={TRACK_ROW_H}
                   midiStartBar={0}
                 />
               </div>
             ) : (
-              <div style={{ width: '100%', height: 34, background: 'var(--bg-card)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>Loading…</span>
+              <div className="w-full h-full grid place-items-center bg-surface-2">
+                <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Loading…</span>
               </div>
             )
           ) : (
@@ -1863,128 +1866,50 @@ function TrackRow({
           )}
         </div>
 
-        {/* Snap indicator during drag */}
         {isOffsetDragging && dragPreviewBar !== null && (() => {
           const snapPct = totalBars > 0 ? (dragPreviewBar / totalBars) * 100 : 0
           return (
             <>
-              <div style={{
-                position: 'absolute', left: `${snapPct}%`, top: 0, height: '100%',
-                width: 1, background: 'var(--accent)', zIndex: 10, pointerEvents: 'none',
-              }} />
-              <div style={{
-                position: 'absolute', left: `${snapPct}%`, top: 2, zIndex: 10,
-                transform: 'translateX(-50%)', pointerEvents: 'none',
-                background: 'var(--accent)', color: 'var(--on-accent)',
-                fontSize: 10, padding: '2px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-              }}>Bar {dragPreviewBar + 1}</div>
+              <div className="absolute top-0 h-full w-px bg-ember z-10 pointer-events-none" style={{ left: `${snapPct}%` }} />
+              <div
+                className="absolute top-0.5 z-10 pointer-events-none bg-ember text-white text-[10px] px-1.5 py-0.5 whitespace-nowrap"
+                style={{ left: `${snapPct}%`, transform: 'translateX(-50%)' }}
+              >
+                Bar {dragPreviewBar + 1}
+              </div>
             </>
           )
         })()}
       </div>
 
-      <button
-        onClick={onToggleMute}
-        className={`w-[22px] h-[22px] rounded-md text-[10px] font-medium transition-all duration-150 ${muted ? 'text-accent' : 'text-dim hover:text-muted'}`}
-        style={{ border: muted ? '0.5px solid var(--accent)' : '0.5px solid var(--border-light)', background: muted ? 'rgba(99,102,241,0.1)' : 'transparent' }}
-      >M</button>
-
-      <button
-        onClick={onToggleSolo}
-        className={`w-[22px] h-[22px] rounded-md text-[10px] font-medium transition-all duration-150 ${soloed ? '' : 'text-dim hover:text-muted'}`}
-        style={{
-          border: soloed ? '0.5px solid var(--amber, #f59e0b)' : '0.5px solid var(--border-light)',
-          background: soloed ? 'rgba(245,158,11,0.12)' : 'transparent',
-          color: soloed ? 'var(--amber, #f59e0b)' : undefined,
-        }}
-      >S</button>
-
-      {/* Action buttons / inline delete confirm */}
-      <div className="flex items-center gap-1 shrink-0">
+      {/* Action column */}
+      <div className="shrink-0 border-l border-border flex items-center gap-1 px-2 self-stretch">
         {confirmDelete ? (
           <div className="flex items-center gap-1.5">
-            <span className="text-[12px] whitespace-nowrap" style={{ color: '#ef4444' }}>Delete track?</span>
+            <span className="text-[10px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
             <button
+              type="button"
               onClick={() => setConfirmDelete(false)}
-              className="h-[26px] px-2.5 rounded-md text-[11px] font-medium"
-              style={{ border: '0.5px solid var(--border)', color: 'var(--text-muted)', background: 'transparent', cursor: 'pointer', transition: 'background 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-            >Cancel</button>
+              className="h-5 px-2 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition"
+            >
+              Cancel
+            </button>
             <button
+              type="button"
               onClick={handleConfirmDelete}
               disabled={deleting}
-              className="h-[26px] px-2.5 rounded-md text-[11px] font-medium text-white disabled:opacity-60"
-              style={{ background: '#ef4444', border: '0.5px solid #ef4444', cursor: 'pointer', transition: 'background 0.15s' }}
-              onMouseEnter={e => { if (!deleting) e.currentTarget.style.background = '#dc2626' }}
-              onMouseLeave={e => { e.currentTarget.style.background = '#ef4444' }}
-            >{deleting ? '…' : 'Delete'}</button>
+              className="h-5 px-2 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
+            >
+              {deleting ? '…' : 'Delete'}
+            </button>
           </div>
         ) : (
           <>
-            {/* Edit MIDI button — always visible for MIDI tracks */}
-            {isMidi && (
-              <ActionButton
-                tooltip="Edit MIDI"
-                color="var(--accent)"
-                hoverBg="rgba(99,102,241,0.10)"
-                hoverBorderColor="rgba(99,102,241,0.30)"
-                hoverColor="var(--accent)"
-                onClick={() => setPianoRollOpen(p => !p)}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="8" width="20" height="12" rx="2" />
-                  <path d="M6 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
-                  <line x1="6" y1="12" x2="6" y2="17" />
-                  <line x1="10" y1="12" x2="10" y2="17" />
-                  <line x1="14" y1="12" x2="14" y2="17" />
-                  <line x1="18" y1="12" x2="18" y2="17" />
-                  <line x1="8" y1="12" x2="8" y2="15" />
-                  <line x1="12" y1="12" x2="12" y2="15" />
-                  <line x1="16" y1="12" x2="16" y2="15" />
-                </svg>
-              </ActionButton>
-            )}
-            <ActionButton
-              tooltip="Replace track"
-              color="var(--accent)"
-              hoverBg="color-mix(in srgb, var(--accent) 10%, transparent)"
-              hoverBorderColor="color-mix(in srgb, var(--accent) 30%, transparent)"
-              onClick={() => fileRef.current?.click()}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 7h11a3 3 0 0 1 3 3v1" /><path d="M14 4l3 3-3 3" />
-                <path d="M21 17H10a3 3 0 0 1-3-3v-1" /><path d="M10 20l-3-3 3-3" />
-              </svg>
-            </ActionButton>
+            <ActionButton label="R" tooltip="Replace track" onClick={() => fileRef.current?.click()} />
             {!isMidi && (
-              <ActionButton
-                tooltip="Download as WAV"
-                color="var(--text-muted)"
-                hoverBg="var(--bg-surface)"
-                hoverColor="var(--text-sec)"
-                href={`/api/tracks/${track.id}/download`}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-                  <path d="M7 11l5 5 5-5" /><line x1="12" y1="4" x2="12" y2="16" />
-                </svg>
-              </ActionButton>
+              <ActionButton label="W" tooltip="Download as WAV" href={`/api/tracks/${track.id}/download`} />
             )}
-            <ActionButton
-              tooltip="Delete track"
-              color="var(--text-dim)"
-              hoverBg="rgba(239,68,68,0.08)"
-              hoverBorderColor="#ef4444"
-              hoverColor="#ef4444"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 7h16" /><path d="M10 11v6" /><path d="M14 11v6" />
-                <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12" />
-                <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
-              </svg>
-            </ActionButton>
+            <ActionButton label="D" tooltip="Delete track" danger onClick={() => setConfirmDelete(true)} />
           </>
         )}
       </div>
@@ -2094,73 +2019,27 @@ function UploadRow({ upload, onRetry, onDismiss }: {
   }
 
   return (
-    // Same grid columns as TrackRow so elements align with real track rows
     <div
-      className="grid items-center h-[62px] gap-3 px-[22px]"
-      style={{
-        gridTemplateColumns: '20px 32px 118px 1fr 22px 22px auto',
-        borderBottom: '0.5px solid var(--border)',
-        borderLeft: status === 'error' ? '3px solid #ef4444' : undefined,
-      }}
+      className="flex border-b border-border"
+      style={{ minHeight: TRACK_ROW_H, borderLeft: status === 'error' ? '3px solid var(--destructive)' : undefined }}
     >
-      {/* Index placeholder */}
-      <div />
-
-      {/* Icon placeholder */}
-      <div className="w-8 h-8 rounded-lg animate-pulse" style={{ background: 'var(--bg-card)' }} />
-
-      {/* Name + status line */}
-      <div style={{ minWidth: 0 }}>
-        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-sec)', marginBottom: 3 }}>
-          {name}
-        </div>
-        {subtitle}
+      <div className="shrink-0 border-r border-border p-3 flex flex-col justify-center" style={{ width: TRACK_LABEL_W }}>
+        <div className="text-xs font-bold uppercase tracking-tight truncate text-muted-foreground">{name}</div>
+        <div className="mt-0.5">{subtitle}</div>
       </div>
-
-      {/* Progress bar — occupies the same 1fr waveform column */}
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <div style={{ flex: 1 }}>
+      <div className="flex-1 flex items-center px-3 min-w-0">
+        <div className="flex-1 min-w-0">
           {waveformArea}
         </div>
         {status === 'uploading' && (
-          <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 8, flexShrink: 0 }}>
-            {progress}%
-          </span>
+          <span className="text-[9px] tabular-nums text-muted-foreground ml-2 shrink-0">{progress}%</span>
         )}
       </div>
-
-      {/* M / S button placeholders */}
-      <div />
-      <div />
-
-      {/* Error actions or empty */}
-      <div>
+      <div className="shrink-0 border-l border-border flex items-center px-2">
         {status === 'error' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <button
-              onClick={onRetry}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '4px 8px', borderRadius: 6,
-                border: '0.5px solid #ef4444', color: '#ef4444',
-                background: 'transparent', cursor: 'pointer', fontSize: 11,
-              }}
-            >
-              <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                <path d="M1.5 5.5a4 4 0 1 0 .5-2" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                <path d="M1.5 2v3.5H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Retry
-            </button>
-            <button
-              onClick={onDismiss}
-              style={{
-                width: 22, height: 22, borderRadius: 6,
-                border: '0.5px solid var(--border)', background: 'transparent',
-                cursor: 'pointer', color: 'var(--text-dim)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
-              }}
-            >×</button>
+          <div className="flex items-center gap-1">
+            <ActionButton label="R" tooltip="Retry upload" onClick={onRetry} />
+            <ActionButton label="C" tooltip="Dismiss" onClick={onDismiss} />
           </div>
         )}
       </div>
@@ -2168,18 +2047,16 @@ function UploadRow({ upload, onRetry, onDismiss }: {
   )
 }
 
-// ─── Player bar ───────────────────────────────────────────────────────────────
+// ─── Master player (bottom bar) ───────────────────────────────────────────────
 
-function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume }: {
+function MasterPlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume }: {
   playing: boolean; currentTime: number; duration: number; loaded: number; total: number; volume: number
   onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
 }) {
   const pct = duration > 0 ? currentTime / duration : 0
   const [dragging, setDragging] = useState(false)
-  const [showVolume, setShowVolume] = useState(false)
-  const [prevVolume, setPrevVolume] = useState(1)
   const barRef = useRef<HTMLDivElement>(null)
-  const volRef = useRef<HTMLDivElement>(null)
+  const isLoading = loaded < total && total > 0
 
   function posToTime(clientX: number) {
     const r = barRef.current?.getBoundingClientRect()
@@ -2187,149 +2064,56 @@ function PlayerBar({ playing, currentTime, duration, loaded, total, volume, onPl
     return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration
   }
 
-  function toggleMute() {
-    if (volume > 0) { setPrevVolume(volume); onVolume(0) }
-    else onVolume(prevVolume || 1)
-  }
-
-  // Close volume popover on outside click
-  useEffect(() => {
-    if (!showVolume) return
-    function handler(e: MouseEvent) {
-      if (volRef.current && !volRef.current.contains(e.target as Node)) setShowVolume(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showVolume])
-
-  const isLoading = loaded < total && total > 0
-  const volPct = Math.round(volume * 100)
-
-  // 4-state volume icon: 0=muted, 1-33=low, 34-66=mid, 67-100=full
-  function VolumeIcon() {
-    if (volume === 0) return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M9.5 4.5l3 3M12.5 4.5l-3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-      </svg>
-    )
-    if (volPct <= 33) return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 6a0.7 0.7 0 0 1 0 2" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-      </svg>
-    )
-    if (volPct <= 66) return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 5a2 2 0 0 1 0 4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-      </svg>
-    )
-    return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-        <path d="M10 4a3.5 3.5 0 0 1 0 6" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-      </svg>
-    )
+  function onBarPointer(clientX: number) {
+    onSeek(posToTime(clientX))
   }
 
   return (
-    <div className="flex items-center h-[52px] shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-      {/* Play button — flush to left edge */}
-      <button onClick={playing ? onPause : onPlay} disabled={total === 0} className="btn-play" style={{ flexShrink: 0, marginLeft: 0 }}>
-        {isLoading ? (
-          <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.25" />
-            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        ) : playing ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2l8 5-8 5V2z" /></svg>
-        )}
-      </button>
-
-      {/* Combined time — "0:42 / 2:55" */}
-      <span className="text-[12px] tabular-nums shrink-0 whitespace-nowrap" style={{ marginLeft: 10 }}>
-        <span style={{ color: 'var(--text-sec)' }}>{fmtTime(currentTime)}</span>
-        <span style={{ color: 'var(--text-muted)' }}> / {fmtTime(duration)}</span>
-      </span>
-
-      {/* Progress bar — flex: 1 */}
-      <div
-        ref={barRef}
-        className="flex-1 h-5 flex items-center cursor-pointer"
-        style={{ margin: '0 12px' }}
-        onMouseDown={e => { setDragging(true); onSeek(posToTime(e.clientX)) }}
-        onMouseMove={e => { if (dragging) onSeek(posToTime(e.clientX)) }}
-        onMouseUp={() => setDragging(false)}
-        onMouseLeave={() => setDragging(false)}
-      >
-        <div className="w-full rounded-full relative" style={{ height: 4, background: 'var(--progress-track)' }}>
-          <div className="h-full rounded-full relative" style={{ width: `${pct * 100}%`, background: 'var(--accent)' }}>
-            <div className="absolute top-1/2 rounded-full bg-white" style={{ right: -5, width: 10, height: 10, transform: 'translateY(-50%)', boxShadow: '0 0 0 2px rgba(99,102,241,0.3)' }} />
-          </div>
+    <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 hidden landscape:flex sm:flex items-center gap-3 sm:gap-6 flex-wrap shrink-0">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={playing ? onPause : onPlay}
+          disabled={total === 0}
+          className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={playing ? 'Pause' : 'Play'}
+        >
+          {isLoading ? (
+            <Spinner size={14} tone="foreground" />
+          ) : (
+            <span className="text-sm translate-x-px">{playing ? '❚❚' : '▶'}</span>
+          )}
+        </button>
+        <div className="font-mono text-xs tabular-nums">
+          <span className="text-foreground">{fmtTime(currentTime)}</span>
+          <span className="text-muted-foreground"> / {fmtTime(duration)}</span>
         </div>
       </div>
 
-      {/* Volume button + popover — flush right */}
-      <div ref={volRef} style={{ position: 'relative', marginRight: 0 }}>
-        <button
-          onClick={() => setShowVolume(v => !v)}
-          className="text-dim hover:text-muted transition-colors duration-150 p-1"
-          title="Volume"
-        >
-          <VolumeIcon />
-        </button>
-        {showVolume && (
-          <div style={{
-            position: 'absolute', bottom: 'calc(100% + 8px)', right: 0,
-            background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-            borderRadius: 8, padding: '12px 10px',
-            width: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-            zIndex: 50, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-          }}>
-            {/* Percentage label */}
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{volPct}</span>
-            {/* Vertical slider */}
-            <input
-              type="range"
-              min={0} max={100} step={1}
-              value={volPct}
-              onChange={e => onVolume(parseInt(e.target.value) / 100)}
-              style={{
-                writingMode: 'vertical-lr' as const,
-                direction: 'rtl' as const,
-                height: 80,
-                width: 20,
-                cursor: 'pointer',
-                accentColor: 'var(--accent)',
-              }}
-            />
-            {/* Mute toggle */}
-            <button
-              onClick={toggleMute}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                color: volume === 0 ? 'var(--accent)' : 'var(--text-muted)',
-                display: 'flex', alignItems: 'center',
-              }}
-              title={volume === 0 ? 'Unmute' : 'Mute'}
-            >
-              {volume === 0 ? (
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-                  <path d="M9.5 4.5l3 3M12.5 4.5l-3 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-                  <path d="M10 4a3.5 3.5 0 0 1 0 6" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-                </svg>
-              )}
-            </button>
-          </div>
-        )}
+      <div
+        ref={barRef}
+        className="flex-1 min-w-[200px] h-2 bg-surface-2 relative cursor-pointer select-none"
+        onMouseDown={e => { setDragging(true); onBarPointer(e.clientX) }}
+        onMouseMove={e => { if (dragging) onBarPointer(e.clientX) }}
+        onMouseUp={() => setDragging(false)}
+        onMouseLeave={() => setDragging(false)}
+      >
+        <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct * 100}%` }} />
+        <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${pct * 100}%` }} />
+      </div>
+
+      <div className="flex items-center gap-3">
+        <SectionLabel>VOL</SectionLabel>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={volume}
+          onChange={e => onVolume(parseFloat(e.target.value))}
+          className="w-24 accent-ember"
+        />
+        <span className="text-[10px] text-muted-foreground tabular-nums w-8">{Math.round(volume * 100)}</span>
       </div>
     </div>
   )
@@ -2356,15 +2140,6 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   projectName: string
   isOpen?: boolean
 }) {
-  function dotColor(v: Version) {
-    return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
-  }
-  function badge(v: Version) {
-    if (v.merged_at) return { label: 'MERGED', bg: 'var(--badge-merged-bg)', color: 'var(--green)' }
-    if (v.type === 'branch') return { label: 'BRANCH', bg: 'var(--badge-branch-bg)', color: 'var(--amber)' }
-    return { label: 'CURRENT', bg: 'var(--badge-current-bg)', color: 'var(--accent)' }
-  }
-
   const main = versions.find(v => v.type === 'main')
   const branches = versions.filter(v => v.type === 'branch')
   const active = versions.find(v => v.id === activeId)
@@ -2379,115 +2154,91 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   ]
 
   const isChecking = mergeCheckingId === activeId
+  const storagePct = Math.min(100, (storageUsed / storageLimit) * 100)
 
   return (
     <aside
       data-tour="versions-sidebar"
-      className={`project-mixer-sidebar w-[208px] shrink-0 flex flex-col overflow-hidden${isOpen ? ' sidebar-open' : ''}`}
-      style={{ background: 'var(--bg-surface)', borderRight: '0.5px solid var(--border)' }}
+      className={`project-mixer-sidebar w-[200px] shrink-0 flex flex-col overflow-hidden border-r border-border bg-surface/30${isOpen ? ' sidebar-open' : ''}`}
     >
-      <div className="flex-1 overflow-y-auto px-3 pt-4 pb-2">
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
+        <div>
+          <SectionLabel>VERSION HISTORY</SectionLabel>
+          <div className="mt-4 space-y-3">
+            {[main, ...branches].filter(Boolean).map(v => {
+              const isActive = v!.id === activeId
+              return (
+                <button
+                  key={v!.id}
+                  type="button"
+                  onClick={() => onSelect(v!.id)}
+                  className={`relative w-full text-left pl-4 border-l-2 transition-colors ${
+                    isActive ? 'border-ember' : 'border-border hover:border-muted-foreground'
+                  }`}
+                >
+                  <div
+                    className={`absolute -left-[5px] top-1 size-2 rounded-full ${
+                      isActive ? 'bg-ember' : v!.merged_at ? 'bg-online' : 'bg-muted-foreground'
+                    }`}
+                  />
+                  <div className="text-[11px] font-bold truncate text-foreground">{v!.name}</div>
+                  <div className="text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5">
+                    {fmtDate(v!.created_at)}
+                    {(commentCounts[v!.id] ?? 0) > 0 && ` · ${commentCounts[v!.id]} COMMENTS`}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
-        <p className="text-[10px] font-medium uppercase px-[10px] mb-[10px]" style={{ color: 'var(--text-muted)', letterSpacing: '1px' }}>Versions</p>
-
-        {[main, ...branches].filter(Boolean).map(v => {
-          const b = badge(v!)
-          const isActive = v!.id === activeId
-          return (
-            <button
-              key={v!.id}
-              onClick={() => onSelect(v!.id)}
-              className="w-full text-left rounded-lg mb-1 transition-colors duration-150"
-              style={{ padding: '8px 10px', background: isActive ? 'var(--bg-card)' : 'transparent' }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-card)' }}
-              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
-            >
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-px" style={{ background: dotColor(v!) }} />
-                <span className="flex-1 text-[13px] truncate" style={{ color: 'var(--text-sec)' }}>{v!.name}</span>
-                {(commentCounts[v!.id] ?? 0) > 0 && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--text-dim)' }}>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                      <path d="M1.5 2.5h7a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5H6L4.5 9 3 7.5H1.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5z" stroke="currentColor" strokeWidth="0.7" />
-                    </svg>
-                    <span style={{ fontSize: 9 }}>{commentCounts[v!.id]}</span>
-                  </span>
-                )}
-                <span className="text-[9px] font-semibold rounded shrink-0 px-[7px] py-[2px] tracking-wide" style={{ background: b.bg, color: b.color }}>
-                  {b.label}
-                </span>
-              </div>
-              <p className="text-[10px] mt-[2px] pl-[14px]" style={{ color: 'var(--text-dim)' }}>{fmtDate(v!.created_at)}</p>
-            </button>
-          )
-        })}
-
-        <p className="text-[10px] font-medium uppercase px-[10px] mt-5 mb-[10px]" style={{ color: 'var(--text-muted)', letterSpacing: '1px' }}>Actions</p>
-
-        {/* Merge to main — shown only when a branch is active */}
-        {canMerge && (
-          <button
-            onClick={() => !isChecking && onMerge(activeId)}
-            disabled={isChecking}
-            className="w-full flex items-center gap-2 rounded-lg mb-0.5 transition-colors duration-150 text-[13px]"
-            style={{ padding: '8px 10px', color: isChecking ? 'var(--accent)' : 'var(--text-muted)', cursor: isChecking ? 'default' : 'pointer' }}
-            onMouseEnter={e => { if (!isChecking) { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-sec)' } }}
-            onMouseLeave={e => { if (!isChecking) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' } }}
-          >
-            {isChecking ? (
-              <>
-                <svg className="animate-spin shrink-0" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
-                  <path d="M6 1.5A4.5 4.5 0 0 1 10.5 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-                Checking…
-              </>
-            ) : (
-              <>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="9" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" /><path d="M3 4.5V7.5M9 4V6a3 3 0 0 1-3 3H4.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>
-                Merge to main
-              </>
+        <div>
+          <SectionLabel>ACTIONS</SectionLabel>
+          <div className="mt-3 space-y-1">
+            {canMerge && (
+              <button
+                type="button"
+                onClick={() => !isChecking && onMerge(activeId)}
+                disabled={isChecking}
+                className="w-full text-left border border-ember/50 text-ember bg-ember-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-ember/20 transition disabled:opacity-50"
+              >
+                {isChecking ? 'Checking…' : 'Merge to main →'}
+              </button>
             )}
-          </button>
-        )}
+            {staticActions.map(({ label, icon, action }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={action}
+                data-tour="new-branch-button"
+                className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition flex items-center gap-2"
+              >
+                <span>{icon}</span>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-        {staticActions.map(({ label, icon, action }) => (
-          <button
-            key={label}
-            onClick={action}
-            data-tour="new-branch-button"
-            className="w-full flex items-center gap-2 rounded-lg mb-0.5 transition-colors duration-150 text-[13px]"
-            style={{ padding: '8px 10px', color: 'var(--text-muted)' }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-sec)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-          >
-            <span>{icon}</span>
-            {label}
-          </button>
-        ))}
+        <div className="mt-auto">
+          <SectionLabel>STORAGE</SectionLabel>
+          <div className="text-[10px] tabular-nums mt-2 text-muted-foreground">
+            {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
+          </div>
+          <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
+            <div
+              className={`h-full transition-all ${storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
+              style={{ width: `${storagePct}%` }}
+            />
+          </div>
+          {storageUsed / storageLimit > 0.95 && (
+            <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
+          )}
+        </div>
       </div>
 
-      <div data-tour="resources-card">
+      <div data-tour="resources-card" className="p-4 pt-0 border-t border-border">
         <ProjectSidebarResources projectId={projectId} projectName={projectName} />
-      </div>
-
-      <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 10px 0' }} />
-      <div className="px-4 py-3">
-        <div className="flex justify-between mb-1.5">
-          <span className="text-[10px] text-dim">Storage</span>
-          <span className="text-[10px] text-dim">{formatBytes(storageUsed)} of {formatBytes(storageLimit)}</span>
-        </div>
-        <div className="h-0.5 rounded-full" style={{ background: 'var(--border)' }}>
-          <div className="h-full rounded-full" style={{
-            width: `${Math.min((storageUsed / storageLimit) * 100, 100)}%`,
-            background: storageUsed / storageLimit > 0.95 ? '#ef4444'
-              : storageUsed / storageLimit > 0.80 ? '#F59E0B'
-              : 'var(--accent)',
-          }} />
-        </div>
-        {storageUsed / storageLimit > 0.95 && (
-          <p className="text-[10px] mt-1 m-0" style={{ color: '#ef4444' }}>Almost full — upgrade to continue uploading</p>
-        )}
       </div>
     </aside>
   )
@@ -2498,26 +2249,19 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
 function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => void; onCancel: () => void }) {
   const [name, setName] = useState('')
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="rounded-2xl p-5 w-[340px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)' }}>
-        <p className="text-[14px] font-medium text-bright mb-4">New branch</p>
+    <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+      <div className="w-full max-w-sm border border-border bg-popover p-6 shadow-2xl">
+        <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New branch</p>
         <input
           autoFocus value={name}
           onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onConfirm(name.trim()); if (e.key === 'Escape') onCancel() }}
           placeholder="feature/new-guitar"
-          className="w-full rounded-lg px-3 py-2 text-bright text-[13px] outline-none mb-4 transition-colors duration-150"
-          style={{ background: 'var(--bg)', border: '0.5px solid var(--border-light)' }}
-          onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
-          onBlur={e => { e.currentTarget.style.borderColor = 'var(--border-light)' }}
+          className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
         />
         <div className="flex gap-2 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-4 py-1.5 rounded-lg text-muted text-[12px] transition-colors duration-150"
-            style={{ border: '0.5px solid var(--border-light)' }}
-          >Cancel</button>
-          <button onClick={() => name.trim() && onConfirm(name.trim())} className="btn-accent px-4 py-1.5 text-[12px]">Create</button>
+          <TbBtn onClick={onCancel}>Cancel</TbBtn>
+          <TbBtn variant="primary" onClick={() => name.trim() && onConfirm(name.trim())}>Create</TbBtn>
         </div>
       </div>
     </div>
@@ -2568,6 +2312,8 @@ export default function ProjectPage() {
     return window.innerWidth > window.innerHeight && window.innerHeight < 420 && window.innerWidth < 1024
   })
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
   const trackListRef = useRef<HTMLDivElement>(null)
   const tracksBodyRef = useRef<HTMLDivElement>(null)
   // Drag-and-drop state
@@ -3221,13 +2967,69 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
+  useEffect(() => {
+    if (!moreOpen) return
+    function onDoc(e: MouseEvent) {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [moreOpen])
+
+  const headerActions = (
+    <>
+      <TbBtn variant="ghost" className="hidden lg:inline-flex" onClick={handleShare} data-tour="share-button">
+        {shareCopied ? 'Copied!' : 'Share'}
+      </TbBtn>
+      <TbBtn
+        variant="ghost"
+        className="hidden lg:inline-flex"
+        disabled={!canSaveVersion || isSaveVersionChecking}
+        onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
+        data-tour="save-version-button"
+        title={canSaveVersion ? 'Merge this branch into main' : 'Switch to a branch to merge changes into main'}
+      >
+        {isSaveVersionChecking ? 'Checking…' : 'Save Version'}
+      </TbBtn>
+      <a
+        href={`/api/versions/${activeVersionId}/export`}
+        className="hidden sm:inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-ember hover:text-white transition no-underline items-center"
+      >
+        Export WAV
+      </a>
+      <div className="relative" ref={moreRef}>
+        <button
+          type="button"
+          onClick={() => setMoreOpen(o => !o)}
+          aria-label="More actions"
+          className="size-8 border border-border bg-surface-2 grid place-items-center text-xs hover:border-ember hover:text-ember transition"
+        >
+          ⋯
+        </button>
+        {moreOpen && (
+          <div className="absolute right-0 top-full mt-2 w-52 z-50 border border-border bg-popover shadow-2xl text-[11px]">
+            <button type="button" onClick={() => { setMoreOpen(false); setShowTour(true) }} className="w-full text-left px-3 py-2 hover:bg-surface flex items-center justify-between">
+              <span>Restart tour</span><span className="text-ember">?</span>
+            </button>
+            <button type="button" onClick={() => { handleShare(); setMoreOpen(false) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden">Share</button>
+            <button type="button" onClick={() => { if (canSaveVersion) handleMergeClick(activeVersionId); setMoreOpen(false) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden" disabled={!canSaveVersion}>Save Version</button>
+            <a href={`/api/versions/${activeVersionId}/export`} className="block w-full text-left px-3 py-2 hover:bg-surface sm:hidden">Export WAV</a>
+            <button type="button" onClick={() => { setMoreOpen(false); setSidebarOpen(o => !o) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden">
+              {sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+
   if (loading) return <BrandSpinner />
   if (error || !project) return (
     <div className="min-h-screen flex items-center justify-center text-[13px] text-danger">{error || 'Project not found'}</div>
   )
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
+    <div className="flex flex-col h-screen overflow-hidden bg-background">
 
       {/* Reading mode — full portrait mobile experience */}
       <ReadingMode
@@ -3252,95 +3054,59 @@ export default function ProjectPage() {
         visible={isMobilePortrait}
       />
 
-      {/* Topbar */}
-      <header
-        className={`flex items-center shrink-0 px-[18px] gap-2.5 mixer-topbar${isShortLandscape ? ' topbar-compact' : ''}`}
-        style={{ height: isShortLandscape ? 36 : 56, background: 'var(--bg-surface)', borderBottom: '0.5px solid var(--border)' }}
-      >
-        {/* Sidebar toggle — only visible at tablet/mobile widths via CSS */}
-        <button
-          className="project-sidebar-toggle"
-          onClick={() => setSidebarOpen(v => !v)}
-          title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-          aria-label="Toggle sidebar"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <rect x="2" y="3.5" width="12" height="1.25" rx="0.6" fill="currentColor"/>
-            <rect x="2" y="7.375" width="12" height="1.25" rx="0.6" fill="currentColor"/>
-            <rect x="2" y="11.25" width="12" height="1.25" rx="0.6" fill="currentColor"/>
-          </svg>
-        </button>
-        {/* Logo + breadcrumb — hidden in short landscape */}
-        {!isShortLandscape && <>
-          <a href="/dashboard" className="flex items-center no-underline mr-1.5">
-            <span className="text-[14px] font-semibold tracking-tight" style={{ color: 'var(--text-sec)' }}>track</span>
-            <span className="text-[14px] font-semibold text-accent tracking-tight">base</span>
-          </a>
-          <span className="text-lg leading-none" style={{ color: 'var(--border-light)' }}>·</span>
-          <a href={`/band/${bandId}`} className="text-[13px] no-underline hover:underline" style={{ color: 'var(--text-muted)' }}>{project.band_name ?? 'Band'}</a>
-          <span className="text-sm" style={{ color: 'var(--border-light)' }}>/</span>
-        </>}
-        <span
-          className="text-[13px] truncate max-w-[200px]"
-          style={{ color: projectNameFlash ? 'var(--accent)' : 'var(--text-sec)', transition: 'color 0.3s' }}
-        >
-          {projectNameEditing ? projectNameValue || project.name : project.name}
-        </span>
-        <div className="flex-1" />
-        {/* Short landscape: dots button opens bottom sheet */}
-        {isShortLandscape ? (
+      {/* Header */}
+      {isShortLandscape ? (
+        <header className="flex items-center shrink-0 px-4 h-9 border-b border-border bg-background mixer-topbar topbar-compact">
           <button
-            onClick={() => setTopbarSheetOpen(true)}
-            aria-label="More actions"
-            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center' }}
+            type="button"
+            className="project-sidebar-toggle"
+            onClick={() => setSidebarOpen(v => !v)}
+            aria-label="Toggle sidebar"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <circle cx="3" cy="8" r="1.5"/>
-              <circle cx="8" cy="8" r="1.5"/>
-              <circle cx="13" cy="8" r="1.5"/>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="3.5" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+              <rect x="2" y="7.375" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+              <rect x="2" y="11.25" width="12" height="1.25" rx="0.6" fill="currentColor"/>
             </svg>
           </button>
-        ) : <>
-          <TourHelpButton onClick={() => setShowTour(true)} />
-          <button onClick={handleShare} data-tour="share-button" className="btn-topbar" style={{ color: shareCopied ? '#10B981' : undefined }}>
-            {shareCopied ? (
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                <path d="M2.5 6.5l3 3 5-5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            ) : (
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-            )}
-            {shareCopied ? 'Copied!' : 'Share'}
-          </button>
-          <a href={`/api/versions/${activeVersionId}/export`} className="btn-topbar">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-            Export WAV
-          </a>
+          <span className="text-[11px] truncate flex-1 text-muted-foreground uppercase tracking-widest">{project.name}</span>
           <button
-            onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
-            disabled={!canSaveVersion || isSaveVersionChecking}
-            data-tour="save-version-button"
-            className="btn-accent"
-            title={canSaveVersion ? 'Merge this branch into main' : 'Switch to a branch to merge changes into main'}
-            style={{
-              opacity: !canSaveVersion ? 0.45 : 1,
-              cursor: !canSaveVersion ? 'not-allowed' : isSaveVersionChecking ? 'wait' : 'pointer',
-            }}
+            type="button"
+            onClick={() => setTopbarSheetOpen(true)}
+            aria-label="More actions"
+            className="size-7 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember bg-transparent cursor-pointer"
           >
-            {isSaveVersionChecking ? (
-              <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
-                <path d="M6.5 2A4.5 4.5 0 0 1 11 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 11V4a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4 6h5M4 8.5h3" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-            )}
-            {isSaveVersionChecking ? 'Checking…' : 'Save version'}
+            ⋯
           </button>
-          <ThemeToggle />
-          <AvatarDropdown />
-        </>}
-      </header>
+        </header>
+      ) : (
+        <AppHeader
+          left={
+            <button
+              type="button"
+              className="project-sidebar-toggle lg:hidden size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
+              onClick={() => setSidebarOpen(v => !v)}
+              aria-label="Toggle sidebar"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <rect x="2" y="3.5" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+                <rect x="2" y="7.375" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+                <rect x="2" y="11.25" width="12" height="1.25" rx="0.6" fill="currentColor"/>
+              </svg>
+            </button>
+          }
+          crumbs={
+            <>
+              <Link href={`/band/${bandId}`} className="hover:text-foreground no-underline text-muted-foreground">
+                {project.band_name ?? 'Band'}
+              </Link>
+              <span className="text-border">/</span>
+              <span className="text-foreground truncate">{project.name}</span>
+            </>
+          }
+          right={headerActions}
+        />
+      )}
 
       {/* Short-landscape bottom sheet — all topbar actions */}
       {topbarSheetOpen && (
@@ -3412,28 +3178,20 @@ export default function ProjectPage() {
         />
 
         <main
-          className="flex flex-col flex-1 overflow-hidden min-w-0"
-          style={{ background: 'var(--bg)', position: 'relative' }}
+          className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background relative"
           onDragOver={handleContentDragOver}
           onDragLeave={handleContentDragLeave}
           onDrop={handleContentDrop}
         >
           {/* Full-screen drag overlay */}
           {isDragging && (
-            <div style={{
-              position: 'absolute', inset: 0, zIndex: 200, pointerEvents: 'none',
-              background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
-              border: '2px dashed var(--accent)',
-              borderRadius: 8,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 10,
-            }}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <path d="M16 4v16M8 14l8-8 8 8" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M4 26h24" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"/>
+            <div className="absolute inset-0 z-[200] pointer-events-none border-2 border-dashed border-ember bg-ember-soft/50 flex flex-col items-center justify-center gap-2">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-ember">
+                <path d="M16 4v16M8 14l8-8 8 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M4 26h24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
               </svg>
-              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)' }}>Drop files to add tracks</span>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>WAV, MP3, and MIDI supported</span>
+              <span className="text-sm font-medium text-ember uppercase tracking-widest">Drop files to add tracks</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest">WAV · MP3 · MIDI</span>
             </div>
           )}
 
@@ -3441,93 +3199,100 @@ export default function ProjectPage() {
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', opacity: isDragging ? 0.4 : 1, transition: 'opacity 0.15s' }}>
 
           {/* Project header */}
-          <div className="px-[22px] pt-4 pb-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {projectNameEditing ? (
-                <input
-                  ref={projectNameInputRef}
-                  value={projectNameValue}
-                  onChange={e => setProjectNameValue(e.target.value.slice(0, 80))}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') commitProjectRename()
-                    if (e.key === 'Escape') setProjectNameEditing(false)
-                  }}
-                  onBlur={commitProjectRename}
-                  className="text-[17px] font-medium text-bright"
-                  style={{
-                    background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-                    borderRadius: 6, padding: '2px 10px',
-                    width: 280, maxWidth: '100%', outline: 'none',
-                  }}
-                />
-              ) : (
-                <div className="flex items-center gap-1.5 group min-w-0" onDoubleClick={startProjectRename}>
-                  <h1
-                    className="text-[17px] font-medium text-bright truncate"
-                    style={{
-                      color: projectNameFlash ? 'var(--accent)' : undefined,
-                      transition: 'color 0.3s',
-                    }}
-                  >
-                    {project.name}
-                  </h1>
+          <section className="border-b border-border bg-surface/40 shrink-0">
+            <div className="px-4 sm:px-6 py-4 flex flex-wrap items-start gap-4 lg:gap-6">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  {projectNameEditing ? (
+                    <input
+                      ref={projectNameInputRef}
+                      value={projectNameValue}
+                      onChange={e => setProjectNameValue(e.target.value.slice(0, 80))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitProjectRename()
+                        if (e.key === 'Escape') setProjectNameEditing(false)
+                      }}
+                      onBlur={commitProjectRename}
+                      className="font-display text-xl uppercase tracking-tight bg-background border border-ember px-2 py-1 outline-none max-w-full"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 group min-w-0" onDoubleClick={startProjectRename}>
+                      <h1
+                        className={`font-display text-2xl sm:text-3xl uppercase tracking-tighter truncate m-0 transition-colors ${
+                          projectNameFlash ? 'text-ember' : 'text-foreground'
+                        }`}
+                      >
+                        {project.name}
+                      </h1>
+                      <button
+                        type="button"
+                        onClick={startProjectRename}
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
+                        title="Rename project"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                   <button
                     type="button"
-                    onClick={startProjectRename}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: 'var(--text-dim)', padding: 0, lineHeight: 1,
-                      display: 'flex', alignItems: 'center',
-                    }}
-                    title="Rename project"
+                    onClick={() => setEditStructure(p => !p)}
+                    disabled={activeTracks.length === 0}
+                    data-tour="edit-structure-button"
+                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
+                      editStructure || sections.length > 0
+                        ? 'border-ember text-ember bg-ember-soft'
+                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                    }`}
                   >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-                    </svg>
+                    {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
                   </button>
                 </div>
-              )}
-              <button
-                onClick={() => setEditStructure(p => !p)}
-                disabled={activeTracks.length === 0}
-                className="btn-structure-toggle"
-                data-active={sections.length > 0 ? 'true' : 'false'}
-                data-tour="edit-structure-button"
-              >
-                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                  <rect x="1" y="1" width="9" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
-                  <rect x="1" y="4.5" width="5" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
-                  <rect x="1" y="8" width="7" height="2.5" rx="0.6" stroke="currentColor" strokeWidth="0.8"/>
-                </svg>
-                {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
-              </button>
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                  {project.bpm != null && <span>{project.bpm} BPM</span>}
+                  {project.key && <span className="text-ember">{project.key}</span>}
+                  <span>{project.time_signature ?? '4/4'}</span>
+                  <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
+                  {player.duration > 0 && <span>{fmtTime(player.duration)}</span>}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap lg:ml-auto">
+                <SectionLabel>VERSION</SectionLabel>
+                {versions.map(v => {
+                  const isActive = v.id === activeVersionId
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => { setActiveVersionId(v.id); setCommentMode(false); setActiveCommentInput(null) }}
+                      className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
+                        isActive
+                          ? 'bg-ember text-white border-ember'
+                          : v.merged_at
+                            ? 'border-border text-muted-foreground opacity-50'
+                            : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+                      }`}
+                    >
+                      {isActive && v.type === 'main' && '● '}
+                      {v.merged_at && '✓ '}
+                      {v.type === 'branch' && !v.merged_at && !isActive && '⌥ '}
+                      {v.name}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={() => setShowBranchModal(true)}
+                  className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-ember hover:text-ember text-muted-foreground transition"
+                >
+                  + Branch
+                </button>
+              </div>
             </div>
-            <p className="text-[11px] text-dim mt-0.5">
-              {activeTracks.length} track{activeTracks.length !== 1 ? 's' : ''}
-              {player.duration > 0 ? ` · ${fmtTime(player.duration)}` : ''}{' · updated today'}
-            </p>
-            <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-              <span className="text-[11px] text-dim mr-1">View:</span>
-              {versions.map(v => {
-                const isActive = v.id === activeVersionId
-                const dotColor = v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => { setActiveVersionId(v.id); setCommentMode(false); setActiveCommentInput(null) }}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] transition-all duration-150"
-                    style={{ border: isActive ? '0.5px solid var(--border-light)' : '0.5px solid transparent', background: isActive ? 'var(--bg-card)' : 'transparent', color: isActive ? 'var(--text-sec)' : 'var(--text-muted)' }}
-                    onMouseEnter={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-sec)'; e.currentTarget.style.background = 'var(--bg-surface)' } }}
-                    onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent' } }}
-                  >
-                    <span className="w-[5px] h-[5px] rounded-full shrink-0" style={{ background: dotColor }} />
-                    {v.name}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+          </section>
 
           {/* Structure + transport — bar ruler, sections, play/time/volume */}
           {project && (
@@ -3542,44 +3307,36 @@ export default function ProjectPage() {
               onEditModeChange={setEditStructure}
               waveformBounds={waveformBounds}
               currentTimeMs={player.currentTime * 1000}
-              playing={player.playing}
-              currentTime={player.currentTime}
-              duration={player.duration}
-              loaded={player.loaded}
-              totalTracks={player.total}
-              volume={player.volume}
-              onPlay={player.play}
-              onPause={player.pause}
               onSeek={player.seek}
-              onVolume={player.setVolume}
             />
           )}
 
           {/* Comment mode banner */}
-          <div className={`overflow-hidden transition-[height,opacity] duration-200 ${commentMode ? 'h-[34px] opacity-100' : 'h-0 opacity-0'}`}>
-            <div className="flex items-center gap-2 px-[22px] h-[34px]" style={{ background: 'rgba(217,119,6,0.06)', borderBottom: '0.5px solid var(--border)' }}>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="var(--amber)" strokeWidth="1"/><path d="M5 3v2.5M5 7v.5" stroke="var(--amber)" strokeWidth="1" strokeLinecap="round"/></svg>
-              <span className="text-[11px] text-amber">Comment mode — drag on any waveform to select a time range</span>
+          <div className={`overflow-hidden transition-[height,opacity] duration-200 shrink-0 ${commentMode ? 'h-9 opacity-100' : 'h-0 opacity-0'}`}>
+            <div className="flex items-center gap-2 px-4 sm:px-6 h-9 bg-ember-soft border-b border-ember/30">
+              <span className="text-[10px] uppercase tracking-widest text-ember">
+                ● Comment mode — click-drag on any waveform to select a time range
+              </span>
             </div>
           </div>
 
           {/* Track list */}
-          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden" style={{ position: 'relative' }}>
-            {/* tracksBodyRef: position:relative so the section overlay can anchor inside it */}
-            <div ref={tracksBodyRef} style={{ position: 'relative' }}>
+          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden relative">
+            <div ref={tracksBodyRef} className="relative">
 
-              {/* Section boundary dashed lines overlay */}
-              {sections.length > 0 && project && totalProjectDurationMs > 0 && (() => {
-                const { barDurationMs } = getBarMath(project, totalProjectDurationMs)
+              {/* Tact grid + section boundary overlays */}
+              {totalProjectBars > 0 && (() => {
+                const { barDurationMs } = getBarMath(project!, totalProjectDurationMs)
                 const wl = waveformBounds?.left ?? 228
                 const wr = waveformBounds?.right ?? 68
                 return (
                   <div style={{
                     position: 'absolute', top: 0, bottom: 0,
                     left: wl, right: wr,
-                    pointerEvents: 'none', zIndex: 4,
+                    pointerEvents: 'none', zIndex: 1,
                   }}>
-                    {[...new Set(sections.flatMap(s => [
+                    <TactGrid totalBars={totalProjectBars} />
+                    {sections.length > 0 && totalProjectDurationMs > 0 && [...new Set(sections.flatMap(s => [
                       ...(s.start_bar > 0 ? [s.start_bar] : []),
                       s.end_bar,
                     ]))].map(bar => {
@@ -3603,7 +3360,9 @@ export default function ProjectPage() {
               {versionLoading ? (
                 <BrandSpinner fullscreen={false} />
               ) : activeTracks.length === 0 ? (
-                <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
+                <div className="px-4 sm:px-6 py-12 text-center text-[10px] uppercase tracking-widest text-muted-foreground">
+                  No tracks yet — add one below
+                </div>
               ) : activeTracks.map((t, i) => (
                 <TrackRow
                   key={t.id} track={t} index={i}
@@ -3659,40 +3418,38 @@ export default function ProjectPage() {
                   onDismiss={() => removeUpload(u.id)}
                 />
               ))}
-            </div>
 
-            <div className="px-[22px] py-3"
-              data-tour="add-track-row"
-              onDragOver={handleAddRowDragOver}
-              onDragLeave={handleAddRowDragLeave}
-              onDrop={handleAddRowDrop}
-            >
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg transition-colors duration-150 disabled:cursor-not-allowed"
-                style={{
-                  border: isDraggingAddRow ? '0.5px dashed var(--accent)' : '0.5px dashed var(--border-light)',
-                  background: isDraggingAddRow ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
-                  color: isDraggingAddRow ? 'var(--accent)' : 'var(--text-dim)',
-                }}
-                onMouseEnter={e => { if (!isDraggingAddRow) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
-                onMouseLeave={e => { if (!isDraggingAddRow) { e.currentTarget.style.borderColor = 'var(--border-light)'; e.currentTarget.style.color = 'var(--text-dim)' } }}
+              {/* Add track — uikit split row */}
+              <div
+                data-tour="add-track-row"
+                className="flex border-t border-border"
+                onDragOver={handleAddRowDragOver}
+                onDragLeave={handleAddRowDragLeave}
+                onDrop={handleAddRowDrop}
               >
-                {isDraggingAddRow ? (
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M6 2v6M2 6l4-4 4 4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M2 10h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                  </svg>
-                ) : (
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-                )}
-                <span className="text-[12px]">
-                  {isDraggingAddRow ? 'Drop to add track' : 'Add track (WAV / MP3 / MIDI)'}
-                </span>
-              </button>
+                <div
+                  className="shrink-0 border-r border-border"
+                  style={{ width: TRACK_LABEL_W }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className={`w-full min-h-[60px] p-4 text-left text-[10px] uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      isDraggingAddRow
+                        ? 'text-ember bg-ember-soft'
+                        : 'text-muted-foreground hover:text-ember hover:bg-surface/30'
+                    }`}
+                  >
+                    {isDraggingAddRow ? '↓ Drop to add track' : '+ Add track'}
+                  </button>
+                </div>
+                <div className="flex-1 min-h-[60px] relative overflow-hidden">
+                  <TactGrid totalBars={totalProjectBars} />
+                </div>
+              </div>
               {uploads.some(u => u.status !== 'done' && u.status !== 'error') && (
-                <p className="text-[11px] mt-1" style={{ color: 'var(--text-dim)' }}>
+                <p className="text-[9px] uppercase tracking-widest text-muted-foreground px-4 sm:px-6 py-2 m-0 border-t border-border">
                   {uploads.filter(u => u.status !== 'done' && u.status !== 'error').length > 1
                     ? `Uploading ${uploads.filter(u => u.status !== 'done' && u.status !== 'error').length} files…`
                     : (() => {
@@ -3709,12 +3466,11 @@ export default function ProjectPage() {
                 multiple className="hidden" onChange={handleAddTrack}
               />
             </div>
-
           </div>
 
-          {/* Footer */}
-          <div className="flex items-center justify-between px-[22px] py-3 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
-            <div className="flex items-center gap-5 flex-wrap">
+          {/* Footer toolbar — BPM meta + comment mode */}
+          <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 shrink-0 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-4 flex-wrap min-w-0">
               {project && (
                 <ProjectMetaFields
                   projectId={projectId}
@@ -3723,23 +3479,46 @@ export default function ProjectPage() {
                   onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
                 />
               )}
-              <span className="text-[11px] text-dim">Tracks <span className="text-soft font-medium">{activeTracks.length}</span></span>
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums">
+                {activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}
+              </span>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
-                data-tour="comments-toggle"
-                className={`inline-flex items-center gap-1.5 px-3 h-[34px] rounded-lg text-[12px] font-medium transition-all duration-150 ${commentMode ? 'btn-accent' : 'btn-topbar'}`}
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 2.5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H5L1 11V2.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round"/></svg>
-                {commentMode ? 'Exit comments' : `Comments${totalComments > 0 ? ` (${totalComments})` : ''}`}
-              </button>
-            </div>
+            <TbBtn
+              variant={commentMode ? 'primary' : 'ghost'}
+              onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+              data-tour="comments-toggle"
+            >
+              {commentMode ? '● COMMENT MODE' : `Comment Mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
+            </TbBtn>
           </div>
 
           </div>{/* end content dim wrapper */}
         </main>
       </div>
+
+      <MasterPlayerBar
+        playing={player.playing}
+        currentTime={player.currentTime}
+        duration={player.duration}
+        loaded={player.loaded}
+        total={player.total}
+        volume={player.volume}
+        onPlay={player.play}
+        onPause={player.pause}
+        onSeek={player.seek}
+        onVolume={player.setVolume}
+      />
+
+      <StatusFooter
+        left={
+          <span className="uppercase tracking-widest truncate hidden sm:inline">
+            {project.bpm != null && `${project.bpm} BPM · `}
+            {project.key && `${project.key} · `}
+            {project.time_signature ?? '4/4'} · {activeTracks.length} TRACKS · {totalComments} COMMENTS
+          </span>
+        }
+        right={<span className="uppercase tracking-widest hidden sm:inline">{project.name.toUpperCase()}</span>}
+      />
 
       {/* Onboarding tour */}
       <ProjectTour

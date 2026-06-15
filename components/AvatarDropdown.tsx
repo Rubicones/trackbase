@@ -2,35 +2,31 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useTheme } from 'next-themes'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePalette } from '@/contexts/PaletteContext'
-import { Avatar } from '@/components/Avatar'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { PALETTE_OPTIONS, type PaletteId } from '@/lib/palettes'
+import { avatarInitials } from '@/lib/avatarTheme'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { UserAvatar } from '@/components/ui/avatar'
+import { ThemePicker } from '@/components/design/ThemePicker'
 
 type ActiveSection = null | 'email' | 'username'
 
 export function AvatarDropdown() {
   const router = useRouter()
-  const { theme, setTheme } = useTheme()
-  const { palette, setPalette } = usePalette()
   const { user, profile, signOut, refreshProfile } = useAuth()
   const [open, setOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<ActiveSection>(null)
   const dropRef = useRef<HTMLDivElement>(null)
 
-  // Username edit state
   const [newUsername, setNewUsername] = useState('')
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'saving' | 'saved'>('idle')
   const usernameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Email edit state
   const [newEmail, setNewEmail] = useState('')
   const [emailStatus, setEmailStatus] = useState<'idle' | 'saving' | 'sent' | 'error'>('idle')
   const [emailError, setEmailError] = useState('')
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     function handler(e: MouseEvent) {
@@ -43,7 +39,6 @@ export function AvatarDropdown() {
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  // Seed inputs when opening a section
   function openSection(s: ActiveSection) {
     setActiveSection(s)
     if (s === 'username') {
@@ -57,7 +52,6 @@ export function AvatarDropdown() {
     }
   }
 
-  // Debounced username availability check
   useEffect(() => {
     if (activeSection !== 'username') return
     if (usernameDebounce.current) clearTimeout(usernameDebounce.current)
@@ -121,38 +115,33 @@ export function AvatarDropdown() {
 
   if (!profile) return null
 
+  const triggerInitials = avatarInitials(profile.username, 'user')
+
   return (
-    <div ref={dropRef} style={{ position: 'relative' }}>
-      {/* Trigger */}
+    <div ref={dropRef} className="relative">
       <button
+        type="button"
+        aria-label="Account menu"
+        aria-expanded={open}
         onClick={() => { setOpen(o => !o); if (open) setActiveSection(null) }}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase font-display hover:border-ember transition-colors"
       >
-        <Avatar username={profile.username} size={32} />
+        {triggerInitials}
       </button>
 
-      {/* Panel */}
       {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-          background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-          borderRadius: 10, padding: 8, minWidth: 220, zIndex: 100,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
-        }}>
-          {/* Header */}
-          <div style={{ padding: '8px 8px 10px', borderBottom: '0.5px solid var(--border)', marginBottom: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Avatar username={profile.username} size={36} />
-              <div style={{ minWidth: 0 }}>
-                <p style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', margin: 0 }}>@{profile.username}</p>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.email}
-                </p>
+        <div className="absolute right-0 top-[calc(100%+8px)] z-100 w-[288px] border border-border bg-popover shadow-2xl font-mono">
+          {/* Profile */}
+          <div className="px-3 py-3 border-b border-border">
+            <div className="flex items-center gap-3 min-w-0">
+              <UserAvatar seed={profile.username} size={40} kind="user" />
+              <div className="min-w-0">
+                <p className="text-sm font-normal text-foreground m-0 truncate">@{profile.username}</p>
+                <p className="text-xs text-muted-foreground m-0 mt-0.5 truncate">{user?.email}</p>
               </div>
             </div>
           </div>
 
-          {/* Change email */}
           <MenuRow
             icon={<EmailIcon />}
             label="Change email"
@@ -160,41 +149,38 @@ export function AvatarDropdown() {
             onClick={() => openSection(activeSection === 'email' ? null : 'email')}
           />
           {activeSection === 'email' && (
-            <div style={{ padding: '4px 8px 8px' }}>
-              <input
+            <div className="px-3 pb-3 space-y-2 border-b border-border">
+              <Input
                 value={newEmail}
                 onChange={e => setNewEmail(e.target.value)}
                 type="email"
                 autoFocus
-                style={inlineInputStyle}
                 disabled={emailStatus === 'saving' || emailStatus === 'sent'}
               />
               {emailStatus === 'sent' && (
-                <p style={{ fontSize: 11, color: 'var(--green)', margin: '4px 0 6px' }}>
-                  Confirmation link sent to new address
-                </p>
+                <p className="text-[11px] text-online m-0">Confirmation link sent to new address</p>
               )}
               {emailStatus === 'error' && (
-                <p style={{ fontSize: 11, color: '#ef4444', margin: '4px 0 6px' }}>{emailError}</p>
+                <p className="text-[11px] text-destructive m-0">{emailError}</p>
               )}
               {emailStatus !== 'sent' && (
                 <>
-                  <p style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5, margin: '4px 0 6px' }}>
+                  <p className="text-[11px] text-muted-foreground m-0 leading-snug">
                     A confirmation link will be sent to the new email address.
                   </p>
-                  <button
+                  <Button
+                    size="sm"
+                    className="uppercase tracking-widest text-[10px] font-bold"
                     onClick={handleSaveEmail}
                     disabled={emailStatus === 'saving' || !newEmail.trim() || newEmail.trim() === user?.email}
-                    style={{ ...inlineSaveBtn, opacity: emailStatus === 'saving' ? 0.6 : 1 }}
                   >
                     {emailStatus === 'saving' ? 'Sending…' : 'Save'}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
           )}
 
-          {/* Edit username */}
           <MenuRow
             icon={<AtIcon />}
             label="Edit username"
@@ -202,261 +188,125 @@ export function AvatarDropdown() {
             onClick={() => openSection(activeSection === 'username' ? null : 'username')}
           />
           {activeSection === 'username' && (
-            <div style={{ padding: '4px 8px 8px' }}>
-              <div style={{ position: 'relative' }}>
-                <input
+            <div className="px-3 pb-3 space-y-2 border-b border-border">
+              <div className="relative">
+                <Input
                   value={newUsername}
                   onChange={e => setNewUsername(e.target.value)}
                   autoFocus
                   maxLength={20}
-                  style={{
-                    ...inlineInputStyle,
-                    borderColor: usernameStatus === 'available' || usernameStatus === 'saved' ? 'var(--green)'
-                      : usernameStatus === 'taken' || usernameStatus === 'invalid' ? '#ef4444'
-                      : 'var(--border)',
-                  }}
                   disabled={usernameStatus === 'saving' || usernameStatus === 'saved'}
+                  className={`pr-8 ${
+                    usernameStatus === 'available' || usernameStatus === 'saved'
+                      ? 'border-online'
+                      : usernameStatus === 'taken' || usernameStatus === 'invalid'
+                        ? 'border-destructive'
+                        : ''
+                  }`}
                 />
-                <div style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)' }}>
+                <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
                   {usernameStatus === 'checking' && <MiniSpinner />}
                   {(usernameStatus === 'available' || usernameStatus === 'saved') && (
-                    <span style={{ fontSize: 11, color: 'var(--green)' }}>✓</span>
+                    <span className="text-[11px] text-online">✓</span>
                   )}
                   {(usernameStatus === 'taken' || usernameStatus === 'invalid') && (
-                    <span style={{ fontSize: 11, color: '#ef4444' }}>✗</span>
+                    <span className="text-[11px] text-destructive">✗</span>
                   )}
                 </div>
               </div>
               {usernameStatus === 'saved' ? (
-                <p style={{ fontSize: 11, color: 'var(--green)', margin: '4px 0 0' }}>Username updated!</p>
+                <p className="text-[11px] text-online m-0">Username updated!</p>
               ) : (
                 <>
-                  <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '4px 0 6px' }}>
+                  <p className="text-[11px] text-muted-foreground m-0">
                     {usernameStatus === 'invalid' ? '3–20 chars, letters/numbers/underscore'
                       : usernameStatus === 'taken' ? 'Already taken'
                       : '3–20 characters'}
                   </p>
-                  <button
+                  <Button
+                    size="sm"
+                    className="uppercase tracking-widest text-[10px] font-bold"
                     onClick={handleSaveUsername}
                     disabled={usernameStatus !== 'available'}
-                    style={{ ...inlineSaveBtn, opacity: usernameStatus !== 'available' ? 0.5 : 1 }}
                   >
                     {usernameStatus === 'saving' ? 'Saving…' : 'Save'}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
           )}
 
-          {/* Appearance */}
-          <ThemeRow theme={theme} onToggle={() => {
-            document.documentElement.classList.add('theme-transition')
-            setTheme(theme === 'dark' ? 'light' : 'dark')
-            window.setTimeout(() => document.documentElement.classList.remove('theme-transition'), 300)
-          }} />
+          {/* Theme — single uikit theme system */}
+          <div className="px-3 py-2 border-b border-border">
+            <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Theme</p>
+          </div>
+          <ThemePicker />
 
-          {/* Color palette */}
-          <PalettePicker palette={palette} onSelect={setPalette} />
-
-          {/* Divider + sign out */}
-          <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
-          <SignOutRow onSignOut={handleSignOut} />
+          <div className="border-t border-border p-1">
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2.5 text-xs text-destructive hover:text-destructive hover:bg-surface px-3"
+              onClick={handleSignOut}
+            >
+              <LogoutIcon />
+              Sign out
+            </Button>
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-// ─── Menu row ─────────────────────────────────────────────────────────────────
-
 function MenuRow({ icon, label, active, onClick }: {
   icon: React.ReactNode; label: string; active?: boolean; onClick: () => void
 }) {
-  const [hov, setHov] = useState(false)
   return (
-    <button
+    <Button
+      variant="ghost"
       onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 7,
-        width: '100%', background: hov || active ? 'var(--bg-card)' : 'transparent',
-        border: 'none', color: 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
-        transition: 'background 0.12s', textAlign: 'left',
-      }}
+      className={`w-full justify-start gap-2.5 px-3 py-2 h-auto text-xs font-normal rounded-none ${
+        active ? 'bg-surface text-foreground' : 'text-foreground'
+      }`}
     >
-      {icon}{label}
-    </button>
+      <span className="text-muted-foreground shrink-0">{icon}</span>
+      {label}
+    </Button>
   )
 }
-
-function SignOutRow({ onSignOut }: { onSignOut: () => void }) {
-  const [hov, setHov] = useState(false)
-  return (
-    <button
-      onClick={onSignOut}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 7,
-        width: '100%', border: 'none', color: '#ef4444', fontSize: 13, cursor: 'pointer',
-        background: hov ? 'rgba(239,68,68,0.08)' : 'transparent',
-        transition: 'background 0.12s', textAlign: 'left',
-      }}
-    >
-      <LogoutSVG />Sign out
-    </button>
-  )
-}
-
-function ThemeRow({ theme, onToggle }: { theme: string | undefined; onToggle: () => void }) {
-  const [hov, setHov] = useState(false)
-  const isDark = theme === 'dark'
-  return (
-    <button
-      onClick={onToggle}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 7,
-        width: '100%', background: hov ? 'var(--bg-card)' : 'transparent',
-        border: 'none', color: 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
-        transition: 'background 0.12s', textAlign: 'left', justifyContent: 'space-between',
-      }}
-    >
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {isDark ? <MoonIcon /> : <SunIcon />}
-        {isDark ? 'Dark mode' : 'Light mode'}
-      </span>
-      <span className="theme-toggle-track" data-on={isDark ? 'true' : 'false'}>
-        <span className="theme-toggle-thumb" />
-      </span>
-    </button>
-  )
-}
-
-function PalettePicker({ palette, onSelect }: { palette: PaletteId; onSelect: (id: PaletteId) => void }) {
-  return (
-    <div style={{ padding: '4px 8px 8px' }}>
-      <p style={{
-        fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)',
-        letterSpacing: '0.6px', fontWeight: 500, margin: '0 2px 8px',
-      }}>
-        Color theme
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {PALETTE_OPTIONS.map(opt => (
-          <PaletteRow
-            key={opt.id}
-            option={opt}
-            active={palette === opt.id}
-            onSelect={() => onSelect(opt.id)}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function PaletteRow({ option, active, onSelect }: {
-  option: typeof PALETTE_OPTIONS[number]
-  active: boolean
-  onSelect: () => void
-}) {
-  const [hov, setHov] = useState(false)
-  return (
-    <button
-      onClick={onSelect}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '7px 10px', borderRadius: 7, width: '100%',
-        background: active ? 'var(--bg-card)' : hov ? 'var(--bg-card)' : 'transparent',
-        border: active ? '0.5px solid var(--border-light)' : '0.5px solid transparent',
-        color: 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
-        transition: 'background 0.12s, border-color 0.12s', textAlign: 'left',
-      }}
-    >
-      <span style={{
-        width: 22, height: 22, borderRadius: 6, flexShrink: 0,
-        background: option.id === 'mono'
-          ? `linear-gradient(135deg, ${option.swatchAlt} 0%, ${option.swatch} 100%)`
-          : option.id === 'default-mono-tracks'
-          ? `linear-gradient(135deg, ${option.swatch} 50%, ${option.swatchAlt ?? option.swatch} 50%)`
-          : `linear-gradient(135deg, ${option.swatch} 0%, ${option.swatchAlt ?? option.swatch} 100%)`,
-        border: '1.5px solid color-mix(in srgb, var(--border-light) 40%, transparent)',
-        boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
-      }} />
-      <span style={{ flex: 1, color: active ? 'var(--text)' : 'var(--text-sec)', fontWeight: active ? 500 : 400 }}>
-        {option.label}
-      </span>
-      {active && (
-        <span style={{ fontSize: 12, color: 'var(--accent)' }}>✓</span>
-      )}
-    </button>
-  )
-}
-
-// ─── Icons ────────────────────────────────────────────────────────────────────
 
 function EmailIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1" />
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <rect x="1" y="3" width="12" height="8" rx="1" stroke="currentColor" strokeWidth="1" />
       <path d="M1 5l6 4 6-4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
     </svg>
   )
 }
+
 function AtIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
       <circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1" />
       <path d="M9.5 7a2.5 2.5 0 0 0 2.5 2.5V7a5 5 0 1 0-2 4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
     </svg>
   )
 }
-function LogoutSVG() {
+
+function LogoutIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
       <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
       <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
-function SunIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1" />
-      <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.93 2.93l1.06 1.06M10.01 10.01l1.06 1.06M10.01 3.99l1.06-1.06M2.93 11.07l1.06-1.06"
-        stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-    </svg>
-  )
-}
-function MoonIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M11.5 8.5A5 5 0 1 1 5.5 2.5a3.5 3.5 0 0 0 6 6z"
-        stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
+
 function MiniSpinner() {
   return (
-    <svg className="animate-spin" width="11" height="11" viewBox="0 0 11 11" fill="none">
+    <svg className="animate-spin text-muted-foreground" width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden>
       <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
-      <path d="M5.5 1.5A4 4 0 0 1 9.5 5.5" stroke="var(--accent)" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M5.5 1.5A4 4 0 0 1 9.5 5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   )
-}
-
-const inlineInputStyle: React.CSSProperties = {
-  width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border)',
-  borderRadius: 6, padding: '5px 28px 5px 8px', color: 'var(--text)',
-  fontSize: 13, outline: 'none', transition: 'border-color 0.15s',
-}
-const inlineSaveBtn: React.CSSProperties = {
-  background: 'var(--accent)', border: 'none', borderRadius: 6,
-  padding: '5px 12px', color: 'var(--on-accent)', fontSize: 12, fontWeight: 500,
-  cursor: 'pointer', transition: 'opacity 0.15s',
 }

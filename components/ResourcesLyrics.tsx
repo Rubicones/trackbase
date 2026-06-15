@@ -262,11 +262,13 @@ interface Props {
   autoOpen?: boolean
   /** Sidebar: button-only row */
   compact?: boolean
+  variant?: 'default' | 'drawer'
 }
 
 const PREVIEW_LINES = 4
 
-export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, showFullByDefault = false, autoOpen = false, compact = false }: Props) {
+export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, showFullByDefault = false, autoOpen = false, compact = false, variant = 'default' }: Props) {
+  const isDrawer = variant === 'drawer'
   const [expanded, setExpanded] = useState(showFullByDefault)
   const [editorOpen, setEditorOpen] = useState(autoOpen)
 
@@ -343,25 +345,27 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
 
   return (
     <>
-      {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <IconMic size={15} color="var(--accent)" />
-        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', flex: 1 }}>Lyrics</span>
-        <button
-          onClick={() => setEditorOpen(true)}
-          style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-        >
-          Edit
-        </button>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-          Last edited {fmtRelative(lyrics.updated_at)}
-        </span>
-      </div>
+      {!isDrawer && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <IconMic size={15} color="var(--accent)" />
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', flex: 1 }}>Lyrics</span>
+          <button
+            onClick={() => setEditorOpen(true)}
+            style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            Edit
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Last edited {fmtRelative(lyrics.updated_at)}
+          </span>
+        </div>
+      )}
 
       {/* Content preview */}
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }} className={isDrawer ? 'mt-2' : undefined}>
         <pre
-          style={{
+          className={isDrawer ? 'text-xs whitespace-pre-wrap text-muted-foreground bg-surface border border-border p-3 max-h-40 overflow-auto m-0 leading-relaxed' : undefined}
+          style={isDrawer ? undefined : {
             fontSize: 13,
             lineHeight: 1.6,
             whiteSpace: 'pre-wrap',
@@ -390,8 +394,18 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
         )}
       </div>
 
+      {isDrawer && (
+        <button
+          type="button"
+          onClick={() => setEditorOpen(true)}
+          className="mt-2 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+        >
+          Edit lyrics →
+        </button>
+      )}
+
       {/* Show more / Show less */}
-      {needsTruncation && (
+      {needsTruncation && !isDrawer && (
         <button
           onClick={() => setExpanded(v => !v)}
           style={{

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ProjectResource } from '@/lib/types'
+import { SectionLabel } from '@/components/design/AppShell'
 import { ResourcesLyrics } from './ResourcesLyrics'
 import { ResourcesFileRow } from './ResourcesFileRow'
 import { ResourcesLinkRow } from './ResourcesLinkRow'
@@ -69,11 +70,27 @@ interface Props {
   projectName: string
   /** Skip the outer card wrapper — used inside the drawer tab */
   bare?: boolean
+  /** Uikit quick-access drawer styling */
+  variant?: 'default' | 'drawer'
+  /** Hide lyrics block (e.g. when shown elsewhere in reading mode) */
+  hideLyrics?: boolean
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtRelative(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 172800) return 'yesterday'
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
+export function ResourcesCard({ projectId, projectName, bare = false, variant = 'default', hideLyrics = false }: Props) {
+  const isDrawer = variant === 'drawer'
   const [resources, setResources] = useState<ProjectResource[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -94,7 +111,7 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
   const lyrics = resources.find(r => r.type === 'lyrics') ?? null
   const files = resources.filter(r => r.type === 'file')
   const links = resources.filter(r => r.type === 'link')
-  const isEmpty = !lyrics && files.length === 0 && links.length === 0
+  const isEmpty = !(!hideLyrics && lyrics) && files.length === 0 && links.length === 0
 
   // Load resources
   const load = useCallback(async () => {
@@ -197,29 +214,43 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
     transition: 'color 0.12s, border-color 0.12s',
   }
 
+  function SectionHeader({ children }: { children: React.ReactNode }) {
+    if (isDrawer) return <SectionLabel>{children}</SectionLabel>
+    return (
+      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+        {children}
+      </p>
+    )
+  }
+
   const content = (
-    <>
+    <div className={isDrawer ? 'space-y-6 text-sm' : undefined}>
       {/* Card header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: loading ? 0 : isEmpty ? 16 : 16 }}>
-        <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)' }}>Resources</span>
+      <div
+        style={{ display: 'flex', alignItems: 'center', justifyContent: isDrawer ? 'flex-end' : 'space-between', marginBottom: loading ? 0 : isEmpty ? 16 : isDrawer ? 0 : 16 }}
+        className={isDrawer && !loading && !isEmpty ? 'mb-0' : undefined}
+      >
+        {!isDrawer && <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)' }}>Resources</span>}
         <div style={{ position: 'relative' }} ref={menuRef}>
           <button
             onClick={() => setMenuOpen(v => !v)}
-            style={{
+            className={isDrawer ? 'border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5 transition inline-flex items-center gap-1 bg-transparent cursor-pointer' : undefined}
+            style={isDrawer ? undefined : {
               ...btnOutline,
               fontSize: 12,
               padding: '4px 10px',
             }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-light)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+            onMouseEnter={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-light)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
+            onMouseLeave={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
           >
             <IconPlus size={11} />
-            Add
+            {isDrawer ? 'Add' : 'Add'}
           </button>
 
           {menuOpen && (
             <div
-              style={{
+              className={isDrawer ? 'absolute right-0 top-full mt-1 z-50 min-w-[150px] border border-border bg-popover shadow-2xl py-1' : undefined}
+              style={isDrawer ? undefined : {
                 position: 'absolute',
                 top: 'calc(100% + 4px)',
                 right: 0,
@@ -240,7 +271,8 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
                 <button
                   key={key}
                   onClick={() => openAddMenu(key as 'file' | 'link' | 'lyrics')}
-                  style={{
+                  className={isDrawer ? 'flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:bg-surface hover:text-foreground bg-transparent border-0 cursor-pointer text-left' : undefined}
+                  style={isDrawer ? undefined : {
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
@@ -254,8 +286,8 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
                     textAlign: 'left',
                     transition: 'background 0.1s, color 0.1s',
                   }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+                  onMouseEnter={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
+                  onMouseLeave={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
                 >
                   <Icon size={13} />
                   {label}
@@ -302,40 +334,46 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
           )}
 
           {/* Lyrics section */}
-          {(lyrics || showLyricsTrigger) && (
-            <div
-              style={{
+          {( !hideLyrics && (lyrics || showLyricsTrigger)) && (
+            <div className={isDrawer ? undefined : undefined}
+              style={isDrawer ? undefined : {
                 paddingBottom: (files.length > 0 || links.length > 0) ? 16 : 0,
                 marginBottom: (files.length > 0 || links.length > 0) ? 16 : 0,
                 borderBottom: (files.length > 0 || links.length > 0) ? '0.5px solid var(--border)' : 'none',
               }}
             >
+              {isDrawer && lyrics && (
+                <SectionHeader>LYRICS{lyrics.updated_at ? ` · edited ${fmtRelative(lyrics.updated_at)}` : ''}</SectionHeader>
+              )}
               <ResourcesLyrics
                 projectId={projectId}
                 projectName={projectName}
                 lyrics={lyrics}
                 onUpdate={r => { upsertResource(r); setShowLyricsTrigger(false) }}
                 autoOpen={showLyricsTrigger}
+                showFullByDefault={isDrawer}
+                variant={isDrawer ? 'drawer' : 'default'}
               />
             </div>
           )}
 
           {/* Files list */}
           {files.length > 0 && (
-            <div style={{ marginBottom: links.length > 0 ? 16 : 0 }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-                Files
-              </p>
+            <div style={{ marginBottom: links.length > 0 ? (isDrawer ? 0 : 16) : 0 }} className={isDrawer ? 'mt-2' : undefined}>
+              <SectionHeader>FILES</SectionHeader>
+              <div className={isDrawer ? 'mt-2 border border-border divide-y divide-border' : undefined}>
               {files.map((r, i) => (
                 <ResourcesFileRow
                   key={r.id}
                   resource={r}
                   projectId={projectId}
-                  isLast={i === files.length - 1}
+                  isLast={isDrawer ? true : i === files.length - 1}
                   onUpdated={upsertResource}
                   onDeleted={removeResource}
+                  variant={isDrawer ? 'drawer' : 'default'}
                 />
               ))}
+              </div>
             </div>
           )}
 
@@ -394,34 +432,43 @@ export function ResourcesCard({ projectId, projectName, bare = false }: Props) {
 
           {/* Links list */}
           {links.length > 0 && (
-            <div>
-              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-                Links
-              </p>
-              {links.map((r, i) => (
-                <ResourcesLinkRow
-                  key={r.id}
-                  resource={r}
-                  projectId={projectId}
-                  isLast={i === links.length - 1}
-                  onUpdated={upsertResource}
-                  onDeleted={removeResource}
-                />
-              ))}
+            <div className={isDrawer ? 'mt-2' : undefined}>
+              <SectionHeader>LINKS</SectionHeader>
+              <div className={isDrawer ? 'mt-2 space-y-2' : undefined}>
+                {links.map((r, i) => (
+                  <ResourcesLinkRow
+                    key={r.id}
+                    resource={r}
+                    projectId={projectId}
+                    isLast={i === links.length - 1}
+                    onUpdated={upsertResource}
+                    onDeleted={removeResource}
+                    variant={isDrawer ? 'drawer' : 'default'}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
           {/* Upload zone — always visible at bottom */}
-          <div style={{ marginTop: 16, paddingTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? 16 : 0, borderTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? '0.5px solid var(--border)' : 'none' }}>
+          <div
+            className={isDrawer ? 'mt-2' : undefined}
+            style={isDrawer ? undefined : {
+              marginTop: 16,
+              paddingTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? 16 : 0,
+              borderTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? '0.5px solid var(--border)' : 'none',
+            }}
+          >
             <ResourcesUploadZone
               ref={uploadRef}
               projectId={projectId}
               onUploadComplete={r => { upsertResource(r) }}
+              variant={isDrawer ? 'drawer' : 'default'}
             />
           </div>
         </>
       )}
-    </>
+    </div>
   )
 
   if (bare) {

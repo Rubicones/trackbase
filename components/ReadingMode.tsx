@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
-import { SECTION_COLORS, sectionLabel } from '@/components/StructureEditor'
+import { sectionLabel } from '@/components/StructureEditor'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { waveformBarsCache } from '@/lib/waveformCache'
-import type { Track, Section, Version, Project } from '@/lib/types'
+import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,66 +29,36 @@ function fmt(secs: number): string {
 
 /** Average all cached waveform bars across audio tracks into one composite. */
 function buildComposite(tracks: Track[]): number[] {
-  const N = 72
+  const N = 96
   const cached = tracks
     .filter(t => t.file_type !== 'midi')
     .map(t => waveformBarsCache.get(t.id))
     .filter((b): b is number[] => !!b)
-  if (!cached.length) return new Array(N).fill(0.4)
+  if (!cached.length) return new Array(N).fill(0.12)
   const sum = new Array(N).fill(0)
-  for (const bars of cached) for (let i = 0; i < N; i++) sum[i] += bars[i] ?? 0
+  for (const bars of cached) {
+    for (let i = 0; i < N; i++) sum[i] += bars[i] ?? 0
+  }
   const max = Math.max(...sum, 0.001)
   return sum.map(v => v / max)
 }
 
-// ─── Master waveform ──────────────────────────────────────────────────────────
+function formatChords(chords: string | null | undefined): string {
+  if (!chords?.trim()) return '—'
+  return chords.trim().split(/\s+/).filter(Boolean).join(' · ')
+}
+
+// ─── Master waveform (uikit bar style) ────────────────────────────────────────
 
 function MasterWaveform({
-  bars, playedRatio, onSeek,
+  bars, playedRatio, onSeek, ready,
 }: {
   bars: number[]
   playedRatio: number
   onSeek: (ratio: number) => void
+  ready: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const { resolvedTheme } = useTheme()
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const W = canvas.offsetWidth || 1
-    const H = canvas.offsetHeight || 64
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = W * dpr
-    canvas.height = H * dpr
-    ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, W, H)
-
-    const accentRaw = getComputedStyle(document.documentElement)
-      .getPropertyValue('--accent').trim()
-    const accent = accentRaw || '#6366F1'
-    const N = bars.length
-    const barW = W / N
-
-    for (let i = 0; i < N; i++) {
-      const amp = bars[i]
-      const barH = Math.max(2, amp * H * 0.9)
-      const x = i * barW
-      const y = (H - barH) / 2
-      ctx.globalAlpha = (i / N) < playedRatio ? 1 : 0.3
-      ctx.fillStyle = accent
-      ctx.beginPath()
-      if (ctx.roundRect) {
-        ctx.roundRect(x + 1, y, Math.max(1, barW - 2), barH, 2)
-      } else {
-        ctx.rect(x + 1, y, Math.max(1, barW - 2), barH)
-      }
-      ctx.fill()
-    }
-  }, [bars, playedRatio, resolvedTheme])
 
   function clientXToRatio(x: number): number {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -99,11 +69,28 @@ function MasterWaveform({
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: 64, cursor: 'pointer', touchAction: 'none', position: 'relative' }}
+      className="mt-2 h-28 flex items-end gap-px border border-border bg-surface/40 p-2 cursor-pointer touch-none"
       onClick={e => onSeek(clientXToRatio(e.clientX))}
-      onTouchEnd={e => { e.preventDefault(); onSeek(clientXToRatio(e.changedTouches[0].clientX)) }}
+      onTouchEnd={e => {
+        e.preventDefault()
+        onSeek(clientXToRatio(e.changedTouches[0].clientX))
+      }}
     >
-      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
+      {bars.map((h, i) => {
+        const played = (i / bars.length) < playedRatio
+        return (
+          <div
+            key={i}
+            className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
+            style={{
+              height: `${Math.max(8, h * 100)}%`,
+              background: 'var(--ember)',
+              opacity: played ? 0.95 : 0.35,
+              animationDelay: ready ? `${i * 8}ms` : undefined,
+            }}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -118,51 +105,39 @@ function VersionDrawer({
   onSelect: (id: string) => void
   onClose: () => void
 }) {
-  function dotColor(v: Version) {
-    return v.merged_at ? 'var(--green)' : v.type === 'main' ? 'var(--accent)' : 'var(--amber)'
-  }
   return (
     <>
-      <div
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 500 }}
-        onClick={onClose}
-      />
-      <div style={{
-        position: 'fixed', top: 0, left: 0, height: '100%',
-        width: 'min(76vw, 280px)',
-        background: 'var(--bg-surface)',
-        borderRight: '0.5px solid var(--border)',
-        zIndex: 501,
-        display: 'flex', flexDirection: 'column',
-        overflowY: 'auto',
-        paddingTop: 20, paddingBottom: 20,
-      }}>
-        <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.07em', padding: '0 16px', marginBottom: 10 }}>
+      <div className="fixed inset-0 bg-black/45 z-[500]" onClick={onClose} />
+      <aside className="fixed top-0 left-0 h-full w-[min(76vw,280px)] z-[501] flex flex-col overflow-y-auto bg-surface border-r border-border py-5">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-4 mb-3">
           Versions
         </p>
-        {versions.map(v => (
-          <button
-            key={v.id}
-            onClick={() => { onSelect(v.id); onClose() }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '10px 16px', width: '100%',
-              background: v.id === activeVersionId ? 'var(--bg-card)' : 'transparent',
-              border: 'none', textAlign: 'left', cursor: 'pointer',
-              color: v.id === activeVersionId ? 'var(--text)' : 'var(--text-muted)',
-              fontSize: 13,
-            }}
-          >
-            <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dotColor(v) }} />
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</span>
-            {v.type === 'main' && (
-              <span style={{ fontSize: 10, padding: '1px 5px', background: 'rgba(99,102,241,0.15)', color: 'var(--accent)', borderRadius: 4, flexShrink: 0 }}>
-                main
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+        {versions.map(v => {
+          const isActive = v.id === activeVersionId
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => { onSelect(v.id); onClose() }}
+              className={`w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-[13px] transition ${
+                isActive ? 'bg-surface-2 text-foreground' : 'text-muted-foreground hover:bg-surface/60'
+              }`}
+            >
+              <span
+                className={`size-1.5 rounded-full shrink-0 ${
+                  isActive ? 'bg-ember' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
+                }`}
+              />
+              <span className="flex-1 truncate">{v.name}</span>
+              {v.type === 'main' && (
+                <span className="text-[9px] uppercase tracking-widest text-ember border border-ember/40 px-1.5 shrink-0">
+                  main
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </aside>
     </>
   )
 }
@@ -195,85 +170,84 @@ export function ReadingMode({
   const { resolvedTheme, setTheme } = useTheme()
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
   const [composite, setComposite] = useState<number[]>(() => buildComposite(activeTracks))
+  const [lyrics, setLyrics] = useState<ProjectResource | null>(null)
 
-  // Rebuild composite waveform when tracks or loaded count changes
   useEffect(() => {
     setComposite(buildComposite(activeTracks))
   }, [activeTracks, player.loaded])
 
+  useEffect(() => {
+    if (!visible) return
+    let cancelled = false
+    fetch(`/api/projects/${projectId}/resources`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled || !data?.resources) return
+        setLyrics(data.resources.find((r: ProjectResource) => r.type === 'lyrics') ?? null)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [projectId, visible])
+
   const playedRatio = player.duration > 0 ? player.currentTime / player.duration : 0
+  const progressPct = playedRatio * 100
 
   function handleSeek(ratio: number) {
     player.seek(ratio * player.duration)
   }
 
-  function fmtBarRange(startBar: number, endBar: number): string {
-    const f = (ms: number) => fmt(ms / 1000)
-    return `${f(startBar * barDurationMs)}–${f(endBar * barDurationMs)}`
+  function sectionStartTime(startBar: number): string {
+    return fmt((startBar * barDurationMs) / 1000)
   }
 
   const isLoading = player.total > 0 && player.loaded < player.total
   const isReady = player.total === 0 || player.loaded === player.total
+  const waveformReady = isReady && player.total > 0
 
   return (
     <div
+      className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden transition-opacity duration-200"
       style={{
-        position: 'fixed', inset: 0, zIndex: 200,
-        background: 'var(--bg)',
-        display: 'flex', flexDirection: 'column',
-        overflow: 'hidden',
         opacity: visible ? 1 : 0,
         pointerEvents: visible ? 'auto' : 'none',
-        transition: 'opacity 0.2s ease',
       }}
     >
-      {/* ── Header ── */}
-      <header style={{
-        height: 44, flexShrink: 0,
-        display: 'flex', alignItems: 'center',
-        padding: '0 16px', gap: 10,
-        background: 'var(--bg-surface)',
-        borderBottom: '0.5px solid var(--border)',
-      }}>
+      {/* Slim top bar — versions + theme */}
+      <header className="h-11 shrink-0 flex items-center gap-2.5 px-4 border-b border-border bg-background">
         <button
+          type="button"
           onClick={() => setVersionDrawerOpen(true)}
           aria-label="Versions"
-          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+          className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
         >
-          {/* hamburger */}
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
             <rect x="2" y="4" width="14" height="1.5" rx="0.75" fill="currentColor" />
             <rect x="2" y="8.25" width="14" height="1.5" rx="0.75" fill="currentColor" />
             <rect x="2" y="12.5" width="14" height="1.5" rx="0.75" fill="currentColor" />
           </svg>
         </button>
-
-        <span style={{
-          flex: 1, fontSize: 14, fontWeight: 500, color: 'var(--text)',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
+        <span className="flex-1 text-[11px] uppercase tracking-widest text-muted-foreground truncate">
           {project.name}
         </span>
-
         <button
+          type="button"
           onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
           aria-label="Toggle theme"
-          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+          className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
         >
           {resolvedTheme === 'dark' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5" />
               <path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           )}
         </button>
       </header>
 
-      {/* ── Version drawer ── */}
       {versionDrawerOpen && (
         <VersionDrawer
           versions={versions}
@@ -283,168 +257,178 @@ export function ReadingMode({
         />
       )}
 
-      {/* ── Scrollable body ── */}
-      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 60 }}>
+      {/* Scrollable body — room for player + rotate bar */}
+      <div className="flex-1 overflow-y-auto pb-[7.5rem]">
 
-        {/* Master player section */}
-        <div style={{ padding: '20px 16px 0' }}>
-          {/* Play row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-            <button
-              onClick={() => player.playing ? player.pause() : player.play()}
-              disabled={!isReady || player.total === 0}
-              style={{
-                width: 56, height: 56, borderRadius: '50%',
-                background: 'var(--accent)', border: 'none', color: '#fff',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: !isReady || player.total === 0 ? 'not-allowed' : 'pointer',
-                opacity: !isReady || player.total === 0 ? 0.55 : 1,
-                flexShrink: 0, transition: 'opacity 0.15s',
-              }}
-            >
-              {player.playing ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16" rx="1" />
-                  <rect x="14" y="4" width="4" height="16" rx="1" />
-                </svg>
-              ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              )}
-            </button>
-
-            <div>
-              <p style={{ margin: '0 0 3px', fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
-                {isLoading
-                  ? `Loading… ${player.loaded}/${player.total}`
-                  : player.total === 0
-                    ? 'No audio tracks'
-                    : player.playing ? 'Playing' : 'Ready'}
-              </p>
-              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-sec)', fontVariantNumeric: 'tabular-nums' }}>
-                {fmt(player.currentTime)} / {fmt(player.duration)}
-              </p>
-            </div>
+        {/* Project header */}
+        <div className="px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-ember">
+            <span className="size-1.5 rounded-full bg-ember animate-pulse-dot" />
+            Rehearsal mode
           </div>
-
-          {/* Master waveform */}
-          <MasterWaveform bars={composite} playedRatio={playedRatio} onSeek={handleSeek} />
-
-          {/* Version pills */}
-          {versions.length > 1 && (
-            <div style={{
-              marginTop: 12, display: 'flex', gap: 6, overflowX: 'auto',
-              paddingBottom: 2, WebkitOverflowScrolling: 'touch',
-              scrollbarWidth: 'none',
-            }}>
-              {versions.map(v => (
-                <button
-                  key={v.id}
-                  onClick={() => onVersionChange(v.id)}
-                  style={{
-                    flexShrink: 0, fontSize: 12, padding: '4px 10px', borderRadius: 20,
-                    border: `0.5px solid ${v.id === activeVersionId ? 'var(--accent)' : 'var(--border)'}`,
-                    background: v.id === activeVersionId ? 'rgba(99,102,241,0.12)' : 'transparent',
-                    color: v.id === activeVersionId ? 'var(--accent)' : 'var(--text-muted)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {v.name}
-                </button>
-              ))}
+          <h1 className="font-display text-3xl uppercase tracking-tighter mt-1 text-foreground">
+            {project.name}
+          </h1>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
+            {project.bpm != null && <span>{project.bpm} BPM</span>}
+            {project.key && <span className="text-ember">{project.key}</span>}
+            <span>{project.time_signature ?? '4/4'}</span>
+            {player.duration > 0 && <span>{fmt(player.duration)}</span>}
+          </div>
+          {project.band_name && (
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
+              {project.band_name}
             </div>
           )}
         </div>
 
-        {/* Structure section */}
-        <div style={{ padding: '24px 16px 0' }}>
-          <p style={{ margin: '0 0 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Structure
-          </p>
-          {sections.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--text-dim)', textAlign: 'center', padding: '24px 0', margin: 0 }}>
-              No structure added yet
+        {/* Full mix waveform */}
+        <div className="px-5 pt-5">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Full mix
+          </div>
+          {isLoading && (
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
+              Loading… {player.loaded}/{player.total}
             </p>
+          )}
+          {player.total === 0 ? (
+            <div className="mt-2 h-28 border border-border bg-surface/40 grid place-items-center">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">No audio tracks</span>
+            </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {sections.map(section => {
-                const colors = SECTION_COLORS[section.type]
-                const chords = section.chords?.trim()
-                  ? section.chords.trim().split(/\s+/).filter(Boolean)
-                  : []
+            <MasterWaveform
+              bars={composite}
+              playedRatio={playedRatio}
+              onSeek={handleSeek}
+              ready={waveformReady}
+            />
+          )}
+          <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-muted-foreground mt-1">
+            <span>{fmt(player.currentTime)}</span>
+            <span>{fmt(player.duration)}</span>
+          </div>
+
+          {/* Version pills */}
+          {versions.length > 1 && (
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {versions.map(v => {
+                const isActive = v.id === activeVersionId
                 return (
-                  <div
-                    key={section.id}
-                    onClick={() => player.seek((section.start_bar * barDurationMs) / 1000)}
-                    style={{
-                      padding: '10px 12px',
-                      background: 'var(--bg-surface)',
-                      border: '0.5px solid var(--border)',
-                      borderLeft: `3px solid ${section.color || colors.fg}`,
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                    }}
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => onVersionChange(v.id)}
+                    className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
+                      isActive
+                        ? 'bg-ember text-white border-ember'
+                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                    }`}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: chords.length ? 6 : 0 }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
-                        background: colors.bg, color: colors.fg,
-                        textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0,
-                      }}>
-                        {sectionLabel(section)}
-                      </span>
-                      <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0 }}>
-                        {fmtBarRange(section.start_bar, section.end_bar)}
-                      </span>
-                    </div>
-                    {chords.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {chords.map((chord, i) => (
-                          <span
-                            key={`${section.id}-${i}`}
-                            style={{
-                              fontSize: 11, padding: '2px 6px', borderRadius: 4,
-                              background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-                              color: 'var(--text-sec)',
-                            }}
-                          >
-                            {chord}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    {v.name}
+                  </button>
                 )
               })}
             </div>
           )}
         </div>
 
-        {/* Resources section */}
-        <div style={{ padding: '24px 16px 0' }}>
-          <p style={{ margin: '0 0 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        {/* Structure & chords */}
+        <div className="px-5 pt-6">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Structure & chords
+          </div>
+          {sections.length === 0 ? (
+            <p className="mt-2 text-[11px] text-muted-foreground py-4 text-center border border-border">
+              No structure added yet
+            </p>
+          ) : (
+            <div className="mt-2 border border-border divide-y divide-border">
+              {sections.map(section => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => player.seek((section.start_bar * barDurationMs) / 1000)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
+                >
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-ember w-16 shrink-0 truncate">
+                    {sectionLabel(section)}
+                  </div>
+                  <div className="text-xs flex-1 truncate text-foreground">
+                    {formatChords(section.chords)}
+                  </div>
+                  <div className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0">
+                    {sectionStartTime(section.start_bar)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Lyrics */}
+        {lyrics?.content?.trim() && (
+          <div className="px-5 pt-6">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Lyrics
+            </div>
+            <pre className="mt-2 text-xs whitespace-pre-wrap text-foreground/90 bg-surface border border-border p-3 leading-relaxed font-mono">
+              {lyrics.content.trim()}
+            </pre>
+          </div>
+        )}
+
+        {/* Resources */}
+        <div className="px-5 pt-6 pb-6">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
             Resources
-          </p>
-          <ResourcesCard projectId={projectId} projectName={project.name} bare />
+          </div>
+          <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} />
         </div>
       </div>
 
-      {/* ── Fixed bottom rotate-prompt bar ── */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, height: 52,
-        background: 'var(--bg-surface)',
-        borderTop: '0.5px solid var(--border)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-        zIndex: 10,
-      }}>
+      {/* Fixed master player — above rotate bar */}
+      <div className="absolute bottom-[52px] left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 flex items-center gap-3 z-10">
+        <button
+          type="button"
+          onClick={() => (player.playing ? player.pause() : player.play())}
+          disabled={!isReady || player.total === 0}
+          className="size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label={player.playing ? 'Pause' : 'Play'}
+        >
+          <span className="text-base translate-x-px">{player.playing ? '❚❚' : '▶'}</span>
+        </button>
+        <div className="flex-1 min-w-0">
+          <div
+            className="h-1.5 bg-surface-2 relative cursor-pointer"
+            onClick={e => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              handleSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
+            }}
+            onTouchEnd={e => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              handleSeek(Math.max(0, Math.min(1, (e.changedTouches[0].clientX - rect.left) / rect.width)))
+            }}
+          >
+            <div className="absolute inset-y-0 left-0 bg-ember transition-[width] duration-75" style={{ width: `${progressPct}%` }} />
+            <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${progressPct}%` }} />
+          </div>
+          <div className="flex justify-between text-[9px] font-mono tabular-nums text-muted-foreground mt-1">
+            <span>{fmt(player.currentTime)}</span>
+            <span>{fmt(player.duration)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Fixed bottom rotate-prompt bar — unchanged message */}
+      <div className="absolute bottom-0 left-0 right-0 h-[52px] bg-surface border-t border-border flex items-center justify-center gap-2.5 z-10">
         <span className="rm-rotate-icon" aria-hidden>
           <svg width="18" height="26" viewBox="0 0 18 26" fill="none">
-            <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--accent)" strokeWidth="1.5" />
-            <circle cx="9" cy="22" r="1.25" fill="var(--accent)" opacity="0.6" />
+            <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--ember)" strokeWidth="1.5" />
+            <circle cx="9" cy="22" r="1.25" fill="var(--ember)" opacity="0.6" />
           </svg>
         </span>
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Rotate to open the mixer</span>
+        <span className="text-[13px] text-muted-foreground">Rotate to open the mixer</span>
       </div>
     </div>
   )

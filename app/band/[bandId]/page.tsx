@@ -3,15 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
-import { StructurePreviewPanel, IconFileDescription } from '@/components/StructurePreviewPanel'
+import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { activityDotColor, activityVerb } from '@/lib/activityFormat'
-import { avatarColor } from '@/lib/avatarTheme'
-import { ThemeAvatar } from '@/components/ThemeAvatar'
+import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
+import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,10 +47,6 @@ function formatDuration(ms: number): string {
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${m}:${sec.toString().padStart(2, '0')}`
-}
-
-function formatFounded(iso: string): string {
-  return new Date(iso).toLocaleDateString('en', { month: 'short', year: 'numeric' })
 }
 
 function formatRelative(iso: string): string {
@@ -92,6 +87,78 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
+function formatLimit(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
+}
+
+function formatFoundedHero(iso: string): string {
+  return new Date(iso).toLocaleDateString('en', { month: 'short', year: 'numeric' }).toUpperCase()
+}
+
+function activityColorClass(action: string): string {
+  switch (action) {
+    case 'merge': return 'text-ember'
+    case 'branch': return 'text-chart-3'
+    case 'upload': return 'text-chart-2'
+    case 'comment': return 'text-chart-5'
+    case 'structure': return 'text-chart-4'
+    case 'resource':
+    case 'resource_update':
+    case 'resource_remove': return 'text-chart-4'
+    case 'export': return 'text-foreground'
+    case 'meta': return 'text-chart-4'
+    default: return 'text-muted-foreground'
+  }
+}
+
+function TbButton({
+  children,
+  variant = 'ghost',
+  className = '',
+  type = 'button',
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'ghost' | 'primary' | 'danger' | 'solid'
+}) {
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none'
+  const styles = {
+    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
+    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
+    solid: 'bg-foreground text-background px-3 py-1.5 font-bold uppercase hover:bg-ember transition-colors',
+    danger: 'bg-destructive text-destructive-foreground px-3 py-1.5 font-bold',
+  }
+  return (
+    <button type={type} className={`${base} ${styles[variant]} ${className}`} {...props}>
+      {children}
+    </button>
+  )
+}
+
+function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={`w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 ${props.className ?? ''}`}
+    />
+  )
+}
+
+function TbModal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md border border-border bg-popover p-6 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function IconPlay({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="currentColor">
@@ -130,25 +197,6 @@ function IconPlus({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
       <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-    </svg>
-  )
-}
-
-function IconBranch({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
-      <circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9"/>
-      <circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9"/>
-      <circle cx="9" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9"/>
-      <path d="M3 4.5v3M3 4.5C3 7 9 7 9 4.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/>
-    </svg>
-  )
-}
-
-function IconComment({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
-      <path d="M1.5 2.5h9a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5H7L4.5 11V8.5H2a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round"/>
     </svg>
   )
 }
@@ -212,60 +260,53 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-      <div className="modal-card-responsive" style={{ padding: '1.5rem' }}>
-        <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-bright)', marginBottom: '1rem' }}>New project</p>
-        <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New project</p>
+      <form onSubmit={handleCreate} className="flex flex-col gap-3">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Project name</label>
+          <TbInput value={name} onChange={e => setName(e.target.value)} placeholder="Summer EP, Track 3…" autoFocus required />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Project name</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Summer EP, Track 3…" autoFocus required
-              style={{ width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.45rem 0.75rem', color: 'var(--text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
+            <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">BPM</label>
+            <TbInput value={bpm} onChange={e => setBpm(e.target.value)} placeholder="120" type="number" min="40" max="300" />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>BPM</label>
-              <input value={bpm} onChange={e => setBpm(e.target.value)} placeholder="120" type="number" min="40" max="300"
-                style={{ width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.45rem 0.75rem', color: 'var(--text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Key</label>
-              <input value={key} onChange={e => setKey(e.target.value)} placeholder="C minor"
-                style={{ width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.45rem 0.75rem', color: 'var(--text)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }} />
-            </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Key</label>
+            <TbInput value={key} onChange={e => setKey(e.target.value)} placeholder="C minor" />
           </div>
-          {error && <p style={{ color: '#f87171', fontSize: 12, margin: 0 }}>{error}</p>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button type="button" onClick={onClose} style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.4rem 1rem', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-            <button type="submit" disabled={loading || !name.trim()}
-              style={{ background: 'var(--accent)', border: 'none', borderRadius: 8, padding: '0.4rem 1rem', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: loading || !name.trim() ? 0.5 : 1 }}>
-              {loading ? 'Creating…' : 'Create project'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+        {error && <p className="text-destructive text-xs m-0">{error}</p>}
+        <div className="flex gap-2 justify-end mt-1">
+          <TbButton onClick={onClose}>Cancel</TbButton>
+          <TbButton variant="primary" type="submit" disabled={loading || !name.trim()}>
+            {loading ? 'Creating…' : 'Create project'}
+          </TbButton>
+        </div>
+      </form>
+    </TbModal>
   )
 }
 
-// ─── Project card ─────────────────────────────────────────────────────────────
+// ─── Project row ──────────────────────────────────────────────────────────────
 
-function ProjectCard({
-  project, playing, loading, error, onPlay, onClick, onPreview, onDelete, onMetaUpdated, isOwner,
+function ProjectRow({
+  project, index, playing, loading, error, onPlay, onOpen, onQuick, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
+  index: number
   playing: boolean
   loading: boolean
   error: boolean
   onPlay: (e: React.MouseEvent) => void
-  onClick: () => void
-  onPreview: (e: React.MouseEvent) => void
+  onOpen: () => void
+  onQuick: (e: React.MouseEvent) => void
   onDelete?: () => void
   onMetaUpdated: (patch: { bpm: number | null; key: string | null }) => void
   isOwner: boolean
 }) {
-  const [hovered, setHovered] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [previewTip, setPreviewTip] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -277,29 +318,26 @@ function ProjectCard({
     return () => document.removeEventListener('mousedown', handler)
   }, [menuOpen])
 
+  const playActive = playing || loading
+
   return (
     <div
-      className="project-card"
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: hovered ? 'var(--bg-card)' : 'var(--bg-surface)',
-        border: `0.5px solid ${hovered ? 'var(--border-light)' : 'var(--border)'}`,
-        borderRadius: 12, padding: 20, cursor: 'pointer',
-        transition: 'background 0.15s, border-color 0.15s',
-        display: 'flex', flexDirection: 'column',
-      }}
+      className={`bg-background flex flex-col gap-3 sm:grid sm:grid-cols-[auto_1fr_auto] sm:gap-4 sm:items-center px-4 py-4 hover:bg-surface transition-colors animate-slide-in relative overflow-visible ${
+        menuOpen ? 'z-30' : 'z-0'
+      }`}
+      style={{ animationDelay: `${index * 40}ms` }}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-        {/* Play button */}
+      <div className="flex items-center gap-3 sm:contents min-w-0">
         <button
+          type="button"
           onClick={onPlay}
           disabled={loading && !playing}
-          className="btn-play-card"
-          data-playing={playing ? 'true' : 'false'}
-          style={{ opacity: !project.first_track_id ? 0.4 : 1 }}
+          aria-label={playing ? `Pause ${project.name}` : `Play ${project.name}`}
+          className={`size-10 shrink-0 border grid place-items-center transition group ${
+            playActive
+              ? 'bg-ember border-ember text-white'
+              : 'border-border bg-surface-2 hover:bg-ember hover:border-ember hover:text-white'
+          } ${!project.first_track_id ? 'opacity-40 cursor-not-allowed' : ''}`}
         >
           {error
             ? <IconPlayError />
@@ -310,155 +348,73 @@ function ProjectCard({
                 : <IconPlay />}
         </button>
 
-        {/* Name + tracks */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="min-w-0 flex-1 text-left sm:flex-none"
+        >
+          <div className="font-display text-lg uppercase tracking-tight truncate hover:text-ember transition-colors">
             {project.name}
-          </p>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>
-            {project.track_count} track{project.track_count !== 1 ? 's' : ''}
-            {project.total_duration_ms > 0 && ` · ${formatDuration(project.total_duration_ms)}`}
-          </p>
-        </div>
-
-        {/* Card actions */}
-        <div className="project-card-header-actions" onClick={e => e.stopPropagation()}>
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              className="project-card-ghost-btn"
-              onClick={onPreview}
-              aria-label="Resources"
-              onMouseEnter={() => setPreviewTip(true)}
-              onMouseLeave={() => setPreviewTip(false)}
-            >
-              <IconFileDescription size={16} />
-            </button>
-            {previewTip && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  bottom: '100%', left: '50%',
-                  transform: 'translateX(-50%)',
-                  marginBottom: 4,
-                  background: 'var(--bg-card)', border: '0.5px solid var(--border-light)',
-                  borderRadius: 6, padding: '4px 8px',
-                  fontSize: 11, color: 'var(--text-sec)',
-                  whiteSpace: 'nowrap', zIndex: 20,
-                }}
-              >Resources</div>
-            )}
           </div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+            <span>{project.track_count} TRACKS</span>
+            {project.total_duration_ms > 0 && <span>{formatDuration(project.total_duration_ms)}</span>}
+            {project.bpm != null && <span className="text-ember">{project.bpm} BPM</span>}
+            {project.key && <span>{project.key.toUpperCase()}</span>}
+            <span>{project.version_count} BRANCH{project.version_count !== 1 ? 'ES' : ''}</span>
+            <span>{project.comment_count} COMMENTS</span>
+            <span className="text-muted-foreground/70">{formatLastEdited(project.last_updated_at).toUpperCase()}</span>
+          </div>
+        </button>
+      </div>
 
-          <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
-              className="project-card-ghost-btn"
-              style={{ color: hovered ? 'var(--text-muted)' : 'var(--text-dim)' }}
-            >
-              <IconDotsV />
-            </button>
-            {menuOpen && (
-              <div style={{
-                position: 'absolute', right: 0, top: '100%', zIndex: 20,
-                background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-                borderRadius: 8, padding: 4, minWidth: 200,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-              }}>
-                <button
-                  onClick={() => { setMenuOpen(false); onClick() }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-sec)', borderRadius: 6 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-                >Open project</button>
-                <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
-                <div style={{ padding: '4px 8px 8px' }} onClick={e => e.stopPropagation()}>
-                  <ProjectMetaFields
-                    projectId={project.id}
-                    bpm={project.bpm}
-                    keySig={project.key}
-                    onUpdated={onMetaUpdated}
-                    variant="menu"
-                  />
-                </div>
-                {isOwner && (
-                  <>
-                    <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
-                    <button
-                      onClick={() => { setMenuOpen(false); onDelete?.() }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', borderRadius: 6 }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; e.currentTarget.style.color = '#ef4444' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--text-muted)' }}
-                    >Delete project</button>
-                  </>
-                )}
+      <div className="flex items-center gap-1 shrink-0 sm:justify-end">
+        <TbButton onClick={onQuick}>Quick</TbButton>
+        <TbButton variant="solid" onClick={onOpen}>Open ↗</TbButton>
+        <div ref={menuRef} className="relative">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            aria-label="Project options"
+            className="size-[34px] border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+          >
+            <IconDotsV />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] border border-border bg-popover shadow-2xl py-1 overflow-visible">
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); onOpen() }}
+                className="block w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
+              >
+                Open project
+              </button>
+              <div className="h-px bg-border my-1" />
+              <div className="px-2 py-1" onClick={e => e.stopPropagation()}>
+                <ProjectMetaFields
+                  projectId={project.id}
+                  bpm={project.bpm}
+                  keySig={project.key}
+                  onUpdated={onMetaUpdated}
+                  variant="menu"
+                />
               </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Meta row */}
-      <div className="project-card-meta">
-        <div className="project-card-meta-left">
-          {project.bpm != null && (
-            <span className="project-card-meta-item">{project.bpm} BPM</span>
+              {isOwner && (
+                <>
+                  <div className="h-px bg-border my-1" />
+                  <button
+                    type="button"
+                    onClick={() => { setMenuOpen(false); onDelete?.() }}
+                    className="block w-full text-left px-3 py-2 text-xs text-destructive hover:bg-destructive/10"
+                  >
+                    Delete project
+                  </button>
+                </>
+              )}
+            </div>
           )}
-          {project.key && (
-            <span className="project-card-meta-item">{project.key}</span>
-          )}
-        </div>
-        <div className="project-card-meta-right">
-          <span className="project-card-meta-item">
-            <IconBranch />{project.version_count}
-          </span>
-          <span className="project-card-meta-item">
-            <IconComment />{project.comment_count}
-          </span>
         </div>
       </div>
-
-      {/* Footer */}
-      <div style={{ borderTop: '0.5px solid var(--border)', paddingTop: 12, marginTop: 'auto' }}>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-          Last edited {formatLastEdited(project.last_updated_at)}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-// ─── New project card ──────────────────────────────────────────────────────────
-
-function NewProjectCard({ onClick }: { onClick: () => void }) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <div
-      className="new-project-card"
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        border: `1.5px dashed ${hovered ? 'var(--accent)' : 'var(--border)'}`,
-        borderRadius: 12, padding: 20, cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        gap: 8, minHeight: 140,
-        transition: 'border-color 0.15s',
-      }}
-    >
-      <div style={{
-        width: 32, height: 32, border: '1px solid var(--border)', borderRadius: 8,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: 'var(--text-muted)',
-      }}>
-        <IconPlus size={16} />
-      </div>
-      <p style={{ fontSize: 14, color: hovered ? 'var(--accent)' : 'var(--text-muted)', margin: 0, transition: 'color 0.15s', fontWeight: 500 }}>
-        Start a new project
-      </p>
-      <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-        Upload stems or start blank
-      </p>
     </div>
   )
 }
@@ -502,7 +458,7 @@ export default function BandPage() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [previewProject, setPreviewProject] = useState<EnhancedProject | null>(null)
-  const [showBandWelcome, setShowBandWelcome] = useState(false)
+  const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
 
   // ── Cleanup audio on unmount ────────────────────────────────────────────────
   useEffect(() => {
@@ -568,11 +524,11 @@ export default function BandPage() {
   }, [authLoading, user, bandId]) // eslint-disable-line
 
   // Show band welcome modal once
-  useEffect(() => {
-    if (!authLoading && profile && !profile.onboarding?.band_seen) {
-      setShowBandWelcome(true)
-    }
-  }, [authLoading, profile])
+  const showBandWelcome =
+    !showWelcomeDismissed &&
+    !authLoading &&
+    !!profile &&
+    !profile.onboarding?.band_seen
 
   // Close member menu on outside click
   useEffect(() => {
@@ -695,12 +651,14 @@ export default function BandPage() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
-  const storageBarColor = storagePct > 95 ? '#ef4444' : storagePct > 80 ? '#F59E0B' : 'var(--accent)'
+  const bandColor = band ? avatarColor(band.name, palette) : 'var(--ember)'
+  const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
+  const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
 
   if (authLoading || loading) return <BrandSpinner />
   if (error) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <p style={{ color: '#f87171', fontSize: 13 }}>{error}</p>
+    <div className="min-h-screen grid place-items-center p-6">
+      <p className="text-destructive text-sm m-0">{error}</p>
     </div>
   )
 
@@ -715,79 +673,60 @@ export default function BandPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+    <div className="min-h-screen flex flex-col bg-background">
 
-      {/* ── Topbar ── */}
-      <header className="app-topbar band-topbar" style={{ height: 56 }}>
-        <div className="breadcrumb-trail">
-          <a href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: 0, textDecoration: 'none', fontSize: '0.9375rem', flexShrink: 0 }}>
-            <span style={{ color: 'var(--text-sec)', fontWeight: 600, letterSpacing: '-0.03em' }}>track</span>
-            <span style={{ color: 'var(--accent)', fontWeight: 600, letterSpacing: '-0.03em' }}>base</span>
-          </a>
-          <span style={{ color: 'var(--border-light)', flexShrink: 0 }}>/</span>
-          <a href="/dashboard" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none', flexShrink: 0 }}>Bands</a>
-          <span style={{ color: 'var(--border-light)', flexShrink: 0 }}>/</span>
-          <span className="breadcrumb-band-name">{band?.name}</span>
-        </div>
-        <div style={{ flex: 1 }} />
-        <AvatarDropdown />
-      </header>
+      <AppHeader
+        crumbs={<span className="text-foreground truncate">{band?.name}</span>}
+        right={
+          <TbButton variant="primary" className="hidden sm:inline-flex items-center gap-1.5" onClick={() => setShowNewProject(true)}>
+            <IconPlus size={12} />
+            New Project
+          </TbButton>
+        }
+      />
 
-      {/* ── Main body ── */}
-      <div className="band-layout">
-
-        {/* ── Left column ── */}
-        <div className="band-main-col">
-
-          {/* Band header */}
-          <div className="band-header-row">
-            <div className="band-header-identity">
-              {/* Avatar */}
-              <ThemeAvatar
-                seed={band?.name ?? '??'}
-                size={80}
-                radius={16}
-                kind="band"
-                className="band-avatar-lg"
-              />
-
-              {/* Info */}
-              <div style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
-                <h1 className="band-title-lg" style={{ fontSize: 26, fontWeight: 600, color: 'var(--text)', margin: '0 0 8px', lineHeight: 1.2 }}>
-                  {band?.name}
-                </h1>
-                <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0, display: 'flex', gap: 0, flexWrap: 'wrap' }}>
-                  {band && (
-                    <>
-                      <span>founded {formatFounded(band.created_at)}</span>
-                      <span style={{ color: 'var(--text-dim)', margin: '0 6px' }}>·</span>
-                      <span>{members.length} member{members.length !== 1 ? 's' : ''}</span>
-                      <span style={{ color: 'var(--text-dim)', margin: '0 6px' }}>·</span>
-                      <span>{projects.length} project{projects.length !== 1 ? 's' : ''}</span>
-                    </>
-                  )}
-                </p>
+      {/* Band hero */}
+      <section className="border-b border-border bg-surface/40">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-6 items-end">
+          <div
+            className="size-16 grid place-items-center font-display font-bold text-2xl text-background shrink-0"
+            style={{ backgroundColor: bandColor }}
+          >
+            {bandInitials}
+          </div>
+          <div className="min-w-0">
+            {band && (
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+                FOUNDED {formatFoundedHero(band.created_at)}
               </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="band-header-actions">
-              <button
-                onClick={() => setShowNewProject(true)}
-                className="btn-accent"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '7px 14px', whiteSpace: 'nowrap',
-                }}
-              >
-                <IconPlus size={13} />
-                New project
-              </button>
+            )}
+            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter truncate m-0">
+              {band?.name}
+            </h1>
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
+              {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} · {members.length} MEMBER{members.length !== 1 ? 'S' : ''} · {roleLabel}
             </div>
           </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-border border border-border text-center w-full lg:w-auto">
+            {[
+              [stats.branches, 'BRANCHES'],
+              [stats.merges, 'MERGES'],
+              [stats.comments, 'COMMENTS'],
+              [stats.tracks, 'TRACKS'],
+            ].map(([n, l]) => (
+              <div key={l as string} className="bg-background px-3 sm:px-4 py-3">
+                <div className="font-display text-xl sm:text-2xl text-foreground tabular-nums">{n as number}</div>
+                <div className="text-[8px] uppercase tracking-widest text-muted-foreground mt-1">{l as string}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
-          {/* Tab bar */}
-          <div className="tab-bar-scroll">
+      {/* Tabs */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 flex items-center justify-between gap-4">
+          <div className="flex overflow-x-auto">
             {(['projects', 'activity'] as const).map(tab => {
               const isActive = activeTab === tab
               const count = tab === 'projects' ? projects.length : totalActivity
@@ -796,259 +735,265 @@ export default function BandPage() {
                   key={tab}
                   type="button"
                   onClick={() => switchTab(tab)}
-                  className="tab-bar-btn"
-                  data-active={isActive ? 'true' : 'false'}
+                  className={`px-4 sm:px-5 h-11 text-[10px] uppercase tracking-widest border-b-2 transition whitespace-nowrap ${
+                    isActive ? 'border-ember text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
                 >
-                  <span className="tab-bar-label">
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                    {count > 0 && (
-                      <span className={isActive ? 'accent-pill' : 'accent-pill accent-pill-muted'}>
-                        {count}
-                      </span>
-                    )}
-                  </span>
+                  {tab}
+                  {count > 0 && (
+                    <span className={`ml-2 tabular-nums ${isActive ? 'text-ember' : 'text-muted-foreground/60'}`}>
+                      {count}
+                    </span>
+                  )}
                 </button>
               )
             })}
           </div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground hidden sm:block shrink-0 tabular-nums">
+            STORAGE {formatBytes(stats.storage_bytes)} / {formatLimit(storageLimitBytes)}
+          </div>
+        </div>
+      </section>
 
-          {/* Tab content */}
+      <div className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 py-6 sm:py-8 grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-8">
+        {/* Main column */}
+        <div className="min-w-0">
           {activeTab === 'projects' ? (
-            <div className="card-grid-projects">
-              {projects.map(p => (
-                <ProjectCard
-                  key={p.id}
-                  project={p}
-                  playing={playingProjectId === p.id}
-                  loading={loadingProjectId === p.id}
-                  error={errorProjectId === p.id}
-                  onPlay={e => handlePlay(e, p)}
-                  onClick={() => router.push(`/band/${bandId}/project/${p.id}`)}
-                  onPreview={e => { e.stopPropagation(); setPreviewProject(p) }}
-                  onDelete={() => { setDeleteModal({ id: p.id, name: p.name }); setDeleteConfirmName(''); setDeleteError('') }}
-                  onMetaUpdated={patch => setProjects(prev => prev.map(x => x.id === p.id ? { ...x, ...patch } : x))}
-                  isOwner={myRole === 'owner'}
-                />
-              ))}
-              <NewProjectCard onClick={() => setShowNewProject(true)} />
+            <div>
+              <div className="flex items-center justify-between mb-4 gap-3">
+                <SectionLabel>{projects.length} PROJECT{projects.length !== 1 ? 'S' : ''}</SectionLabel>
+                <TbButton variant="primary" className="sm:hidden" onClick={() => setShowNewProject(true)}>
+                  + New
+                </TbButton>
+              </div>
+              <div className="grid gap-px bg-border border border-border overflow-visible isolate">
+                {projects.map((p, i) => (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    index={i}
+                    playing={playingProjectId === p.id}
+                    loading={loadingProjectId === p.id}
+                    error={errorProjectId === p.id}
+                    onPlay={e => handlePlay(e, p)}
+                    onOpen={() => router.push(`/band/${bandId}/project/${p.id}`)}
+                    onQuick={e => { e.stopPropagation(); setPreviewProject(p) }}
+                    onDelete={() => { setDeleteModal({ id: p.id, name: p.name }); setDeleteConfirmName(''); setDeleteError('') }}
+                    onMetaUpdated={patch => setProjects(prev => prev.map(x => x.id === p.id ? { ...x, ...patch } : x))}
+                    isOwner={myRole === 'owner'}
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowNewProject(true)}
+                  className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
+                >
+                  <div className="size-8 border border-border grid place-items-center text-muted-foreground">
+                    <IconPlus size={14} />
+                  </div>
+                  <span className="text-sm text-muted-foreground hover:text-ember transition-colors font-medium">
+                    Start a new project
+                  </span>
+                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                    Upload stems or start blank
+                  </span>
+                </button>
+              </div>
             </div>
           ) : (
-            /* Activity feed */
             <div>
+              <SectionLabel>ALL ACTIVITY</SectionLabel>
               {activityLoading ? (
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '20px 0' }}>Loading activity…</p>
+                <p className="text-sm text-muted-foreground mt-4 m-0">Loading activity…</p>
               ) : itemsForFeed.length === 0 ? (
-                <p style={{ fontSize: 13, color: 'var(--text-dim)', padding: '20px 0' }}>No activity yet.</p>
+                <p className="text-sm text-muted-foreground/70 mt-4 m-0">No activity yet.</p>
               ) : (
-                groupedActivity.map(group => (
-                  <div key={group.date}>
-                    <p style={{
-                      fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)',
-                      letterSpacing: '0.8px', marginTop: 20, marginBottom: 8, fontWeight: 500,
-                    }}>{group.date}</p>
-                    {group.items.map(item => (
-                      <div key={item.id} style={{ position: 'relative', paddingLeft: 20, paddingBottom: 16 }}>
-                        {/* Dot */}
-                        <div style={{
-                          position: 'absolute', left: 0, top: 6,
-                          width: 8, height: 8, borderRadius: '50%',
-                          background: activityDotColor(item.action),
-                        }} />
-                        <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.4, margin: '0 0 2px' }}>
-                          <span style={{ fontWeight: 500, color: 'var(--accent)' }}>@{item.username}</span>
-                          {' '}{activityVerb(item.action)}{' '}
-                          <span style={{ fontWeight: 500, color: 'var(--text)' }}>{item.subject}</span>
-                          {item.detail && (
-                            <span style={{ color: 'var(--text-muted)' }}> · {item.detail}</span>
-                          )}
-                          {/* For non-comment actions, append the project name */}
-                          {item.action !== 'comment' && item.project_name && (
-                            <span style={{ color: 'var(--text-dim)' }}> · {item.project_name}</span>
-                          )}
-                        </p>
-                        <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-                          {formatRelative(item.created_at)}
-                        </p>
+                <div className="mt-4 border border-border bg-surface divide-y divide-border">
+                  {groupedActivity.map(group => (
+                    <div key={group.date}>
+                      <div className="px-4 py-2 bg-background border-b border-border">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{group.date}</span>
                       </div>
-                    ))}
-                  </div>
-                ))
+                      {group.items.map(item => (
+                        <div
+                          key={item.id}
+                          className="grid grid-cols-1 sm:grid-cols-[80px_1fr_auto] sm:items-center gap-2 sm:gap-4 px-4 py-3 text-xs hover:bg-background transition-colors"
+                        >
+                          <span className={`text-[9px] font-bold tracking-widest uppercase ${activityColorClass(item.action)}`}>
+                            {item.action.replace(/_/g, ' ')}
+                          </span>
+                          <div className="min-w-0">
+                            <span className="text-foreground font-bold">@{item.username}</span>{' '}
+                            <span className="text-muted-foreground">{activityVerb(item.action)}</span>{' '}
+                            <span className="text-foreground">{item.subject}</span>
+                            {item.detail && <span className="text-muted-foreground"> · {item.detail}</span>}
+                            {item.action !== 'comment' && item.project_name && (
+                              <span className="text-muted-foreground/70"> · {item.project_name}</span>
+                            )}
+                          </div>
+                          <span className="text-muted-foreground tabular-nums sm:text-right">{formatRelative(item.created_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}
         </div>
 
-        {/* ── Right column ── */}
-        <div className="band-sidebar">
-
-          {/* Members card */}
-          <div className="sidebar-card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.8px', fontWeight: 500 }}>Members</span>
+        {/* Sidebar */}
+        <aside className="space-y-6 lg:space-y-8 min-w-0">
+          {/* Members */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <SectionLabel>MEMBERS</SectionLabel>
               <button
+                type="button"
                 onClick={handleCopyInvite}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--accent)', padding: 0 }}
-              >Invite</button>
+                className="text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+              >
+                + Invite
+              </button>
             </div>
+            <div className="border border-border bg-surface divide-y divide-border">
+              {members.map(m => {
+                const username = m.profiles?.username ?? 'user'
+                const displayName = m.profiles?.display_name ?? username
+                const isMe = m.user_id === user?.id
+                const isMemberOwner = m.role === 'owner'
+                const roleTagColor = m.role_label ? avatarColor(m.role_label, palette) : null
+                const memberInitials = avatarInitials(username, 'user')
 
-            {members.map((m, idx) => {
-              const username = m.profiles?.username ?? 'user'
-              const isMe = m.user_id === user?.id
-              const isOwner = m.role === 'owner'
-              const roleLabelColor = m.role_label ? avatarColor(m.role_label, palette) : null
-              const isLast = idx === members.length - 1
-
-              return (
-                <div key={m.user_id}>
-                  <div
-                    className="member-row"
-                    style={{ borderBottom: isLast ? 'none' : '0.5px solid var(--border)' }}
-                  >
-                    {/* Avatar */}
-                    <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <ThemeAvatar seed={username} size={36} shape="circle" kind="user" />
-                      {/* Online dot */}
-                      <div style={{
-                        position: 'absolute', bottom: 0, right: 0,
-                        width: 8, height: 8, borderRadius: '50%',
-                        background: '#10B981', border: '1.5px solid var(--bg-surface)',
-                      }} />
-                    </div>
-
-                    {/* Info */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        @{username}
-                      </p>
-                      {(m.role_label || isOwner) && (
-                        <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
-                          {roleLabelColor && m.role_label && (
-                            <span style={{
-                              fontSize: 10, padding: '1px 7px', borderRadius: 20,
-                              background: `${roleLabelColor}1a`, color: roleLabelColor,
-                              border: `0.5px solid ${roleLabelColor}4d`,
-                            }}>{m.role_label}</span>
-                          )}
-                          {isOwner && (
-                            <span style={{
-                              fontSize: 10, padding: '1px 7px', borderRadius: 20,
-                              background: 'var(--bg-card)', color: 'var(--text-muted)',
-                              border: '0.5px solid var(--border)',
-                            }}>owner</span>
+                return (
+                  <div key={m.user_id}>
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="size-8 bg-surface-2 grid place-items-center text-[10px] font-bold shrink-0 relative">
+                        {memberInitials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold truncate">
+                          {displayName}
+                          {isMemberOwner && <span className="text-ember text-[9px] ml-1">★</span>}
+                        </div>
+                        <div className="text-[9px] text-muted-foreground truncate">@{username}</div>
+                      </div>
+                      {(m.role_label || isMemberOwner) && (
+                        <span
+                          className="text-[8px] font-bold tracking-widest border px-1.5 py-0.5 shrink-0 uppercase"
+                          style={roleTagColor
+                            ? { borderColor: `${roleTagColor}80`, color: roleTagColor }
+                            : undefined}
+                        >
+                          {m.role_label ?? (isMemberOwner ? 'owner' : '')}
+                        </span>
+                      )}
+                      {isMe && (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingMember(m.user_id); setEditRoleLabel(m.role_label ?? '') }}
+                          className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer shrink-0"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {myRole === 'owner' && !isMe && (
+                        <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); setMemberMenu(memberMenu === m.user_id ? null : m.user_id) }}
+                            className="size-7 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember bg-transparent cursor-pointer"
+                          >
+                            <IconDotsV size={12} />
+                          </button>
+                          {memberMenu === m.user_id && (
+                            <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] border border-border bg-popover shadow-2xl py-1">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveMember(m.user_id)}
+                                className="block w-full text-left px-3 py-2 text-xs text-destructive hover:bg-destructive/10"
+                              >
+                                Remove from band
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
                     </div>
-
-                    {/* Edit role (own row) */}
-                    {isMe && (
-                      <span
-                        className="member-row-action"
-                        onClick={() => { setEditingMember(m.user_id); setEditRoleLabel(m.role_label ?? '') }}
-                        style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer' }}
-                      >Edit</span>
-                    )}
-
-                    {/* Dots menu (owner can remove others) */}
-                    {myRole === 'owner' && !isMe && (
-                      <div className="member-row-action" style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={e => { e.stopPropagation(); setMemberMenu(memberMenu === m.user_id ? null : m.user_id) }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: 'var(--text-dim)', borderRadius: 4 }}
-                        ><IconDotsV /></button>
-                        {memberMenu === m.user_id && (
-                          <div style={{
-                            position: 'absolute', right: 0, top: '100%', zIndex: 20,
-                            background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-                            borderRadius: 8, padding: 4, minWidth: 160,
-                            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-                          }}>
-                            <button
-                              onClick={() => handleRemoveMember(m.user_id)}
-                              style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '7px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#ef4444', borderRadius: 6 }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-                            >Remove from band</button>
-                          </div>
-                        )}
+                    {editingMember === m.user_id && (
+                      <div className="flex gap-2 px-3 pb-3 pl-[52px]">
+                        <TbInput
+                          autoFocus
+                          value={editRoleLabel}
+                          onChange={e => setEditRoleLabel(e.target.value)}
+                          placeholder="guitarist, vocalist…"
+                          maxLength={20}
+                          className="text-xs py-1.5"
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleSaveRoleLabel(m.user_id)
+                            if (e.key === 'Escape') setEditingMember(null)
+                          }}
+                        />
+                        <TbButton variant="primary" className="shrink-0" onClick={() => handleSaveRoleLabel(m.user_id)}>Save</TbButton>
+                        <TbButton className="shrink-0" onClick={() => setEditingMember(null)}>✕</TbButton>
                       </div>
                     )}
                   </div>
-
-                  {/* Inline role edit */}
-                  {editingMember === m.user_id && (
-                    <div style={{ display: 'flex', gap: 6, paddingLeft: 46, paddingBottom: 6 }}>
-                      <input
-                        autoFocus value={editRoleLabel}
-                        onChange={e => setEditRoleLabel(e.target.value)}
-                        placeholder="guitarist, vocalist…" maxLength={20}
-                        onKeyDown={e => { if (e.key === 'Enter') handleSaveRoleLabel(m.user_id); if (e.key === 'Escape') setEditingMember(null) }}
-                        style={{ flex: 1, background: 'var(--bg)', border: '0.5px solid var(--accent)', borderRadius: 6, padding: '3px 8px', color: 'var(--text)', fontSize: 12, outline: 'none' }}
-                      />
-                      <button onClick={() => handleSaveRoleLabel(m.user_id)} style={{ background: 'var(--accent)', border: 'none', borderRadius: 6, padding: '3px 10px', color: 'white', fontSize: 11, fontWeight: 500, cursor: 'pointer' }}>Save</button>
-                      <button onClick={() => setEditingMember(null)} style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 6, padding: '3px 10px', color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer' }}>✕</button>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-
-            {/* Copy invite button at bottom */}
+                )
+              })}
+            </div>
             <button
+              type="button"
               onClick={handleCopyInvite}
               disabled={inviteCopying}
-              style={{
-                width: '100%', marginTop: 12,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                background: 'transparent',
-                border: `0.5px solid ${inviteCopied ? '#10B981' : 'var(--border)'}`,
-                borderRadius: 8, padding: '7px 0',
-                color: inviteCopied ? '#10B981' : 'var(--text-muted)',
-                fontSize: 12, cursor: inviteCopying ? 'not-allowed' : 'pointer',
-                transition: 'all 0.15s',
-              }}
+              className={`w-full mt-3 flex items-center justify-center gap-2 border px-3 py-2 text-[10px] uppercase tracking-widest transition ${
+                inviteCopied
+                  ? 'border-online text-online'
+                  : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+              } bg-transparent cursor-pointer disabled:opacity-50`}
             >
               {inviteCopied ? <IconCheck /> : <IconCopy />}
               {inviteCopied ? 'Copied!' : 'Copy invite link'}
             </button>
           </div>
 
-          {/* Recent Activity card — shown on Projects tab only */}
+          {/* Recent activity — projects tab only */}
           {activeTab === 'projects' && (
-            <div className="sidebar-card">
-              <p style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 12 }}>Recent Activity</p>
-              {recentActivity.length === 0 ? (
-                <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>No activity yet.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {recentActivity.map(item => (
-                    <div key={item.id} className="activity-row">
+            <div>
+              <SectionLabel>RECENT ACTIVITY</SectionLabel>
+              <div className="mt-3 border border-border bg-surface divide-y divide-border">
+                {recentActivity.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/70 px-3 py-4 m-0">No activity yet.</p>
+                ) : (
+                  recentActivity.map(item => (
+                    <div key={item.id} className="flex gap-3 px-3 py-2.5">
                       <div
-                        className="activity-dot"
+                        className="size-2 rounded-full shrink-0 mt-1.5"
                         style={{ background: activityDotColor(item.action) }}
                       />
-                      <div>
-                        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
-                          <span style={{ fontWeight: 500, color: 'var(--text)' }}>{item.username}</span>
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground m-0 leading-relaxed">
+                          <span className="font-bold text-foreground">{item.username}</span>
                           {' '}{activityVerb(item.action)}{' '}
                           <span>{item.subject}</span>
                           {item.detail && <span> · {item.detail}</span>}
                           {item.action !== 'comment' && item.project_name && (
-                            <span style={{ color: 'var(--text-dim)' }}> · {item.project_name}</span>
+                            <span className="text-muted-foreground/70"> · {item.project_name}</span>
                           )}
                         </p>
-                        <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: '1px 0 0' }}>
+                        <p className="text-[10px] text-muted-foreground/60 mt-0.5 m-0 tabular-nums">
                           {formatRelative(item.created_at)}
                         </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
               {totalActivity > 5 && (
                 <button
+                  type="button"
                   onClick={() => switchTab('activity')}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--accent)', padding: '10px 0 0', display: 'block' }}
+                  className="mt-2 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
                 >
                   View all activity →
                 </button>
@@ -1056,46 +1001,57 @@ export default function BandPage() {
             </div>
           )}
 
-          {/* Band stats card */}
-          <div className="sidebar-card">
-            <p style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 14 }}>Band Stats</p>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+          {/* Band stats */}
+          <div>
+            <SectionLabel>BAND STATS</SectionLabel>
+            <div className="mt-3 grid grid-cols-2 gap-px bg-border border border-border">
               {[
-                { label: 'Branches', value: stats.branches },
-                { label: 'Merges', value: stats.merges },
-                { label: 'Comments', value: stats.comments },
-                { label: 'Tracks', value: stats.tracks },
+                { label: 'BRANCHES', value: stats.branches },
+                { label: 'MERGES', value: stats.merges },
+                { label: 'COMMENTS', value: stats.comments },
+                { label: 'TRACKS', value: stats.tracks },
               ].map(stat => (
-                <div key={stat.label} style={{
-                  background: 'var(--bg-card)', borderRadius: 8, padding: 12,
-                }}>
-                  <p style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.6px', margin: '0 0 4px' }}>{stat.label}</p>
-                  <p style={{ fontSize: 24, fontWeight: 600, color: 'var(--text)', margin: 0 }}>{stat.value}</p>
+                <div key={stat.label} className="bg-background px-3 py-3">
+                  <div className="text-[8px] uppercase tracking-widest text-muted-foreground">{stat.label}</div>
+                  <div className="font-display text-2xl text-foreground tabular-nums mt-1">{stat.value}</div>
                 </div>
               ))}
             </div>
-
-            {/* Storage bar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Storage</span>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {formatBytes(stats.storage_bytes)} / 10 GB
-              </span>
-            </div>
-            <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-card)', overflow: 'hidden' }}>
-              <div style={{
-                height: '100%', borderRadius: 2,
-                width: `${storagePct}%`,
-                background: storageBarColor,
-                transition: 'width 0.3s',
-              }} />
+            <div className="mt-4">
+              <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
+                <span>STORAGE</span>
+                <span className="tabular-nums text-foreground">
+                  {formatBytes(stats.storage_bytes)} / {formatLimit(storageLimitBytes)}
+                </span>
+              </div>
+              <div className="h-1 bg-surface-2 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    storagePct > 95 ? 'bg-destructive' : storagePct > 80 ? 'bg-chart-2' : 'bg-ember'
+                  }`}
+                  style={{ width: `${storagePct}%` }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+
+          {/* Welcome */}
+          <div className="border border-ember/30 bg-ember-soft p-4">
+            <SectionLabel>WELCOME</SectionLabel>
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed m-0">
+              This is {band?.name}&apos;s workspace. Songs, people, and activity all live here.
+              Click any project to open it, or hit <strong className="text-foreground font-bold">Quick</strong> for resources and structure.
+            </p>
+          </div>
+        </aside>
       </div>
 
-      {/* ── Modals ── */}
+      <StatusFooter
+        left={<span className="uppercase tracking-widest truncate">{band?.name} · {activeTab.toUpperCase()}</span>}
+        right={<span className="uppercase tracking-widest hidden sm:inline">SYNC OK · 24MS</span>}
+      />
+
+      {/* Modals */}
       {showNewProject && (
         <NewProjectModal
           bandId={bandId}
@@ -1105,42 +1061,35 @@ export default function BandPage() {
       )}
 
       {deleteModal && (
-        <div className="modal-overlay">
-          <div className="modal-card-responsive" style={{ padding: '1.5rem', width: 400, maxWidth: 'calc(100vw - 32px)' }}>
-            <p style={{ fontSize: 18, fontWeight: 500, color: 'var(--text-bright)', marginBottom: '0.75rem' }}>
-              Delete &ldquo;{deleteModal.name}&rdquo;?
-            </p>
-            <p style={{ fontSize: 13, color: '#ef4444', lineHeight: 1.6, marginBottom: '1.25rem' }}>
-              This will permanently delete all versions, tracks, and comments in this project. Audio files will be removed from storage.
-            </p>
-            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-              Type the project name to confirm:
-            </label>
-            <input
-              value={deleteConfirmName}
-              onChange={e => setDeleteConfirmName(e.target.value)}
-              placeholder={deleteModal.name}
-              autoFocus
-              style={{ width: '100%', background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.45rem 0.75rem', color: 'var(--text)', fontSize: 13, outline: 'none', marginBottom: '1rem', boxSizing: 'border-box' }}
-            />
-            {deleteError && <p style={{ color: '#ef4444', fontSize: 12, marginBottom: '0.75rem' }}>{deleteError}</p>}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setDeleteModal(null); setDeleteConfirmName('') }}
-                style={{ background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.4rem 1rem', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-              <button
-                onClick={handleDeleteProject}
-                disabled={deleteConfirmName !== deleteModal.name || deleting}
-                style={{
-                  background: '#ef4444', border: 'none', borderRadius: 8, padding: '0.4rem 1rem',
-                  color: 'white', cursor: deleteConfirmName !== deleteModal.name || deleting ? 'not-allowed' : 'pointer',
-                  fontSize: 12, fontWeight: 500,
-                  opacity: deleteConfirmName !== deleteModal.name || deleting ? 0.4 : 1,
-                }}>
-                {deleting ? 'Deleting…' : 'Delete project'}
-              </button>
-            </div>
+        <TbModal onClose={() => { setDeleteModal(null); setDeleteConfirmName('') }}>
+          <p className="font-display text-lg uppercase tracking-tight text-foreground mb-3 m-0">
+            Delete &ldquo;{deleteModal.name}&rdquo;?
+          </p>
+          <p className="text-destructive text-xs leading-relaxed mb-4 m-0">
+            This will permanently delete all versions, tracks, and comments in this project. Audio files will be removed from storage.
+          </p>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+            Type the project name to confirm:
+          </label>
+          <TbInput
+            value={deleteConfirmName}
+            onChange={e => setDeleteConfirmName(e.target.value)}
+            placeholder={deleteModal.name}
+            autoFocus
+            className="mb-4"
+          />
+          {deleteError && <p className="text-destructive text-xs mb-3 m-0">{deleteError}</p>}
+          <div className="flex gap-2 justify-end">
+            <TbButton onClick={() => { setDeleteModal(null); setDeleteConfirmName('') }}>Cancel</TbButton>
+            <TbButton
+              variant="danger"
+              onClick={handleDeleteProject}
+              disabled={deleteConfirmName !== deleteModal.name || deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete project'}
+            </TbButton>
           </div>
-        </div>
+        </TbModal>
       )}
 
       <StructurePreviewPanel
@@ -1154,7 +1103,7 @@ export default function BandPage() {
       {showBandWelcome && (
         <BandWelcomeModal
           onDismiss={() => {
-            setShowBandWelcome(false)
+            setShowWelcomeDismissed(true)
             updateOnboarding('band_seen', true)
           }}
         />

@@ -32,7 +32,39 @@ const SECTION_TYPES: SectionType[] = [
 const SECTION_TYPE_LABELS: Record<SectionType, string> = {
   intro: 'Intro', verse: 'Verse', chorus: 'Chorus',
   'pre-chorus': 'Pre-Ch.', bridge: 'Bridge', drop: 'Drop',
-  breakdown: 'Breakdown', outro: 'Outro', custom: 'Custom…',
+  breakdown: 'Breakdown', outro: 'Outro', custom: 'Custom',
+}
+
+const BARS_PER_TACT = 4
+
+function sectionDisplayRange(s: Section): string {
+  return `${s.start_bar + 1}–${s.end_bar}`
+}
+
+function RangeStepper({
+  label, value, min, max, onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange: (v: number) => void
+}) {
+  const set = (v: number) => onChange(Math.min(max, Math.max(min, v)))
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+      <div className="flex border border-border">
+        <button type="button" onClick={() => set(value - 1)} className="px-2 text-xs hover:bg-surface border-r border-border">−</button>
+        <input
+          value={value}
+          onChange={e => set(parseInt(e.target.value || '0', 10) || min)}
+          className="flex-1 bg-transparent text-center text-xs font-mono tabular-nums focus:outline-none w-0 min-w-0"
+        />
+        <button type="button" onClick={() => set(value + 1)} className="px-2 text-xs hover:bg-surface border-l border-border">+</button>
+      </div>
+    </div>
+  )
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,21 +153,24 @@ function PopoverCaret({
 // ─── Name picker portal (new section placement) ───────────────────────────────
 
 function NamePickerPortal({
-  selectionStart, selectionEnd, barDurationMs, totalDurationMs, stripRef,
-  onConfirm, onCancel,
+  selectionStart, selectionEnd, totalBars, barDurationMs, totalDurationMs, stripRef,
+  onConfirm, onCancel, onRangeChange,
 }: {
   selectionStart: number
   selectionEnd: number
+  totalBars: number
   barDurationMs: number
   totalDurationMs: number
   stripRef: React.RefObject<HTMLDivElement | null>
-  onConfirm: (type: SectionType, customName?: string) => void
+  onConfirm: (type: SectionType, customName?: string, chords?: string) => void
   onCancel: () => void
+  onRangeChange: (start: number, end: number) => void
 }) {
   const pickerRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
   const [customMode, setCustomMode] = useState(false)
   const [customName, setCustomName] = useState('')
+  const [chords, setChords] = useState('')
 
   useEffect(() => { if (customMode) customInputRef.current?.focus() }, [customMode])
 
@@ -153,16 +188,15 @@ function NamePickerPortal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel])
 
-  const W = 258
-  const POPOVER_H = 180
-  let pLeft = 8, pTop = 200, caret = W / 2, flippedPicker = false
+  const W = 320
+  const POPOVER_H = 420
+  let pLeft = 8, pTop = 200, flippedPicker = false
 
   if (typeof window !== 'undefined' && stripRef.current) {
     const rect = stripRef.current.getBoundingClientRect()
     const midMs = ((selectionStart + selectionEnd) / 2) * barDurationMs
     const cx = rect.left + (totalDurationMs > 0 ? midMs / totalDurationMs : 0.5) * rect.width
     pLeft = Math.max(8, Math.min(cx - W / 2, window.innerWidth - W - 8))
-    caret = Math.max(12, Math.min(W - 12, cx - pLeft))
     if (rect.top < POPOVER_H + 8) {
       pTop = rect.bottom + 8
       flippedPicker = true
@@ -171,74 +205,77 @@ function NamePickerPortal({
     }
   }
 
+  function confirmType(type: SectionType, name?: string) {
+    onConfirm(type, name, chords.trim() || undefined)
+  }
+
   return createPortal(
-    <div ref={pickerRef} style={{
-      position: 'fixed', top: pTop, left: pLeft, width: W,
-      transform: flippedPicker ? 'none' : 'translateY(-100%)',
-      background: 'var(--bg-surface)', border: '0.5px solid var(--accent)',
-      borderRadius: 8, padding: '10px 10px 12px',
-      zIndex: 200, boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-    }}>
-      {flippedPicker ? (
-        <PopoverCaret side="top" left={caret} />
-      ) : (
-        <PopoverCaret side="bottom" left={caret} />
-      )}
-      <div style={{ fontSize: 10, color: 'var(--accent)', marginBottom: 8, fontWeight: 500 }}>
-        Bars {selectionStart + 1}–{selectionEnd}
+    <div ref={pickerRef} className="fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in"
+      style={{ top: pTop, left: pLeft, transform: flippedPicker ? 'none' : 'translateY(-100%)' }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+          Bars {selectionStart + 1}–{selectionEnd}
+          <span className="text-foreground/60"> · {selectionEnd - selectionStart} bars</span>
+        </div>
+        <button type="button" onClick={onCancel} className="size-5 grid place-items-center text-muted-foreground hover:text-foreground" aria-label="Close">×</button>
       </div>
-      {!customMode ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 5 }}>
-          {SECTION_TYPES.map(type => {
-            const c = SECTION_COLORS[type]
-            return (
-              <button key={type}
-                onClick={() => type === 'custom' ? setCustomMode(true) : onConfirm(type)}
-                style={{
-                  padding: '5px 6px', borderRadius: 5, fontSize: 10, fontWeight: 500,
-                  background: c.bg, color: c.fg, border: `0.5px solid ${c.fg}`,
-                  cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.12s',
+      <div className="p-3 space-y-3">
+        <div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1.5">Section</div>
+          {customMode ? (
+            <div className="space-y-2">
+              <input ref={customInputRef} value={customName}
+                onChange={e => setCustomName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && customName.trim()) confirmType('custom', customName.trim())
+                  if (e.key === 'Escape') setCustomMode(false)
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '0.7' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
-              >{SECTION_TYPE_LABELS[type]}</button>
-            )
-          })}
+                placeholder="My section"
+                className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
+              />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setCustomMode(false)}
+                  className="flex-1 text-[10px] uppercase tracking-widest border border-border py-1.5 hover:border-foreground/40">Back</button>
+                <button type="button" onClick={() => { if (customName.trim()) confirmType('custom', customName.trim()) }} disabled={!customName.trim()}
+                  className="flex-1 text-[10px] uppercase tracking-widest border border-border py-1.5 hover:border-foreground/40 disabled:opacity-40">Save</button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-1">
+              {SECTION_TYPES.map(type => (
+                <button key={type} type="button"
+                  onClick={() => type === 'custom' ? setCustomMode(true) : confirmType(type)}
+                  className="text-[10px] uppercase tracking-widest py-1.5 border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition truncate"
+                >{SECTION_TYPE_LABELS[type]}</button>
+              ))}
+            </div>
+          )}
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input ref={customInputRef} value={customName}
-            onChange={e => setCustomName(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && customName.trim()) onConfirm('custom', customName.trim())
-              if (e.key === 'Escape') setCustomMode(false)
-            }}
-            placeholder="Name this section…"
-            style={{
-              width: '100%', boxSizing: 'border-box',
-              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-              borderRadius: 5, padding: '5px 8px', fontSize: 12,
-              color: 'var(--text)', outline: 'none',
-            }}
+
+        <div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Chords</div>
+          <input value={chords} onChange={e => setChords(e.target.value)}
+            placeholder="Ebm7 — Ab9 — Dbmaj9"
+            className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
           />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setCustomMode(false)} style={{
-              flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11,
-              background: 'transparent', border: '0.5px solid var(--border)',
-              color: 'var(--text-muted)', cursor: 'pointer',
-            }}>Back</button>
-            <button
-              onClick={() => { if (customName.trim()) onConfirm('custom', customName.trim()) }}
-              disabled={!customName.trim()}
-              style={{
-                flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11, fontWeight: 500,
-                background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', cursor: 'pointer',
-                opacity: customName.trim() ? 1 : 0.4,
-              }}
-            >Confirm</button>
-          </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-2 gap-2">
+          <RangeStepper label="Start bar" value={selectionStart + 1} min={1} max={selectionEnd}
+            onChange={v => onRangeChange(v - 1, selectionEnd)} />
+          <RangeStepper label="End bar" value={selectionEnd} min={selectionStart + 1} max={totalBars}
+            onChange={v => onRangeChange(selectionStart, v)} />
+        </div>
+
+        <div className="flex justify-between gap-2 pt-1 border-t border-border">
+          <button type="button" onClick={onCancel}
+            className="text-[10px] uppercase tracking-widest text-destructive hover:underline">
+            Remove
+          </button>
+        </div>
+      </div>
     </div>,
     document.body
   )
@@ -249,17 +286,19 @@ function NamePickerPortal({
 type CellPos = { left: number; top: number; width: number; height: number }
 
 function SectionEditPopover({
-  section, cellPos, detectingChords, audioTracks,
-  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onDelete, onClose,
+  section, cellPos, detectingChords, audioTracks, totalBars,
+  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onDelete, onClose,
 }: {
   section: Section
   cellPos: CellPos
   detectingChords: boolean
   audioTracks: Track[]
+  totalBars: number
   onTypeChange: (id: string, type: SectionType, customName?: string) => void
   onChordsLocalChange: (id: string, chords: string) => void
   onChordsAutoSave: (id: string, chords: string) => Promise<void>
   onDetectChords: (trackIds: string[]) => void
+  onBarRangeChange: (id: string, startBar: number, endBar: number) => void
   onDelete: (id: string) => void
   onClose: () => void
 }) {
@@ -367,16 +406,6 @@ function SectionEditPopover({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, trackPickerOpen])
 
-  const W = 246
-  const POPOVER_H = trackPickerOpen ? 420 : 300
-  const cellCx = cellPos.left + cellPos.width / 2
-  const pLeft = typeof window !== 'undefined'
-    ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
-    : 8
-  const caret = Math.max(12, Math.min(W - 12, cellCx - pLeft))
-  const flippedEdit = cellPos.top < POPOVER_H + 8
-  const pTop = flippedEdit ? cellPos.top + cellPos.height + 8 : cellPos.top - 8
-
   function handleTypeClick(type: SectionType) {
     if (type === 'custom') { setCustomMode(true); return }
     onTypeChange(section.id, type)
@@ -404,334 +433,138 @@ function SectionEditPopover({
     onDetectChords(ids)
   }
 
-  const textareaBorderColor = isDirty && saveStatus === 'idle' ? '#F59E0B' : 'var(--border)'
+  const W = 320
+  const POPOVER_H = trackPickerOpen ? 460 : 380
+  const cellCx = cellPos.left + cellPos.width / 2
+  const pLeft = typeof window !== 'undefined'
+    ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
+    : 8
+  const flippedEdit = cellPos.top < POPOVER_H + 8
+  const pTop = flippedEdit ? cellPos.top + cellPos.height + 8 : cellPos.top - 8
+
+  const barCount = section.end_bar - section.start_bar
 
   return createPortal(
-    <div ref={popoverRef} style={{
-      position: 'fixed', top: pTop, left: pLeft, width: W,
-      transform: flippedEdit ? 'none' : 'translateY(-100%)',
-      background: 'var(--bg-surface)', border: '0.5px solid var(--accent)',
-      borderRadius: 8, padding: '10px 10px 10px',
-      zIndex: 200, boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-    }}>
-      {/* caret */}
-      {flippedEdit ? (
-        <PopoverCaret side="top" left={caret} />
-      ) : (
-        <PopoverCaret side="bottom" left={caret} />
-      )}
-
-      {/* bar range */}
-      <div style={{ fontSize: 10, color: 'var(--accent)', marginBottom: 8, fontWeight: 500 }}>
-        Bars {section.start_bar + 1}–{section.end_bar}
+    <div ref={popoverRef} className="fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in"
+      style={{ top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+          Bars {section.start_bar + 1}–{section.end_bar}
+          <span className="text-foreground/60"> · {barCount} bars</span>
+        </div>
+        <button type="button" onClick={onClose} className="size-5 grid place-items-center text-muted-foreground hover:text-foreground" aria-label="Close">×</button>
       </div>
 
-      {!customMode ? (
-        <>
-          {/* type grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 5, marginBottom: 8 }}>
-            {SECTION_TYPES.map(type => {
-              const c = SECTION_COLORS[type]
-              const active = section.type === type
-              return (
-                <button key={type} onClick={() => handleTypeClick(type)} style={{
-                  padding: '5px 6px', borderRadius: 5, fontSize: 10, fontWeight: 500,
-                  background: c.bg, color: c.fg,
-                  border: active ? `1.5px solid ${c.fg}` : `0.5px solid ${c.fg}`,
-                  cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.12s',
-                }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '0.7' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
-                >
-                  {type === 'custom' && section.type === 'custom'
-                    ? sectionLabel(section)
-                    : SECTION_TYPE_LABELS[type]}
-                </button>
-              )
-            })}
+      <div className="p-3 space-y-3">
+          <div>
+            <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1.5">Section</div>
+            {customMode ? (
+              <div className="space-y-2">
+                <input ref={customInputRef} value={customName} onChange={e => setCustomName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCustomConfirm(); if (e.key === 'Escape') setCustomMode(false) }}
+                  placeholder="My section"
+                  className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setCustomMode(false)}
+                    className="flex-1 text-[10px] uppercase tracking-widest border border-border py-1.5">Back</button>
+                  <button type="button" onClick={handleCustomConfirm} disabled={!customName.trim()}
+                    className="flex-1 text-[10px] uppercase tracking-widest border border-border py-1.5 disabled:opacity-40">Save</button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1">
+                {SECTION_TYPES.map(type => {
+                  const active = section.type === type
+                  return (
+                    <button key={type} type="button" onClick={() => handleTypeClick(type)}
+                      className={`text-[10px] uppercase tracking-widest py-1.5 border transition truncate ${
+                        active ? 'border-foreground/50 text-foreground bg-surface' : 'border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+                      }`}
+                    >
+                      {type === 'custom' && section.type === 'custom' ? sectionLabel(section) : SECTION_TYPE_LABELS[type]}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
-          {/* chord textarea with autosave indicator */}
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 3 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                <span style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 500 }}>Chords</span>
-                {detectingChords && (
-                  <span style={{ fontSize: 9, color: 'var(--accent)' }}>Detecting…</span>
-                )}
-                {!detectingChords && isDirty && saveStatus === 'idle' && (
-                  <span style={{ fontSize: 9, color: '#F59E0B' }}>Unsaved</span>
-                )}
-                {!detectingChords && saveStatus === 'saving' && (
-                  <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>Saving…</span>
-                )}
-                {!detectingChords && saveStatus === 'saved' && (
-                  <span style={{ fontSize: 9, color: '#10B981' }}>● Saved</span>
-                )}
-                {!detectingChords && saveStatus === 'error' && (
-                  <span style={{ fontSize: 9, color: '#ef4444' }}>Error</span>
-                )}
+          {section.type === 'custom' && !customMode && (
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Label</div>
+              <input value={customName} onChange={e => setCustomName(e.target.value)}
+                onBlur={() => customName.trim() && handleCustomConfirm()}
+                className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
+                placeholder="My section"
+              />
+            </div>
+          )}
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[9px] uppercase tracking-widest text-muted-foreground">
+                Chords
+                {detectingChords && <span className="text-ember"> · detecting…</span>}
+                {!detectingChords && isDirty && saveStatus === 'idle' && <span className="text-amber"> · unsaved</span>}
+                {!detectingChords && saveStatus === 'saving' && <span> · saving…</span>}
+                {!detectingChords && saveStatus === 'saved' && <span className="text-online"> · saved</span>}
               </div>
               {audioTracks.length > 0 && !trackPickerOpen && (
-                <button
-                  type="button"
-                  disabled={detectingChords}
-                  onClick={() => setTrackPickerOpen(true)}
-                  style={{
-                    flexShrink: 0, padding: '2px 8px', borderRadius: 5, fontSize: 10, fontWeight: 500,
-                    background: 'transparent', border: '0.5px solid var(--accent)',
-                    color: 'var(--accent)', cursor: detectingChords ? 'not-allowed' : 'pointer',
-                    opacity: detectingChords ? 0.5 : 1,
-                  }}
-                >
-                  Detect chords
+                <button type="button" disabled={detectingChords} onClick={() => setTrackPickerOpen(true)}
+                  className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50">
+                  Detect
                 </button>
               )}
             </div>
-            <textarea
-              value={chords} rows={2}
-              disabled={detectingChords}
+            <input value={chords} disabled={detectingChords}
               onChange={e => handleChordsChange(e.target.value)}
-              placeholder={detectingChords ? 'Analyzing audio…' : 'Am F C G…'}
-              style={{
-                width: '100%', boxSizing: 'border-box', resize: 'none',
-                background: 'var(--bg-card)',
-                border: `0.5px solid ${textareaBorderColor}`,
-                borderRadius: 5, padding: '5px 8px',
-                fontSize: 11, fontFamily: 'var(--font-mono, monospace)',
-                color: 'var(--text-sec)', outline: 'none',
-              }}
-              onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
-              onBlur={e => { e.currentTarget.style.borderColor = textareaBorderColor }}
+              placeholder={detectingChords ? 'Analyzing audio…' : 'Ebm7 — Ab9 — Dbmaj9'}
+              className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
+              style={{ borderColor: isDirty && saveStatus === 'idle' ? '#F59E0B' : undefined }}
             />
             {trackPickerOpen && (
-              <div style={{
-                marginTop: 8, padding: '8px 8px 6px',
-                background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-                borderRadius: 6,
-              }}>
-                <p style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 500, margin: '0 0 6px' }}>
-                  Tracks to analyze
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 120, overflowY: 'auto', marginBottom: 8 }}>
+              <div className="mt-2 p-2 border border-border bg-surface space-y-2">
+                <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Tracks to analyze</p>
+                <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
                   {audioTracks.map(track => (
-                    <label
-                      key={track.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        fontSize: 11, color: 'var(--text-sec)', cursor: 'pointer',
-                        minWidth: 0,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedTrackIds.has(track.id)}
-                        onChange={() => toggleTrack(track.id)}
-                        style={{ flexShrink: 0, accentColor: 'var(--accent)' }}
-                      />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {trackLabel(track)}
-                      </span>
+                    <label key={track.id} className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer min-w-0">
+                      <input type="checkbox" checked={selectedTrackIds.has(track.id)} onChange={() => toggleTrack(track.id)} className="accent-ember shrink-0" />
+                      <span className="truncate">{trackLabel(track)}</span>
                     </label>
                   ))}
                 </div>
-                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    onClick={() => setTrackPickerOpen(false)}
-                    style={{
-                      padding: '3px 10px', borderRadius: 5, fontSize: 10,
-                      background: 'transparent', border: '0.5px solid var(--border)',
-                      color: 'var(--text-muted)', cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={selectedTrackIds.size === 0}
-                    onClick={handleRunDetection}
-                    style={{
-                      padding: '3px 10px', borderRadius: 5, fontSize: 10, fontWeight: 500,
-                      background: 'var(--accent)', border: 'none', color: 'var(--on-accent)',
-                      cursor: selectedTrackIds.size === 0 ? 'not-allowed' : 'pointer',
-                      opacity: selectedTrackIds.size === 0 ? 0.45 : 1,
-                    }}
-                  >
-                    Run detection
-                  </button>
+                <div className="flex gap-2 justify-end">
+                  <button type="button" onClick={() => setTrackPickerOpen(false)} className="text-[10px] uppercase tracking-widest border border-border px-2 py-1">Cancel</button>
+                  <button type="button" disabled={selectedTrackIds.size === 0} onClick={handleRunDetection}
+                    className="text-[10px] uppercase tracking-widest bg-foreground text-background px-2 py-1 disabled:opacity-40">Run</button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* delete */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              onClick={() => onDelete(section.id)}
-              style={{
-                padding: '3px 10px', borderRadius: 5, fontSize: 11,
-                background: 'transparent', border: '0.5px solid var(--border)',
-                color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.12s',
-              }}
-              onMouseEnter={e => {
-                const t = e.currentTarget
-                t.style.background = 'rgba(239,68,68,0.08)'
-                t.style.borderColor = '#ef4444'
-                t.style.color = '#ef4444'
-              }}
-              onMouseLeave={e => {
-                const t = e.currentTarget
-                t.style.background = 'transparent'
-                t.style.borderColor = 'var(--border)'
-                t.style.color = 'var(--text-muted)'
-              }}
-            >Delete section</button>
+          <div className="grid grid-cols-2 gap-2">
+            <RangeStepper label="Start bar" value={section.start_bar + 1} min={1} max={section.end_bar}
+              onChange={v => onBarRangeChange(section.id, v - 1, section.end_bar)} />
+            <RangeStepper label="End bar" value={section.end_bar} min={section.start_bar + 1} max={totalBars}
+              onChange={v => onBarRangeChange(section.id, section.start_bar, v)} />
           </div>
-        </>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input ref={customInputRef} value={customName}
-            onChange={e => setCustomName(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') handleCustomConfirm()
-              if (e.key === 'Escape') setCustomMode(false)
-            }}
-            placeholder="Section name…"
-            style={{
-              width: '100%', boxSizing: 'border-box',
-              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-              borderRadius: 5, padding: '5px 8px', fontSize: 12,
-              color: 'var(--text)', outline: 'none',
-            }}
-          />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setCustomMode(false)} style={{
-              flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11,
-              background: 'transparent', border: '0.5px solid var(--border)',
-              color: 'var(--text-muted)', cursor: 'pointer',
-            }}>Back</button>
-            <button onClick={handleCustomConfirm} disabled={!customName.trim()} style={{
-              flex: 1, padding: '4px 8px', borderRadius: 5, fontSize: 11, fontWeight: 500,
-              background: 'var(--accent)', border: 'none', color: 'var(--on-accent)', cursor: 'pointer',
-              opacity: customName.trim() ? 1 : 0.4,
-            }}>Save</button>
+
+          <div className="flex justify-between gap-2 pt-1 border-t border-border">
+            <button type="button" onClick={() => onDelete(section.id)}
+              className="text-[10px] uppercase tracking-widest text-destructive hover:underline">
+              Remove
+            </button>
+            <button type="button" onClick={onClose}
+              className="text-[10px] uppercase tracking-widest border border-border px-3 py-1.5 hover:border-foreground/40">
+              Done
+            </button>
           </div>
-        </div>
-      )}
+      </div>
     </div>,
     document.body
-  )
-}
-
-// ─── Structure transport (play / time / volume) ───────────────────────────────
-
-function fmtTime(s: number) {
-  const m = Math.floor(s / 60)
-  const sec = Math.floor(s % 60)
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
-
-function VolumeIcon({ volume }: { volume: number }) {
-  if (volume === 0) return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-      <path d="M10 4l4 4M14 4l-4 4" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-    </svg>
-  )
-  if (volume < 0.5) return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-      <path d="M10 5.5a1.5 1.5 0 0 1 0 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-    </svg>
-  )
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M2 5h2l3-3v10L4 9H2V5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-      <path d="M10 4.5a3 3 0 0 1 0 5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function StructureTransport({
-  side, playing, currentTime, duration, loaded, totalTracks,
-  volume, onPlay, onPause, onVolume,
-}: {
-  side: 'left' | 'right'
-  playing: boolean; currentTime: number; duration: number
-  loaded: number; totalTracks: number; volume: number
-  onPlay: () => void; onPause: () => void; onVolume: (v: number) => void
-}) {
-  const [showVolume, setShowVolume] = useState(false)
-  const [prevVolume, setPrevVolume] = useState(1)
-  const volRef = useRef<HTMLDivElement>(null)
-  const isLoading = loaded < totalTracks && totalTracks > 0
-
-  // (volume popover is hover-controlled — no click-outside handler needed)
-
-  function toggleMute() {
-    if (volume > 0) { setPrevVolume(volume); onVolume(0) }
-    else onVolume(prevVolume || 1)
-  }
-
-  if (side === 'right') return null
-
-  // side === 'left': play + time + volume, all left-aligned
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
-      gap: 8, paddingLeft: 10, width: '100%',
-    }}>
-      <button onClick={playing ? onPause : onPlay} disabled={totalTracks === 0} className="btn-play">
-        {isLoading ? (
-          <svg className="animate-spin" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.25" />
-            <path d="M7 1.5A5.5 5.5 0 0 1 12.5 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        ) : playing ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="2" y="2" width="3.5" height="10" rx="1" /><rect x="8.5" y="2" width="3.5" height="10" rx="1" /></svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.5 2l8 5-8 5V2z" /></svg>
-        )}
-      </button>
-      <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-        <span style={{ color: 'var(--text-sec)' }}>{fmtTime(currentTime)}</span>
-        <span style={{ color: 'var(--text-muted)' }}> / {fmtTime(duration)}</span>
-      </span>
-      <div ref={volRef} style={{ position: 'relative' }}
-        onMouseEnter={() => setShowVolume(true)}
-        onMouseLeave={() => setShowVolume(false)}
-      >
-        <button
-          onClick={toggleMute}
-          title="Click to mute · Hover for slider"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', padding: 4 }}
-        >
-          <VolumeIcon volume={volume} />
-        </button>
-        {showVolume && (
-          <div style={{
-            position: 'absolute', bottom: '100%', left: 0, marginBottom: 6,
-            background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-            borderRadius: 10, padding: '10px 8px',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.12)', zIndex: 30,
-          }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-              {Math.round(volume * 100)}%
-            </span>
-            <input
-              type="range" min={0} max={1} step={0.01} value={volume}
-              onChange={e => onVolume(parseFloat(e.target.value))}
-              style={{
-                writingMode: 'vertical-lr', direction: 'rtl',
-                height: 80, width: 20, cursor: 'pointer', accentColor: 'var(--accent)',
-              }}
-            />
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
 
@@ -792,8 +625,7 @@ export default function StructureOverlay({
   sections, onSectionsChange,
   editMode, onEditModeChange,
   waveformBounds, currentTimeMs = 0,
-  playing, currentTime, duration, loaded, totalTracks,
-  volume, onPlay, onPause, onSeek, onVolume,
+  onSeek,
 }: {
   project: Project
   versionId: string
@@ -805,16 +637,7 @@ export default function StructureOverlay({
   onEditModeChange: (v: boolean) => void
   waveformBounds: { left: number; right: number } | null
   currentTimeMs?: number
-  playing: boolean
-  currentTime: number
-  duration: number
-  loaded: number
-  totalTracks: number
-  volume: number
-  onPlay: () => void
-  onPause: () => void
   onSeek: (t: number) => void
-  onVolume: (v: number) => void
 }) {
   const [timeSignature, setTimeSignature] = useState(project.time_signature ?? '4/4')
   const [selMode, setSelMode] = useState<SelMode>('idle')
@@ -823,9 +646,6 @@ export default function StructureOverlay({
   const [hint, setHint] = useState<{ text: string; isError: boolean } | null>(null)
   const [activeEdit, setActiveEdit] = useState<ActiveEdit | null>(null)
   const [hoveredChords, setHoveredChords] = useState<{ section: Section; rect: DOMRect } | null>(null)
-  const [isMobileWidth, setIsMobileWidth] = useState(() =>
-    typeof window !== 'undefined' && window.innerWidth < 768
-  )
 
   const stripRef = useRef<HTMLDivElement>(null)
   const sectionsRef = useRef(sections)
@@ -838,13 +658,6 @@ export default function StructureOverlay({
   activeEditRef.current = activeEdit
 
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
-
-  // Track viewport width for bar label density
-  useEffect(() => {
-    function check() { setIsMobileWidth(window.innerWidth < 768) }
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
-  }, [])
 
   // Reset when leaving edit mode
   useEffect(() => {
@@ -875,8 +688,6 @@ export default function StructureOverlay({
     ? { ...project, time_signature: timeSignature }
     : project
   const { barDurationMs, totalBars } = getBarMath(effectiveProject, totalDurationMs)
-  const labelStepBase = totalBars <= 32 ? 1 : totalBars <= 64 ? 2 : 4
-  const labelStep = isMobileWidth ? Math.max(labelStepBase, 10) : labelStepBase
 
   // Time-based position: maps bar → 0..1 fraction, matching waveform scale
   const tp = (bar: number) =>
@@ -885,8 +696,10 @@ export default function StructureOverlay({
   const wl = waveformBounds?.left ?? 228
   const wr = waveformBounds?.right ?? 68
 
-  const STRIP_H = editMode ? 38 : 34
-  const TACTS_H = 16 + STRIP_H
+  const RULER_H = 40
+  const RIBBON_H = 56
+  const tactCount = Math.ceil(totalBars / BARS_PER_TACT)
+  const showBarGrid = totalBars <= 160
 
   const activeSection = activeEdit
     ? sections.find(s => s.id === activeEdit.sectionId)
@@ -895,9 +708,6 @@ export default function StructureOverlay({
   const playheadPct = totalDurationMs > 0
     ? Math.min(100, (currentTimeMs / totalDurationMs) * 100)
     : 0
-
-  const ticks: number[] = []
-  for (let i = 0; i <= totalBars; i++) ticks.push(i)
 
   function resetSel() {
     setSelMode('idle')
@@ -1124,7 +934,7 @@ export default function StructureOverlay({
     void runChordDetection(section, selectedTrackIds)
   }
 
-  async function handleConfirmNew(type: SectionType, customName?: string) {
+  async function handleConfirmNew(type: SectionType, customName?: string, chords?: string) {
     if (selStart === null || selEnd === null) return
     const c = SECTION_COLORS[type] ?? SECTION_COLORS.custom
     try {
@@ -1134,6 +944,7 @@ export default function StructureOverlay({
         body: JSON.stringify({
           type, custom_name: customName ?? null,
           start_bar: selStart, end_bar: selEnd,
+          chords: chords ?? null,
           color: c.bg, position: sections.length,
         }),
       })
@@ -1223,251 +1034,261 @@ export default function StructureOverlay({
     fetch(`/api/sections/${id}`, { method: 'DELETE' }).catch(console.error)
   }
 
+  function handleBarRangeChange(id: string, startBar: number, endBar: number) {
+    const sorted = [...sections].sort((a, b) => a.start_bar - b.start_bar)
+    const idx = sorted.findIndex(s => s.id === id)
+    const section = sorted[idx]
+    if (!section) return
+
+    const prev = idx > 0 ? sorted[idx - 1] : null
+    const next = idx < sorted.length - 1 ? sorted[idx + 1] : null
+    const minStart = prev ? prev.end_bar : 0
+    const maxEnd = next ? next.start_bar : totalBars
+    const start = Math.max(minStart, Math.min(startBar, endBar - 1))
+    const end = Math.max(start + 1, Math.min(endBar, maxEnd))
+    if (start === section.start_bar && end === section.end_bar) return
+
+    onSectionsChange(prevSections =>
+      prevSections
+        .map(s => s.id === id ? { ...s, start_bar: start, end_bar: end } : s)
+        .sort((a, b) => a.start_bar - b.start_bar),
+    )
+    updateActiveEditPos(id, start, end)
+    fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_bar: start, end_bar: end }),
+    }).catch(console.error)
+  }
+
+  function handlePendingRangeChange(start: number, end: number) {
+    const overlap = sections.find(s => start < s.end_bar && end > s.start_bar)
+    if (overlap) {
+      setHint({ text: `Overlaps with "${sectionLabel(overlap)}"`, isError: true })
+      return
+    }
+    setSelStart(start)
+    setSelEnd(end)
+    setHint(null)
+  }
+
+  const stripCursor = !editMode
+    ? 'pointer'
+    : activeEdit ? 'default'
+    : selMode === 'naming' ? 'default'
+    : 'crosshair'
+
   return (
     <>
-      <div style={{
-        background: 'var(--bg-surface)',
-        borderBottom: '0.5px solid var(--border)',
-        flexShrink: 0,
-        transition: 'box-shadow 0.2s',
-        userSelect: 'none',
-      }}>
+      <div className="bg-surface border-b border-border shrink-0 select-none">
 
-        {/* Edit mode header row */}
         {editMode && (
-          <div style={{
-            height: 34, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '0 10px',
-            borderBottom: '0.5px solid var(--border)',
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-soft)', letterSpacing: '0.06em' }}>
-              STRUCTURE
-            </span>
-            <select value={timeSignature} onChange={e => setTimeSignature(e.target.value)}
-              style={{
-                background: 'transparent', border: '0.5px solid var(--border)',
-                borderRadius: 4, padding: '2px 4px',
-                fontSize: 11, color: 'var(--text-muted)',
-                cursor: 'pointer', outline: 'none',
-              }}>
+          <div className="flex items-center gap-2 h-[34px] px-3 border-b border-border bg-surface/40">
+            <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />
+            <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Structure</span>
+            <select
+              value={timeSignature}
+              onChange={e => setTimeSignature(e.target.value)}
+              className="bg-transparent border border-border px-1 py-0.5 text-[11px] text-muted-foreground cursor-pointer outline-none"
+            >
               {['4/4', '3/4', '6/8', '2/4', '5/4', '7/8'].map(ts => (
                 <option key={ts} value={ts}>{ts}</option>
               ))}
             </select>
 
             {hint ? (
-              <span style={{ fontSize: 11, flex: 1, color: hint.isError ? '#ef4444' : 'var(--accent)' }}>
+              <span className={`text-[11px] flex-1 min-w-0 truncate ${hint.isError ? 'text-destructive' : 'text-ember'}`}>
                 {hint.text}
               </span>
             ) : (
-              <span style={{ fontSize: 11, flex: 1, color: 'var(--text-dim)' }}>
+              <span className="text-[11px] flex-1 min-w-0 truncate text-muted-foreground">
                 {sections.length === 0
                   ? 'Click the strip to place your first section'
                   : `${sections.length} section${sections.length !== 1 ? 's' : ''} — drag edges to resize, click empty space to add`}
               </span>
             )}
 
-            <div style={{ display: 'flex', gap: 5 }}>
+            <div className="ml-auto flex gap-2 shrink-0">
               {selMode === 'start_set' && (
-                <button onClick={resetSel} style={{
-                  padding: '0 8px', height: 26, borderRadius: 5, fontSize: 11,
-                  background: 'transparent', border: '0.5px solid var(--border)',
-                  color: 'var(--text-muted)', cursor: 'pointer',
-                }}>Cancel</button>
+                <button type="button" onClick={resetSel}
+                  className="px-2 h-[26px] text-[11px] border border-border text-muted-foreground hover:border-ember hover:text-ember">
+                  Cancel
+                </button>
               )}
-              <button onClick={handleDone} className="btn-accent-sm">Done</button>
+              <button type="button" onClick={handleDone} className="btn-accent-sm">Done</button>
             </div>
           </div>
         )}
 
-        {/* Tacts row — transport flanks ruler + section strip */}
-        <div style={{ display: 'flex', alignItems: 'stretch' }}>
-          <div style={{ width: wl, flexShrink: 0, height: TACTS_H, display: 'flex', alignItems: 'center' }}>
-            <StructureTransport
-              side="left"
-              playing={playing} currentTime={currentTime} duration={duration}
-              loaded={loaded} totalTracks={totalTracks} volume={volume}
-              onPlay={onPlay} onPause={onPause} onVolume={onVolume}
-            />
+        {/* Tacts + structure — separate rows, shared label column */}
+        <div className="flex items-stretch border-b border-border">
+          {/* Label column */}
+          <div style={{ width: wl }} className="shrink-0 border-r border-border flex flex-col bg-surface/40">
+            <div
+              className="border-b border-border px-3 flex flex-col justify-between text-[9px] uppercase font-bold tracking-widest text-muted-foreground"
+              style={{ height: RULER_H }}
+            >
+              <span className="pt-2">CHANNEL</span>
+              <span className="pb-1.5 normal-case tracking-normal font-mono text-foreground/60 font-normal">
+                {totalBars} bars · {timeSignature}
+              </span>
+            </div>
+            <div
+              className="px-3 flex flex-col justify-center gap-0.5"
+              style={{ height: RIBBON_H }}
+            >
+              <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-muted-foreground">
+                {editMode && <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />}
+                STRUCTURE
+              </div>
+              {editMode && (
+                <span className="text-[8px] normal-case tracking-normal font-mono text-muted-foreground">
+                  drag edges · click to add
+                </span>
+              )}
+            </div>
           </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Bar ruler — numbers only */}
-            <div style={{ position: 'relative', height: 16, overflow: 'hidden' }}>
-              {totalBars <= 160 && ticks.filter(bar => bar % labelStep === 0).map(bar => (
-                <span key={bar} style={{
-                  position: 'absolute',
-                  left: `${tp(bar) * 100}%`,
-                  top: 2,
-                  transform: 'translateX(-50%)',
-                  fontSize: 9, fontWeight: 600, lineHeight: 1,
-                  color: 'var(--text-muted)', whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                }}>{bar + 1}</span>
-              ))}
+          {/* Timeline column — ruler + structure grid */}
+          <div className="flex-1 min-w-0 relative flex flex-col bg-surface">
+            {totalDurationMs > 0 && (
+              <div
+                className="absolute top-0 bottom-0 w-px -ml-px bg-foreground/70 pointer-events-none z-[15]"
+                style={{ left: `${playheadPct}%` }}
+              />
+            )}
+
+            {/* Tacts row */}
+            <div
+              className="relative border-b border-border bg-surface/40 overflow-hidden select-none shrink-0"
+              style={{ height: RULER_H }}
+            >
+              {Array.from({ length: tactCount }, (_, i) => {
+                const bar = i * BARS_PER_TACT
+                const barNum = bar + 1
+                const heavy = i % 4 === 0
+                return (
+                  <span
+                    key={`tact-num-${i}`}
+                    className={`absolute top-1 text-[9px] tabular-nums font-mono pointer-events-none ${
+                      heavy ? 'text-foreground font-medium' : 'text-muted-foreground/80'
+                    }`}
+                    style={{ left: `${tp(bar) * 100}%`, paddingLeft: i === 0 ? 2 : 4 }}
+                  >
+                    {heavy ? barNum : <span className="hidden sm:inline">{barNum}</span>}
+                  </span>
+                )
+              })}
+              {showBarGrid && Array.from({ length: totalBars }, (_, i) => {
+                const isTact = i % BARS_PER_TACT === 0
+                return (
+                  <div
+                    key={`ruler-tick-${i}`}
+                    className="absolute bottom-0 w-px pointer-events-none"
+                    style={{
+                      left: `${tp(i) * 100}%`,
+                      height: isTact ? 12 : 6,
+                      background: isTact ? 'color-mix(in oklab, var(--foreground) 45%, transparent)' : 'var(--border)',
+                    }}
+                  />
+                )
+              })}
             </div>
 
-            {/* Section strip */}
+            {/* Structure row */}
             <div
               ref={stripRef}
               onMouseDown={handleStripMouseDown}
-              style={{
-                position: 'relative', height: STRIP_H,
-                background: 'var(--bg-card)',
-                borderTop: '0.5px solid var(--border)',
-                cursor: !editMode
-                  ? 'pointer'
-                  : activeEdit ? 'default'
-                  : selMode === 'naming' ? 'default'
-                  : 'crosshair',
-                overflow: 'hidden',
-              }}
+              className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-surface' : 'bg-surface/60'}`}
+              style={{ height: RIBBON_H, cursor: stripCursor }}
             >
-            {/* Bar grid lines — confined to strip height, matching sections */}
-            {totalBars <= 160 && ticks.map(bar => {
-              const isMajor = bar % labelStep === 0
-              return (
-                <div key={bar} style={{
-                  position: 'absolute',
-                  top: 0, height: '100%',
-                  left: `${tp(bar) * 100}%`,
-                  width: 1,
-                  marginLeft: -0.5,
-                  background: isMajor ? 'var(--text-dim)' : 'var(--border-light)',
-                  opacity: isMajor ? 0.6 : 0.38,
-                  pointerEvents: 'none',
-                }} />
-              )
-            })}
+              {showBarGrid && Array.from({ length: totalBars }, (_, i) => {
+                const isTact = i % BARS_PER_TACT === 0
+                return (
+                  <div
+                    key={`strip-grid-${i}`}
+                    className="absolute top-0 bottom-0 w-px pointer-events-none"
+                    style={{
+                      left: `${tp(i) * 100}%`,
+                      background: isTact ? 'var(--border)' : 'color-mix(in oklab, var(--border) 55%, transparent)',
+                      opacity: isTact ? 0.55 : 0.35,
+                    }}
+                  />
+                )
+              })}
 
-            {/* Playback playhead */}
-            {totalDurationMs > 0 && (
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${playheadPct}%`,
-                width: 2, marginLeft: -1,
-                background: 'var(--accent)',
-                boxShadow: '0 0 6px rgba(99,102,241,0.55)',
-                pointerEvents: 'none', zIndex: 15,
-              }} />
-            )}
+              {sections.map(s => {
+                const isActive = activeEdit?.sectionId === s.id
+                return (
+                  <div
+                    key={s.id}
+                    data-structure-section
+                    onMouseEnter={e => {
+                      if (s.chords?.trim() && !isActive) {
+                        setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
+                      }
+                    }}
+                    onMouseLeave={() => setHoveredChords(null)}
+                    className={`absolute top-0 bottom-0 flex flex-col items-start justify-start pt-1.5 px-1.5 overflow-hidden ${
+                      editMode ? 'cursor-pointer' : 'cursor-inherit'
+                    }`}
+                    style={{
+                      left: `${tp(s.start_bar) * 100}%`,
+                      width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
+                      borderLeft: pendingChordIds.has(s.id)
+                        ? '2px solid #F59E0B'
+                        : '1px solid var(--border)',
+                      background: isActive ? 'color-mix(in oklab, var(--foreground) 4%, transparent)' : 'transparent',
+                      outline: isActive ? '1px solid color-mix(in oklab, var(--foreground) 35%, transparent)' : 'none',
+                      outlineOffset: -1,
+                      zIndex: isActive ? 8 : 6,
+                    }}
+                  >
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[#6366F1] truncate leading-tight pointer-events-none w-full">
+                      {sectionLabel(s)}
+                    </span>
+                    <span className="text-[9px] font-mono text-[#6366F1]/75 truncate leading-tight pointer-events-none w-full mt-0.5">
+                      {s.chords?.replace(/\n/g, ' ').slice(0, 48) || (editMode ? '+ chords' : '\u00a0')}
+                    </span>
+                    {editMode && (
+                      <>
+                        <div
+                          onMouseDown={e => beginResize(e, s.id, 'start')}
+                          title="Drag to resize"
+                          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-foreground/10"
+                        />
+                        <div
+                          onMouseDown={e => beginResize(e, s.id, 'end')}
+                          title="Drag to resize"
+                          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-foreground/10"
+                        />
+                      </>
+                    )}
+                  </div>
+                )
+              })}
 
-            {/* Section cells */}
-            {sections.map(s => {
-              const c = SECTION_COLORS[s.type] ?? SECTION_COLORS.custom
-              const isActive = activeEdit?.sectionId === s.id
-              return (
-                <div key={s.id}
-                  data-structure-section
-                  onMouseEnter={e => {
-                    if (s.chords?.trim() && !isActive) {
-                      setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
-                    }
-                  }}
-                  onMouseLeave={() => setHoveredChords(null)}
+              {editMode && selStart !== null && (
+                <div
+                  className="absolute top-0 bottom-0 pointer-events-none border-x border-foreground/35 bg-foreground/[0.04]"
                   style={{
-                  position: 'absolute', top: 0, bottom: 0,
-                  left: `${tp(s.start_bar) * 100}%`,
-                  width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
-                  background: c.bg,
-                  borderLeft: pendingChordIds.has(s.id) ? '2px solid #F59E0B' : `2px solid ${c.fg}`,
-                  overflow: 'visible',
-                  display: 'flex', flexDirection: 'column', justifyContent: 'center',
-                  paddingLeft: 5,
-                  cursor: editMode ? 'pointer' : 'inherit',
-                  outline: isActive ? `1.5px solid ${c.fg}` : 'none',
-                  outlineOffset: -1,
-                  zIndex: isActive ? 8 : 6,
-                }}>
-                  <span style={{
-                    fontSize: 10, color: c.fg, fontWeight: 500,
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    lineHeight: 1.3,
-                    pointerEvents: 'none',
-                  }}>{sectionLabel(s)}</span>
-                  {/* Chords shown in view mode only (edit mode uses the chord bar below) */}
-                  {!editMode && s.chords && (
-                    <span style={{
-                      fontSize: 9, color: `${c.fg}bb`,
-                      fontFamily: 'var(--font-mono, monospace)',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      lineHeight: 1.3,
-                      pointerEvents: 'none',
-                    }}>{s.chords.replace(/\n/g, ' ').slice(0, 28)}</span>
-                  )}
-                  {editMode && (
-                    <>
-                      <div
-                        onMouseDown={e => beginResize(e, s.id, 'start')}
-                        title="Drag to resize"
-                        style={{
-                          position: 'absolute', left: -3, top: 0, bottom: 0,
-                          width: 8, cursor: 'ew-resize', zIndex: 10,
-                        }}
-                      >
-                        <div style={{
-                          position: 'absolute', left: 3, top: '15%', bottom: '15%',
-                          width: 2, borderRadius: 1,
-                          background: isActive ? c.fg : 'var(--border-light)',
-                          opacity: isActive ? 1 : 0.7,
-                        }} />
-                      </div>
-                      <div
-                        onMouseDown={e => beginResize(e, s.id, 'end')}
-                        title="Drag to resize"
-                        style={{
-                          position: 'absolute', right: -3, top: 0, bottom: 0,
-                          width: 8, cursor: 'ew-resize', zIndex: 10,
-                        }}
-                      >
-                        <div style={{
-                          position: 'absolute', right: 3, top: '15%', bottom: '15%',
-                          width: 2, borderRadius: 1,
-                          background: isActive ? c.fg : 'var(--border-light)',
-                          opacity: isActive ? 1 : 0.7,
-                        }} />
-                      </div>
-                    </>
-                  )}
+                    left: `${tp(selStart) * 100}%`,
+                    width: selEnd !== null
+                      ? `${(tp(selEnd) - tp(selStart)) * 100}%`
+                      : 1,
+                  }}
+                />
+              )}
+
+              {editMode && sections.length === 0 && selMode === 'idle' && (
+                <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted-foreground pointer-events-none">
+                  click to place first section
                 </div>
-              )
-            })}
-
-            {/* In-progress selection highlight */}
-            {editMode && selStart !== null && (
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${tp(selStart) * 100}%`,
-                width: selEnd !== null
-                  ? `${(tp(selEnd) - tp(selStart)) * 100}%`
-                  : 1.5,
-                background: selEnd !== null ? 'rgba(99,102,241,0.18)' : 'transparent',
-                borderLeft: '1.5px solid var(--accent)',
-                borderRight: selEnd !== null ? '1.5px solid var(--accent)' : 'none',
-                pointerEvents: 'none',
-              }} />
-            )}
-
-            {/* Empty strip hint */}
-            {editMode && sections.length === 0 && selMode === 'idle' && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, color: 'var(--text-dim)', pointerEvents: 'none',
-              }}>click to place first section</div>
-            )}
+              )}
             </div>
           </div>
 
-          <div style={{ width: wr, flexShrink: 0, height: TACTS_H, display: 'flex', alignItems: 'center' }}>
-            <StructureTransport
-              side="right"
-              playing={playing} currentTime={currentTime} duration={duration}
-              loaded={loaded} totalTracks={totalTracks} volume={volume}
-              onPlay={onPlay} onPause={onPause} onVolume={onVolume}
-            />
-          </div>
+          <div style={{ width: wr }} className="shrink-0 bg-surface/40 border-l border-border" />
         </div>
 
       </div>
@@ -1477,11 +1298,13 @@ export default function StructureOverlay({
         <NamePickerPortal
           selectionStart={selStart}
           selectionEnd={selEnd}
+          totalBars={totalBars}
           barDurationMs={barDurationMs}
           totalDurationMs={totalDurationMs}
           stripRef={stripRef}
           onConfirm={handleConfirmNew}
           onCancel={resetSel}
+          onRangeChange={handlePendingRangeChange}
         />
       )}
 
@@ -1492,10 +1315,12 @@ export default function StructureOverlay({
           cellPos={activeEdit.cellPos}
           detectingChords={detectingChordsFor === activeSection.id}
           audioTracks={audioTracks}
+          totalBars={totalBars}
           onTypeChange={handleTypeChange}
           onChordsLocalChange={handleChordsLocalChange}
           onChordsAutoSave={handleChordsAutoSave}
           onDetectChords={ids => handleDetectChords(activeSection.id, ids)}
+          onBarRangeChange={handleBarRangeChange}
           onDelete={handleDelete}
           onClose={closeActiveEdit}
         />

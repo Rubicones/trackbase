@@ -68,9 +68,10 @@ interface Props {
   isLast: boolean
   onUpdated: (resource: ProjectResource) => void
   onDeleted: (id: string) => void
+  variant?: 'default' | 'drawer'
 }
 
-export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDeleted }: Props) {
+export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDeleted, variant = 'default' }: Props) {
   const [editing, setEditing] = useState(false)
   const [titleInput, setTitleInput] = useState(resource.title ?? '')
   const [urlInput, setUrlInput] = useState(resource.url ?? '')
@@ -128,7 +129,7 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
 
   if (editing) {
     return (
-      <div style={{ padding: '8px 0', borderBottom: isLast ? 'none' : '0.5px solid var(--border)' }}>
+      <div className={variant === 'drawer' ? 'border border-border p-3 mb-2' : undefined} style={variant === 'drawer' ? undefined : { padding: '8px 0', borderBottom: isLast ? 'none' : '0.5px solid var(--border)' }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text"
@@ -184,6 +185,30 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
           >
             <IconCheck size={11} />
             Save
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (variant === 'drawer') {
+    return (
+      <div className="border border-border p-3 text-xs flex items-center justify-between gap-3 min-w-0 group hover:bg-surface transition-colors">
+        <span className="truncate font-medium text-foreground">{getDisplayTitle(resource)}</span>
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
+          <a
+            href={resource.url ?? '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground truncate max-w-[120px] sm:max-w-[180px] hover:text-ember no-underline"
+          >
+            {resource.url}
+          </a>
+          <button type="button" onClick={startEdit} title="Edit" className="text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
+            <IconPencil size={12} />
+          </button>
+          <button type="button" onClick={handleDelete} title="Delete" className="text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
+            <IconTrash size={12} />
           </button>
         </div>
       </div>

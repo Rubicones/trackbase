@@ -38,6 +38,7 @@ interface UploadItem {
 export interface Props {
   projectId: string
   onUploadComplete: (resource: ProjectResource) => void
+  variant?: 'default' | 'drawer'
 }
 
 export type ResourcesUploadZoneHandle = {
@@ -76,9 +77,10 @@ function xhrPut(url: string, file: File, onProgress: (pct: number) => void): Pro
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(function ResourcesUploadZone(
-  { projectId, onUploadComplete },
+  { projectId, onUploadComplete, variant = 'default' },
   ref,
 ) {
+  const isDrawer = variant === 'drawer'
   const [dragging, setDragging] = useState(false)
   const [queue, setQueue] = useState<UploadItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -162,7 +164,8 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) enqueue(e.dataTransfer.files) }}
-        style={{
+        className={isDrawer ? `border border-dashed p-6 text-center text-xs text-muted-foreground cursor-pointer transition-colors ${dragging ? 'border-ember bg-ember-soft' : 'border-border hover:border-ember'}` : undefined}
+        style={isDrawer ? undefined : {
           padding: '10px 14px',
           borderRadius: 7,
           border: `0.5px dashed ${dragging ? 'var(--accent)' : 'var(--border)'}`,
@@ -174,17 +177,27 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
           transition: 'border-color 0.15s, background 0.15s',
         }}
       >
-        <div style={{ color: dragging ? 'var(--accent)' : 'var(--text-dim)', transition: 'color 0.15s' }}>
-          <IconUpload size={15} />
-        </div>
-        <div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Drop files or <span style={{ color: 'var(--accent)' }}>browse</span>
+        {isDrawer ? (
+          <p className="m-0 leading-relaxed">
+            Drag-and-drop WAV / MP3 / MIDI / PDF — max 200 MB
+            {' · '}
+            <span className="text-ember">browse</span>
           </p>
-          <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1 }}>
-            PDF, ZIP, audio, DAW files · max 200 MB
-          </p>
-        </div>
+        ) : (
+          <>
+            <div style={{ color: dragging ? 'var(--accent)' : 'var(--text-dim)', transition: 'color 0.15s' }}>
+              <IconUpload size={15} />
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Drop files or <span style={{ color: 'var(--accent)' }}>browse</span>
+              </p>
+              <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1 }}>
+                PDF, ZIP, audio, DAW files · max 200 MB
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       <input

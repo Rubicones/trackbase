@@ -3,13 +3,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { BrandSpinner } from '@/components/BrandSpinner'
-import { activityDotColor, formatActivityLine } from '@/lib/activityFormat'
-import { avatarColor } from '@/lib/avatarTheme'
-import { ThemeAvatar } from '@/components/ThemeAvatar'
+import { formatActivityLine } from '@/lib/activityFormat'
+import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
+import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +24,15 @@ interface DashboardBand {
   latestActivity: ActivityItem | null
   storageBytes: number; storageLimitBytes: number
 }
+
+type FilterTab = 'all' | 'owner' | 'member' | 'recent'
+
+const FILTER_TABS: { id: FilterTab; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'owner', label: 'Owner' },
+  { id: 'member', label: 'Member' },
+  { id: 'recent', label: 'Recently active' },
+]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,11 +57,64 @@ function formatLimit(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
 }
 
-function storageBarColor(bytes: number, limit: number): string {
-  const pct = bytes / limit
-  if (pct > 0.85) return 'var(--danger)'
-  if (pct > 0.60) return 'var(--amber)'
-  return 'var(--accent)'
+function timeGreeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function displayName(username?: string | null): string {
+  if (!username) return 'there.'
+  return `${username.charAt(0).toUpperCase()}${username.slice(1)}.`
+}
+
+// ─── Shared uikit primitives ──────────────────────────────────────────────────
+
+function TbButton({
+  children,
+  variant = 'ghost',
+  className = '',
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'ghost' | 'primary' | 'danger'
+}) {
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none'
+  const styles = {
+    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
+    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
+    danger: 'bg-destructive text-destructive-foreground px-3 py-1.5 font-bold',
+  }
+  return (
+    <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
+      {children}
+    </button>
+  )
+}
+
+function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={`w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 ${props.className ?? ''}`}
+    />
+  )
+}
+
+function TbModal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md border border-border bg-popover p-6 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  )
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
@@ -83,23 +144,24 @@ function NewBandModal({ onClose, onCreated }: {
   }
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card-responsive">
-        <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', marginBottom: 16, margin: '0 0 16px' }}>New band</p>
-        <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <input value={name} onChange={e => setName(e.target.value)}
-            placeholder="The Noise, Blue Period…" autoFocus style={inputStyle} />
-          {error && <p style={{ color: '#f87171', fontSize: 12, margin: 0 }}>{error}</p>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button type="button" onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-            <button type="submit" disabled={loading || !name.trim()}
-              style={{ ...confirmBtnStyle, opacity: loading || !name.trim() ? 0.5 : 1 }}>
-              {loading ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New band</p>
+      <form onSubmit={handleCreate} className="flex flex-col gap-3">
+        <TbInput
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="The Noise, Blue Period…"
+          autoFocus
+        />
+        {error && <p className="text-destructive text-xs m-0">{error}</p>}
+        <div className="flex gap-2 justify-end mt-1">
+          <TbButton onClick={onClose}>Cancel</TbButton>
+          <TbButton type="submit" variant="primary" disabled={loading || !name.trim()} className="px-4">
+            {loading ? 'Creating…' : 'Create'}
+          </TbButton>
+        </div>
+      </form>
+    </TbModal>
   )
 }
 
@@ -124,27 +186,29 @@ function DeleteBandModal({ band, onClose, onDeleted }: {
   }
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card-responsive">
-        <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', margin: '0 0 10px' }}>Delete {band.name}?</p>
-        <p style={{ fontSize: 13, color: '#ef4444', lineHeight: 1.6, margin: '0 0 16px' }}>
-          This permanently deletes all projects, tracks, and versions. This cannot be undone.
-        </p>
-        <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
-          Type the band name to confirm:
-        </label>
-        <input value={confirm} onChange={e => setConfirm(e.target.value)}
-          placeholder={band.name} autoFocus style={inputStyle} />
-        {error && <p style={{ color: '#f87171', fontSize: 12, marginTop: 8, marginBottom: 0 }}>{error}</p>}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-          <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-          <button onClick={handleDelete} disabled={confirm !== band.name || loading}
-            style={{ ...confirmBtnStyle, background: '#ef4444', opacity: confirm !== band.name || loading ? 0.5 : 1, cursor: confirm !== band.name || loading ? 'not-allowed' : 'pointer' }}>
-            {loading ? 'Deleting…' : 'Delete band'}
-          </button>
-        </div>
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-2">Delete {band.name}?</p>
+      <p className="text-sm text-destructive leading-relaxed m-0 mb-4">
+        This permanently deletes all projects, tracks, and versions. This cannot be undone.
+      </p>
+      <label className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-2">
+        Type the band name to confirm:
+      </label>
+      <TbInput
+        value={confirm}
+        onChange={e => setConfirm(e.target.value)}
+        placeholder={band.name}
+        autoFocus
+        className="mb-4"
+      />
+      {error && <p className="text-destructive text-xs m-0 mb-3">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <TbButton onClick={onClose}>Cancel</TbButton>
+        <TbButton variant="danger" onClick={handleDelete} disabled={confirm !== band.name || loading}>
+          {loading ? 'Deleting…' : 'Delete band'}
+        </TbButton>
       </div>
-    </div>
+    </TbModal>
   )
 }
 
@@ -167,41 +231,39 @@ function LeaveBandModal({ band, onClose, onLeft }: {
   }
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card-responsive">
-        <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', margin: '0 0 10px' }}>Leave {band.name}?</p>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 16px' }}>
-          You'll lose access to all projects in this band.
-        </p>
-        {error && <p style={{ color: '#f87171', fontSize: 12, margin: '0 0 12px' }}>{error}</p>}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-          <button onClick={handleLeave} disabled={loading}
-            style={{ ...confirmBtnStyle, background: '#ef4444', opacity: loading ? 0.6 : 1 }}>
-            {loading ? 'Leaving…' : 'Leave band'}
-          </button>
-        </div>
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-2">Leave {band.name}?</p>
+      <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-4">
+        You&apos;ll lose access to all projects in this band.
+      </p>
+      {error && <p className="text-destructive text-xs m-0 mb-3">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <TbButton onClick={onClose}>Cancel</TbButton>
+        <TbButton variant="danger" onClick={handleLeave} disabled={loading}>
+          {loading ? 'Leaving…' : 'Leave band'}
+        </TbButton>
       </div>
-    </div>
+    </TbModal>
   )
 }
 
 // ─── Band card ────────────────────────────────────────────────────────────────
 
-function BandCard({ band, onNavigate, onDelete, onLeave }: {
+function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
   band: DashboardBand
+  index: number
   onNavigate: () => void
   onDelete: () => void
   onLeave: () => void
 }) {
-  const [hov, setHov] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const { palette } = usePalette()
   const isOwner = band.userRole === 'owner'
   const color = avatarColor(band.name, palette)
-  const roleLabel = band.userRoleLabel ?? (isOwner ? 'Owner' : 'Member')
+  const initials = avatarInitials(band.name, 'band')
   const storagePct = band.storageBytes / band.storageLimitBytes
+  const roleLabel = (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
   const activityLine = band.latestActivity
     ? formatActivityLine(
         band.latestActivity.action,
@@ -221,258 +283,119 @@ function BandCard({ band, onNavigate, onDelete, onLeave }: {
   }, [menuOpen])
 
   return (
-    <div
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+    <article
+      role="link"
+      tabIndex={0}
       onClick={onNavigate}
-      style={{
-        cursor: 'pointer',
-        background: 'var(--bg-surface)',
-        borderWidth: '0.5px',    borderTopStyle: 'solid',
-        borderColor: hov ? 'var(--border-light)' : 'var(--border)',
-        borderRadius: 10,
-        padding: '18px 18px 16px 16px',
-        transition: 'border-color 0.15s',
-        position: 'relative',
-        minWidth: 0,
-        overflow: 'hidden',
-      }}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate() } }}
+      className="group relative bg-background p-5 hover:bg-surface transition-colors animate-slide-in cursor-pointer text-left"
+      style={{ animationDelay: `${index * 50}ms` }}
     >
-      <div className={`absolute left-0 top-1/2 -translate-y-1/2 h-[80%] w-[2px] rounded-full`} style={{backgroundColor: color}}></div>
-      {/* Card header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-        {/* Avatar */}
-        <ThemeAvatar seed={band.name} size={44} radius={10} kind="band" />
-
-        {/* Name + role */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', margin: 0, letterSpacing: '-0.02em' }}>
-            {band.name}
-          </p>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '1px 0 0' }}>{roleLabel}</p>
+      <div className="flex items-start justify-between mb-5">
+        <div
+          className="size-12 grid place-items-center font-display font-bold text-lg text-background shrink-0"
+          style={{ backgroundColor: color }}
+        >
+          {initials}
         </div>
-
-        {/* Dots menu */}
-        <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-          <button
-            onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
-            style={{
-              width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: menuOpen ? 'var(--bg-card)' : 'transparent',
-              border: `0.5px solid ${menuOpen ? 'var(--border)' : 'transparent'}`,
-              borderRadius: 7, cursor: 'pointer', color: 'var(--text-dim)', transition: 'background 0.12s',
-            }}
-          >
-            <DotsVIcon />
-          </button>
-          {menuOpen && (
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 4px)', right: 0,
-              background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-              borderRadius: 8, padding: 4, minWidth: 160, zIndex: 60,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.14)',
-            }}>
-              <DropItem label="Open band" icon={<OpenIcon />} onClick={() => { setMenuOpen(false); onNavigate() }} />
-              <div style={{ height: '0.5px', background: 'var(--border)', margin: '4px 0' }} />
-              {isOwner
-                ? <DropItem label="Delete band" icon={<TrashIcon />} danger onClick={() => { setMenuOpen(false); onDelete() }} />
-                : <DropItem label="Leave band"  icon={<LeaveIcon />} danger onClick={() => { setMenuOpen(false); onLeave() }} />
-              }
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Stats tiles */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
-        {[
-          { label: 'PROJECTS', value: band.projectCount },
-          { label: 'MEMBERS',  value: band.memberCount },
-          { label: 'UPDATED',  value: formatRelative(band.lastUpdated) },
-        ].map(({ label, value }) => (
-          <div key={label} style={{
-            background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-            borderRadius: 10, padding: '10px 14px',
-          }}>
-            <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-dim)', margin: '0 0 4px' }}>
-              {label}
-            </p>
-            <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)', margin: 0 }}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Recent activity row */}
-      {band.latestActivity && activityLine && (
-        <div style={{
-          borderTop: '0.5px solid var(--border)', borderBottom: '0.5px solid var(--border)',
-          padding: '10px 0', marginBottom: 12,
-          display: 'flex', alignItems: 'center', gap: 8,
-          minWidth: 0,
-        }}>
-          <div style={{
-            flexShrink: 0, width: 8, height: 8, borderRadius: '50%',
-            background: activityDotColor(band.latestActivity.action),
-          }} />
-          <p
-            title={activityLine}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 13, color: 'var(--text-muted)', margin: 0,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}
-          >
-            {activityLine}
-          </p>
-        </div>
-      )}
-
-      {/* Storage bar */}
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Storage</span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            {formatBytes(band.storageBytes)} / {formatLimit(band.storageLimitBytes)}
+        <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+          <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
+            isOwner ? 'border-ember text-ember' : 'border-border text-muted-foreground'
+          }`}>
+            {roleLabel}
           </span>
-        </div>
-        <div style={{ height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
-          <div style={{
-            height: '100%',
-            width: `${Math.min(storagePct * 100, 100)}%`,
-            borderRadius: 2,
-            background: storageBarColor(band.storageBytes, band.storageLimitBytes),
-            transition: 'width 0.3s',
-          }} />
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              aria-label="Band options"
+              aria-expanded={menuOpen}
+              onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
+              className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+            >
+              <DotsVIcon />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl py-1">
+                <DropItem label="Open band" onClick={() => { setMenuOpen(false); onNavigate() }} />
+                <div className="h-px bg-border my-1" />
+                {isOwner
+                  ? <DropItem label="Delete band" danger onClick={() => { setMenuOpen(false); onDelete() }} />
+                  : <DropItem label="Leave band" danger onClick={() => { setMenuOpen(false); onLeave() }} />
+                }
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      <h3 className="font-display text-xl uppercase tracking-tight group-hover:text-ember transition-colors m-0">
+        {band.name}
+      </h3>
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
+        {band.projectCount} PROJECTS · {band.memberCount} MEMBERS · {formatRelative(band.lastUpdated)}
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {activityLine ? (
+          <div className="text-[10px] text-muted-foreground line-clamp-1 border-l-2 border-ember/60 pl-2" title={activityLine}>
+            {activityLine}
+          </div>
+        ) : (
+          <div className="text-[10px] text-muted-foreground/50 line-clamp-1 border-l-2 border-border pl-2">
+            No recent activity
+          </div>
+        )}
+        <div>
+          <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
+            <span>STORAGE</span>
+            <span className="tabular-nums text-foreground">
+              {formatBytes(band.storageBytes)} / {formatLimit(band.storageLimitBytes)}
+            </span>
+          </div>
+          <div className="h-1 bg-surface-2 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-ember'}`}
+              style={{ width: `${Math.min(storagePct * 100, 100)}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </article>
   )
 }
 
-// ─── New band card ────────────────────────────────────────────────────────────
-
-function NewBandCard({ onClick }: { onClick: () => void }) {
-  const [hov, setHov] = useState(false)
-  return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        cursor: 'pointer', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        background: 'transparent', borderRadius: 14,
-        border: `1.5px dashed ${hov ? 'var(--accent)' : 'var(--border)'}`,
-        padding: 40, minHeight: 180,
-        transition: 'border-color 0.15s',
-      }}
-    >
-      <div style={{
-        width: 32, height: 32, borderRadius: 8,
-        border: `1px solid ${hov ? 'var(--accent)' : 'var(--border)'}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: hov ? 'var(--accent)' : 'var(--text-dim)',
-        transition: 'border-color 0.15s, color 0.15s', marginBottom: 10,
-      }}>
-        <PlusIcon size={16} />
-      </div>
-      <p style={{ fontSize: 14, color: hov ? 'var(--accent)' : 'var(--text-muted)', margin: 0, transition: 'color 0.15s' }}>
-        New band
-      </p>
-    </div>
-  )
-}
-
-// ─── Drop menu item ───────────────────────────────────────────────────────────
-
-function DropItem({ label, icon, danger, onClick }: {
-  label: string; icon: React.ReactNode; danger?: boolean; onClick: () => void
+function DropItem({ label, danger, onClick }: {
+  label: string; danger?: boolean; onClick: () => void
 }) {
-  const [hov, setHov] = useState(false)
   return (
     <button
+      type="button"
       onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-        borderRadius: 7, width: '100%', textAlign: 'left', border: 'none',
-        color: danger ? '#ef4444' : 'var(--text-sec)', fontSize: 13, cursor: 'pointer',
-        background: hov ? (danger ? 'rgba(239,68,68,0.08)' : 'var(--bg-card)') : 'transparent',
-        transition: 'background 0.12s',
-      }}>
-      {icon}{label}
+      className={`block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest transition-colors hover:bg-surface ${
+        danger ? 'text-destructive' : 'text-foreground'
+      }`}
+    >
+      {label}
     </button>
   )
 }
 
-// ─── Icons ────────────────────────────────────────────────────────────────────
-
-function PlusIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none">
-      <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  )
-}
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <circle cx="6" cy="6" r="4" stroke="currentColor" strokeWidth="1" />
-      <path d="M9.5 9.5L12 12" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-    </svg>
-  )
-}
 function DotsVIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
       <circle cx="8" cy="4" r="1.2" fill="currentColor" />
       <circle cx="8" cy="8" r="1.2" fill="currentColor" />
       <circle cx="8" cy="12" r="1.2" fill="currentColor" />
     </svg>
   )
 }
-function OpenIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M5 3l4 4-4 4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 4h9M5 4V2.5h4V4M10.5 4l-.5 7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1L3.5 4"
-        stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function LeaveIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-      <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function MusicIcon() {
-  return (
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-      <path d="M20 36V16l20-4v20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="14" cy="36" r="6" stroke="currentColor" strokeWidth="2" />
-      <circle cx="34" cy="32" r="6" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  )
-}
 
 // ─── Main page ────────────────────────────────────────────────────────────────
-
-type FilterTab = 'all' | 'owner' | 'member' | 'recent'
 
 export default function DashboardPage() {
   const router = useRouter()
   const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const [bands, setBands] = useState<DashboardBand[]>([])
   const [totalBands, setTotalBands] = useState(0)
@@ -487,23 +410,17 @@ export default function DashboardPage() {
   const [deletingBand, setDeletingBand] = useState<DashboardBand | null>(null)
   const [leavingBand, setLeavingBand] = useState<DashboardBand | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [showWelcome, setShowWelcome] = useState(false)
+  const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
+  const showWelcome =
+    !showWelcomeDismissed &&
+    !authLoading &&
+    !!profile &&
+    !profile.onboarding?.dashboard_seen
 
-  const searchRef = useRef<HTMLInputElement>(null)
-
-  // Auth guard
   useEffect(() => {
     if (!authLoading && !user) router.replace('/auth')
   }, [authLoading, user, router])
 
-  // Show welcome modal once
-  useEffect(() => {
-    if (!authLoading && profile && !profile.onboarding?.dashboard_seen) {
-      setShowWelcome(true)
-    }
-  }, [authLoading, profile])
-
-  // Fetch dashboard data
   useEffect(() => {
     if (authLoading || !user) return
     fetch('/api/dashboard')
@@ -517,7 +434,6 @@ export default function DashboardPage() {
       .finally(() => setLoadingData(false))
   }, [authLoading, user])
 
-  // ⌘K / Ctrl+K focuses search
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -529,189 +445,173 @@ export default function DashboardPage() {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  function showToast(msg: string) {
+  function showToastMsg(msg: string) {
     setToast(msg); setTimeout(() => setToast(null), 3000)
   }
 
-  // Filter + search
   const filteredBands = bands
     .filter(b => {
-      if (filter === 'owner')  return b.userRole === 'owner'
+      if (filter === 'owner') return b.userRole === 'owner'
       if (filter === 'member') return b.userRole === 'member'
       return true
     })
     .filter(b => !search || b.name.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
-      if (filter === 'recent') {
-        const aAct = a.latestActivity?.created_at ?? a.lastUpdated
-        const bAct = b.latestActivity?.created_at ?? b.lastUpdated
-        return bAct.localeCompare(aAct)
-      }
-      return b.lastUpdated.localeCompare(a.lastUpdated)
+      const aAct = a.latestActivity?.created_at ?? a.lastUpdated
+      const bAct = b.latestActivity?.created_at ?? b.lastUpdated
+      return bAct.localeCompare(aAct)
     })
+
+  const totalStorageBytes = bands.reduce((s, b) => s + b.storageBytes, 0)
 
   if (authLoading) return <BrandSpinner />
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      {/* Top bar */}
-      <header className="app-topbar">
-        <button
-          onClick={() => router.push('/dashboard')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
-        >
-          <span style={{ color: 'var(--text-sec)', fontWeight: 600, letterSpacing: '-0.03em', fontSize: '1rem' }}>track</span>
-          <span style={{ color: 'var(--accent)', fontWeight: 600, letterSpacing: '-0.03em', fontSize: '1rem' }}>base</span>
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={() => {}}
-          className="topbar-hide-mobile"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 14px',
-            background: 'transparent', border: '0.5px solid var(--border)',
-            borderRadius: 8, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer',
-          }}
-        >
-          Feedback
-        </button>
-        <AvatarDropdown />
-      </header>
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <AppHeader crumbs={<span className="text-foreground">Dashboard</span>} />
 
-      {/* Page content */}
-      <div className="page-shell">
-
-        {/* Page header row */}
-        <div className="page-header-row">
-          {/* Left: title + subtitle */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 className="page-title-lg" style={{ fontSize: 28, fontWeight: 600, color: 'var(--text)', margin: '0 0 6px', letterSpacing: '-0.03em' }}>
-              Your bands
+      {/* Hero */}
+      <section className="border-b border-border bg-surface/40">
+        <div className="mx-auto max-w-7xl px-6 py-10 grid lg:grid-cols-[1fr_auto] gap-8 items-end">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-ember font-bold mb-2">/ HOME BASE</div>
+            <h1 className="font-display text-4xl sm:text-6xl uppercase tracking-tighter m-0 leading-none">
+              {timeGreeting()},{' '}
+              <span className="text-ember">{displayName(profile?.username)}</span>
             </h1>
-            <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>
-              {totalBands} band{totalBands !== 1 ? 's' : ''} · {totalProjects} project{totalProjects !== 1 ? 's' : ''} · {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''}
+            <p className="text-sm text-muted-foreground mt-3 max-w-md m-0">
+              {totalBands} band{totalBands !== 1 ? 's' : ''}. {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
+              {totalCollaborators > 0 && (
+                <> {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''} across your roster.</>
+              )}
+              {' '}Open one to keep going, or spin up a new one.
             </p>
           </div>
-
-          {/* Right: search + new band */}
-          <div className="page-header-actions">
-            {/* Search */}
-            <div className="search-field">
-              <span style={{
-                position: 'absolute', left: 10, color: 'var(--text-dim)', pointerEvents: 'none',
-                display: 'flex', alignItems: 'center',
-              }}>
-                <SearchIcon />
-              </span>
-              <input
-                ref={searchRef}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search bands"
-                className="search-input"
-              />
-              <span className="search-kbd" style={{
-                position: 'absolute', right: 10,
-                display: 'flex', alignItems: 'center', gap: 2,
-                background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-                borderRadius: 5, padding: '2px 6px', fontSize: 11, color: 'var(--text-dim)',
-                pointerEvents: 'none', letterSpacing: '0.02em',
-              }}>
-                ⌘K
-              </span>
-            </div>
-
-            {/* New band button */}
-            <button
-              onClick={() => setShowNewBand(true)}
-              className="btn-accent-fill btn-new-band"
-              style={{ height: 34, padding: '0 14px', whiteSpace: 'nowrap' }}
-            >
-              <PlusIcon size={12} />
-              New band
-            </button>
+          <div className="grid grid-cols-3 gap-px bg-border border border-border shrink-0">
+            {[
+              [totalBands, 'BANDS'],
+              [totalProjects, 'PROJECTS'],
+              [totalCollaborators, 'COLLABORATORS'],
+            ].map(([n, l]) => (
+              <div key={l as string} className="bg-background px-6 py-4 min-w-[7rem]">
+                <div className="font-display text-3xl text-foreground tabular-nums leading-none">{n}</div>
+                <div className="text-[9px] uppercase tracking-widest text-muted-foreground mt-1">{l}</div>
+              </div>
+            ))}
           </div>
         </div>
+      </section>
 
-        {/* Filter tabs */}
-        <div className="filter-tabs-row">
-          {([
-            { id: 'all',    label: 'All' },
-            { id: 'owner',  label: 'Owner' },
-            { id: 'member', label: 'Member' },
-            { id: 'recent', label: 'Recently active' },
-          ] as { id: FilterTab; label: string }[]).map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              style={{
-                padding: '6px 14px', borderRadius: 10, border: `0.5px solid ${filter === tab.id ? 'var(--border-light)' : 'var(--border)'}`,
-                background: filter === tab.id ? 'var(--bg-surface)' : 'var(--bg-card)',
-                color: filter === tab.id ? 'var(--text)' : 'var(--text-muted)',
-                fontWeight: filter === tab.id ? 500 : 400,
-                fontSize: 13, cursor: 'pointer', transition: 'all 0.12s',
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
+      {/* Search + filters + new band */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-7xl px-6 py-4 flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
+          <div className="flex-1 flex items-center border border-border bg-surface/60 px-3 h-10 focus-within:border-ember transition-colors">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground mr-3 shrink-0">SEARCH</span>
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Find a band…"
+              className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none text-foreground min-w-0"
+            />
+            <kbd className="hidden sm:inline text-[10px] uppercase tracking-widest text-muted-foreground/60 ml-2 shrink-0 border border-border px-1.5 py-0.5 bg-background">
+              ⌘K
+            </kbd>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex">
+              {FILTER_TABS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setFilter(id)}
+                  className={`px-4 h-10 text-[10px] uppercase tracking-widest border border-border -ml-px first:ml-0 transition-colors whitespace-nowrap ${
+                    filter === id
+                      ? 'bg-ember text-white border-ember z-[1] relative'
+                      : 'bg-background text-foreground hover:border-ember hover:text-ember'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="h-10 px-4 shrink-0">
+              + New band
+            </TbButton>
+          </div>
         </div>
+      </section>
 
-        {/* Content */}
+      {/* Band grid */}
+      <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">
         {loadingData ? (
-          <BrandSpinner fullscreen={false} />
+          <div className="py-20 flex justify-center">
+            <BrandSpinner fullscreen={false} />
+          </div>
         ) : bands.length === 0 ? (
-          /* Empty state */
-          <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            padding: '100px 0', gap: 12,
-          }}>
-            <div style={{ color: 'var(--text-dim)' }}><MusicIcon /></div>
-            <p style={{ fontSize: 20, color: 'var(--text-muted)', margin: 0, fontWeight: 500 }}>No bands yet</p>
-            <p style={{ fontSize: 14, color: 'var(--text-dim)', margin: 0, textAlign: 'center', maxWidth: 320 }}>
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center border border-border bg-surface/30 px-6">
+            <div className="font-display text-2xl uppercase tracking-tight text-muted-foreground">No bands yet</div>
+            <p className="text-sm text-muted-foreground max-w-sm m-0">
               Create your first band or join one with an invite link
             </p>
-            <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-              <button
-                onClick={() => setShowNewBand(true)}
-                className="btn-accent-fill"
-                style={{ height: 36, padding: '0 16px' }}
-              >
-                <PlusIcon /> Create a band
-              </button>
-              <button
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }}
-              >
+            <div className="flex flex-wrap gap-3 justify-center mt-2">
+              <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="px-4 py-2">
+                Create a band
+              </TbButton>
+              <TbButton onClick={() => router.push('/onboarding')} className="px-4 py-2">
                 Join with invite link
-              </button>
+              </TbButton>
             </div>
           </div>
-        ) : filteredBands.length === 0 && search ? (
-          /* No search results */
-          <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-            No bands matching &ldquo;{search}&rdquo;
-          </div>
         ) : (
-          /* Card grid */
-          <div className="card-grid-2">
-            {filteredBands.map(band => (
-              <BandCard
-                key={band.id}
-                band={band}
-                onNavigate={() => router.push(`/band/${band.id}`)}
-                onDelete={() => setDeletingBand(band)}
-                onLeave={() => setLeavingBand(band)}
-              />
-            ))}
-            {/* New band card — only shown in All tab with no search query */}
-            {filter === 'all' && !search && (
-              <NewBandCard onClick={() => setShowNewBand(true)} />
-            )}
-          </div>
-        )}
-      </div>
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <SectionLabel>{filteredBands.length} ACTIVE COLLECTIVE{filteredBands.length !== 1 ? 'S' : ''}</SectionLabel>
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">SORT: RECENT ↓</div>
+            </div>
 
-      {/* Modals */}
+            {filteredBands.length === 0 && search ? (
+              <div className="py-16 text-center text-sm text-muted-foreground border border-border">
+                No bands matching &ldquo;{search}&rdquo;
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border border border-border">
+                {filteredBands.map((band, i) => (
+                  <BandCard
+                    key={band.id}
+                    band={band}
+                    index={i}
+                    onNavigate={() => router.push(`/band/${band.id}`)}
+                    onDelete={() => setDeletingBand(band)}
+                    onLeave={() => setLeavingBand(band)}
+                  />
+                ))}
+
+                {filter === 'all' && !search && (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewBand(true)}
+                    className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-ember hover:bg-surface transition-colors min-h-[200px]"
+                  >
+                    <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-ember">+</div>
+                    <div className="font-display text-sm uppercase tracking-widest">Create new band</div>
+                    <div className="text-[10px] text-muted-foreground">or paste an invite code</div>
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      <StatusFooter
+        left={
+          <span className="uppercase tracking-widest truncate">
+            {totalBands} BANDS · {totalProjects} PROJECTS · {formatBytes(totalStorageBytes)} USED
+          </span>
+        }
+      />
+
       {showNewBand && (
         <NewBandModal
           onClose={() => setShowNewBand(false)}
@@ -727,7 +627,7 @@ export default function DashboardPage() {
             setBands(prev => prev.filter(b => b.id !== deletingBand.id))
             setTotalBands(n => n - 1)
             setDeletingBand(null)
-            showToast(`${name} has been deleted`)
+            showToastMsg(`${name} has been deleted`)
           }}
         />
       )}
@@ -743,44 +643,20 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* Toast */}
       {toast && (
-        <div style={{
-          position: 'fixed', bottom: 'max(24px, env(safe-area-inset-bottom, 0px))', left: '50%', transform: 'translateX(-50%)',
-          background: 'var(--bg-card)', border: '0.5px solid var(--border-light)',
-          borderRadius: 12, padding: '10px 16px', fontSize: 12, fontWeight: 500,
-          color: 'var(--text)', zIndex: 9000, pointerEvents: 'none',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span style={{ color: 'var(--green)' }}>✓</span>{toast}
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-9000 border border-border bg-popover px-4 py-2.5 text-[10px] uppercase tracking-widest text-foreground shadow-2xl flex items-center gap-2 pointer-events-none">
+          <span className="text-online">✓</span>{toast}
         </div>
       )}
 
-      {/* Onboarding welcome modal */}
       {showWelcome && (
         <DashboardWelcomeModal
           onDismiss={() => {
-            setShowWelcome(false)
+            setShowWelcomeDismissed(true)
             updateOnboarding('dashboard_seen', true)
           }}
         />
       )}
     </div>
   )
-}
-
-// ─── Shared styles ────────────────────────────────────────────────────────────
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', boxSizing: 'border-box', background: 'var(--bg)',
-  border: '0.5px solid var(--border)', borderRadius: 8,
-  padding: '8px 10px', color: 'var(--text)', fontSize: 14, outline: 'none',
-}
-const cancelBtnStyle: React.CSSProperties = {
-  background: 'transparent', border: '0.5px solid var(--border)',
-  borderRadius: 8, padding: '6px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13,
-}
-const confirmBtnStyle: React.CSSProperties = {
-  background: 'var(--accent)', border: 'none', borderRadius: 8,
-  padding: '6px 14px', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
 }

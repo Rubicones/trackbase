@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { SECTION_COLORS, getBarMath, sectionLabel } from '@/components/StructureEditor'
+import { getBarMath, sectionLabel } from '@/components/StructureEditor'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
+import { SectionLabel } from '@/components/design/AppShell'
 import type { Project, Section } from '@/lib/types'
 
-type PanelTab = 'structure' | 'notes' | 'resources'
+type PanelTab = 'resources' | 'structure' | 'notes'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -30,30 +31,6 @@ function IconLayoutList({ size = 32 }: { size?: number }) {
   )
 }
 
-function IconArrowRight({ size = 14 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function IconX({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function IconChevronDown({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDuration(ms: number): string {
@@ -64,14 +41,9 @@ function formatDuration(ms: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-function barTimeRange(
-  startBar: number,
-  endBar: number,
-  barDurationMs: number
-): string {
-  const startMs = startBar * barDurationMs
-  const endMs = endBar * barDurationMs
-  return `${formatDuration(startMs)}—${formatDuration(endMs)}`
+function formatChords(raw: string | null | undefined): string {
+  if (!raw?.trim()) return '—'
+  return raw.trim().split(/\s+/).filter(Boolean).join(' - ')
 }
 
 interface PreviewProject {
@@ -96,11 +68,12 @@ interface StructurePreviewData {
   sections: Section[]
 }
 
+const TABS: PanelTab[] = ['resources', 'structure', 'notes']
+
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 export function StructurePreviewPanel({
   projectId,
-  accentColor,
   bandId,
   onClose,
 }: {
@@ -112,30 +85,22 @@ export function StructurePreviewPanel({
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [data, setData] = useState<StructurePreviewData | null>(null)
   const [sections, setSections] = useState<Section[]>([])
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
-  const [versionMenuOpen, setVersionMenuOpen] = useState(false)
   const [contentVisible, setContentVisible] = useState(true)
   const [versionLoading, setVersionLoading] = useState(false)
-  const versionMenuRef = useRef<HTMLDivElement>(null)
   const prevProjectIdRef = useRef<string | null>(null)
 
-  // ── Tabs ──────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<PanelTab>('resources')
 
-  // Notes tab
   const [notesContent, setNotesContent] = useState('')
   const [notesLoaded, setNotesLoaded] = useState(false)
   const [notesSaving, setNotesSaving] = useState(false)
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Resources tab — ResourcesCard handles its own fetching.
-  // We mount it once the tab is visited so it doesn't unmount/remount on tab switches.
-  const [resourcesTabVisited, setResourcesTabVisited] = useState(true)
   const [resourcesMounted, setResourcesMounted] = useState(true)
 
   const handleClose = useCallback(() => {
@@ -143,7 +108,6 @@ export function StructurePreviewPanel({
     setTimeout(onClose, 200)
   }, [onClose])
 
-  // Mount / unmount with animation
   useEffect(() => {
     if (projectId) {
       setMounted(true)
@@ -162,16 +126,6 @@ export function StructurePreviewPanel({
     return () => { document.body.style.overflow = '' }
   }, [projectId])
 
-  // Mobile breakpoint
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 519px)')
-    const update = () => setIsMobile(mq.matches)
-    update()
-    mq.addEventListener('change', update)
-    return () => mq.removeEventListener('change', update)
-  }, [])
-
-  // Escape to close
   useEffect(() => {
     if (!projectId) return
     function onKey(e: KeyboardEvent) {
@@ -181,18 +135,6 @@ export function StructurePreviewPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [projectId, handleClose])
 
-  // Close version menu on outside click
-  useEffect(() => {
-    if (!versionMenuOpen) return
-    function onDown(e: MouseEvent) {
-      if (versionMenuRef.current && !versionMenuRef.current.contains(e.target as Node)) {
-        setVersionMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [versionMenuOpen])
-
   const loadPreview = useCallback(async (id: string, swap = false) => {
     if (swap) {
       setContentVisible(false)
@@ -200,7 +142,6 @@ export function StructurePreviewPanel({
     }
     setLoading(true)
     setError('')
-    setVersionMenuOpen(false)
     try {
       const res = await fetch(`/api/projects/${id}/structure-preview`)
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Failed to load')
@@ -229,7 +170,6 @@ export function StructurePreviewPanel({
       return
     }
     setActiveTab('resources')
-    setResourcesTabVisited(true)
     setResourcesMounted(true)
     const isSwap = prevProjectIdRef.current !== null && prevProjectIdRef.current !== projectId
     if (isSwap) {
@@ -240,7 +180,6 @@ export function StructurePreviewPanel({
     loadPreview(projectId, isSwap)
   }, [projectId, loadPreview])
 
-  // Load notes when notes tab is first selected
   async function loadNotes(id: string) {
     if (notesLoaded) return
     try {
@@ -251,14 +190,14 @@ export function StructurePreviewPanel({
         setNotesLoaded(true)
       }
     } catch {
-      setNotesLoaded(true) // fail silently — start with empty
+      setNotesLoaded(true)
     }
   }
 
   function handleTabChange(tab: PanelTab) {
     setActiveTab(tab)
     if (tab === 'notes' && projectId && !notesLoaded) loadNotes(projectId)
-    if (tab === 'resources') { setResourcesTabVisited(true); setResourcesMounted(true) }
+    if (tab === 'resources') setResourcesMounted(true)
   }
 
   function handleNotesChange(value: string) {
@@ -280,7 +219,6 @@ export function StructurePreviewPanel({
   }
 
   async function handleVersionChange(versionId: string) {
-    setVersionMenuOpen(false)
     if (versionId === selectedVersionId) return
     setSelectedVersionId(versionId)
     setVersionLoading(true)
@@ -321,254 +259,180 @@ export function StructurePreviewPanel({
     0
   )
 
-  const subtitleParts: string[] = []
-  if (project) {
-    subtitleParts.push(`${project.track_count} track${project.track_count !== 1 ? 's' : ''}`)
-    if (project.total_duration_ms > 0) {
-      subtitleParts.push(formatDuration(project.total_duration_ms))
-    }
-    if (project.bpm) subtitleParts.push(`${project.bpm} BPM`)
-    if (project.key) subtitleParts.push(project.key)
-  }
+  const viewingLabel = (selectedVersion?.name ?? 'main').toUpperCase()
 
   return createPortal(
-    <>
+    <div
+      className="fixed inset-0 z-[200] flex justify-end"
+      onClick={handleClose}
+      role="presentation"
+    >
+      {/* Backdrop */}
       <div
-        className={`structure-preview-backdrop${panelOpen ? ' is-open' : ''}`}
-        onClick={handleClose}
+        className={`absolute inset-0 bg-background/70 backdrop-blur-sm transition-opacity duration-250 ${
+          panelOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
         aria-hidden="true"
       />
+
+      {/* Drawer — slides in from right; full width on mobile, max-w-xl on larger screens */}
       <aside
-        className={`structure-preview-panel${panelOpen ? ' is-open' : ''}${isMobile ? ' is-mobile' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label={project ? `${project.name} structure preview` : 'Structure preview'}
+        aria-label={project ? `${project.name} quick access` : 'Quick access'}
+        onClick={e => e.stopPropagation()}
+        className={`relative flex h-full w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl transition-transform duration-250 ease-out ${
+          panelOpen ? 'translate-x-0 animate-slide-in' : 'translate-x-full'
+        }`}
       >
-        {isMobile && <div className="structure-preview-handle" aria-hidden="true" />}
-
         {/* Header */}
-        <div className="structure-preview-header">
-          <div className="structure-preview-header-left">
-            <div className="structure-preview-title-row">
-              <span className="structure-preview-accent-dot" style={{ background: accentColor }} />
-              <span className="structure-preview-title">{project?.name ?? 'Loading…'}</span>
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+          <div className="min-w-0 pr-3">
+            <SectionLabel>QUICK ACCESS</SectionLabel>
+            <div className="font-display mt-0.5 truncate text-lg uppercase tracking-tight text-foreground">
+              {project?.name ?? 'Loading…'}
             </div>
-            {subtitleParts.length > 0 && (
-              <p className="structure-preview-subtitle">{subtitleParts.join(' · ')}</p>
-            )}
           </div>
-          <div className="structure-preview-header-actions">
-            {projectId && (
-              <button
-                type="button"
-                className="structure-preview-open-btn"
-                onClick={() => router.push(`/band/${bandId}/project/${projectId}`)}
-              >
-                <IconArrowRight size={13} />
-                Open
-              </button>
-            )}
-            <button
-              type="button"
-              className="structure-preview-close-btn"
-              onClick={handleClose}
-              aria-label="Close"
-            >
-              <IconX />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close"
+            className="shrink-0 border-0 bg-transparent p-1 text-muted-foreground transition-colors hover:text-foreground cursor-pointer text-lg leading-none"
+          >
+            ✕
+          </button>
         </div>
 
-        {/* Tab bar */}
-        <div
-          style={{
-            display: 'flex',
-            gap: 0,
-            padding: '0 16px',
-            borderBottom: '0.5px solid var(--border)',
-            flexShrink: 0,
-          }}
-        >
-          {(['resources', 'structure', 'notes'] as PanelTab[]).map(tab => (
+        {/* Tabs */}
+        <div className="flex shrink-0 border-b border-border">
+          {TABS.map(tab => (
             <button
               key={tab}
               type="button"
               onClick={() => handleTabChange(tab)}
-              style={{
-                fontSize: 12,
-                fontWeight: activeTab === tab ? 500 : 400,
-                color: activeTab === tab ? 'var(--text)' : 'var(--text-dim)',
-                background: 'transparent',
-                border: 'none',
-                borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                padding: '9px 10px 7px',
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-                transition: 'color 0.12s',
-                marginBottom: -0.5,
-              }}
-              onMouseEnter={e => {
-                if (activeTab !== tab) (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'
-              }}
-              onMouseLeave={e => {
-                if (activeTab !== tab) (e.currentTarget as HTMLElement).style.color = 'var(--text-dim)'
-              }}
+              className={`h-10 flex-1 px-2 text-[10px] uppercase tracking-widest border-b-2 transition sm:px-4 ${
+                activeTab === tab
+                  ? 'border-ember text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
             >
               {tab}
             </button>
           ))}
         </div>
 
-        {/* Content */}
+        {/* Scrollable content */}
         <div
-          className="structure-preview-content"
+          className="flex-1 overflow-y-auto p-4 sm:p-5"
           style={{
             opacity: contentVisible ? 1 : 0,
             transition: contentVisible ? 'opacity 0.15s ease-out' : 'opacity 0.1s ease-in',
           }}
         >
-          {/* ── Structure tab ── */}
+          {/* Resources */}
+          {activeTab === 'resources' && resourcesMounted && project && (
+            <ResourcesCard
+              projectId={project.id}
+              projectName={project.name}
+              bare
+              variant="drawer"
+            />
+          )}
+
+          {/* Structure */}
           {activeTab === 'structure' && (
             loading ? (
               <BrandSpinner fullscreen={false} />
             ) : error ? (
-              <p className="structure-preview-status structure-preview-status-error">{error}</p>
+              <p className="text-destructive text-sm m-0">{error}</p>
             ) : sections.length === 0 ? (
-              <div className="structure-preview-empty">
+              <div className="flex flex-col items-center justify-center min-h-[240px] gap-2 text-muted-foreground text-center">
                 <IconLayoutList />
-                <p className="structure-preview-empty-title">No structure defined yet</p>
-                <p className="structure-preview-empty-hint">Open the project to add song structure</p>
+                <p className="text-sm text-muted-foreground m-0">No structure defined yet</p>
+                <p className="text-xs text-muted-foreground/70 m-0">Open the project to add song structure</p>
               </div>
             ) : (
-              <>
-                {versions.length > 1 && selectedVersion && (
-                  <div className="structure-preview-version-row" ref={versionMenuRef}>
-                    <button
-                      type="button"
-                      className="structure-preview-version-pill"
-                      onClick={() => setVersionMenuOpen(v => !v)}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <SectionLabel>VIEWING · {viewingLabel}</SectionLabel>
+                  {versions.length > 0 && (
+                    <select
+                      value={selectedVersionId ?? ''}
+                      onChange={e => handleVersionChange(e.target.value)}
                       disabled={versionLoading}
+                      className="bg-surface border border-border text-[10px] uppercase tracking-widest px-2 py-1 outline-none focus:border-ember max-w-[160px] truncate cursor-pointer disabled:opacity-50"
                     >
-                      Viewing: {selectedVersion.name}
-                      <IconChevronDown />
-                    </button>
-                    {versionMenuOpen && (
-                      <div className="structure-preview-version-menu">
-                        {versions.map(v => (
-                          <button
-                            key={v.id}
-                            type="button"
-                            className="structure-preview-version-option"
-                            data-active={v.id === selectedVersionId ? 'true' : 'false'}
-                            onClick={() => handleVersionChange(v.id)}
-                          >
-                            {v.name}
-                            {v.type === 'main' && (
-                              <span className="structure-preview-version-tag">main</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                      {versions.map(v => (
+                        <option key={v.id} value={v.id}>
+                          {v.name}{v.type === 'main' ? ' (main)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
 
-                <p className="structure-preview-summary">
-                  {sections.length} section{sections.length !== 1 ? 's' : ''}
-                  {' · '}
-                  {totalSectionBars} bar{totalSectionBars !== 1 ? 's' : ''}
-                </p>
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+                  {sections.length} SECTION{sections.length !== 1 ? 'S' : ''} · {totalSectionBars} BAR{totalSectionBars !== 1 ? 'S' : ''}
+                </div>
 
-                <div className="structure-preview-sections">
+                <div className="border border-border divide-y divide-border">
                   {sections.map(section => {
-                    const colors = SECTION_COLORS[section.type]
-                    const chords = section.chords?.trim()
-                      ? section.chords.trim().split(/\s+/).filter(Boolean)
-                      : []
+                    const startBar = section.start_bar + 1
+                    const endBar = section.end_bar
+                    const startTime = formatDuration(section.start_bar * barDurationMs)
 
                     return (
                       <div
                         key={section.id}
-                        className="structure-preview-section-card"
-                        style={{ borderLeftColor: section.color || colors.fg }}
+                        className="grid grid-cols-1 sm:grid-cols-[minmax(72px,88px)_1fr_auto] gap-1 sm:gap-3 items-start sm:items-center px-3 py-2.5 text-xs"
                       >
-                        <div className="structure-preview-section-top">
-                          <span
-                            className="structure-preview-section-type"
-                            style={{ background: colors.bg, color: colors.fg }}
-                          >
-                            {sectionLabel(section)}
-                          </span>
-                          <span className="structure-preview-section-range">
-                            Bars {section.start_bar + 1}—{section.end_bar}
-                            {' · '}
-                            {barTimeRange(section.start_bar, section.end_bar, barDurationMs)}
-                          </span>
-                        </div>
-
-                        {chords.length > 0 && (
-                          <div className="structure-preview-chords">
-                            <p className="structure-preview-chords-label">Chords</p>
-                            <div className="structure-preview-chord-pills">
-                              {chords.map((chord, i) => (
-                                <span key={`${section.id}-${i}`} className="structure-preview-chord-pill">
-                                  {chord}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        <span className="text-ember font-bold tracking-widest uppercase shrink-0">
+                          {sectionLabel(section).toUpperCase()}
+                        </span>
+                        <span className="text-muted-foreground font-mono truncate">
+                          {formatChords(section.chords)}
+                        </span>
+                        <span className="text-muted-foreground tabular-nums font-mono whitespace-nowrap sm:text-right">
+                          {startBar}–{endBar} · {startTime}
+                        </span>
                       </div>
                     )
                   })}
                 </div>
-              </>
+              </div>
             )
           )}
 
-          {/* ── Notes tab ── */}
+          {/* Notes */}
           {activeTab === 'notes' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div className="flex flex-col h-full min-h-[280px]">
               <textarea
                 value={notesContent}
                 onChange={e => handleNotesChange(e.target.value)}
                 placeholder="Project notes, ideas, references…"
-                style={{
-                  flex: 1,
-                  width: '100%',
-                  resize: 'none',
-                  fontSize: 13,
-                  lineHeight: 1.65,
-                  color: 'var(--text-sec)',
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  padding: 0,
-                  fontFamily: 'inherit',
-                  boxSizing: 'border-box',
-                  minHeight: 240,
-                }}
+                className="w-full flex-1 min-h-[240px] bg-surface border border-border p-3 text-sm text-foreground outline-none focus:border-ember resize-none leading-relaxed placeholder:text-muted-foreground/60"
               />
-              <p style={{ fontSize: 10, color: 'var(--text-dim)', textAlign: 'right', marginTop: 6, flexShrink: 0 }}>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground text-right mt-2 m-0">
                 {notesSaving ? 'Saving…' : notesContent ? 'Auto-saved' : ''}
               </p>
             </div>
           )}
-
-          {/* ── Resources tab ── */}
-          {/* Keep mounted once visited so switching away and back doesn't refetch */}
-          {resourcesMounted && project && (
-            <div style={{ display: activeTab === 'resources' ? 'block' : 'none' }}>
-              <ResourcesCard
-                projectId={project.id}
-                projectName={project.name}
-                bare={true}
-              />
-            </div>
-          )}
         </div>
+
+        {/* Footer */}
+        {projectId && (
+          <div className="shrink-0 border-t border-border p-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => router.push(`/band/${bandId}/project/${projectId}`)}
+              className="bg-ember text-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition"
+            >
+              Open Full Mixer ↗
+            </button>
+          </div>
+        )}
       </aside>
-    </>,
+    </div>,
     document.body
   )
 }

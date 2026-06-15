@@ -156,9 +156,10 @@ interface Props {
   isLast: boolean
   onUpdated: (resource: ProjectResource) => void
   onDeleted: (id: string) => void
+  variant?: 'default' | 'drawer'
 }
 
-export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDeleted }: Props) {
+export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDeleted, variant = 'default' }: Props) {
   const [renaming, setRenaming] = useState(false)
   const [nameInput, setNameInput] = useState(resource.title ?? resource.original_filename ?? '')
   const [saving, setSaving] = useState(false)
@@ -213,6 +214,57 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
     cursor: 'pointer',
     flexShrink: 0,
     transition: 'color 0.12s',
+  }
+
+  if (variant === 'drawer') {
+    const kind = (ext || 'file').slice(0, 4)
+    const meta = [
+      resource.author_username,
+      fmtRelative(resource.created_at),
+    ].filter(Boolean).join(' · ')
+
+    if (renaming) {
+      return (
+        <div className="px-3 py-2 flex items-center gap-2">
+          <input
+            autoFocus
+            type="text"
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') saveRename()
+              if (e.key === 'Escape') setRenaming(false)
+            }}
+            className="flex-1 min-w-0 bg-surface border border-ember px-2 py-1 text-xs outline-none"
+          />
+          <button type="button" onClick={saveRename} disabled={saving} className="text-ember text-xs bg-transparent border-0 cursor-pointer">Save</button>
+          <button type="button" onClick={() => setRenaming(false)} className="text-muted-foreground text-xs bg-transparent border-0 cursor-pointer">✕</button>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex items-center gap-2 sm:gap-3 px-3 py-2 text-xs hover:bg-surface transition-colors min-w-0">
+        <span className="text-[9px] font-bold tracking-widest text-ember uppercase w-8 sm:w-10 shrink-0">{kind}</span>
+        <span className="flex-1 truncate min-w-0" title={displayName}>{displayName}</span>
+        <span className="text-muted-foreground shrink-0 tabular-nums hidden xs:inline">{size}</span>
+        {meta && <span className="text-muted-foreground shrink-0 truncate max-w-[88px] hidden md:inline">{meta}</span>}
+        <button type="button" onClick={handleDownload} title="Download" className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
+          <IconDownload size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => { setNameInput(resource.title ?? resource.original_filename ?? ''); setRenaming(true) }}
+          title="Rename"
+          className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5"
+        >
+          <IconPencil size={12} />
+        </button>
+        <button type="button" onClick={handleDelete} title="Delete" className="shrink-0 text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
+          <IconTrash size={12} />
+        </button>
+      </div>
+    )
   }
 
   return (

@@ -1,5 +1,7 @@
 'use client'
 
+import { Spinner } from '@/components/ui/Spinner'
+
 export function BrandSpinner({
   fullscreen = true,
   label = 'Loading',
@@ -14,12 +16,7 @@ export function BrandSpinner({
       aria-live="polite"
       aria-label={label}
     >
-      <div className="brand-spinner">
-        <svg className="brand-spinner-svg" viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">
-          <circle className="brand-spinner-track" cx="22" cy="22" r="17" />
-          <circle className="brand-spinner-arc" cx="22" cy="22" r="17" />
-        </svg>
-      </div>
+      <Spinner size={40} label={fullscreen ? undefined : label} />
     </div>
   )
 }

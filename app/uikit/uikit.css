@@ -1,0 +1,589 @@
+/* ─── Trackbase UI Kit styles ───────────────────────────────────────────────
+   Imported only in app/uikit — does NOT modify globals.css.
+   All Tailwind-specific directives (@theme inline, @utility) have been
+   replaced with plain CSS so the file works WITHOUT being part of the
+   Tailwind entry-point (globals.css).
+──────────────────────────────────────────────────────────────────────────── */
+/* Fonts are loaded via next/font in app/uikit/layout.tsx (--tb-font-display, --tb-font-mono) */
+
+/* Isolate uikit from app-wide Inter on <body> */
+.tb-uikit-root {
+  font-family: var(--tb-font-mono);
+  font-synthesis: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEME VARIABLES — scoped to .tb-kit wrapper
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── ember-dark (default) ─── */
+.tb-kit {
+  --radius: 0.125rem;
+  --background:             oklch(0.13 0 0);
+  --foreground:             oklch(0.93 0 0);
+  --surface:                oklch(0.16 0 0);
+  --surface-2:              oklch(0.19 0 0);
+  --card:                   oklch(0.16 0 0);
+  --card-foreground:        oklch(0.93 0 0);
+  --popover:                oklch(0.16 0 0);
+  --popover-foreground:     oklch(0.93 0 0);
+  --primary:                oklch(0.68 0.22 35);
+  --primary-foreground:     oklch(0.98 0 0);
+  --secondary:              oklch(0.22 0 0);
+  --secondary-foreground:   oklch(0.93 0 0);
+  --muted:                  oklch(0.22 0 0);
+  --muted-foreground:       oklch(0.58 0 0);
+  --accent:                 oklch(0.68 0.22 35);
+  --accent-foreground:      oklch(0.98 0 0);
+  --ember:                  oklch(0.68 0.22 35);
+  --ember-soft:             oklch(0.68 0.22 35 / 0.12);
+  --destructive:            oklch(0.62 0.22 22);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border:                 oklch(0.26 0 0);
+  --grid:                   oklch(0.22 0 0);
+  --input:                  oklch(0.22 0 0);
+  --ring:                   oklch(0.68 0.22 35);
+  --chart-1:                oklch(0.68 0.22 35);
+  --chart-2:                oklch(0.78 0.18 145);
+  --chart-3:                oklch(0.72 0.16 240);
+  --chart-4:                oklch(0.80 0.18 90);
+  --chart-5:                oklch(0.68 0.20 320);
+  --online:                 oklch(0.78 0.18 145);
+
+  /* Base styles */
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: var(--tb-font-mono);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+  font-synthesis: none;
+}
+
+/* ─── ember-light ─── */
+.tb-kit[data-theme="ember-light"] {
+  --background:             oklch(0.97 0 0);
+  --foreground:             oklch(0.16 0 0);
+  --surface:                oklch(1 0 0);
+  --surface-2:              oklch(0.94 0 0);
+  --card:                   oklch(1 0 0);
+  --card-foreground:        oklch(0.16 0 0);
+  --popover:                oklch(1 0 0);
+  --popover-foreground:     oklch(0.16 0 0);
+  --primary:                oklch(0.62 0.22 32);
+  --primary-foreground:     oklch(0.99 0 0);
+  --secondary:              oklch(0.92 0 0);
+  --secondary-foreground:   oklch(0.16 0 0);
+  --muted:                  oklch(0.92 0 0);
+  --muted-foreground:       oklch(0.42 0 0);
+  --accent:                 oklch(0.62 0.22 32);
+  --accent-foreground:      oklch(0.99 0 0);
+  --ember:                  oklch(0.62 0.22 32);
+  --ember-soft:             oklch(0.62 0.22 32 / 0.1);
+  --destructive:            oklch(0.55 0.22 22);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border:                 oklch(0.85 0 0);
+  --grid:                   oklch(0.90 0 0);
+  --input:                  oklch(0.90 0 0);
+  --ring:                   oklch(0.62 0.22 32);
+  --chart-1:                oklch(0.62 0.22 32);
+  --chart-2:                oklch(0.68 0.18 145);
+  --chart-3:                oklch(0.60 0.16 240);
+  --chart-4:                oklch(0.70 0.18 90);
+  --chart-5:                oklch(0.58 0.20 320);
+  --online:                 oklch(0.62 0.18 145);
+}
+
+/* ─── studio-dark ─── */
+.tb-kit[data-theme="studio-dark"] {
+  --background:             oklch(0.19 0.012 250);
+  --foreground:             oklch(0.92 0.005 250);
+  --surface:                oklch(0.22 0.014 250);
+  --surface-2:              oklch(0.26 0.016 250);
+  --card:                   oklch(0.22 0.014 250);
+  --card-foreground:        oklch(0.92 0.005 250);
+  --popover:                oklch(0.22 0.014 250);
+  --popover-foreground:     oklch(0.92 0.005 250);
+  --primary:                oklch(0.74 0.13 200);
+  --primary-foreground:     oklch(0.14 0.02 250);
+  --secondary:              oklch(0.28 0.014 250);
+  --secondary-foreground:   oklch(0.92 0.005 250);
+  --muted:                  oklch(0.28 0.014 250);
+  --muted-foreground:       oklch(0.66 0.012 250);
+  --accent:                 oklch(0.74 0.13 200);
+  --accent-foreground:      oklch(0.14 0.02 250);
+  --ember:                  oklch(0.74 0.13 200);
+  --ember-soft:             oklch(0.74 0.13 200 / 0.14);
+  --destructive:            oklch(0.62 0.18 22);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border:                 oklch(0.30 0.014 250);
+  --grid:                   oklch(0.26 0.014 250);
+  --input:                  oklch(0.28 0.014 250);
+  --ring:                   oklch(0.74 0.13 200);
+  --chart-1:                oklch(0.74 0.13 200);
+  --chart-2:                oklch(0.78 0.18 145);
+  --chart-3:                oklch(0.72 0.16 240);
+  --chart-4:                oklch(0.80 0.18 90);
+  --chart-5:                oklch(0.68 0.20 320);
+  --online:                 oklch(0.78 0.18 145);
+}
+
+/* ─── studio-light ─── */
+.tb-kit[data-theme="studio-light"] {
+  --background:             oklch(0.985 0.003 80);
+  --foreground:             oklch(0.22 0.01 260);
+  --surface:                oklch(1 0 0);
+  --surface-2:              oklch(0.95 0.004 80);
+  --card:                   oklch(1 0 0);
+  --card-foreground:        oklch(0.22 0.01 260);
+  --popover:                oklch(1 0 0);
+  --popover-foreground:     oklch(0.22 0.01 260);
+  --primary:                oklch(0.52 0.13 265);
+  --primary-foreground:     oklch(0.99 0 0);
+  --secondary:              oklch(0.94 0.005 80);
+  --secondary-foreground:   oklch(0.22 0.01 260);
+  --muted:                  oklch(0.94 0.005 80);
+  --muted-foreground:       oklch(0.46 0.01 260);
+  --accent:                 oklch(0.52 0.13 265);
+  --accent-foreground:      oklch(0.99 0 0);
+  --ember:                  oklch(0.52 0.13 265);
+  --ember-soft:             oklch(0.52 0.13 265 / 0.10);
+  --destructive:            oklch(0.55 0.22 22);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border:                 oklch(0.88 0.005 80);
+  --grid:                   oklch(0.92 0.005 80);
+  --input:                  oklch(0.92 0.005 80);
+  --ring:                   oklch(0.52 0.13 265);
+  --chart-1:                oklch(0.52 0.13 265);
+  --chart-2:                oklch(0.58 0.18 145);
+  --chart-3:                oklch(0.55 0.16 240);
+  --chart-4:                oklch(0.60 0.18 90);
+  --chart-5:                oklch(0.52 0.20 320);
+  --online:                 oklch(0.55 0.18 145);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE RESET inside .tb-kit
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.tb-kit *,
+.tb-kit *::before,
+.tb-kit *::after {
+  border-color: var(--border);
+  box-sizing: border-box;
+}
+
+.tb-kit h1,
+.tb-kit h2,
+.tb-kit h3,
+.tb-kit h4,
+.tb-kit h5,
+.tb-kit h6 {
+  font-family: var(--tb-font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+/* Mono everywhere except explicit display roles */
+.tb-kit p,
+.tb-kit li,
+.tb-kit label,
+.tb-kit td,
+.tb-kit th,
+.tb-kit button,
+.tb-kit input,
+.tb-kit textarea,
+.tb-kit select {
+  font-family: inherit;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FONT UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.tb-kit .font-display {
+  font-family: var(--tb-font-display);
+}
+
+.font-display {
+  font-family: var(--tb-font-display);
+}
+
+/* Override Tailwind's default font-mono to use JetBrains Mono on this page */
+.tb-kit .font-mono {
+  font-family: var(--tb-font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY SCALE — matches brandbook specs (not default Tailwind metrics)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.tb-kit .tb-type-display-xl {
+  font-family: var(--tb-font-display);
+  font-size: 4.5rem;
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-display-l {
+  font-family: var(--tb-font-display);
+  font-size: 3rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-display-m {
+  font-family: var(--tb-font-display);
+  font-size: 1.875rem;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  font-weight: 400;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-body-l {
+  font-family: var(--tb-font-mono);
+  font-size: 1rem;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-body-m {
+  font-family: var(--tb-font-mono);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-meta {
+  font-family: var(--tb-font-mono);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.tb-kit .tb-type-mono-numeric {
+  font-family: var(--tb-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.125rem;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+/* Hero + section display typography */
+.tb-kit .tb-hero-title {
+  font-family: var(--tb-font-display);
+  font-size: 3rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--foreground);
+  margin-top: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .tb-kit .tb-hero-title {
+    font-size: 3.75rem;
+  }
+}
+
+.tb-kit .tb-hero-title-brand {
+  font-weight: 700;
+}
+
+.tb-kit .tb-hero-title-accent {
+  font-weight: 400;
+  color: var(--ember);
+}
+
+.tb-kit .tb-hero-lead {
+  font-family: var(--tb-font-mono);
+  font-size: 0.875rem;
+  line-height: 1.625;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-top: 1rem;
+  max-width: 36rem;
+}
+
+.tb-kit .tb-section-title {
+  font-family: var(--tb-font-display);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  font-weight: 400;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-family-display {
+  font-family: var(--tb-font-display);
+  font-size: 3rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  font-weight: 400;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-family-mono {
+  font-family: var(--tb-font-mono);
+  font-size: 2.25rem;
+  line-height: 1.1;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.tb-kit .tb-type-spec-label {
+  font-family: var(--tb-font-mono);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.tb-kit .tb-type-spec-label strong {
+  display: block;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.tb-kit .tb-type-spec-meta {
+  font-family: var(--tb-font-mono);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  font-weight: 400;
+  margin-top: 0.25rem;
+  color: var(--muted-foreground);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPONENT HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.tb-kit .divide-y > :not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.tb-kit .tb-accordion-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease-out;
+}
+
+.tb-kit .tb-accordion-panel[data-state="open"] {
+  grid-template-rows: 1fr;
+}
+
+.tb-kit .tb-accordion-panel-inner {
+  overflow: hidden;
+}
+
+@keyframes tb-accordion-down {
+  from { height: 0; }
+  to { height: var(--tb-accordion-height, auto); }
+}
+
+@keyframes tb-accordion-up {
+  from { height: var(--tb-accordion-height, auto); }
+  to { height: 0; }
+}
+
+.tb-kit .animate-accordion-down {
+  animation: tb-accordion-down 0.2s ease-out;
+}
+
+.tb-kit .animate-accordion-up {
+  animation: tb-accordion-up 0.2s ease-out;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COLOR UTILITIES — explicit CSS (replaces @theme inline)
+   All use CSS variables that resolve within .tb-kit
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Ember */
+.text-ember   { color: var(--ember); }
+.bg-ember     { background-color: var(--ember); }
+.border-ember { border-color: var(--ember); }
+.bg-ember\/80  { background-color: color-mix(in srgb, var(--ember) 80%, transparent); }
+.bg-ember\/40  { background-color: color-mix(in srgb, var(--ember) 40%, transparent); }
+.bg-ember\/15  { background-color: color-mix(in srgb, var(--ember) 15%, transparent); }
+.bg-ember\/10  { background-color: color-mix(in srgb, var(--ember) 10%, transparent); }
+.border-ember\/40 { border-color: color-mix(in srgb, var(--ember) 40%, transparent); }
+.border-ember\/30 { border-color: color-mix(in srgb, var(--ember) 30%, transparent); }
+
+/* Ember-soft */
+.bg-ember-soft     { background-color: var(--ember-soft); }
+.bg-ember-soft\/40 { background-color: color-mix(in srgb, var(--ember-soft) 40%, transparent); }
+.text-ember-soft   { color: var(--ember-soft); }
+.border-ember-soft { border-color: var(--ember-soft); }
+
+/* Background */
+.bg-background     { background-color: var(--background); }
+.bg-background\/85 { background-color: color-mix(in srgb, var(--background) 85%, transparent); }
+.bg-background\/95 { background-color: color-mix(in srgb, var(--background) 95%, transparent); }
+.text-background   { color: var(--background); }
+
+/* Foreground */
+.text-foreground   { color: var(--foreground); }
+.bg-foreground     { background-color: var(--foreground); }
+
+/* Surface */
+.bg-surface        { background-color: var(--surface); }
+.bg-surface\/30    { background-color: color-mix(in srgb, var(--surface) 30%, transparent); }
+.bg-surface\/40    { background-color: color-mix(in srgb, var(--surface) 40%, transparent); }
+.text-surface      { color: var(--surface); }
+.bg-surface-2      { background-color: var(--surface-2); }
+.text-surface-2    { color: var(--surface-2); }
+
+/* Muted */
+.bg-muted              { background-color: var(--muted); }
+.bg-muted\/50          { background-color: color-mix(in srgb, var(--muted) 50%, transparent); }
+.text-muted            { color: var(--muted); }
+.text-muted-foreground { color: var(--muted-foreground); }
+
+/* Primary */
+.bg-primary           { background-color: var(--primary); }
+.bg-primary\/10       { background-color: color-mix(in srgb, var(--primary) 10%, transparent); }
+.bg-primary\/90       { background-color: color-mix(in srgb, var(--primary) 90%, transparent); }
+.text-primary         { color: var(--primary); }
+.text-primary-foreground { color: var(--primary-foreground); }
+.border-primary       { border-color: var(--primary); }
+
+/* Secondary */
+.bg-secondary             { background-color: var(--secondary); }
+.bg-secondary\/80         { background-color: color-mix(in srgb, var(--secondary) 80%, transparent); }
+.text-secondary           { color: var(--secondary); }
+.text-secondary-foreground { color: var(--secondary-foreground); }
+
+/* Card */
+.bg-card           { background-color: var(--card); }
+.text-card-foreground { color: var(--card-foreground); }
+
+/* Popover */
+.bg-popover           { background-color: var(--popover); }
+.text-popover-foreground { color: var(--popover-foreground); }
+
+/* Accent */
+.bg-accent            { background-color: var(--accent); }
+.text-accent          { color: var(--accent); }
+.text-accent-foreground { color: var(--accent-foreground); }
+.hover\:bg-accent:hover { background-color: var(--accent); }
+.hover\:text-accent-foreground:hover { color: var(--accent-foreground); }
+
+/* Destructive */
+.bg-destructive              { background-color: var(--destructive); }
+.bg-destructive\/90          { background-color: color-mix(in srgb, var(--destructive) 90%, transparent); }
+.text-destructive            { color: var(--destructive); }
+.text-destructive-foreground { color: var(--destructive-foreground); }
+.border-destructive          { border-color: var(--destructive); }
+.border-destructive\/50      { border-color: color-mix(in srgb, var(--destructive) 50%, transparent); }
+
+/* Border */
+.border-border      { border-color: var(--border); }
+.border-border\/40  { border-color: color-mix(in srgb, var(--border) 40%, transparent); }
+.border-input       { border-color: var(--input); }
+
+/* Ring */
+.ring-ring          { --tw-ring-color: var(--ring); }
+
+/* Chart colors */
+.bg-chart-1  { background-color: var(--chart-1); }
+.bg-chart-2  { background-color: var(--chart-2); }
+.bg-chart-3  { background-color: var(--chart-3); }
+.bg-chart-4  { background-color: var(--chart-4); }
+.bg-chart-5  { background-color: var(--chart-5); }
+.text-chart-1 { color: var(--chart-1); }
+.text-chart-2 { color: var(--chart-2); }
+.text-chart-3 { color: var(--chart-3); }
+.text-chart-4 { color: var(--chart-4); }
+.text-chart-5 { color: var(--chart-5); }
+.border-chart-2       { border-color: var(--chart-2); }
+.border-chart-2\/40   { border-color: color-mix(in srgb, var(--chart-2) 40%, transparent); }
+.bg-chart-2\/15       { background-color: color-mix(in srgb, var(--chart-2) 15%, transparent); }
+.border-chart-3\/40   { border-color: color-mix(in srgb, var(--chart-3) 40%, transparent); }
+.bg-chart-3\/15       { background-color: color-mix(in srgb, var(--chart-3) 15%, transparent); }
+.border-chart-4\/40   { border-color: color-mix(in srgb, var(--chart-4) 40%, transparent); }
+.bg-chart-4\/15       { background-color: color-mix(in srgb, var(--chart-4) 15%, transparent); }
+
+/* Online / live status */
+.bg-online        { background-color: var(--online); }
+.text-online      { color: var(--online); }
+.bg-online\/10    { background-color: color-mix(in srgb, var(--online) 10%, transparent); }
+.border-online    { border-color: var(--online); }
+.border-online\/40 { border-color: color-mix(in srgb, var(--online) 40%, transparent); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRID BACKGROUNDS (replaces @utility)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.grid-bg {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.grid-bg-sm {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS (replaces @utility + @keyframes)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes tb-slide-in {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes tb-draw-wave {
+  from { transform: scaleY(0.1); opacity: 0; }
+  to   { transform: scaleY(1);   opacity: 1; }
+}
+@keyframes tb-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+@keyframes tb-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.animate-slide-in  { animation: tb-slide-in  0.6s cubic-bezier(0.32, 0.72, 0, 1) both; }
+.animate-draw-wave { animation: tb-draw-wave 0.7s cubic-bezier(0.32, 0.72, 0, 1) both; transform-origin: center; }
+.animate-pulse-dot { animation: tb-pulse-dot 1.6s ease-in-out infinite; }
+.animate-marquee   { animation: tb-marquee 30s linear infinite; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Reading mode bottom bar phone tilt (also used in mixer page)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.rm-rotate-icon {
+  display: inline-flex;
+  animation: rm-phone-tilt 2.4s ease-in-out infinite;
+}
+@keyframes rm-phone-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  35%       { transform: rotate(90deg); }
+  65%       { transform: rotate(90deg); }
+}
