@@ -1,6 +1,6 @@
 import { getContext, start, ToneAudioBuffer } from 'tone'
 import type { Track } from '@/lib/types'
-import { audioArrayBufferCache } from '@/lib/waveformCache'
+import { fetchTrackAudioBuffer } from '@/lib/waveformCache'
 
 function barDurationSec(bpm: number, timeSignature: string): number {
   const beatsPerBar = parseInt(timeSignature.split('/')[0], 10) || 4
@@ -15,15 +15,10 @@ async function decodeTrackMono(
 ): Promise<Float32Array | null> {
   if (track.file_type === 'midi') return null
 
-  let ab = audioArrayBufferCache.get(track.id)
-  if (!ab) {
-    const res = await fetch(`/api/tracks/${track.id}/stream`)
-    if (!res.ok) return null
-    ab = await res.arrayBuffer()
-    audioArrayBufferCache.set(track.id, ab.slice(0))
-  }
+  const ab = await fetchTrackAudioBuffer(track.id)
+  if (!ab) return null
 
-  const decoded = await ctx.decodeAudioData(ab.slice(0))
+  const decoded = await ctx.decodeAudioData(ab)
   if (decoded.numberOfChannels === 1) return decoded.getChannelData(0).slice()
 
   const mix = new Float32Array(decoded.length)

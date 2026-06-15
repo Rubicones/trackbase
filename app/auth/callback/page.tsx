@@ -3,6 +3,10 @@
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { AuthShell } from '@/components/auth/AuthShell'
+import { Spinner } from '@/components/ui/Spinner'
+
+const NEXT_STORAGE_KEY = 'tb-auth-next'
 
 export default function AuthCallbackPage() {
   const router = useRouter()
@@ -14,12 +18,22 @@ export default function AuthCallbackPage() {
 
     const supabase = getSupabaseClient()
 
+    function readNext(): string {
+      try {
+        const stored = sessionStorage.getItem(NEXT_STORAGE_KEY)
+        if (stored) {
+          sessionStorage.removeItem(NEXT_STORAGE_KEY)
+          return stored
+        }
+      } catch {
+        /* noop */
+      }
+      return '/dashboard'
+    }
+
     async function resolveDestination(userId: string, accessToken: string, expiresIn: number) {
-      // Set the auth cookie so middleware can read it immediately after redirect
       document.cookie = `sb-at=${accessToken}; path=/; max-age=${expiresIn}; SameSite=Lax`
 
-      // Check the profiles table — user_metadata.username may lag behind (cache),
-      // but the DB is always authoritative.
       const { data: profile } = await supabase
         .from('profiles')
         .select('username')
@@ -27,14 +41,12 @@ export default function AuthCallbackPage() {
         .maybeSingle()
 
       if (profile?.username) {
-        router.replace('/dashboard')
+        router.replace(readNext())
       } else {
         router.replace('/onboarding')
       }
     }
 
-    // detectSessionInUrl: true on the browser client auto-exchanges the PKCE
-    // code.  Wait for the SIGNED_IN event to get the fresh session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event !== 'SIGNED_IN' || !session) return
@@ -47,8 +59,6 @@ export default function AuthCallbackPage() {
       }
     )
 
-    // Fallback: if the session is already in memory (e.g. user opened the link
-    // in a tab where they were already signed in), onAuthStateChange won't fire.
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) return
       subscription.unsubscribe()
@@ -63,43 +73,18 @@ export default function AuthCallbackPage() {
   }, [router])
 
   return (
-    <main className="auth-shell">
-      <div style={styles.card}>
-        <Spinner />
-        <p style={styles.text}>Signing you in…</p>
+    <AuthShell>
+      <div className="flex flex-col items-center gap-4 animate-slide-in">
+        <Spinner size={32} />
+        <div className="text-center">
+          <p className="m-0 font-display text-sm uppercase tracking-tight text-foreground">
+            Signing you in
+          </p>
+          <p className="m-0 mt-1 text-[10px] uppercase tracking-widest text-muted-foreground">
+            Verifying your session…
+          </p>
+        </div>
       </div>
-    </main>
+    </AuthShell>
   )
-}
-
-function Spinner() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none"
-      style={{ animation: 'spin 0.8s linear infinite' }}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-      <circle cx="14" cy="14" r="11" stroke="var(--border)" strokeWidth="2" />
-      <path d="M14 3a11 11 0 0 1 11 11" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  main: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'var(--bg)',
-  },
-  card: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '1rem',
-  },
-  text: {
-    fontSize: '0.9375rem',
-    color: 'var(--text-muted)',
-    margin: 0,
-  },
 }

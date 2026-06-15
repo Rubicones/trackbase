@@ -14,6 +14,7 @@ import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
+import { Toast } from '@/components/design/Toast'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1762,22 +1763,7 @@ export default function ProjectPage() {
       )}
 
       {/* Toast */}
-      {toast && createPortal(
-        <div
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9000] px-4 py-2.5 rounded-xl text-[12px] font-medium flex items-center gap-2 pointer-events-none"
-          style={{
-            background: 'var(--bg-card)',
-            border: '0.5px solid var(--border-light)',
-            color: 'var(--text-soft)',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
-            animation: 'toast-in 0.2s ease',
-          }}
-        >
-          <span style={{ color: 'var(--green)' }}>✓</span>
-          {toast}
-        </div>,
-        document.body
-      )}
+      {toast && <Toast message={toast} />}
     </div>
   )
 }

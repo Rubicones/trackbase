@@ -608,7 +608,7 @@ export default function StructureOverlay({
   sections, onSectionsChange,
   editMode, onEditModeChange,
   waveformBounds, currentTimeMs = 0,
-  onSeek,
+  onSeek, compact = false,
 }: {
   project: Project
   versionId: string
@@ -621,6 +621,8 @@ export default function StructureOverlay({
   waveformBounds: { left: number; right: number } | null
   currentTimeMs?: number
   onSeek: (t: number) => void
+  /** Mobile landscape — shorter rows, sparse tact labels, no chords/edit UI */
+  compact?: boolean
 }) {
   const [timeSignature, setTimeSignature] = useState(project.time_signature ?? '4/4')
   const [selMode, setSelMode] = useState<SelMode>('idle')
@@ -679,10 +681,11 @@ export default function StructureOverlay({
   const wl = waveformBounds?.left ?? 228
   const wr = waveformBounds?.right ?? 68
 
-  const RULER_H = 40
-  const RIBBON_H = 56
+  const RULER_H = compact ? 22 : 40
+  const RIBBON_H = compact ? 24 : 56
   const tactCount = Math.ceil(totalBars / BARS_PER_TACT)
-  const showBarGrid = totalBars <= 160
+  const showBarGrid = !compact && totalBars <= 160
+  const showTactLabel = (tactIndex: number) => compact ? tactIndex % 2 === 0 : true
 
   const activeSection = activeEdit
     ? sections.find(s => s.id === activeEdit.sectionId)
@@ -800,6 +803,31 @@ export default function StructureOverlay({
     window.addEventListener('mouseup', onUp)
   }
 
+  function seekFromTimelineEl(clientX: number, el: HTMLElement) {
+    if (totalDurationMs <= 0) return
+    const rect = el.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    onSeek((ratio * totalDurationMs) / 1000)
+  }
+
+  function attachTimelineScrub(el: HTMLElement, clientX: number) {
+    seekFromTimelineEl(clientX, el)
+    function onMove(ev: MouseEvent) { seekFromTimelineEl(ev.clientX, el) }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  function handleRulerMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (totalDurationMs <= 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    attachTimelineScrub(e.currentTarget, e.clientX)
+  }
+
   function handleStripMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (selMode === 'naming' || resizeDragRef.current) return
     e.preventDefault()
@@ -809,7 +837,7 @@ export default function StructureOverlay({
 
     // View mode — click anywhere on the strip to seek
     if (!editMode) {
-      if (totalDurationMs > 0) onSeek((ratio * totalDurationMs) / 1000)
+      attachTimelineScrub(e.currentTarget, e.clientX)
       return
     }
 
@@ -1063,7 +1091,7 @@ export default function StructureOverlay({
     <>
       <div className="bg-surface border-b border-border shrink-0 select-none">
 
-        {editMode && (
+        {editMode && !compact && (
           <div className="flex items-center gap-2 h-[34px] px-3 border-b border-border bg-surface/40">
             <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />
             <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Structure</span>
@@ -1106,23 +1134,25 @@ export default function StructureOverlay({
           {/* Label column */}
           <div style={{ width: wl }} className="shrink-0 border-r border-border flex flex-col bg-surface/40">
             <div
-              className="border-b border-border px-3 flex flex-col justify-between text-[9px] uppercase font-bold tracking-widest text-muted-foreground"
+              className={`border-b border-border px-3 flex items-center text-[9px] uppercase font-bold tracking-widest text-muted-foreground ${compact ? '' : 'flex-col justify-between'}`}
               style={{ height: RULER_H }}
             >
-              <span className="pt-2">CHANNEL</span>
-              <span className="pb-1.5 normal-case tracking-normal font-mono text-foreground/60 font-normal">
-                {totalBars} bars · {timeSignature}
-              </span>
+              <span className={compact ? '' : 'pt-2'}>CHANNEL</span>
+              {!compact && (
+                <span className="pb-1.5 normal-case tracking-normal font-mono text-foreground/60 font-normal">
+                  {totalBars} bars · {timeSignature}
+                </span>
+              )}
             </div>
             <div
-              className={`px-3 flex flex-col justify-center gap-0.5 ${editMode ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
+              className={`px-3 flex items-center ${compact ? '' : 'flex-col justify-center gap-0.5'} ${editMode && !compact ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
               style={{ height: RIBBON_H }}
             >
               <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-ember">
-                {editMode && <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />}
+                {editMode && !compact && <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />}
                 STRUCTURE
               </div>
-              {editMode && (
+              {editMode && !compact && (
                 <span className="text-[8px] normal-case tracking-normal font-mono text-muted-foreground">
                   drag edges · click to add
                 </span>
@@ -1139,19 +1169,22 @@ export default function StructureOverlay({
               />
             )}
 
-            {/* Tacts row */}
+            {/* Tacts row — click/drag to seek */}
             <div
-              className="relative border-b border-border bg-surface/40 overflow-hidden select-none shrink-0"
+              onMouseDown={handleRulerMouseDown}
+              className="relative border-b border-border bg-surface/40 overflow-hidden select-none shrink-0 cursor-pointer hover:bg-surface/60 transition-colors"
               style={{ height: RULER_H }}
+              title="Click or drag to seek"
             >
               {Array.from({ length: tactCount }, (_, i) => {
+                if (!showTactLabel(i)) return null
                 const bar = i * BARS_PER_TACT
                 const barNum = bar + 1
-                const heavy = i % 4 === 0
+                const heavy = compact ? true : i % 4 === 0
                 return (
                   <span
                     key={`tact-num-${i}`}
-                    className={`absolute top-1 text-[9px] tabular-nums font-mono pointer-events-none ${
+                    className={`absolute top-0.5 text-[9px] tabular-nums font-mono pointer-events-none ${
                       heavy ? 'text-foreground font-medium' : 'text-muted-foreground/80'
                     }`}
                     style={{ left: `${tp(bar) * 100}%`, paddingLeft: i === 0 ? 2 : 4 }}
@@ -1211,15 +1244,15 @@ export default function StructureOverlay({
                   <div
                     key={s.id}
                     data-structure-section
-                    onMouseEnter={e => {
+                    onMouseEnter={compact ? undefined : e => {
                       if (s.chords?.trim() && !isActive) {
                         setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
                       }
                     }}
-                    onMouseLeave={() => setHoveredChords(null)}
-                    className={`absolute inset-y-0 flex flex-col items-start justify-start pt-1.5 px-2 overflow-hidden transition-[filter] ${
-                      editMode ? 'cursor-pointer hover:brightness-[1.03]' : 'cursor-inherit'
-                    } ${isActive ? 'z-[8]' : 'z-[6]'}`}
+                    onMouseLeave={compact ? undefined : () => setHoveredChords(null)}
+                    className={`absolute inset-y-0 flex flex-col items-start justify-center px-2 overflow-hidden transition-[filter] ${
+                      compact ? 'py-0' : 'justify-start pt-1.5'
+                    } ${editMode && !compact ? 'cursor-pointer hover:brightness-[1.03]' : 'cursor-inherit'} ${isActive ? 'z-[8]' : 'z-[6]'}`}
                     style={{
                       left: `${tp(s.start_bar) * 100}%`,
                       width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
@@ -1230,13 +1263,15 @@ export default function StructureOverlay({
                       background: `color-mix(in oklab, ${accent} 12%, transparent)`,
                     }}
                   >
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-ember truncate leading-tight pointer-events-none w-full">
+                    <span className={`font-bold uppercase tracking-widest text-ember truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
                       {sectionLabel(s)}
                     </span>
-                    <span className="text-[9px] font-mono text-foreground/75 truncate leading-tight pointer-events-none w-full mt-0.5">
-                      {s.chords?.replace(/\n/g, ' ').slice(0, 48) || (editMode ? '+ chords' : '\u00a0')}
-                    </span>
-                    {editMode && (
+                    {!compact && (
+                      <span className="text-[9px] font-mono text-foreground/75 truncate leading-tight pointer-events-none w-full mt-0.5">
+                        {s.chords?.replace(/\n/g, ' ').slice(0, 48) || (editMode ? '+ chords' : '\u00a0')}
+                      </span>
+                    )}
+                    {editMode && !compact && (
                       <>
                         <div
                           onMouseDown={e => beginResize(e, s.id, 'start')}
@@ -1254,7 +1289,7 @@ export default function StructureOverlay({
                 )
               })}
 
-              {editMode && selStart !== null && (
+              {editMode && !compact && selStart !== null && (
                 <div
                   className="absolute top-0 bottom-0 pointer-events-none border-x border-foreground/35 bg-foreground/[0.04]"
                   style={{
@@ -1266,7 +1301,7 @@ export default function StructureOverlay({
                 />
               )}
 
-              {editMode && sections.length === 0 && selMode === 'idle' && (
+              {editMode && !compact && sections.length === 0 && selMode === 'idle' && (
                 <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted-foreground pointer-events-none">
                   click to place first section
                 </div>
@@ -1280,7 +1315,7 @@ export default function StructureOverlay({
       </div>
 
       {/* Name picker portal */}
-      {selMode === 'naming' && selStart !== null && selEnd !== null && (
+      {!compact && selMode === 'naming' && selStart !== null && selEnd !== null && (
         <NamePickerPortal
           selectionStart={selStart}
           selectionEnd={selEnd}
@@ -1295,7 +1330,7 @@ export default function StructureOverlay({
       )}
 
       {/* Section edit popover */}
-      {activeSection && activeEdit && (
+      {!compact && activeSection && activeEdit && (
         <SectionEditPopover
           section={activeSection}
           cellPos={activeEdit.cellPos}
@@ -1313,7 +1348,7 @@ export default function StructureOverlay({
       )}
 
       {/* Chords hover tooltip */}
-      {hoveredChords && (
+      {!compact && hoveredChords && (
         <ChordsTooltip section={hoveredChords.section} rect={hoveredChords.rect} />
       )}
     </>

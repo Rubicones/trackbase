@@ -580,10 +580,10 @@
 
 .rm-rotate-icon {
   display: inline-flex;
-  animation: rm-phone-tilt 2.4s ease-in-out infinite;
+  transform: rotate(90deg);
+  animation: rm-phone-tilt 1.2s ease-in-out 1 forwards;
 }
 @keyframes rm-phone-tilt {
-  0%, 100% { transform: rotate(0deg); }
-  35%       { transform: rotate(90deg); }
-  65%       { transform: rotate(90deg); }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(90deg); }
 }

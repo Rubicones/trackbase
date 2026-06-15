@@ -76,9 +76,32 @@ const ALL_STEPS: TourStep[] = [
   },
 ]
 
-const CARD_W = 320
+const CARD_W = 340
 const CARD_PADDING = 8   // breathing room around the spotlight element
 const CARD_GAP = 14      // gap between spotlight and card
+
+// ─── UI primitives (uikit / auth patterns) ────────────────────────────────────
+
+function TourBtn({
+  children,
+  variant = 'ghost',
+  className = '',
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'ghost' | 'primary' | 'link'
+}) {
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center justify-center'
+  const styles = {
+    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
+    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110 active:scale-[0.99]',
+    link: 'text-muted-foreground hover:text-ember bg-transparent border-0 px-2 py-1',
+  }
+  return (
+    <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
+      {children}
+    </button>
+  )
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -117,7 +140,6 @@ function computeCardPlacement(
   } else if (spaceLeft >= CARD_W + CARD_GAP) {
     placement = 'left'
   } else {
-    // Default to below even if cramped
     placement = 'below'
   }
 
@@ -143,7 +165,6 @@ function computeCardPlacement(
       break
   }
 
-  // Clamp to viewport
   top = Math.max(8, Math.min(vh - cardEstimatedH - 8, top))
   left = Math.max(8, Math.min(vw - CARD_W - 8, left))
 
@@ -154,14 +175,12 @@ function computeCardPlacement(
 
 interface ProjectTourProps {
   projectName: string
-  /** Tour is displayed when true */
   show: boolean
   onFinish: () => void
   onSkip: () => void
 }
 
 export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTourProps) {
-  // visibleSteps is the subset of ALL_STEPS that have reachable targets
   const [visibleSteps, setVisibleSteps] = useState<TourStep[]>([])
   const [stepIndex, setStepIndex] = useState(0)
   const [spotlight, setSpotlight] = useState<SpotlightState | null>(null)
@@ -172,11 +191,10 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
 
   useEffect(() => setMounted(true), [])
 
-  // On show, reset and build visible step list
   useEffect(() => {
     if (!show) return
     setStepIndex(0)
-    setVisibleSteps(ALL_STEPS) // start with all; targets resolved per-step
+    setVisibleSteps(ALL_STEPS)
   }, [show])
 
   const goToStep = useCallback(async (idx: number, steps: TourStep[]) => {
@@ -186,7 +204,6 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
     const step = steps[idx]
 
     if (step.target === null) {
-      // Centered full-dim card
       setSpotlight(null)
       setCard({ top: window.innerHeight / 2 - 150, left: window.innerWidth / 2 - CARD_W / 2, placement: 'center' })
       setTransitioning(false)
@@ -195,15 +212,12 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
 
     const el = await resolveTarget(step.target)
     if (!el) {
-      // Skip this step
       const newSteps = steps.filter((_, i) => i !== idx)
       setVisibleSteps(newSteps)
-      // Recurse with same index (now pointing to next step in filtered list)
       await goToStep(idx, newSteps)
       return
     }
 
-    // Scroll into view, then wait for scroll
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     await new Promise(r => setTimeout(r, 320))
 
@@ -216,20 +230,17 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
     }
     setSpotlight(sp)
 
-    // Estimate card height for placement (we'll refine after render)
-    const estH = 200
+    const estH = 220
     const cardPos = computeCardPlacement(sp, estH)
     setCard(cardPos)
     setTransitioning(false)
   }, [])
 
-  // Navigate to current step when stepIndex or visibleSteps changes
   useEffect(() => {
     if (!show || visibleSteps.length === 0) return
     goToStep(stepIndex, visibleSteps)
   }, [show, stepIndex, visibleSteps, goToStep])
 
-  // Recalculate position after card renders (actual height)
   useEffect(() => {
     if (!spotlight || !cardRef.current) return
     const actualH = cardRef.current.offsetHeight
@@ -241,7 +252,6 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
     })
   })
 
-  // Resize handler
   useEffect(() => {
     if (!show) return
     function handleResize() {
@@ -283,154 +293,99 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
 
   return createPortal(
     <>
-      {/* Backdrop / spotlight overlay */}
+      {/* Backdrop / spotlight */}
       {isCenter ? (
-        // Full dim
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.6)',
-          zIndex: 300,
-          pointerEvents: 'none',
-        }} />
+        <div className="fixed inset-0 z-[300] bg-background/80 backdrop-blur-sm pointer-events-none" />
       ) : spotlight ? (
-        // Box-shadow cutout spotlight
         <div
+          className="fixed pointer-events-none z-[301] border-2 border-ember"
           style={{
-            position: 'fixed',
             top: spotlight.top,
             left: spotlight.left,
             width: spotlight.width,
             height: spotlight.height,
-            borderRadius: 8,
-            boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)',
-            border: '2px solid var(--accent)',
-            pointerEvents: 'none',
-            zIndex: 301,
+            boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)',
             transition: 'top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease',
           }}
         />
       ) : null}
 
-      {/* Invisible click-capture layer to block interaction with page */}
-      <div style={{
-        position: 'fixed', inset: 0,
-        zIndex: 300,
-        pointerEvents: transitioning ? 'auto' : 'auto',
-        cursor: 'default',
-      }} />
+      {/* Click-capture layer */}
+      <div className="fixed inset-0 z-[300] cursor-default" />
 
       {/* Tour card */}
       {card && (
         <div
           ref={cardRef}
+          className="fixed z-[302] border border-border bg-popover shadow-2xl p-5 animate-slide-in"
           style={{
-            position: 'fixed',
             top: card.top,
             left: card.left,
             width: CARD_W,
-            zIndex: 302,
-            background: 'var(--bg-surface)',
-            border: '0.5px solid var(--accent)',
-            borderRadius: 'var(--border-radius-lg, 16px)',
-            padding: 16,
             transition: 'top 0.25s ease, left 0.25s ease',
           }}
         >
-          {/* Caret */}
-          {!isCenter && <Caret placement={card.placement} spotlight={spotlight} cardLeft={card.left} cardTop={card.top} cardW={CARD_W} />}
+          {!isCenter && (
+            <Caret
+              placement={card.placement}
+              spotlight={spotlight}
+              cardLeft={card.left}
+              cardTop={card.top}
+              cardW={CARD_W}
+            />
+          )}
 
-          {/* Top row: step indicator + close */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+          {/* Header */}
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
               Step {displayStep} of {totalSteps}
             </span>
             <button
+              type="button"
               onClick={handleSkip}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer', padding: 2,
-                color: 'var(--text-dim)', display: 'flex', alignItems: 'center',
-                borderRadius: 4, lineHeight: 1,
-              }}
+              className="size-7 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
               title="Close tour"
+              aria-label="Close tour"
             >
               <XIcon />
             </button>
           </div>
 
           {/* Title */}
-          <p style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)', margin: '0 0 8px', lineHeight: 1.4 }}>
+          <h2 className="font-display text-base uppercase tracking-tight text-foreground m-0 mb-2 leading-snug">
             {title}
-          </p>
+          </h2>
 
           {/* Body */}
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 16px' }}>
+          <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-4">
             {currentStep.body}
           </p>
 
-          {/* Progress dots */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+          {/* Progress bar */}
+          <div className="flex gap-0.5 mb-5" role="progressbar" aria-valuenow={displayStep} aria-valuemin={1} aria-valuemax={totalSteps}>
             {visibleSteps.map((_, i) => (
               <div
                 key={i}
-                style={{
-                  borderRadius: '50%',
-                  width: i === stepIndex ? 6 : 5,
-                  height: i === stepIndex ? 6 : 5,
-                  background: i === stepIndex
-                    ? 'var(--accent)'
-                    : i < stepIndex
-                    ? 'var(--text-dim)'
-                    : 'var(--border-light)',
-                  transition: 'background 0.2s, width 0.2s, height 0.2s',
-                  flexShrink: 0,
-                }}
+                className={`h-0.5 flex-1 transition-colors ${
+                  i === stepIndex ? 'bg-ember' : i < stepIndex ? 'bg-foreground/35' : 'bg-border'
+                }`}
               />
             ))}
           </div>
 
-          {/* Footer buttons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+          {/* Actions */}
+          <div className="flex items-center gap-2 justify-end">
             {showSkip && (
-              <button
-                onClick={handleSkip}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer', padding: '6px 8px',
-                  fontSize: 12, color: 'var(--text-dim)', marginRight: 'auto',
-                }}
-              >
+              <TourBtn variant="link" className="mr-auto" onClick={handleSkip}>
                 Skip tour
-              </button>
+              </TourBtn>
             )}
             {!isFirst && (
-              <button
-                onClick={handleBack}
-                style={{
-                  background: 'none',
-                  border: '0.5px solid var(--border)',
-                  borderRadius: 7, padding: '6px 14px',
-                  fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer',
-                }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-light)' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)' }}
-              >
-                Back
-              </button>
+              <TourBtn onClick={handleBack}>Back</TourBtn>
             )}
-            <button
-              onClick={handleNext}
-              style={{
-                background: 'var(--accent)',
-                border: 'none', borderRadius: 7,
-                padding: '6px 16px',
-                fontSize: 13, fontWeight: 500,
-                color: 'var(--on-accent)', cursor: 'pointer',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-hover)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent)' }}
-            >
+            <TourBtn variant="primary" onClick={handleNext}>
               {isFirst ? 'Start' : isLast ? 'Finish' : 'Next'}
-            </button>
+            </TourBtn>
           </div>
         </div>
       )}
@@ -450,69 +405,108 @@ function Caret({ placement, spotlight, cardLeft, cardTop, cardW }: {
 }) {
   if (!spotlight || placement === 'center') return null
 
-  const CARET = 8
+  const CARET = 7
   const style: React.CSSProperties = { position: 'absolute', width: 0, height: 0 }
+  const fill = 'var(--popover)'
+  const stroke = 'var(--border)'
 
   if (placement === 'below') {
-    // Caret on top edge of card, pointing up toward the element
     const anchorX = spotlight.left + spotlight.width / 2
     const caretX = Math.max(CARET, Math.min(cardW - CARET * 2, anchorX - cardLeft))
     return (
-      <div style={{
-        ...style,
-        top: -CARET,
-        left: caretX,
-        borderLeft: `${CARET}px solid transparent`,
-        borderRight: `${CARET}px solid transparent`,
-        borderBottom: `${CARET}px solid var(--accent)`,
-      }} />
+      <>
+        <div style={{
+          ...style,
+          top: -CARET,
+          left: caretX,
+          borderLeft: `${CARET}px solid transparent`,
+          borderRight: `${CARET}px solid transparent`,
+          borderBottom: `${CARET}px solid ${stroke}`,
+        }} />
+        <div style={{
+          ...style,
+          top: -CARET + 1,
+          left: caretX + 1,
+          borderLeft: `${CARET - 1}px solid transparent`,
+          borderRight: `${CARET - 1}px solid transparent`,
+          borderBottom: `${CARET - 1}px solid ${fill}`,
+        }} />
+      </>
     )
   }
 
   if (placement === 'above') {
-    // Caret on bottom edge of card, pointing down toward the element
     const anchorX = spotlight.left + spotlight.width / 2
     const caretX = Math.max(CARET, Math.min(cardW - CARET * 2, anchorX - cardLeft))
     return (
-      <div style={{
-        ...style,
-        bottom: -CARET,
-        left: caretX,
-        borderLeft: `${CARET}px solid transparent`,
-        borderRight: `${CARET}px solid transparent`,
-        borderTop: `${CARET}px solid var(--accent)`,
-      }} />
+      <>
+        <div style={{
+          ...style,
+          bottom: -CARET,
+          left: caretX,
+          borderLeft: `${CARET}px solid transparent`,
+          borderRight: `${CARET}px solid transparent`,
+          borderTop: `${CARET}px solid ${stroke}`,
+        }} />
+        <div style={{
+          ...style,
+          bottom: -CARET + 1,
+          left: caretX + 1,
+          borderLeft: `${CARET - 1}px solid transparent`,
+          borderRight: `${CARET - 1}px solid transparent`,
+          borderTop: `${CARET - 1}px solid ${fill}`,
+        }} />
+      </>
     )
   }
 
   if (placement === 'right') {
-    // Caret on left edge of card, pointing left toward the element
     const anchorY = spotlight.top + spotlight.height / 2
-    // We don't know card height here, just use a midpoint approximation
+    const top = Math.max(CARET, anchorY - cardTop - CARET)
     return (
-      <div style={{
-        ...style,
-        left: -CARET,
-        top: Math.max(CARET, anchorY - cardTop - CARET),
-        borderTop: `${CARET}px solid transparent`,
-        borderBottom: `${CARET}px solid transparent`,
-        borderRight: `${CARET}px solid var(--accent)`,
-      }} />
+      <>
+        <div style={{
+          ...style,
+          left: -CARET,
+          top,
+          borderTop: `${CARET}px solid transparent`,
+          borderBottom: `${CARET}px solid transparent`,
+          borderRight: `${CARET}px solid ${stroke}`,
+        }} />
+        <div style={{
+          ...style,
+          left: -CARET + 1,
+          top: top + 1,
+          borderTop: `${CARET - 1}px solid transparent`,
+          borderBottom: `${CARET - 1}px solid transparent`,
+          borderRight: `${CARET - 1}px solid ${fill}`,
+        }} />
+      </>
     )
   }
 
   if (placement === 'left') {
-    // Caret on right edge of card, pointing right toward the element
     const anchorY = spotlight.top + spotlight.height / 2
+    const top = Math.max(CARET, anchorY - cardTop - CARET)
     return (
-      <div style={{
-        ...style,
-        right: -CARET,
-        top: Math.max(CARET, anchorY - cardTop - CARET),
-        borderTop: `${CARET}px solid transparent`,
-        borderBottom: `${CARET}px solid transparent`,
-        borderLeft: `${CARET}px solid var(--accent)`,
-      }} />
+      <>
+        <div style={{
+          ...style,
+          right: -CARET,
+          top,
+          borderTop: `${CARET}px solid transparent`,
+          borderBottom: `${CARET}px solid transparent`,
+          borderLeft: `${CARET}px solid ${stroke}`,
+        }} />
+        <div style={{
+          ...style,
+          right: -CARET + 1,
+          top: top + 1,
+          borderTop: `${CARET - 1}px solid transparent`,
+          borderBottom: `${CARET - 1}px solid transparent`,
+          borderLeft: `${CARET - 1}px solid ${fill}`,
+        }} />
+      </>
     )
   }
 
@@ -523,7 +517,7 @@ function Caret({ placement, spotlight, cardLeft, cardTop, cardW }: {
 
 function XIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden>
       <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   )
@@ -534,29 +528,14 @@ function XIcon() {
 export function TourHelpButton({ onClick }: { onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       title="Show tour"
-      style={{
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        width: 32, height: 32,
-        background: 'transparent', border: '0.5px solid var(--border)',
-        borderRadius: 8, cursor: 'pointer',
-        color: 'var(--text-dim)',
-        transition: 'border-color 0.12s, color 0.12s',
-      }}
-      onMouseEnter={e => {
-        const b = e.currentTarget as HTMLButtonElement
-        b.style.borderColor = 'var(--border-light)'
-        b.style.color = 'var(--text-muted)'
-      }}
-      onMouseLeave={e => {
-        const b = e.currentTarget as HTMLButtonElement
-        b.style.borderColor = 'var(--border)'
-        b.style.color = 'var(--text-dim)'
-      }}
+      aria-label="Show tour"
+      className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="8" cy="8" r="7" />
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="8" cy="8" r="6.5" />
         <path d="M6 6a2 2 0 1 1 2.5 1.9C7.9 8.2 8 8.7 8 9" />
         <circle cx="8" cy="11.5" r="0.6" fill="currentColor" stroke="none" />
       </svg>

@@ -1609,6 +1609,7 @@ html.dark[data-palette="green"] .theme-avatar {
       transition: transform 0.25s ease;
       box-shadow: 4px 0 24px rgba(0, 0, 0, 0.28);
       flex-shrink: unset !important;
+      background: var(--bg-surface) !important;
     }
     .project-mixer-sidebar.sidebar-open {
       transform: translateX(0);
@@ -1633,13 +1634,13 @@ html.dark[data-palette="green"] .theme-avatar {
     text-align: center;
   }
   .portrait-overlay-icon {
-    animation: portrait-rotate-hint 2.2s ease-in-out infinite;
     display: inline-block;
+    transform: rotate(90deg);
+    animation: portrait-rotate-hint 1.2s ease-in-out 1 forwards;
   }
   @keyframes portrait-rotate-hint {
-    0%, 100% { transform: rotate(0deg); }
-    35%       { transform: rotate(90deg); }
-    65%       { transform: rotate(90deg); }
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(90deg); }
   }
 
   /* ── Mobile touch sizing for mixer ─────────────────────────────────── */
@@ -1662,15 +1663,15 @@ html.dark[data-palette="green"] .theme-avatar {
   to { transform: rotate(360deg); }
 }
 
-/* Reading mode bottom bar — phone tilt animation */
+/* Reading mode bottom bar — phone tilt animation (once, ends landscape) */
 .rm-rotate-icon {
   display: inline-flex;
-  animation: rm-phone-tilt 2.4s ease-in-out infinite;
+  transform: rotate(90deg);
+  animation: rm-phone-tilt 1.2s ease-in-out 1 forwards;
 }
 @keyframes rm-phone-tilt {
-  0%, 100% { transform: rotate(0deg); }
-  35%       { transform: rotate(90deg); }
-  65%       { transform: rotate(90deg); }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(90deg); }
 }
 
 .page-loading-overlay {

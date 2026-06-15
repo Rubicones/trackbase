@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { useTheme } from 'next-themes'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { sectionLabel } from '@/components/StructureEditor'
 import { ResourcesCard } from '@/components/ResourcesCard'
-import { waveformBarsCache } from '@/lib/waveformCache'
+import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { buildCompositeWaveform } from '@/lib/waveform-decode'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,27 +21,28 @@ export type ReadingModePlayer = {
   seek: (t: number) => void
 }
 
+const REHEARSAL_BAR_COUNT = 48
+const DECODE_BAR_COUNT = 96
+
+function downsampleBars(bars: number[], targetCount: number): number[] {
+  if (bars.length <= targetCount) return bars
+  const result: number[] = []
+  const step = bars.length / targetCount
+  for (let i = 0; i < targetCount; i++) {
+    const start = Math.floor(i * step)
+    const end = Math.max(start + 1, Math.floor((i + 1) * step))
+    let peak = 0
+    for (let j = start; j < end; j++) peak = Math.max(peak, bars[j] ?? 0)
+    result.push(peak)
+  }
+  return result
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(secs: number): string {
   const s = Math.floor(secs)
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-}
-
-/** Average all cached waveform bars across audio tracks into one composite. */
-function buildComposite(tracks: Track[]): number[] {
-  const N = 96
-  const cached = tracks
-    .filter(t => t.file_type !== 'midi')
-    .map(t => waveformBarsCache.get(t.id))
-    .filter((b): b is number[] => !!b)
-  if (!cached.length) return new Array(N).fill(0.12)
-  const sum = new Array(N).fill(0)
-  for (const bars of cached) {
-    for (let i = 0; i < N; i++) sum[i] += bars[i] ?? 0
-  }
-  const max = Math.max(...sum, 0.001)
-  return sum.map(v => v / max)
 }
 
 function formatChords(chords: string | null | undefined): string {
@@ -59,38 +61,65 @@ function MasterWaveform({
   ready: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const draggingRef = useRef(false)
 
-  function clientXToRatio(x: number): number {
+  const seekAt = useCallback((clientX: number) => {
     const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return 0
-    return Math.max(0, Math.min(1, (x - rect.left) / rect.width))
+    if (!rect) return
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    onSeek(ratio)
+  }, [onSeek])
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!ready) return
+    draggingRef.current = true
+    e.currentTarget.setPointerCapture(e.pointerId)
+    seekAt(e.clientX)
   }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current) return
+    seekAt(e.clientX)
+  }
+
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = false
+    e.currentTarget.releasePointerCapture(e.pointerId)
+  }
+
+  const playheadPct = Math.min(100, Math.max(0, playedRatio * 100))
 
   return (
     <div
       ref={containerRef}
-      className="mt-2 h-28 flex items-end gap-px border border-border bg-surface/40 p-2 cursor-pointer touch-none"
-      onClick={e => onSeek(clientXToRatio(e.clientX))}
-      onTouchEnd={e => {
-        e.preventDefault()
-        onSeek(clientXToRatio(e.changedTouches[0].clientX))
-      }}
+      className="relative mt-2 h-28 border border-border bg-surface/40 p-2 cursor-pointer touch-none select-none"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
-      {bars.map((h, i) => {
-        const played = (i / bars.length) < playedRatio
-        return (
+      <div className="relative h-full flex items-end gap-px">
+        {bars.map((h, i) => {
+          const played = (i + 0.5) / bars.length <= playedRatio
+          return (
+            <div
+              key={i}
+              className="flex-1 min-w-0"
+              style={{
+                height: `${Math.max(6, h * 100)}%`,
+                background: 'var(--ember)',
+                opacity: ready ? (played ? 0.95 : 0.35) : 0.2,
+              }}
+            />
+          )
+        })}
+        {ready && (
           <div
-            key={i}
-            className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
-            style={{
-              height: `${Math.max(8, h * 100)}%`,
-              background: 'var(--ember)',
-              opacity: played ? 0.95 : 0.35,
-              animationDelay: ready ? `${i * 8}ms` : undefined,
-            }}
+            className="absolute top-0 bottom-0 w-px -ml-px bg-foreground pointer-events-none z-10"
+            style={{ left: `${playheadPct}%` }}
           />
-        )
-      })}
+        )}
+      </div>
     </div>
   )
 }
@@ -152,6 +181,7 @@ export function ReadingMode({
   activeVersionId,
   onVersionChange,
   projectId,
+  bandId,
   activeTracks,
   barDurationMs,
   visible,
@@ -163,18 +193,51 @@ export function ReadingMode({
   activeVersionId: string
   onVersionChange: (id: string) => void
   projectId: string
+  bandId: string
   activeTracks: Track[]
   barDurationMs: number
   visible: boolean
 }) {
-  const { resolvedTheme, setTheme } = useTheme()
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
-  const [composite, setComposite] = useState<number[]>(() => buildComposite(activeTracks))
+  const [composite, setComposite] = useState<number[]>(() => new Array(REHEARSAL_BAR_COUNT).fill(0.12))
+  const [waveformReady, setWaveformReady] = useState(false)
+  const [waveformLoading, setWaveformLoading] = useState(false)
   const [lyrics, setLyrics] = useState<ProjectResource | null>(null)
+  const [showResources, setShowResources] = useState(false)
+
+  const audioTrackIds = activeTracks
+    .filter(t => t.file_type !== 'midi')
+    .map(t => t.id)
+    .join(',')
 
   useEffect(() => {
-    setComposite(buildComposite(activeTracks))
-  }, [activeTracks, player.loaded])
+    if (!visible) return
+    const audioCount = audioTrackIds.split(',').filter(Boolean).length
+    if (!audioCount) {
+      setComposite(new Array(REHEARSAL_BAR_COUNT).fill(0.12))
+      setWaveformReady(false)
+      setWaveformLoading(false)
+      return
+    }
+
+    if (player.total > 0 && player.loaded < player.total) {
+      setWaveformLoading(true)
+      setWaveformReady(false)
+      return
+    }
+
+    let cancelled = false
+    setWaveformLoading(true)
+
+    buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
+      if (cancelled) return
+      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
+      setWaveformReady(true)
+      setWaveformLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [visible, audioTrackIds, player.loaded, player.total])
 
   useEffect(() => {
     if (!visible) return
@@ -189,6 +252,15 @@ export function ReadingMode({
     return () => { cancelled = true }
   }, [projectId, visible])
 
+  // Defer heavy ResourcesCard until user scrolls near it
+  useEffect(() => {
+    if (!visible) return
+    const t = setTimeout(() => setShowResources(true), 600)
+    return () => clearTimeout(t)
+  }, [visible, projectId])
+
+  if (!visible) return null
+
   const playedRatio = player.duration > 0 ? player.currentTime / player.duration : 0
   const progressPct = playedRatio * 100
 
@@ -202,18 +274,11 @@ export function ReadingMode({
 
   const isLoading = player.total > 0 && player.loaded < player.total
   const isReady = player.total === 0 || player.loaded === player.total
-  const waveformReady = isReady && player.total > 0
 
   return (
-    <div
-      className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden transition-opacity duration-200"
-      style={{
-        opacity: visible ? 1 : 0,
-        pointerEvents: visible ? 'auto' : 'none',
-      }}
-    >
-      {/* Slim top bar — versions + theme */}
-      <header className="h-11 shrink-0 flex items-center gap-2.5 px-4 border-b border-border bg-background">
+    <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
+      {/* Slim top bar — versions drawer, logo, nav path, account */}
+      <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
         <button
           type="button"
           onClick={() => setVersionDrawerOpen(true)}
@@ -226,26 +291,34 @@ export function ReadingMode({
             <rect x="2" y="12.5" width="14" height="1.5" rx="0.75" fill="currentColor" />
           </svg>
         </button>
-        <span className="flex-1 text-[11px] uppercase tracking-widest text-muted-foreground truncate">
-          {project.name}
-        </span>
-        <button
-          type="button"
-          onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-          aria-label="Toggle theme"
-          className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
-        >
-          {resolvedTheme === 'dark' ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-        </button>
+
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <Link
+            href="/dashboard"
+            className="font-display text-sm font-bold tracking-tight text-ember shrink-0 no-underline"
+          >
+            TRACKBASE
+          </Link>
+          <nav
+            aria-label="Breadcrumb"
+            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
+          >
+            <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
+              Bands
+            </Link>
+            <span className="text-border shrink-0">/</span>
+            <Link
+              href={`/band/${bandId}`}
+              className="hover:text-foreground no-underline truncate min-w-0"
+            >
+              {project.band_name ?? 'Band'}
+            </Link>
+            <span className="text-border shrink-0">/</span>
+            <span className="text-foreground truncate min-w-0">{project.name}</span>
+          </nav>
+        </div>
+
+        <AvatarDropdown />
       </header>
 
       {versionDrawerOpen && (
@@ -287,9 +360,9 @@ export function ReadingMode({
           <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             Full mix
           </div>
-          {isLoading && (
+          {(isLoading || waveformLoading) && (
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
-              Loading… {player.loaded}/{player.total}
+              {isLoading ? `Loading audio… ${player.loaded}/${player.total}` : 'Building waveform…'}
             </p>
           )}
           {player.total === 0 ? (
@@ -301,7 +374,7 @@ export function ReadingMode({
               bars={composite}
               playedRatio={playedRatio}
               onSeek={handleSeek}
-              ready={waveformReady}
+              ready={waveformReady && isReady}
             />
           )}
           <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-muted-foreground mt-1">
@@ -378,13 +451,15 @@ export function ReadingMode({
           </div>
         )}
 
-        {/* Resources */}
-        <div className="px-5 pt-6 pb-6">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-            Resources
+        {/* Resources — deferred mount for mobile perf */}
+        {showResources && (
+          <div className="px-5 pt-6 pb-6">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+              Resources
+            </div>
+            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} />
           </div>
-          <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} />
-        </div>
+        )}
       </div>
 
       {/* Fixed master player — above rotate bar */}
@@ -410,7 +485,7 @@ export function ReadingMode({
               handleSeek(Math.max(0, Math.min(1, (e.changedTouches[0].clientX - rect.left) / rect.width)))
             }}
           >
-            <div className="absolute inset-y-0 left-0 bg-ember transition-[width] duration-75" style={{ width: `${progressPct}%` }} />
+            <div className="absolute inset-y-0 left-0 bg-ember/40 transition-[width] duration-75" style={{ width: `${progressPct}%` }} />
             <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${progressPct}%` }} />
           </div>
           <div className="flex justify-between text-[9px] font-mono tabular-nums text-muted-foreground mt-1">
@@ -420,7 +495,7 @@ export function ReadingMode({
         </div>
       </div>
 
-      {/* Fixed bottom rotate-prompt bar — unchanged message */}
+      {/* Fixed bottom rotate-prompt bar */}
       <div className="absolute bottom-0 left-0 right-0 h-[52px] bg-surface border-t border-border flex items-center justify-center gap-2.5 z-10">
         <span className="rm-rotate-icon" aria-hidden>
           <svg width="18" height="26" viewBox="0 0 18 26" fill="none">
@@ -428,7 +503,9 @@ export function ReadingMode({
             <circle cx="9" cy="22" r="1.25" fill="var(--ember)" opacity="0.6" />
           </svg>
         </span>
-        <span className="text-[13px] text-muted-foreground">Rotate to open the mixer</span>
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+          Rotate to open the mixer
+        </span>
       </div>
     </div>
   )

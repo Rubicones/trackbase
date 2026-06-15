@@ -15,13 +15,14 @@ import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { Toast } from '@/components/design/Toast'
 import { TactGrid } from '@/components/design/TactGrid'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { FloatingPopover } from '@/components/design/FloatingPopover'
 import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
-import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
+import { waveformBarsCache, fetchTrackAudioBuffer } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
 import { resolveTrackIconColor } from '@/lib/trackIcon'
 import { trackColorAt, getTrackIconSwatches } from '@/lib/trackPalette'
@@ -338,14 +339,19 @@ function ThemeToggle() {
 
 // ─── Comment tooltip (portal) ─────────────────────────────────────────────────
 
+function isCommentUiTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-comment-ui]') !== null
+}
+
 function CommentTooltip({
-  comment, anchorLeft, anchorTop, onDelete, onHide, currentUserId, isOwner, onReplySubmit, onReplyFocusChange,
+  comment, anchorLeft, anchorTop, onDelete, onHide, onShow, currentUserId, isOwner, onReplySubmit, onReplyFocusChange,
 }: {
   comment: TrackComment
   anchorLeft: number
   anchorTop: number
   onDelete: (id: string) => void
   onHide: () => void
+  onShow?: () => void
   currentUserId: string | undefined
   isOwner: boolean
   onReplySubmit: (commentId: string, content: string) => Promise<void>
@@ -367,7 +373,7 @@ function CommentTooltip({
   const author = comment.author_username ?? 'unknown'
 
   return (
-    <FloatingPopover left={left} top={anchorTop} width={W} onMouseLeave={onHide}>
+    <FloatingPopover left={left} top={anchorTop} width={W} onMouseLeave={onHide} onMouseEnter={onShow}>
       <div className="px-3 py-2.5">
         <div className="flex items-center gap-2 mb-1">
           <UserAvatar seed={author} size={18} kind="user" />
@@ -418,8 +424,14 @@ function CommentTooltip({
             placeholder="Reply..."
             value={replyText}
             onChange={e => setReplyText(e.target.value)}
+            onPointerDown={e => {
+              e.stopPropagation()
+              onReplyFocusChange?.(true)
+            }}
             onFocus={() => onReplyFocusChange?.(true)}
             onBlur={() => { setTimeout(() => onReplyFocusChange?.(false), 150) }}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
             onKeyDown={async e => {
               if (e.key === 'Enter' && !e.shiftKey && replyText.trim() && !submittingReply) {
                 e.preventDefault()
@@ -437,9 +449,48 @@ function CommentTooltip({
   )
 }
 
-// ─── Comment range marker ─────────────────────────────────────────────────────
+// ─── Comment toggle (icon button for mobile top bar) ─────────────────────────
 
-function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete, currentUserId, isOwner, onReplyCreate }: {
+function CommentToggleBtn({
+  active, count, onClick, className = 'size-8',
+}: {
+  active: boolean
+  count: number
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-tour="comments-toggle"
+      aria-label={active ? 'Exit comment mode' : `Comments${count > 0 ? ` (${count})` : ''}`}
+      aria-pressed={active}
+      className={`${className} border grid place-items-center transition shrink-0 relative ${
+        active
+          ? 'border-ember bg-ember text-white'
+          : 'border-border bg-surface-2 text-muted-foreground hover:border-ember hover:text-ember'
+      }`}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <path
+          d="M2.5 3.5h11a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H9.2L7 13.5V11H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {!active && count > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-ember text-white text-[8px] font-bold leading-[14px] text-center">
+          {count > 9 ? '9+' : count}
+        </span>
+      )}
+    </button>
+  )
+}
+
+
+function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete, currentUserId, isOwner, onReplyCreate, onInteractionChange }: {
   comment: TrackComment
   durationMs: number
   dotTopOffset: number
@@ -448,6 +499,7 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
+  onInteractionChange?: (commentId: string, active: boolean) => void
 }) {
   const startPct = durationMs > 0 ? (comment.timecode_start_ms / durationMs) * 100 : 0
   const endPct = durationMs > 0 ? (comment.timecode_end_ms / durationMs) * 100 : 0
@@ -460,6 +512,11 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const tooltipVisible = showTooltip || replyFocused
+
+  useEffect(() => {
+    onInteractionChange?.(comment.id, tooltipVisible)
+    return () => onInteractionChange?.(comment.id, false)
+  }, [tooltipVisible, comment.id, onInteractionChange])
 
   const scheduleHide = () => {
     hideTimer.current = setTimeout(() => {
@@ -478,18 +535,43 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
 
   const replyCount = comment.replies?.length ?? 0
 
+  // Tap outside to close on touch devices
+  useEffect(() => {
+    if (!showTooltip || commentMode) return
+    function onDoc(e: PointerEvent) {
+      const t = e.target as Node
+      if (rangeRef.current?.contains(t)) return
+      if (isCommentUiTarget(e.target)) return
+      setShowTooltip(false)
+    }
+    document.addEventListener('pointerdown', onDoc)
+    return () => document.removeEventListener('pointerdown', onDoc)
+  }, [showTooltip, commentMode])
+
+  function handleMarkerTap(e: React.MouseEvent) {
+    if (commentMode) return
+    // Desktop uses hover; touch devices toggle on tap
+    if (typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches) return
+    e.stopPropagation()
+    setShowTooltip(v => !v)
+  }
+
   return (
     <div
       ref={rangeRef}
       className="absolute top-0 h-full z-[3]"
+      data-comment-ui
       style={{
         left: `${startPct}%`,
         width: `${widthPct}%`,
         pointerEvents: commentMode ? 'none' : 'auto',
-        minWidth: 2,
+        minWidth: isNarrow ? 20 : 2,
       }}
       onMouseEnter={() => { if (!commentMode) { cancelHide(); setShowTooltip(true) } }}
       onMouseLeave={scheduleHide}
+      onMouseDown={e => e.stopPropagation()}
+      onPointerDown={e => e.stopPropagation()}
+      onClick={handleMarkerTap}
     >
       {/* Range fill */}
       <div
@@ -515,6 +597,7 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
             anchorTop={top}
             onDelete={onDelete}
             onHide={scheduleHide}
+            onShow={cancelHide}
             currentUserId={currentUserId}
             isOwner={isOwner}
             onReplySubmit={onReplyCreate}
@@ -542,11 +625,16 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 20) }, [])
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (bubbleRef.current && !bubbleRef.current.contains(e.target as Node)) onClose()
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const t = ('touches' in e ? document.elementFromPoint(e.touches[0]?.clientX ?? 0, e.touches[0]?.clientY ?? 0) : e.target) as Node | null
+      if (bubbleRef.current && t && !bubbleRef.current.contains(t)) onClose()
     }
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    document.addEventListener('touchstart', handler)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      document.removeEventListener('touchstart', handler)
+    }
   }, [onClose])
 
   async function submit() {
@@ -583,6 +671,9 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
           ref={inputRef}
           value={text}
           onChange={e => setText(e.target.value)}
+          onMouseDown={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
           onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onClose() }}
           placeholder="Add comment..."
           className="flex h-8 w-full font-display border border-border bg-transparent px-3 py-1 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -607,6 +698,7 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
 
 const TRACK_LABEL_W = 192
 const TRACK_ROW_H = 80
+const COMPACT_TRACK_ROW_H = 48
 
 // ─── Waveform ─────────────────────────────────────────────────────────────────
 
@@ -614,7 +706,8 @@ function Waveform({
   trackId, muted, playedRatio, color, durationMs,
   commentMode, comments, activeInput, audioReady,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
-  currentUserId, isOwner, onReplyCreate, currentUser,
+  currentUserId, isOwner, onReplyCreate, currentUser, onCommentInteractionChange,
+  compact = false,
 }: {
   trackId: string; muted: boolean; playedRatio: number; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
@@ -627,6 +720,8 @@ function Waveform({
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
   currentUser: { username: string } | null
+  onCommentInteractionChange?: (commentId: string, active: boolean) => void
+  compact?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const barsRef = useRef<number[]>([])
@@ -643,6 +738,8 @@ function Waveform({
 
   // Stable ref for finalize so window listener always calls fresh version
   const finalizeDragFnRef = useRef<() => void>(() => {})
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
 
   useEffect(() => {
     let cancelled = false
@@ -652,21 +749,13 @@ function Waveform({
       if (cachedBars) {
         barsRef.current = cachedBars
         setReady(true)
-        onReady?.()
+        onReadyRef.current?.()
         return
       }
       try {
         const actx = new AudioContext()
-        // Use cached ArrayBuffer if available (avoids network round-trip).
-        const cachedAB = audioArrayBufferCache.get(trackId)
-        let ab: ArrayBuffer
-        if (cachedAB) {
-          ab = cachedAB.slice(0) // slice() because decodeAudioData() detaches
-        } else {
-          const res = await fetch(`/api/tracks/${trackId}/stream`)
-          ab = await res.arrayBuffer()
-          audioArrayBufferCache.set(trackId, ab.slice(0)) // store before decode consumes it
-        }
+        const ab = await fetchTrackAudioBuffer(trackId)
+        if (!ab || cancelled) return
         const decoded = await actx.decodeAudioData(ab)
         const raw = decoded.getChannelData(0)
         const N = 96
@@ -683,14 +772,14 @@ function Waveform({
           waveformBarsCache.set(trackId, bars)
           barsRef.current = bars
           setReady(true)
-          onReady?.()
+          onReadyRef.current?.()
         }
         actx.close()
       } catch { /* silent */ }
     }
     load()
     return () => { cancelled = true }
-  }, [trackId, onReady])
+  }, [trackId])
 
   function getXPercent(clientX: number): number {
     const rect = containerRef.current!.getBoundingClientRect()
@@ -819,9 +908,11 @@ function Waveform({
       </div>
 
       {commentMode && !dragRect && (
-        <div className="absolute inset-0 z-[2] pointer-events-none bg-ember/5 border-2 border-dashed border-ember/40 grid place-items-center">
-          <div className="text-[10px] uppercase tracking-widest text-ember bg-background border border-ember/40 px-2 py-1">
-            Click-drag to comment
+        <div className="absolute inset-0 z-[2] pointer-events-none bg-ember/5 border border-dashed border-ember/40 grid place-items-center">
+          <div className={`uppercase tracking-widest text-ember bg-background/90 border border-ember/40 ${
+            compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1'
+          }`}>
+            {compact ? 'Tap & drag' : 'Click-drag to comment'}
           </div>
         </div>
       )}
@@ -838,6 +929,7 @@ function Waveform({
           currentUserId={currentUserId}
           isOwner={isOwner}
           onReplyCreate={onReplyCreate}
+          onInteractionChange={onCommentInteractionChange}
         />
       ))}
 
@@ -976,16 +1068,8 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
 
     Promise.all(audioTracks.map(async t => {
       try {
-        // Use cached ArrayBuffer to avoid re-fetching audio on version revisit.
-        const cachedAB = audioArrayBufferCache.get(t.id)
-        let ab: ArrayBuffer
-        if (cachedAB) {
-          ab = cachedAB.slice(0) // fresh copy — decodeAudioData() detaches
-        } else {
-          const res = await fetch(`/api/tracks/${t.id}/stream`)
-          ab = await res.arrayBuffer()
-          audioArrayBufferCache.set(t.id, ab.slice(0))
-        }
+        const ab = await fetchTrackAudioBuffer(t.id)
+        if (!ab || cancelled) return
         const decoded = await ctx.decodeAudioData(ab)
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
@@ -1456,6 +1540,7 @@ function TrackRow({
   onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
+  compact = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   currentTimeMs: number; commentMode: boolean
@@ -1482,6 +1567,7 @@ function TrackRow({
   project: Project
   totalBars: number
   runtimeDurationMs: number
+  compact?: boolean
 }) {
   const { resolvedTheme } = useTheme()
   const { palette: colorPalette } = usePalette()
@@ -1507,6 +1593,34 @@ function TrackRow({
   const origStartBarRef = useRef(0)
   const dragPreviewBarRef = useRef<number | null>(null)
   const waveformColRef = useRef<HTMLDivElement>(null)
+  const commentUiActiveRef = useRef(false)
+  const activeCommentInteractionsRef = useRef(new Set<string>())
+
+  const handleCommentInteractionChange = useCallback((commentId: string, active: boolean) => {
+    if (active) activeCommentInteractionsRef.current.add(commentId)
+    else activeCommentInteractionsRef.current.delete(commentId)
+    commentUiActiveRef.current = activeCommentInteractionsRef.current.size > 0
+  }, [])
+
+  function cancelOffsetDrag() {
+    setIsOffsetDragging(false)
+    onDragEndOffset()
+    dragPreviewBarRef.current = null
+    setDragPreviewBar(null)
+    dragMovedRef.current = false
+  }
+
+  // Cancel track-offset drag when the user interacts with portaled comment UI
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!isCommentUiTarget(e.target)) return
+      commentUiActiveRef.current = true
+      if (isOffsetDragging) cancelOffsetDrag()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOffsetDragging, onDragEndOffset])
 
   // Per-track offset and timing (uses dragPreviewBar state above)
   const projBpmRow = project.bpm ?? 120
@@ -1554,7 +1668,7 @@ function TrackRow({
 
   // Drag-to-offset handlers (mouse + touch)
   function startOffsetDrag(clientX: number) {
-    if (commentMode) return
+    if (commentMode || commentUiActiveRef.current) return
     dragStartXRef.current = clientX
     dragMovedRef.current = false
     origStartBarRef.current = track.start_bar ?? 0
@@ -1566,12 +1680,16 @@ function TrackRow({
   }
 
   function handleOffsetMouseDown(e: React.MouseEvent) {
+    if (isCommentUiTarget(e.target) || commentUiActiveRef.current) return
     e.preventDefault()
+    e.stopPropagation()
     startOffsetDrag(e.clientX)
   }
 
   function handleOffsetTouchStart(e: React.TouchEvent) {
+    if (isCommentUiTarget(e.target) || commentUiActiveRef.current) return
     e.preventDefault()
+    e.stopPropagation()
     startOffsetDrag(e.touches[0].clientX)
   }
 
@@ -1590,12 +1708,23 @@ function TrackRow({
     }
     function onMouseMove(e: MouseEvent) { moveAt(e.clientX) }
     function onTouchMove(e: TouchEvent) { e.preventDefault(); moveAt(e.touches[0].clientX) }
-    async function onDragEnd(clientX: number) {
+    async function onDragEnd(e: MouseEvent | TouchEvent) {
+      const endTarget = 'changedTouches' in e
+        ? e.changedTouches[0]?.target ?? null
+        : e.target
+
+      if (isCommentUiTarget(endTarget) || commentUiActiveRef.current) {
+        cancelOffsetDrag()
+        return
+      }
+
       setIsOffsetDragging(false)
       onDragEndOffset()
       let newBar = dragPreviewBarRef.current
       if (!dragMovedRef.current) {
-        newBar = barFromClientX(clientX)
+        newBar = barFromClientX('changedTouches' in e
+          ? e.changedTouches[0]?.clientX ?? dragStartXRef.current
+          : e.clientX)
         dragPreviewBarRef.current = newBar
         setDragPreviewBar(newBar)
       }
@@ -1605,8 +1734,8 @@ function TrackRow({
       }
       setDragPreviewBar(null)
     }
-    function onMouseUp(e: MouseEvent) { void onDragEnd(e.clientX) }
-    function onTouchEnd(e: TouchEvent) { void onDragEnd(e.changedTouches[0]?.clientX ?? dragStartXRef.current) }
+    function onMouseUp(e: MouseEvent) { void onDragEnd(e) }
+    function onTouchEnd(e: TouchEvent) { void onDragEnd(e) }
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('touchmove', onTouchMove, { passive: false })
@@ -1672,6 +1801,7 @@ function TrackRow({
   }
 
   const trackLetter = (displayName.trim()[0] ?? '?').toUpperCase()
+  const rowH = compact ? COMPACT_TRACK_ROW_H : TRACK_ROW_H
 
   return (
     <>
@@ -1679,7 +1809,7 @@ function TrackRow({
       data-track-row
       className="flex group/track hover:bg-surface/30 overflow-visible border-b border-border"
       style={{
-        minHeight: TRACK_ROW_H,
+        minHeight: rowH,
         background: rowBg,
         boxShadow: isOffsetDragging
           ? '0 2px 8px rgba(0,0,0,0.15)'
@@ -1695,8 +1825,8 @@ function TrackRow({
     >
       {/* Label column */}
       <div
-        className="shrink-0 border-r border-border p-3 flex flex-col justify-between"
-        style={{ width: TRACK_LABEL_W }}
+        className={`shrink-0 border-r border-border flex flex-col justify-between ${compact ? 'p-2' : 'p-3'}`}
+        style={{ width: compact ? 140 : TRACK_LABEL_W }}
       >
         <div className="flex items-start gap-2 min-w-0">
           <div className="relative shrink-0">
@@ -1704,7 +1834,7 @@ function TrackRow({
               type="button"
               onClick={() => setShowIconPicker(p => !p)}
               title="Change track color"
-              className="size-6 grid place-items-center text-[10px] font-bold text-background transition-opacity hover:opacity-80"
+              className={`grid place-items-center font-bold text-background transition-opacity hover:opacity-80 ${compact ? 'size-5 text-[9px]' : 'size-6 text-[10px]'}`}
               style={{ background: col.fg }}
             >
               {!isMidi && !waveformReady ? (
@@ -1750,6 +1880,7 @@ function TrackRow({
                 )}
               </div>
             )}
+            {!compact && (
             <div className="mt-0.5">
               {changed ? (
                 <span className="text-[9px] uppercase tracking-widest text-amber">Modified</span>
@@ -1766,9 +1897,10 @@ function TrackRow({
                 </span>
               )}
             </div>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-1 mt-2">
+        <div className={`flex items-center gap-1 ${compact ? 'mt-1' : 'mt-2'}`}>
           <TrackLetterBtn
             letter="M"
             tooltip="Mute"
@@ -1783,7 +1915,7 @@ function TrackRow({
             activeClass="bg-chart-4 text-background border-chart-4"
             onClick={onToggleSolo}
           />
-          {isMidi && (
+          {isMidi && !compact && (
             <button
               type="button"
               onClick={() => setPianoRollOpen(p => !p)}
@@ -1836,7 +1968,7 @@ function TrackRow({
         ref={waveformColRef}
         data-waveform-col
         className="relative flex-1 min-w-0 overflow-hidden border-l border-border/0"
-        style={{ minHeight: TRACK_ROW_H }}
+        style={{ minHeight: rowH }}
       >
         {!commentMode && (
           <TactGrid
@@ -1869,7 +2001,7 @@ function TrackRow({
                   color={col.fg}
                   projectBpm={project.bpm ?? undefined}
                   totalProjectMs={trackOwnDurationMs}
-                  height={TRACK_ROW_H}
+                  height={rowH}
                   midiStartBar={0}
                 />
               </div>
@@ -1901,6 +2033,8 @@ function TrackRow({
               onReady={() => setWaveformReady(true)}
               currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
               currentUser={currentUser}
+              onCommentInteractionChange={handleCommentInteractionChange}
+              compact={compact}
             />
           )}
         </div>
@@ -2056,9 +2190,10 @@ function UploadRow({ upload, onRetry, onDismiss }: {
 
 // ─── Master player (bottom bar) ───────────────────────────────────────────────
 
-function MasterPlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume }: {
+function MasterPlayerBar({ playing, currentTime, duration, loaded, total, volume, onPlay, onPause, onSeek, onVolume, compact = false }: {
   playing: boolean; currentTime: number; duration: number; loaded: number; total: number; volume: number
   onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
+  compact?: boolean
 }) {
   const pct = duration > 0 ? currentTime / duration : 0
   const [dragging, setDragging] = useState(false)
@@ -2073,6 +2208,43 @@ function MasterPlayerBar({ playing, currentTime, duration, loaded, total, volume
 
   function onBarPointer(clientX: number) {
     onSeek(posToTime(clientX))
+  }
+
+  if (compact) {
+    return (
+      <div className="border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 h-10">
+        <button
+          type="button"
+          onClick={playing ? onPause : onPlay}
+          disabled={total === 0}
+          className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          aria-label={playing ? 'Pause' : 'Play'}
+        >
+          {isLoading ? (
+            <Spinner size={14} tone="foreground" />
+          ) : (
+            <span className="text-sm translate-x-px">{playing ? '❚❚' : '▶'}</span>
+          )}
+        </button>
+        <div
+          ref={barRef}
+          className="flex-1 min-w-0 h-1 bg-surface-2 relative cursor-pointer select-none"
+          onMouseDown={e => { setDragging(true); onBarPointer(e.clientX) }}
+          onMouseMove={e => { if (dragging) onBarPointer(e.clientX) }}
+          onMouseUp={() => setDragging(false)}
+          onMouseLeave={() => setDragging(false)}
+          onTouchStart={e => { setDragging(true); onBarPointer(e.touches[0].clientX) }}
+          onTouchMove={e => { if (dragging) onBarPointer(e.touches[0].clientX) }}
+          onTouchEnd={() => setDragging(false)}
+        >
+          <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct * 100}%` }} />
+          <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${pct * 100}%` }} />
+        </div>
+        <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 w-[4.5rem] text-right">
+          {fmtTime(currentTime)}
+        </span>
+      </div>
+    )
   }
 
   return (
@@ -2134,9 +2306,56 @@ function formatBytes(b: number): string {
   return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+// ─── Mobile version bar (scrollable pills + fixed + branch) ───────────────────
+
+function MobileVersionBar({
+  versions, activeId, onSelect, onNewBranch,
+}: {
+  versions: Version[]
+  activeId: string
+  onSelect: (id: string) => void
+  onNewBranch: () => void
+}) {
+  return (
+    <div className="flex items-stretch border-b border-border bg-surface/40 shrink-0 h-9">
+      <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 px-3 scrollbar-none">
+        {versions.map(v => {
+          const isActive = v.id === activeId
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onSelect(v.id)}
+              className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition ${
+                isActive
+                  ? 'bg-ember text-white border-ember'
+                  : v.merged_at
+                    ? 'border-border text-muted-foreground opacity-50'
+                    : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+              }`}
+            >
+              {isActive && v.type === 'main' && '● '}
+              {v.merged_at && '✓ '}
+              {v.type === 'branch' && !v.merged_at && !isActive && '⌥ '}
+              {v.name}
+            </button>
+          )
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={onNewBranch}
+        className="shrink-0 self-stretch border-l border-border px-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
+      >
+        + Branch
+      </button>
+    </div>
+  )
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName, isOpen }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName, isOpen, compact = false }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
@@ -2146,6 +2365,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   projectId: string
   projectName: string
   isOpen?: boolean
+  compact?: boolean
 }) {
   const main = versions.find(v => v.type === 'main')
   const branches = versions.filter(v => v.type === 'branch')
@@ -2166,14 +2386,17 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   return (
     <aside
       data-tour="versions-sidebar"
-      className={`project-mixer-sidebar w-[200px] shrink-0 flex flex-col overflow-hidden border-r border-border bg-surface/30${isOpen ? ' sidebar-open' : ''}`}
+      className={`project-mixer-sidebar w-[200px] shrink-0 flex flex-col overflow-hidden border-r border-border ${
+        compact ? 'bg-surface' : 'bg-surface/30'
+      }${isOpen ? ' sidebar-open' : ''}`}
     >
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
+      <div className={`flex-1 overflow-y-auto flex flex-col ${compact ? 'p-3 gap-4' : 'p-4 gap-6'}`}>
         <div>
           <SectionLabel>VERSION HISTORY</SectionLabel>
-          <div className="mt-4 space-y-3">
+          <div className={compact ? 'mt-2 space-y-1' : 'mt-4 space-y-3'}>
             {[main, ...branches].filter(Boolean).map(v => {
               const isActive = v!.id === activeId
+              const comments = commentCounts[v!.id] ?? 0
               return (
                 <button
                   key={v!.id}
@@ -2184,15 +2407,27 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
                   }`}
                 >
                   <div
-                    className={`absolute -left-[5px] top-1 size-2 rounded-full ${
-                      isActive ? 'bg-ember' : v!.merged_at ? 'bg-online' : 'bg-muted-foreground'
-                    }`}
+                    className={`absolute -left-[5px] size-2 rounded-full ${
+                      compact ? 'top-1/2 -translate-y-1/2' : 'top-1'
+                    } ${isActive ? 'bg-ember' : v!.merged_at ? 'bg-online' : 'bg-muted-foreground'}`}
                   />
-                  <div className="text-[11px] font-bold truncate text-foreground">{v!.name}</div>
-                  <div className="text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5">
-                    {fmtDate(v!.created_at)}
-                    {(commentCounts[v!.id] ?? 0) > 0 && ` · ${commentCounts[v!.id]} COMMENTS`}
-                  </div>
+                  {compact ? (
+                    <div className="text-[10px] truncate leading-tight py-1">
+                      <span className="font-bold text-foreground">{v!.name}</span>
+                      <span className="text-muted-foreground font-normal">
+                        {' · '}{fmtDate(v!.created_at)}
+                        {comments > 0 && ` · ${comments} comment${comments !== 1 ? 's' : ''}`}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-[11px] font-bold truncate text-foreground">{v!.name}</div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5">
+                        {fmtDate(v!.created_at)}
+                        {comments > 0 && ` · ${comments} COMMENTS`}
+                      </div>
+                    </>
+                  )}
                 </button>
               )
             })}
@@ -2227,26 +2462,39 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
           </div>
         </div>
 
-        <div className="mt-auto">
+        <div className={compact ? '' : 'mt-auto'}>
           <SectionLabel>STORAGE</SectionLabel>
-          <div className="text-[10px] tabular-nums mt-2 text-muted-foreground">
-            {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
-          </div>
-          <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
-            <div
-              className={`h-full transition-all ${storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
-              style={{ width: `${storagePct}%` }}
-            />
-          </div>
-          {storageUsed / storageLimit > 0.95 && (
-            <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
+          {compact ? (
+            <div className="text-[10px] tabular-nums mt-1 text-muted-foreground truncate">
+              {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
+              <span className={`ml-2 ${storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
+                {Math.round(storagePct)}%
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="text-[10px] tabular-nums mt-2 text-muted-foreground">
+                {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
+              </div>
+              <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
+                <div
+                  className={`h-full transition-all ${storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
+                  style={{ width: `${storagePct}%` }}
+                />
+              </div>
+              {storageUsed / storageLimit > 0.95 && (
+                <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      <div data-tour="resources-card" className="p-4 pt-0 border-t border-border">
-        <ProjectSidebarResources projectId={projectId} projectName={projectName} />
-      </div>
+      {!compact && (
+        <div data-tour="resources-card" className="p-4 pt-0 border-t border-border">
+          <ProjectSidebarResources projectId={projectId} projectName={projectName} />
+        </div>
+      )}
     </aside>
   )
 }
@@ -2318,6 +2566,16 @@ export default function ProjectPage() {
     if (typeof window === 'undefined') return false
     return window.innerWidth > window.innerHeight && window.innerHeight < 420 && window.innerWidth < 1024
   })
+  const [isMobileLandscape, setIsMobileLandscape] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.innerWidth > window.innerHeight && window.innerWidth < 1024
+  })
+
+  // Structure editing is desktop-only — keep mobile mixer light
+  useEffect(() => {
+    if (isMobileLandscape && editStructure) setEditStructure(false)
+  }, [isMobileLandscape, editStructure])
+
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
@@ -2448,6 +2706,7 @@ export default function ProjectPage() {
   // Measure waveform column bounds for structure overlay alignment.
   // Uses [data-waveform-col] from an actual track row.
   useEffect(() => {
+    if (isMobilePortrait) return
     const listEl = trackListRef.current
     if (!listEl) return
     function measure() {
@@ -2466,7 +2725,7 @@ export default function ProjectPage() {
     const obs = new ResizeObserver(measure)
     obs.observe(listEl)
     return () => obs.disconnect()
-  }, [activeTracks.length])
+  }, [activeTracks.length, isMobilePortrait])
 
   // Orientation detection — switches between ReadingMode and mixer, collapses topbar on short landscape
   useEffect(() => {
@@ -2475,6 +2734,7 @@ export default function ProjectPage() {
       const w = window.innerWidth, h = window.innerHeight
       setIsMobilePortrait(w < 768 && h > w)
       setIsShortLandscape(w > h && h < 420 && w < 1024)
+      setIsMobileLandscape(w > h && w < 1024)
     }
     window.addEventListener('resize', check)
     window.addEventListener('orientationchange', check)
@@ -3002,6 +3262,13 @@ export default function ProjectPage() {
       >
         Export WAV
       </a>
+      {isMobileLandscape && (
+        <CommentToggleBtn
+          active={commentMode}
+          count={totalComments}
+          onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+        />
+      )}
       <div className="relative" ref={moreRef}>
         <button
           type="button"
@@ -3054,11 +3321,14 @@ export default function ProjectPage() {
         activeVersionId={activeVersionId}
         onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
         projectId={projectId}
+        bandId={bandId}
         activeTracks={activeTracks}
         barDurationMs={projBarDurationMs}
         visible={isMobilePortrait}
       />
 
+      {!isMobilePortrait && (
+      <>
       {/* Header */}
       {isShortLandscape ? (
         <header className="flex items-center shrink-0 px-4 h-9 border-b border-border bg-background mixer-topbar topbar-compact">
@@ -3075,6 +3345,12 @@ export default function ProjectPage() {
             </svg>
           </button>
           <span className="text-[11px] truncate flex-1 text-muted-foreground uppercase tracking-widest">{project.name}</span>
+          <CommentToggleBtn
+            active={commentMode}
+            count={totalComments}
+            onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+            className="size-7"
+          />
           <button
             type="button"
             onClick={() => setTopbarSheetOpen(true)}
@@ -3110,6 +3386,15 @@ export default function ProjectPage() {
             </>
           }
           right={headerActions}
+        />
+      )}
+
+      {isMobileLandscape && (
+        <MobileVersionBar
+          versions={versions}
+          activeId={activeVersionId}
+          onSelect={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          onNewBranch={() => setShowBranchModal(true)}
         />
       )}
 
@@ -3180,6 +3465,7 @@ export default function ProjectPage() {
           projectId={projectId}
           projectName={project.name}
           isOpen={sidebarOpen}
+          compact={isMobileLandscape}
         />
 
         <main
@@ -3204,6 +3490,17 @@ export default function ProjectPage() {
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', opacity: isDragging ? 0.4 : 1, transition: 'opacity 0.15s' }}>
 
           {/* Project header */}
+          {isMobileLandscape ? (
+            <section className="border-b border-border bg-surface/40 shrink-0 px-4 py-1.5">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums flex items-center gap-x-3 overflow-x-auto whitespace-nowrap scrollbar-none">
+                {project.bpm != null && <span>{project.bpm} BPM</span>}
+                {project.key && <span className="text-ember">{project.key}</span>}
+                <span>{project.time_signature ?? '4/4'}</span>
+                <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
+                {player.duration > 0 && <span>{fmtTime(player.duration)}</span>}
+              </div>
+            </section>
+          ) : (
           <section className="border-b border-border bg-surface/40 shrink-0">
             <div className="px-4 sm:px-6 py-4 flex flex-wrap items-start gap-4 lg:gap-6">
               <div className="min-w-0 flex-1">
@@ -3298,6 +3595,7 @@ export default function ProjectPage() {
               </div>
             </div>
           </section>
+          )}
 
           {/* Structure + transport — bar ruler, sections, play/time/volume */}
           {project && (
@@ -3308,15 +3606,17 @@ export default function ProjectPage() {
               tracks={activeTracks}
               sections={sections}
               onSectionsChange={setSections}
-              editMode={editStructure}
+              editMode={isMobileLandscape ? false : editStructure}
               onEditModeChange={setEditStructure}
               waveformBounds={waveformBounds}
               currentTimeMs={player.currentTime * 1000}
               onSeek={player.seek}
+              compact={isMobileLandscape}
             />
           )}
 
-          {/* Comment mode banner */}
+          {/* Comment mode banner — desktop only; mobile uses top-bar icon */}
+          {!isMobileLandscape && (
           <div className={`overflow-hidden transition-[height,opacity] duration-200 shrink-0 ${commentMode ? 'h-9 opacity-100' : 'h-0 opacity-0'}`}>
             <div className="flex items-center gap-2 px-4 sm:px-6 h-9 bg-ember-soft border-b border-ember/30">
               <span className="text-[10px] uppercase tracking-widest text-ember">
@@ -3324,6 +3624,7 @@ export default function ProjectPage() {
               </span>
             </div>
           </div>
+          )}
 
           {/* Track list */}
           <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden relative">
@@ -3399,6 +3700,7 @@ export default function ProjectPage() {
                   project={project}
                   totalBars={totalProjectBars}
                   runtimeDurationMs={effectiveTrackDurationMs(t)}
+                  compact={isMobileLandscape}
                 />
               ))}
               {/* Upload progress rows */}
@@ -3473,7 +3775,8 @@ export default function ProjectPage() {
             </div>
           </div>
 
-          {/* Footer toolbar — BPM meta + comment mode */}
+          {/* Footer toolbar — BPM meta + comment mode (desktop only) */}
+          {!isMobileLandscape && (
           <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 shrink-0 flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-4 flex-wrap min-w-0">
               {project && (
@@ -3496,6 +3799,7 @@ export default function ProjectPage() {
               {commentMode ? '● COMMENT MODE' : `Comment Mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
             </TbBtn>
           </div>
+          )}
 
           </div>{/* end content dim wrapper */}
         </main>
@@ -3512,8 +3816,10 @@ export default function ProjectPage() {
         onPause={player.pause}
         onSeek={player.seek}
         onVolume={player.setVolume}
+        compact={isMobileLandscape}
       />
 
+      {!isMobileLandscape && (
       <StatusFooter
         left={
           <span className="uppercase tracking-widest truncate hidden sm:inline">
@@ -3524,6 +3830,9 @@ export default function ProjectPage() {
         }
         right={<span className="uppercase tracking-widest hidden sm:inline">{project.name.toUpperCase()}</span>}
       />
+      )}
+      </>
+      )}
 
       {/* Onboarding tour */}
       <ProjectTour
@@ -3554,22 +3863,7 @@ export default function ProjectPage() {
       )}
 
       {/* Toast */}
-      {toast && createPortal(
-        <div
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9000] px-4 py-2.5 rounded-xl text-[12px] font-medium flex items-center gap-2 pointer-events-none"
-          style={{
-            background: 'var(--bg-card)',
-            border: '0.5px solid var(--border-light)',
-            color: 'var(--text-soft)',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
-            animation: 'toast-in 0.2s ease',
-          }}
-        >
-          <span style={{ color: 'var(--green)' }}>✓</span>
-          {toast}
-        </div>,
-        document.body
-      )}
+      {toast && <Toast message={toast} />}
     </div>
   )
 }

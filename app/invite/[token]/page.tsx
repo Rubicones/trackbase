@@ -3,6 +3,16 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
+import {
+  AuthShell,
+  AuthCard,
+  AuthCardHeader,
+  AuthCardBody,
+  AuthWaveAccent,
+  AuthLoadingScreen,
+} from '@/components/auth/AuthShell'
+import { AuthButton } from '@/components/auth/AuthPrimitives'
+import { Spinner } from '@/components/ui/Spinner'
 
 export default function InvitePage() {
   const { token } = useParams<{ token: string }>()
@@ -11,10 +21,8 @@ export default function InvitePage() {
 
   const [status, setStatus] = useState<'idle' | 'accepting' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState('')
-  const [bandId, setBandId] = useState<string | null>(null)
 
   useEffect(() => {
-    // If not authed, send to auth with invite redirect
     if (!authLoading && !user) {
       router.replace(`/auth?next=/invite/${token}`)
     }
@@ -30,7 +38,6 @@ export default function InvitePage() {
         setStatus('error')
         return
       }
-      setBandId(data.band_id)
       setStatus('success')
       setTimeout(() => router.push(`/band/${data.band_id}`), 1200)
     } catch {
@@ -40,120 +47,101 @@ export default function InvitePage() {
   }
 
   if (authLoading || !user) {
-    return <Screen><p style={s.muted}>Redirecting…</p></Screen>
+    return <AuthLoadingScreen label="Redirecting" />
   }
 
   return (
-    <Screen>
-      <div style={s.card}>
-        {/* Logo */}
-        <div style={s.logo}>
-          <span style={{ color: 'var(--text-sec)', fontWeight: 600 }}>track</span>
-          <span style={{ color: 'var(--accent)', fontWeight: 600 }}>base</span>
-        </div>
+    <AuthShell>
+      <AuthCard>
+        <AuthWaveAccent />
 
         {status === 'success' ? (
           <>
-            <div style={s.iconWrap}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <circle cx="16" cy="16" r="15" stroke="var(--green)" strokeWidth="1.2" />
-                <path d="M10 16l5 5 7-8" stroke="var(--green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-            <h1 style={s.title}>Joined!</h1>
-            <p style={s.sub}>Redirecting you to the band…</p>
+            <AuthCardHeader
+              tag="03 // Invite"
+              title="You're in"
+              subtitle="Redirecting you to the band…"
+            />
+            <AuthCardBody className="flex flex-col items-center gap-4 text-center">
+              <div className="size-14 border border-online/40 bg-online/10 grid place-items-center text-online">
+                <CheckIcon />
+              </div>
+              <Spinner size={20} tone="muted" />
+            </AuthCardBody>
           </>
         ) : status === 'error' ? (
           <>
-            <div style={s.iconWrap}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <circle cx="16" cy="16" r="15" stroke="#ef4444" strokeWidth="1.2" />
-                <path d="M11 11l10 10M21 11l-10 10" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </div>
-            <h1 style={s.title}>Invalid invite</h1>
-            <p style={{ ...s.sub, color: '#f87171' }}>{message}</p>
-            <button onClick={() => router.push('/dashboard')} style={s.btn}>Go to dashboard</button>
+            <AuthCardHeader
+              tag="03 // Invite"
+              title="Invalid invite"
+              subtitle={message}
+            />
+            <AuthCardBody className="space-y-4 text-center">
+              <div className="mx-auto size-14 border border-destructive/40 bg-destructive/10 grid place-items-center text-destructive">
+                <XIcon />
+              </div>
+              <AuthButton onClick={() => router.push('/dashboard')}>
+                Go to dashboard →
+              </AuthButton>
+            </AuthCardBody>
           </>
         ) : (
           <>
-            <div style={s.iconWrap}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <circle cx="16" cy="16" r="15" stroke="var(--accent)" strokeWidth="1.2" />
-                <path d="M10 16h12M10 11h6M10 21h6" stroke="var(--accent)" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
-            </div>
-            <h1 style={s.title}>You're invited</h1>
-            <p style={s.sub}>Someone invited you to join their band on Trackbase.</p>
-            <button
-              onClick={handleAccept}
-              disabled={status === 'accepting'}
-              style={{ ...s.btn, opacity: status === 'accepting' ? 0.6 : 1 }}
-            >
-              {status === 'accepting' ? 'Joining…' : 'Accept invite →'}
-            </button>
+            <AuthCardHeader
+              tag="03 // Invite"
+              title="You're invited"
+              subtitle="Someone invited you to join their band on Trackbase."
+            />
+            <AuthCardBody className="space-y-4 text-center">
+              <div className="mx-auto size-14 border border-ember/40 bg-ember-soft/30 grid place-items-center text-ember">
+                <InviteIcon />
+              </div>
+              <AuthButton
+                onClick={handleAccept}
+                disabled={status === 'accepting'}
+              >
+                {status === 'accepting' ? 'Joining…' : 'Accept invite →'}
+              </AuthButton>
+            </AuthCardBody>
           </>
         )}
-      </div>
-    </Screen>
+      </AuthCard>
+    </AuthShell>
   )
 }
 
-function Screen({ children }: { children: React.ReactNode }) {
+function CheckIcon() {
   return (
-    <main className="auth-shell">
-      {children}
-    </main>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M5 12l5 5 9-10"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
-const s: Record<string, React.CSSProperties> = {
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    background: 'var(--bg-surface)',
-    border: '0.5px solid var(--border)',
-    borderRadius: 16,
-    padding: '2.5rem 2rem',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '0.5rem',
-  },
-  logo: {
-    fontSize: '1rem',
-    letterSpacing: '-0.03em',
-    display: 'flex',
-    marginBottom: '1rem',
-  },
-  iconWrap: { marginBottom: '0.75rem' },
-  title: {
-    fontSize: '1.25rem',
-    fontWeight: 600,
-    color: 'var(--text-bright)',
-    letterSpacing: '-0.02em',
-    margin: 0,
-  },
-  sub: {
-    fontSize: '0.8125rem',
-    color: 'var(--text-muted)',
-    textAlign: 'center',
-    margin: '0 0 0.75rem',
-    lineHeight: 1.5,
-  },
-  btn: {
-    background: 'var(--accent)',
-    color: 'white',
-    border: 'none',
-    borderRadius: 8,
-    padding: '0.625rem 1.5rem',
-    fontWeight: 500,
-    fontSize: '0.875rem',
-    cursor: 'pointer',
-    marginTop: '0.5rem',
-  },
-  muted: {
-    color: 'var(--text-muted)',
-    fontSize: 13,
-  },
+function XIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M7 7l10 10M17 7L7 17"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function InviteIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 12h8M8 9h5M8 15h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
 }
