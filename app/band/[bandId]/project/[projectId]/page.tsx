@@ -13,7 +13,7 @@ import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
-import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
+import { ProjectResourcesButton } from '@/components/ResourcesModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { Toast } from '@/components/design/Toast'
 import { TactGrid } from '@/components/design/TactGrid'
@@ -1919,9 +1919,9 @@ function TrackRow({
             <button
               type="button"
               onClick={() => setPianoRollOpen(p => !p)}
-              className="text-[9px] uppercase tracking-widest text-ember hover:underline px-0.5"
+              className="text-[9px] uppercase tracking-widest border border-border text-muted-foreground hover:border-ember hover:text-ember px-1.5 py-0.5 transition"
             >
-              {pianoRollOpen ? 'Close' : 'Edit ↗'}
+              {pianoRollOpen ? 'Close' : 'Edit'}
             </button>
           )}
           <div className="ml-auto flex items-center gap-0.5">
@@ -2491,8 +2491,8 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       </div>
 
       {!compact && (
-        <div data-tour="resources-card" className="p-4 pt-0 border-t border-border">
-          <ProjectSidebarResources projectId={projectId} projectName={projectName} />
+        <div className="p-4 pt-0 border-t border-border">
+          <ProjectResourcesButton projectId={projectId} projectName={projectName} className="mt-4" />
         </div>
       )}
     </aside>

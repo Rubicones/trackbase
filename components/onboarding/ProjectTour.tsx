@@ -67,7 +67,7 @@ const ALL_STEPS: TourStep[] = [
   {
     target: 'resources-card',
     title: 'Keep everything in one place',
-    body: 'Attach lyrics, DAW project files, reference links — anything related to this song. Access it quickly from the band page too, without opening the full project.',
+    body: 'Click Resources to attach lyrics, DAW project files, reference links — anything related to this song. Everything stays in one place for the whole band.',
   },
   {
     target: 'share-button',

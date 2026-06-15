@@ -2,6 +2,7 @@
 
 import {
   useEffect, useRef, useState, useCallback, useLayoutEffect,
+  type ButtonHTMLAttributes,
 } from 'react'
 import type { MidiNote, MidiTrackData, Track } from '@/lib/types'
 import {
@@ -183,6 +184,50 @@ function PianoKeyboard({
       ref={canvasRef}
       style={{ width: 40, height, display: 'block', flexShrink: 0, cursor: 'pointer' }}
       onClick={handleClick}
+    />
+  )
+}
+
+// ─── UI kit controls ──────────────────────────────────────────────────────────
+
+const midiBtnShared =
+  'text-[10px] uppercase tracking-widest transition disabled:opacity-40 disabled:pointer-events-none inline-flex items-center justify-center gap-1.5 border cursor-pointer'
+
+function MidiBtn({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`${midiBtnShared} border-border bg-surface text-foreground hover:border-ember hover:text-ember px-3 py-1.5 ${className}`}
+      {...props}
+    />
+  )
+}
+
+function MidiBtnPrimary({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`${midiBtnShared} bg-ember text-primary-foreground border-ember px-3 py-1.5 font-bold hover:brightness-110 disabled:opacity-50 ${className}`}
+      {...props}
+    />
+  )
+}
+
+function MidiIconBtn({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`${midiBtnShared} size-7 border-border bg-surface text-foreground hover:border-ember hover:text-ember text-base font-semibold leading-none disabled:opacity-35 ${className}`}
+      {...props}
     />
   )
 }
@@ -793,101 +838,66 @@ export default function PianoRollEditor({
   }
 
   return (
-    <div
-      style={{
-        background: 'var(--bg-surface)',
-        borderTop: '0.5px solid var(--border)',
-        borderBottom: '0.5px solid var(--border)',
-        height: 460,
-        display: 'flex',
-        flexDirection: 'column',
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
-      } as React.CSSProperties}
-    >
+    <div className="bg-surface border-y border-border h-[460px] flex flex-col select-none">
       {/* ── Toolbar ── */}
-      <div style={{
-        height: 40, flexShrink: 0,
-        background: 'var(--bg-card)',
-        borderBottom: '0.5px solid var(--border)',
-        display: 'flex', alignItems: 'center',
-        padding: '0 12px', gap: 10,
-      }}>
+      <div className="h-10 shrink-0 bg-card border-b border-border flex items-center px-3 gap-2.5">
         {/* Mode toggle */}
-        <div style={{ display: 'flex', background: 'var(--bg)', borderRadius: 6, padding: 2, gap: 1 }}>
+        <div className="inline-flex border border-border shrink-0">
           {(['draw', 'select'] as const).map(m => (
             <button
               key={m}
+              type="button"
               onClick={() => setMode(m)}
-              style={{
-                padding: '3px 9px', borderRadius: 5, fontSize: 11,
-                background: mode === m ? 'var(--bg-card)' : 'transparent',
-                color: mode === m ? 'var(--text-sec)' : 'var(--text-dim)',
-                border: mode === m ? '0.5px solid var(--border)' : 'none',
-                cursor: 'pointer', transition: 'all 0.12s',
-              }}
+              className={`text-[10px] uppercase tracking-widest px-3 py-1.5 transition border-r border-border last:border-r-0 ${
+                mode === m
+                  ? 'bg-ember text-white'
+                  : 'text-muted-foreground hover:text-ember hover:bg-ember-soft'
+              }`}
             >
-              {m === 'draw' ? '✏ Draw' : '↔ Select'}
+              {m === 'draw' ? 'Draw' : 'Select'}
             </button>
           ))}
         </div>
 
         {/* Snap */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Snap:</span>
+        <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground shrink-0">
+          Snap
           <select
             value={snap}
             onChange={e => setSnap(e.target.value)}
-            style={{
-              background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-              borderRadius: 5, padding: '2px 6px', fontSize: 11,
-              color: 'var(--text-sec)', cursor: 'pointer',
-            }}
+            className="bg-surface border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-foreground outline-none focus:border-ember cursor-pointer"
           >
             {Object.keys(SNAP_DIVISIONS).map(k => (
               <option key={k} value={k}>{k}</option>
             ))}
           </select>
-        </div>
+        </label>
 
         {/* Instrument selector */}
-        <div ref={instrumentMenuRef} style={{ position: 'relative', flex: 1 }}>
-          <button
+        <div ref={instrumentMenuRef} className="relative flex-1 min-w-0">
+          <MidiBtn
             onClick={() => setShowInstrumentMenu(v => !v)}
-            style={{
-              background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-              borderRadius: 5, padding: '3px 10px', fontSize: 11,
-              color: 'var(--text-sec)', cursor: 'pointer', maxWidth: 180,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}
+            className="max-w-[220px] truncate"
           >
-            🎹 {gmProgramLabel(instrument)}
-          </button>
+            {gmProgramLabel(instrument)}
+          </MidiBtn>
           {showInstrumentMenu && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, zIndex: 100, marginTop: 4,
-              background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-              borderRadius: 8, width: 220, maxHeight: 300, overflowY: 'auto',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
-            }}>
+            <div className="absolute top-full left-0 z-[100] mt-1 w-[220px] max-h-[300px] overflow-y-auto border border-border bg-popover shadow-2xl">
               {GM_PROGRAM_GROUPS.map(group => (
                 <div key={group.family}>
-                  <div style={{ padding: '6px 10px 3px', fontSize: 10, color: 'var(--text-dim)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <div className="px-3 pt-2 pb-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
                     {group.family}
                   </div>
                   {group.programs.map(p => (
                     <button
                       key={p.num}
+                      type="button"
                       onClick={() => { setInstrument(p.num); setShowInstrumentMenu(false) }}
-                      style={{
-                        display: 'block', width: '100%', textAlign: 'left',
-                        padding: '5px 16px', fontSize: 12,
-                        color: instrument === p.num ? 'var(--accent)' : 'var(--text-sec)',
-                        background: instrument === p.num ? 'rgba(99,102,241,0.08)' : 'transparent',
-                        border: 'none', cursor: 'pointer',
-                      }}
-                      onMouseEnter={e => { if (instrument !== p.num) e.currentTarget.style.background = 'var(--bg-card)' }}
-                      onMouseLeave={e => { if (instrument !== p.num) e.currentTarget.style.background = 'transparent' }}
+                      className={`block w-full text-left px-4 py-1.5 text-xs transition ${
+                        instrument === p.num
+                          ? 'text-ember bg-ember-soft'
+                          : 'text-muted-foreground hover:bg-surface hover:text-foreground'
+                      }`}
                     >
                       {p.label}
                     </button>
@@ -898,44 +908,34 @@ export default function PianoRollEditor({
           )}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div className="flex-1" />
 
-        {/* Undo/Redo */}
-        <button
-          onClick={undo} disabled={!undoStack.current.length}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 5px', opacity: undoStack.current.length ? 1 : 0.3 }}
+        {/* Undo / Redo */}
+        <MidiIconBtn
+          onClick={undo}
+          disabled={!undoStack.current.length}
           title="Undo (Ctrl+Z)"
-        >↺</button>
-        <button
-          onClick={redo} disabled={!redoStack.current.length}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 5px', opacity: redoStack.current.length ? 1 : 0.3 }}
-          title="Redo (Ctrl+Shift+Z)"
-        >↻</button>
-
-        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
-
-        <button
-          onClick={onClose}
-          style={{
-            background: 'transparent', border: '0.5px solid var(--border)',
-            borderRadius: 6, padding: '4px 12px', fontSize: 11,
-            color: 'var(--text-muted)', cursor: 'pointer',
-          }}
-        >Cancel</button>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{
-            background: saving ? 'var(--accent-dim, #4f46e5)' : 'var(--accent)',
-            border: 'none', borderRadius: 6, padding: '4px 14px',
-            fontSize: 11, fontWeight: 500, color: 'white', cursor: 'pointer',
-            opacity: saving ? 0.7 : 1,
-          }}
+          aria-label="Undo"
         >
+          ↺
+        </MidiIconBtn>
+        <MidiIconBtn
+          onClick={redo}
+          disabled={!redoStack.current.length}
+          title="Redo (Ctrl+Shift+Z)"
+          aria-label="Redo"
+        >
+          ↻
+        </MidiIconBtn>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <MidiBtn onClick={onClose}>Cancel</MidiBtn>
+        <MidiBtnPrimary onClick={handleSave} disabled={saving}>
           {saving ? 'Saving…' : 'Save'}
-        </button>
+        </MidiBtnPrimary>
         {saveError && (
-          <span style={{ fontSize: 11, color: '#ef4444', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span className="text-[10px] text-destructive max-w-[140px] truncate">
             {saveError}
           </span>
         )}
@@ -1005,48 +1005,50 @@ export default function PianoRollEditor({
       </div>
 
       {/* ── Footer ── */}
-      <div style={{
-        height: 40, flexShrink: 0,
-        background: 'var(--bg-card)',
-        borderTop: '0.5px solid var(--border)',
-        display: 'flex', alignItems: 'center',
-        padding: '0 14px', gap: 16, fontSize: 11,
-      }}>
+      <div className="h-10 shrink-0 bg-card border-t border-border flex items-center px-3.5 gap-4 text-[10px] uppercase tracking-widest">
         {/* Note count */}
-        <span style={{ color: 'var(--text-dim)' }}>
+        <span className="text-muted-foreground">
           {selectedIds.size > 0
             ? `${selectedIds.size} note${selectedIds.size !== 1 ? 's' : ''} selected`
             : `${notes.length} note${notes.length !== 1 ? 's' : ''} total`}
         </span>
 
-        <div style={{ flex: 1 }} />
+        <div className="flex-1" />
 
         {/* Zoom controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button
+        <div className="flex items-center gap-2">
+          <MidiIconBtn
             onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
-            style={{ background: 'none', border: '0.5px solid var(--border)', borderRadius: 4, width: 20, height: 20, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >−</button>
-          <span style={{ color: 'var(--text-dim)', minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-          <button
+            aria-label="Zoom out"
+            className="size-6 text-base"
+          >
+            −
+          </MidiIconBtn>
+          <span className="text-muted-foreground min-w-10 text-center tabular-nums normal-case tracking-normal">
+            {Math.round(zoom * 100)}%
+          </span>
+          <MidiIconBtn
             onClick={() => setZoom(z => Math.min(4, z + 0.25))}
-            style={{ background: 'none', border: '0.5px solid var(--border)', borderRadius: 4, width: 20, height: 20, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >+</button>
+            aria-label="Zoom in"
+            className="size-6 text-base"
+          >
+            +
+          </MidiIconBtn>
         </div>
 
         {/* Velocity for selected note */}
         {singleSelected && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ color: 'var(--text-dim)' }}>Velocity:</span>
+          <div className="flex items-center gap-2 normal-case tracking-normal">
+            <span className="text-muted-foreground text-[10px] uppercase tracking-widest">Velocity</span>
             <input
               type="range" min={1} max={127} value={singleSelected.velocity}
               onChange={e => {
                 const v = parseInt(e.target.value)
                 setNotes(prev => prev.map(n => n.id === singleSelected.id ? { ...n, velocity: v } : n))
               }}
-              style={{ width: 80, accentColor: 'var(--accent)' }}
+              className="w-20 accent-ember"
             />
-            <span style={{ color: 'var(--text-sec)', minWidth: 25 }}>{singleSelected.velocity}</span>
+            <span className="text-foreground min-w-6 tabular-nums">{singleSelected.velocity}</span>
           </div>
         )}
       </div>

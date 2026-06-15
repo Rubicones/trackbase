@@ -5,23 +5,23 @@ import React, {
   type ReactNode,
 } from 'react'
 
+import {
+  DESIGN_THEMES,
+  DEFAULT_DESIGN_THEME,
+  type DesignThemeId,
+} from '@/lib/design-theme'
+
 // ─── Theme ───────────────────────────────────────────────────────────────────
 
-type ThemeId = 'ember-dark' | 'ember-light' | 'studio-dark' | 'studio-light'
-
-const THEMES: { id: ThemeId; label: string; mode: 'dark' | 'light'; swatches: string[]; description: string }[] = [
-  { id: 'ember-dark',   label: 'Ember Dark',   mode: 'dark',  swatches: ['#211f1e','#2a2826','#ff5a1f','#f5f5f5'], description: 'Default. Brutalist bone-black canvas with hot ember accent.' },
-  { id: 'ember-light',  label: 'Ember Light',  mode: 'light', swatches: ['#f5f5f5','#ffffff','#ea4d12','#1a1a1a'], description: 'Studio-paper white with the same ember signature.' },
-  { id: 'studio-dark',  label: 'Studio Dim',   mode: 'dark',  swatches: ['#1f242c','#2a313b','#5ac8e6','#e8ecf1'], description: 'Calmer slate-blue night mode with a cool teal accent.' },
-  { id: 'studio-light', label: 'Studio Paper', mode: 'light', swatches: ['#f9f7f3','#ffffff','#4b56c4','#1d2030'], description: 'Warm paper background with a muted indigo accent.' },
-]
+const THEMES = DESIGN_THEMES
+type ThemeId = DesignThemeId
 
 type ThemeCtx = { theme: ThemeId; setTheme: (t: ThemeId) => void }
-const ThemeContext = createContext<ThemeCtx>({ theme: 'ember-dark', setTheme: () => {} })
+const ThemeContext = createContext<ThemeCtx>({ theme: DEFAULT_DESIGN_THEME, setTheme: () => {} })
 const useTheme = () => useContext(ThemeContext)
 
 function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeId>('ember-dark')
+  const [theme, setThemeState] = useState<ThemeId>(DEFAULT_DESIGN_THEME)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

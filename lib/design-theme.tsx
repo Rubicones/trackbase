@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
-export type DesignThemeId = 'ember-dark' | 'ember-light' | 'studio-dark' | 'studio-light'
+export type DesignThemeId =
+  | 'ember-dark'
+  | 'ember-light'
+  | 'blush-dark'
+  | 'blush-light'
+  | 'studio-dark'
+  | 'studio-light'
+  | 'studio-paper-dark'
 
 export const DESIGN_THEMES: {
   id: DesignThemeId
@@ -26,6 +33,20 @@ export const DESIGN_THEMES: {
     description: 'Studio-paper white with the same ember signature.',
   },
   {
+    id: 'blush-dark',
+    label: 'Blush Dark',
+    mode: 'dark',
+    swatches: ['#211f1e', '#2a2826', '#f472b6', '#f5f5f5'],
+    description: 'Bone-black canvas with a vivid pink accent.',
+  },
+  {
+    id: 'blush-light',
+    label: 'Blush Light',
+    mode: 'light',
+    swatches: ['#f5f5f5', '#ffffff', '#e85d9a', '#1a1a1a'],
+    description: 'Clean light studio with a pink accent instead of ember.',
+  },
+  {
     id: 'studio-dark',
     label: 'Studio Dim',
     mode: 'dark',
@@ -36,8 +57,15 @@ export const DESIGN_THEMES: {
     id: 'studio-light',
     label: 'Studio Paper',
     mode: 'light',
-    swatches: ['#f9f7f3', '#ffffff', '#4b56c4', '#1d2030'],
+    swatches: ['#f9f7f3', '#ffffff', '#6d58c8', '#1d2030'],
     description: 'Warm paper background with a muted indigo accent.',
+  },
+  {
+    id: 'studio-paper-dark',
+    label: 'Studio Paper Dark',
+    mode: 'dark',
+    swatches: ['#2a2620', '#332e26', '#8f78e8', '#f0ebe3'],
+    description: 'Warm paper-toned night mode with the same indigo accent.',
   },
 ]
 
@@ -57,7 +85,8 @@ const DesignThemeContext = createContext<DesignThemeContextValue>({
 export function applyDesignTheme(theme: DesignThemeId) {
   if (typeof document === 'undefined') return
   document.documentElement.setAttribute('data-theme', theme)
-  document.documentElement.style.colorScheme = theme.endsWith('light') ? 'light' : 'dark'
+  const meta = DESIGN_THEMES.find(t => t.id === theme)
+  document.documentElement.style.colorScheme = meta?.mode ?? (theme.endsWith('light') ? 'light' : 'dark')
 }
 
 export function DesignThemeProvider({ children }: { children: ReactNode }) {
