@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '@/lib/types'
 
+const menuInputCls =
+  'w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ember'
+
+const inlineInputCls =
+  'bg-surface border border-ember px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:border-ember tabular-nums'
+
 export function ProjectMetaFields({
   projectId,
   bpm,
@@ -69,33 +75,11 @@ export function ProjectMetaFields({
     if (next !== (keySig || null)) await saveMeta({ key: next })
   }
 
-  const fieldBtn: React.CSSProperties = {
-    background: 'none',
-    border: 'none',
-    padding: 0,
-    cursor: 'pointer',
-    fontSize: 11,
-    color: 'var(--text-dim)',
-  }
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    fontSize: 12,
-    fontWeight: 500,
-    color: 'var(--text-soft)',
-    background: 'var(--bg-card)',
-    border: '0.5px solid var(--border)',
-    borderRadius: 6,
-    padding: '6px 8px',
-    outline: 'none',
-    boxSizing: 'border-box',
-  }
-
   if (variant === 'menu') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 2px' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>BPM</span>
+      <div className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">BPM</span>
           <input
             ref={bpmRef}
             value={bpmVal}
@@ -105,12 +89,11 @@ export function ProjectMetaFields({
             placeholder="120"
             type="text"
             inputMode="numeric"
-            style={inputStyle}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+            className={menuInputCls}
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Key</span>
+        <label className="flex flex-col gap-1">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Key</span>
           <input
             ref={keyRef}
             value={keyVal}
@@ -118,8 +101,7 @@ export function ProjectMetaFields({
             onKeyDown={e => { if (e.key === 'Enter') void commitKey() }}
             onBlur={() => void commitKey()}
             placeholder="C minor"
-            style={inputStyle}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+            className={menuInputCls}
           />
         </label>
       </div>
@@ -127,9 +109,9 @@ export function ProjectMetaFields({
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <span style={fieldBtn}>
-        BPM{' '}
+    <div className="flex items-center gap-4 flex-wrap text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums">
+      <span className="inline-flex items-center gap-1.5">
+        BPM
         {editingBpm ? (
           <input
             ref={bpmRef}
@@ -142,29 +124,22 @@ export function ProjectMetaFields({
             onBlur={() => void commitBpm()}
             type="text"
             inputMode="numeric"
-            style={{
-              width: 42, fontSize: 11, fontWeight: 500, color: 'var(--text-soft)',
-              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-              borderRadius: 4, padding: '1px 4px', outline: 'none',
-            }}
+            className={`${inlineInputCls} w-10`}
           />
         ) : (
           <button
             type="button"
             onClick={() => { setEditingBpm(true); setTimeout(() => bpmRef.current?.select(), 0) }}
-            style={{
-              ...fieldBtn,
-              fontWeight: 500,
-              color: bpm ? 'var(--text-soft)' : 'var(--text-dim)',
-              fontStyle: bpm ? 'normal' : 'italic',
-            }}
+            className={`font-mono normal-case tracking-normal ${
+              bpm ? 'text-ember' : 'text-muted-foreground/70 italic'
+            }`}
           >
             {bpm ?? 'set'}
           </button>
         )}
       </span>
-      <span style={fieldBtn}>
-        Key{' '}
+      <span className="inline-flex items-center gap-1.5">
+        Key
         {editingKey ? (
           <input
             ref={keyRef}
@@ -176,22 +151,15 @@ export function ProjectMetaFields({
             }}
             onBlur={() => void commitKey()}
             placeholder="C minor"
-            style={{
-              width: 72, fontSize: 11, fontWeight: 500, color: 'var(--text-soft)',
-              background: 'var(--bg-card)', border: '0.5px solid var(--accent)',
-              borderRadius: 4, padding: '1px 4px', outline: 'none',
-            }}
+            className={`${inlineInputCls} w-[4.5rem]`}
           />
         ) : (
           <button
             type="button"
             onClick={() => { setEditingKey(true); setTimeout(() => keyRef.current?.select(), 0) }}
-            style={{
-              ...fieldBtn,
-              fontWeight: 500,
-              color: keySig ? 'var(--text-soft)' : 'var(--text-dim)',
-              fontStyle: keySig ? 'normal' : 'italic',
-            }}
+            className={`font-mono normal-case tracking-normal ${
+              keySig ? 'text-foreground' : 'text-muted-foreground/70 italic'
+            }`}
           >
             {keySig ?? 'set'}
           </button>

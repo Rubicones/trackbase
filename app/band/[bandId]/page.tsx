@@ -376,21 +376,21 @@ function ProjectRow({
             type="button"
             onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
             aria-label="Project options"
-            className="size-[34px] border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+            className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
           >
             <IconDotsV />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] border border-border bg-popover shadow-2xl py-1 overflow-visible">
+            <div className="absolute right-0 top-full mt-2 z-50 w-52 border border-border bg-popover shadow-2xl">
               <button
                 type="button"
                 onClick={() => { setMenuOpen(false); onOpen() }}
-                className="block w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
+                className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-foreground hover:bg-surface transition-colors"
               >
                 Open project
               </button>
-              <div className="h-px bg-border my-1" />
-              <div className="px-2 py-1" onClick={e => e.stopPropagation()}>
+              <div className="h-px bg-border" />
+              <div className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                 <ProjectMetaFields
                   projectId={project.id}
                   bpm={project.bpm}
@@ -401,11 +401,11 @@ function ProjectRow({
               </div>
               {isOwner && (
                 <>
-                  <div className="h-px bg-border my-1" />
+                  <div className="h-px bg-border" />
                   <button
                     type="button"
                     onClick={() => { setMenuOpen(false); onDelete?.() }}
-                    className="block w-full text-left px-3 py-2 text-xs text-destructive hover:bg-destructive/10"
+                    className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-destructive hover:bg-destructive/10 transition-colors"
                   >
                     Delete project
                   </button>

@@ -665,10 +665,10 @@ html.dark[data-palette="green"] .theme-avatar {
 
   /* Comment / selection overlays on waveforms */
   .waveform-accent-fill {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    background: color-mix(in oklab, var(--ember) 15%, transparent);
   }
   .waveform-accent-edge {
-    background: var(--accent);
+    background: var(--ember);
   }
   .waveform-accent-label {
     background: var(--accent);

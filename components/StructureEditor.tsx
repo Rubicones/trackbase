@@ -11,19 +11,8 @@ import {
   sliceSectionFromToneBuffer,
 } from '@/lib/mergedAudioBuffer'
 
-// ─── Section colors ───────────────────────────────────────────────────────────
-
-export const SECTION_COLORS: Record<SectionType, { bg: string; fg: string }> = {
-  intro:        { bg: 'rgba(99,102,241,0.38)',  fg: '#6366F1' },
-  verse:        { bg: 'rgba(16,185,129,0.38)',  fg: '#10B981' },
-  chorus:       { bg: 'rgba(168,85,247,0.38)',  fg: '#A855F7' },
-  'pre-chorus': { bg: 'rgba(245,158,11,0.38)',  fg: '#F59E0B' },
-  bridge:       { bg: 'rgba(6,182,212,0.38)',   fg: '#06B6D4' },
-  drop:         { bg: 'rgba(239,68,68,0.38)',   fg: '#ef4444' },
-  breakdown:    { bg: 'rgba(107,114,128,0.38)', fg: '#6b7280' },
-  outro:        { bg: 'rgba(59,130,246,0.38)',  fg: '#3b82f6' },
-  custom:       { bg: 'rgba(156,163,175,0.38)', fg: '#9ca3af' },
-}
+/** Stored on section rows for merge/API; UI uses ember tokens, not this value. */
+const SECTION_STORED_COLOR = 'oklch(0.68 0.22 35 / 0.12)'
 
 const SECTION_TYPES: SectionType[] = [
   'intro', 'verse', 'chorus', 'pre-chorus', 'bridge', 'drop', 'breakdown', 'outro', 'custom',
@@ -571,37 +560,31 @@ function SectionEditPopover({
 // ─── Chords hover tooltip ─────────────────────────────────────────────────────
 
 function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
-  const c = SECTION_COLORS[section.type] ?? SECTION_COLORS.custom
   const W = 200
   const cellCx = rect.left + rect.width / 2
   const pLeft = typeof window !== 'undefined'
     ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
     : 8
-  const caret = Math.max(12, Math.min(W - 12, cellCx - pLeft))
   const pTop = rect.top - 8
 
   return createPortal(
-    <div style={{
-      position: 'fixed', top: pTop, left: pLeft, width: W,
-      transform: 'translateY(-100%)',
-      background: 'var(--bg-surface)',
-      border: `0.5px solid ${c.fg}`,
-      borderRadius: 8, padding: '8px 10px',
-      zIndex: 300, boxShadow: '0 4px 20px rgba(0,0,0,0.28)',
-      pointerEvents: 'none',
-    }}>
-      <PopoverCaret side="bottom" left={caret} borderColor={c.fg} />
-      <div style={{ fontSize: 10, color: c.fg, fontWeight: 600, marginBottom: 5 }}>
+    <div
+      className="fixed z-[300] pointer-events-none border border-border bg-popover shadow-2xl px-3 py-2 animate-slide-in"
+      style={{
+        top: pTop,
+        left: pLeft,
+        width: W,
+        transform: 'translateY(-100%)',
+      }}
+    >
+      <div className="text-[9px] font-bold uppercase tracking-widest text-ember mb-1">
         {sectionLabel(section)}
       </div>
-      <div style={{
-        fontSize: 11, fontFamily: 'var(--font-mono, monospace)',
-        color: 'var(--text-sec)', whiteSpace: 'pre-wrap', lineHeight: 1.55,
-      }}>
+      <div className="text-[10px] font-mono text-foreground/80 whitespace-pre-wrap leading-relaxed">
         {section.chords}
       </div>
     </div>,
-    document.body
+    document.body,
   )
 }
 
@@ -936,7 +919,6 @@ export default function StructureOverlay({
 
   async function handleConfirmNew(type: SectionType, customName?: string, chords?: string) {
     if (selStart === null || selEnd === null) return
-    const c = SECTION_COLORS[type] ?? SECTION_COLORS.custom
     try {
       const res = await fetch(`/api/versions/${versionId}/sections`, {
         method: 'POST',
@@ -945,7 +927,7 @@ export default function StructureOverlay({
           type, custom_name: customName ?? null,
           start_bar: selStart, end_bar: selEnd,
           chords: chords ?? null,
-          color: c.bg, position: sections.length,
+          color: SECTION_STORED_COLOR, position: sections.length,
         }),
       })
       if (!res.ok) throw new Error('Failed')
@@ -963,14 +945,13 @@ export default function StructureOverlay({
   }
 
   function handleTypeChange(id: string, type: SectionType, customName?: string) {
-    const c = SECTION_COLORS[type] ?? SECTION_COLORS.custom
     onSectionsChange(prev => prev.map(s =>
-      s.id === id ? { ...s, type, custom_name: customName ?? null, color: c.bg } : s,
+      s.id === id ? { ...s, type, custom_name: customName ?? null, color: SECTION_STORED_COLOR } : s,
     ))
     fetch(`/api/sections/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, custom_name: customName ?? null, color: c.bg }),
+      body: JSON.stringify({ type, custom_name: customName ?? null, color: SECTION_STORED_COLOR }),
     }).catch(console.error)
   }
 
@@ -1134,10 +1115,10 @@ export default function StructureOverlay({
               </span>
             </div>
             <div
-              className="px-3 flex flex-col justify-center gap-0.5"
+              className={`px-3 flex flex-col justify-center gap-0.5 ${editMode ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
               style={{ height: RIBBON_H }}
             >
-              <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-muted-foreground">
+              <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-ember">
                 {editMode && <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />}
                 STRUCTURE
               </div>
@@ -1199,7 +1180,7 @@ export default function StructureOverlay({
             <div
               ref={stripRef}
               onMouseDown={handleStripMouseDown}
-              className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-surface' : 'bg-surface/60'}`}
+              className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
               style={{ height: RIBBON_H, cursor: stripCursor }}
             >
               {showBarGrid && Array.from({ length: totalBars }, (_, i) => {
@@ -1219,6 +1200,13 @@ export default function StructureOverlay({
 
               {sections.map(s => {
                 const isActive = activeEdit?.sectionId === s.id
+                const pendingChords = pendingChordIds.has(s.id)
+                const accent = 'var(--ember)'
+                const sideBorder = pendingChords
+                  ? `1px solid color-mix(in oklab, ${accent} 40%, var(--border))`
+                  : isActive
+                    ? '1px solid color-mix(in oklab, var(--ember) 35%, var(--border))'
+                    : '1px solid color-mix(in oklab, var(--border) 85%, var(--ember) 15%)'
                 return (
                   <div
                     key={s.id}
@@ -1229,25 +1217,23 @@ export default function StructureOverlay({
                       }
                     }}
                     onMouseLeave={() => setHoveredChords(null)}
-                    className={`absolute top-0 bottom-0 flex flex-col items-start justify-start pt-1.5 px-1.5 overflow-hidden ${
-                      editMode ? 'cursor-pointer' : 'cursor-inherit'
-                    }`}
+                    className={`absolute inset-y-0 flex flex-col items-start justify-start pt-1.5 px-2 overflow-hidden transition-[filter] ${
+                      editMode ? 'cursor-pointer hover:brightness-[1.03]' : 'cursor-inherit'
+                    } ${isActive ? 'z-[8]' : 'z-[6]'}`}
                     style={{
                       left: `${tp(s.start_bar) * 100}%`,
                       width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
-                      borderLeft: pendingChordIds.has(s.id)
-                        ? '2px solid #F59E0B'
-                        : '1px solid var(--border)',
-                      background: isActive ? 'color-mix(in oklab, var(--foreground) 4%, transparent)' : 'transparent',
-                      outline: isActive ? '1px solid color-mix(in oklab, var(--foreground) 35%, transparent)' : 'none',
-                      outlineOffset: -1,
-                      zIndex: isActive ? 8 : 6,
+                      borderTop: 'none',
+                      borderBottom: 'none',
+                      borderLeft: sideBorder,
+                      borderRight: sideBorder,
+                      background: `color-mix(in oklab, ${accent} 12%, transparent)`,
                     }}
                   >
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[#6366F1] truncate leading-tight pointer-events-none w-full">
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-ember truncate leading-tight pointer-events-none w-full">
                       {sectionLabel(s)}
                     </span>
-                    <span className="text-[9px] font-mono text-[#6366F1]/75 truncate leading-tight pointer-events-none w-full mt-0.5">
+                    <span className="text-[9px] font-mono text-foreground/75 truncate leading-tight pointer-events-none w-full mt-0.5">
                       {s.chords?.replace(/\n/g, ' ').slice(0, 48) || (editMode ? '+ chords' : '\u00a0')}
                     </span>
                     {editMode && (

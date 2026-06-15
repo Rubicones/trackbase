@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -16,6 +16,10 @@ import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TactGrid } from '@/components/design/TactGrid'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
+import { FloatingPopover } from '@/components/design/FloatingPopover'
+import { UserAvatar } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, audioArrayBufferCache } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
@@ -127,13 +131,6 @@ function fmtDate(iso: string) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   if (diff < 172800) return 'yesterday'
   return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
-}
-
-function avatarColor(str: string): string {
-  const colors = ['#6366F1','#10B981','#F59E0B','#EC4899','#06B6D4','#8B5CF6','#F97316','#14B8A6']
-  let h = 0
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) & 0xffffffff
-  return colors[Math.abs(h) % colors.length]
 }
 
 function relativeTime(iso: string): string {
@@ -358,7 +355,6 @@ function CommentTooltip({
   let left = anchorLeft - W / 2
   if (left < 8) left = 8
   if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
-  const caretLeft = Math.max(8, Math.min(W - 12, anchorLeft - left))
 
   const [showAllReplies, setShowAllReplies] = useState(false)
   const [replyText, setReplyText] = useState('')
@@ -367,87 +363,57 @@ function CommentTooltip({
   const visibleReplies = showAllReplies ? replies : replies.slice(0, 2)
   const hiddenCount = replies.length - 2
 
-  const authorColor = avatarColor(comment.author_username ?? 'unknown')
   const canDelete = comment.created_by === currentUserId || isOwner
+  const author = comment.author_username ?? 'unknown'
 
-  return createPortal(
-    <div
-      className="fixed z-[6000] pointer-events-auto rounded-xl overflow-hidden"
-      style={{
-        left, top: anchorTop, width: W, transform: 'translateY(-100%)',
-        background: 'var(--bg-surface)',
-        border: '0.5px solid var(--border-light)',
-      }}
-      onMouseLeave={onHide}
-    >
-      <div className="absolute pointer-events-none" style={{
-        bottom: -4, left: caretLeft - 4,
-        borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
-        borderTop: '4px solid var(--bg-surface)',
-      }} />
-      <div className="px-3 py-2">
-        {/* Top row: author + timecode + delete */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-          <div style={{
-            width: 18, height: 18, borderRadius: '50%',
-            background: `${authorColor}33`,
-            border: `1px solid ${authorColor}66`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 8, fontWeight: 600, color: authorColor, flexShrink: 0,
-          }}>
-            {(comment.author_username ?? 'unknown').slice(0, 2).toUpperCase()}
-          </div>
-          <span style={{ fontSize: 11, color: 'var(--text-sec)', fontWeight: 500 }}>{comment.author_username ?? 'unknown'}</span>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>·</span>
-          <span className="text-[11px] tabular-nums" style={{ color: 'var(--accent)' }}>
+  return (
+    <FloatingPopover left={left} top={anchorTop} width={W} onMouseLeave={onHide}>
+      <div className="px-3 py-2.5">
+        <div className="flex items-center gap-2 mb-1">
+          <UserAvatar seed={author} size={18} kind="user" />
+          <span className="text-[11px] text-foreground truncate">{author}</span>
+          <span className="text-[10px] tabular-nums text-ember shrink-0">
             {fmtMs(comment.timecode_start_ms)} → {fmtMs(comment.timecode_end_ms)}
           </span>
           {canDelete && (
             <button
+              type="button"
               onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
-              className="text-[12px] text-dim hover:text-danger transition-colors duration-150 px-0.5 leading-none"
-              style={{ marginLeft: 'auto' }}
-            >✕</button>
+              className="ml-auto text-muted-foreground hover:text-destructive transition-colors text-xs leading-none px-0.5"
+              aria-label="Delete comment"
+            >
+              ✕
+            </button>
           )}
         </div>
-        {/* Relative time */}
-        <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '0 0 8px 0' }}>{relativeTime(comment.created_at)}</p>
-        {/* Comment text */}
-        <p className="text-[13px] text-soft leading-snug break-words" style={{ margin: 0, lineHeight: 1.5 }}>{comment.content}</p>
+        <p className="text-[9px] text-muted-foreground m-0 mb-2">{relativeTime(comment.created_at)}</p>
+        <p className="text-[13px] text-foreground leading-snug break-words m-0">{comment.content}</p>
 
-        {/* Replies */}
         {replies.length > 0 && (
-          <div style={{ borderTop: '0.5px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
-            {visibleReplies.map(r => {
-              const rc = avatarColor(r.author_username)
-              return (
-                <div key={r.id} style={{ marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-                    <div style={{
-                      width: 16, height: 16, borderRadius: '50%',
-                      background: `${rc}33`, border: `1px solid ${rc}66`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 7, fontWeight: 600, color: rc, flexShrink: 0,
-                    }}>
-                      {r.author_username.slice(0, 2).toUpperCase()}
-                    </div>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-sec)' }}>{r.author_username}</span>
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-sec)', lineHeight: 1.4, margin: 0 }}>{r.content}</p>
-                  <p style={{ fontSize: 10, color: 'var(--text-dim)', margin: '2px 0 0 0' }}>{relativeTime(r.created_at)}</p>
+          <div className="border-t border-border mt-2 pt-2 space-y-2">
+            {visibleReplies.map(r => (
+              <div key={r.id}>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <UserAvatar seed={r.author_username} size={16} kind="user" />
+                  <span className="text-[11px] text-foreground">{r.author_username}</span>
                 </div>
-              )
-            })}
+                <p className="text-[12px] text-foreground/85 leading-snug m-0">{r.content}</p>
+                <p className="text-[9px] text-muted-foreground m-0 mt-0.5">{relativeTime(r.created_at)}</p>
+              </div>
+            ))}
             {!showAllReplies && hiddenCount > 0 && (
-              <button onClick={() => setShowAllReplies(true)} style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 4 }}>
+              <button
+                type="button"
+                onClick={() => setShowAllReplies(true)}
+                className="text-[10px] uppercase tracking-widest text-ember hover:underline"
+              >
                 Show {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
               </button>
             )}
           </div>
         )}
 
-        {/* Reply input */}
-        <div style={{ borderTop: '0.5px solid var(--border)', marginTop: replies.length > 0 ? 4 : 8, paddingTop: 6 }}>
+        <div className={`border-t border-border pt-2 ${replies.length > 0 ? 'mt-2' : 'mt-3'}`}>
           <input
             placeholder="Reply..."
             value={replyText}
@@ -463,18 +429,11 @@ function CommentTooltip({
                 finally { setSubmittingReply(false) }
               }
             }}
-            style={{
-              width: '100%', background: 'var(--bg-card)', border: '0.5px solid var(--border)',
-              borderRadius: 6, padding: '5px 8px', fontSize: 12, color: 'var(--text)',
-              outline: 'none', boxSizing: 'border-box',
-            }}
-            onMouseEnter={e => { (e.target as HTMLInputElement).style.borderColor = 'var(--accent)' }}
-            onMouseLeave={e => { (e.target as HTMLInputElement).style.borderColor = 'var(--border)' }}
+            className="flex h-8 w-full font-display border border-border bg-transparent px-3 py-1 text-xs text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
       </div>
-    </div>,
-    document.body
+    </FloatingPopover>
   )
 }
 
@@ -607,59 +566,40 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
   let left = lineX - W / 2
   if (left < 8) left = 8
   if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
-  const caretOffset = Math.max(8, Math.min(W - 12, lineX - left))
 
-  return createPortal(
-    <div
-      ref={bubbleRef}
-      className="fixed z-[5000] rounded-xl p-3"
-      style={{
-        left, top: waveformTop - 8, width: W, transform: 'translateY(-100%)',
-        background: 'var(--bg-card)',
-        border: '0.5px solid var(--accent)',
-      }}
-    >
-      <div className="absolute pointer-events-none" style={{
-        bottom: -4, left: caretOffset - 4,
-        borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
-        borderTop: '4px solid var(--bg-card)',
-      }} />
-      {currentUser && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-          <div style={{
-            width: 16, height: 16, borderRadius: '50%',
-            background: `${avatarColor(currentUser.username)}33`,
-            border: `1px solid ${avatarColor(currentUser.username)}66`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 7, fontWeight: 600, color: avatarColor(currentUser.username), flexShrink: 0,
-          }}>
-            {currentUser.username.slice(0, 2).toUpperCase()}
+  return (
+    <FloatingPopover left={left} top={waveformTop - 8} width={W}>
+      <div ref={bubbleRef} className="p-3">
+        {currentUser && (
+          <div className="flex items-center gap-2 mb-2">
+            <UserAvatar seed={currentUser.username} size={16} kind="user" />
+            <span className="text-[11px] text-foreground">{currentUser.username}</span>
           </div>
-          <span style={{ fontSize: 11, color: 'var(--text-sec)', fontWeight: 500 }}>{currentUser.username}</span>
+        )}
+        <div className="text-[10px] tabular-nums text-ember mb-2">
+          {fmtMs(startMs)} → {fmtMs(endMs)}
         </div>
-      )}
-      <div className="text-[10px] text-accent tabular-nums mb-2">
-        {fmtMs(startMs)} → {fmtMs(endMs)}
+        <input
+          ref={inputRef}
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onClose() }}
+          placeholder="Add comment..."
+          className="flex h-8 w-full font-display border border-border bg-transparent px-3 py-1 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <div className="flex justify-between items-center mt-2 pt-2 border-t border-border">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">esc to cancel</span>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={submitting || !text.trim()}
+            className="uppercase tracking-widest text-[10px] font-bold h-7"
+          >
+            {submitting ? '…' : errored ? 'Error' : 'Send'}
+          </Button>
+        </div>
       </div>
-      <input
-        ref={inputRef} value={text}
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onClose() }}
-        placeholder="Add comment..."
-        className="w-full bg-transparent outline-none text-[13px] text-bright placeholder:text-dim"
-      />
-      <div className="flex justify-between items-center mt-2 pt-2" style={{ borderTop: '0.5px solid var(--border-light)' }}>
-        <span className="text-[10px] text-dim">esc to cancel</span>
-        <button
-          onClick={submit}
-          disabled={submitting || !text.trim()}
-          className={`px-2.5 py-1 rounded-md text-[11px] font-medium text-bright transition-colors duration-150 ${errored ? 'bg-danger' : 'bg-accent hover:bg-accent-dim'} disabled:opacity-40 disabled:cursor-not-allowed`}
-        >
-          {submitting ? '…' : errored ? 'Error' : 'Send'}
-        </button>
-      </div>
-    </div>,
-    document.body
+    </FloatingPopover>
   )
 }
 
@@ -934,7 +874,7 @@ function Waveform({
           {/* Time label above right edge */}
           {dragSpan > 0.01 && (
             <div
-              className="absolute z-[4] pointer-events-none text-[10px] px-1.5 py-0.5 rounded-[4px] whitespace-nowrap tabular-nums waveform-accent-label"
+              className="absolute z-[4] pointer-events-none text-[10px] px-2 py-0.5 whitespace-nowrap tabular-nums bg-foreground text-background uppercase tracking-widest"
               style={{
                 left: `${Math.max(dragRect.startX, dragRect.endX) * 100}%`,
                 bottom: '100%',
@@ -1295,27 +1235,18 @@ function TrackLetterBtn({
   onClick?: () => void
   activeClass?: string
 }) {
-  const [hovered, setHovered] = useState(false)
   return (
-    <div className="relative">
+    <HoverTooltip label={tooltip}>
       <button
         type="button"
-        title={tooltip}
         onClick={onClick}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         className={`size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
           active && activeClass ? activeClass : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
         }`}
       >
         {letter}
       </button>
-      {hovered && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] whitespace-nowrap z-30 border border-border bg-popover shadow-lg pointer-events-none">
-          {tooltip}
-        </div>
-      )}
-    </div>
+    </HoverTooltip>
   )
 }
 
@@ -1330,33 +1261,77 @@ function ActionButton({
   tooltip: string
   danger?: boolean
 }) {
-  const [hovered, setHovered] = useState(false)
-
   const className = `size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
     danger
-      ? hovered ? 'border-destructive text-destructive bg-destructive/10' : 'border-border text-muted-foreground'
-      : hovered ? 'border-ember text-ember bg-ember-soft' : 'border-border text-muted-foreground'
+      ? 'border-border text-muted-foreground hover:border-destructive hover:text-destructive hover:bg-destructive/10'
+      : 'border-border text-muted-foreground hover:border-ember hover:text-ember hover:bg-ember-soft'
   }`
 
-  const handlers = {
-    onMouseEnter: () => setHovered(true),
-    onMouseLeave: () => setHovered(false),
-    title: tooltip,
-  }
+  return (
+    <HoverTooltip label={tooltip} className="shrink-0">
+      {href ? (
+        <a href={href} download className={className}>{label}</a>
+      ) : (
+        <button type="button" onClick={onClick} className={className}>{label}</button>
+      )}
+    </HoverTooltip>
+  )
+}
+
+function TrackIconBtn({
+  tooltip, onClick, href, danger, children,
+}: {
+  tooltip: string
+  onClick?: () => void
+  href?: string
+  danger?: boolean
+  children: ReactNode
+}) {
+  const className = `size-5 border grid place-items-center transition ${
+    danger
+      ? 'border-border text-muted-foreground hover:border-destructive hover:text-destructive'
+      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+  }`
 
   return (
-    <div className="relative shrink-0">
+    <HoverTooltip label={tooltip}>
       {href ? (
-        <a href={href} download className={className} {...handlers}>{label}</a>
+        <a href={href} download className={className} aria-label={tooltip}>{children}</a>
       ) : (
-        <button type="button" onClick={onClick} className={className} {...handlers}>{label}</button>
+        <button type="button" onClick={onClick} className={className} aria-label={tooltip}>{children}</button>
       )}
-      {hovered && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] whitespace-nowrap z-30 border border-border bg-popover shadow-lg pointer-events-none">
-          {tooltip}
-        </div>
-      )}
-    </div>
+    </HoverTooltip>
+  )
+}
+
+function ReplaceIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 11v-1a4 4 0 0 1 4-4h14" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 13v1a4 4 0 0 1-4 4H3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M12 3v12" strokeLinecap="round" />
+      <path d="m7 10 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 21h14" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 6h18" strokeLinecap="round" />
+      <path d="M8 6V4h8v2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 6l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 
@@ -1528,6 +1503,7 @@ function TrackRow({
   const [isOffsetDragging, setIsOffsetDragging] = useState(false)
   const [dragPreviewBar, setDragPreviewBar] = useState<number | null>(null)
   const dragStartXRef = useRef(0)
+  const dragMovedRef = useRef(false)
   const origStartBarRef = useRef(0)
   const dragPreviewBarRef = useRef<number | null>(null)
   const waveformColRef = useRef<HTMLDivElement>(null)
@@ -1561,10 +1537,26 @@ function TrackRow({
     ? Math.max(widthPercent, 100 - startPercent)
     : widthPercent
 
+  function barFromClientX(clientX: number): number {
+    const colEl = waveformColRef.current
+    if (!colEl || totalBars <= 0) return 0
+    const rect = colEl.getBoundingClientRect()
+    const xPct = (clientX - rect.left) / rect.width
+    return Math.max(0, Math.min(totalBars - 1, Math.floor(xPct * totalBars)))
+  }
+
+  async function snapStartBar(startBar: number) {
+    if (startBar === (track.start_bar ?? 0)) return
+    try {
+      await onStartBarUpdate(track.id, startBar)
+    } catch { /* ignore */ }
+  }
+
   // Drag-to-offset handlers (mouse + touch)
   function startOffsetDrag(clientX: number) {
     if (commentMode) return
     dragStartXRef.current = clientX
+    dragMovedRef.current = false
     origStartBarRef.current = track.start_bar ?? 0
     const initialBar = track.start_bar ?? 0
     setIsOffsetDragging(true)
@@ -1591,33 +1583,39 @@ function TrackRow({
       const containerWidth = colEl.offsetWidth
       const barsPerPixel = totalBars / containerWidth
       const deltaX = clientX - dragStartXRef.current
+      if (Math.abs(deltaX) > 3) dragMovedRef.current = true
       const newStartBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
       dragPreviewBarRef.current = newStartBar
       setDragPreviewBar(newStartBar)
     }
     function onMouseMove(e: MouseEvent) { moveAt(e.clientX) }
     function onTouchMove(e: TouchEvent) { e.preventDefault(); moveAt(e.touches[0].clientX) }
-    async function onDragEnd() {
+    async function onDragEnd(clientX: number) {
       setIsOffsetDragging(false)
       onDragEndOffset()
-      const newBar = dragPreviewBarRef.current
+      let newBar = dragPreviewBarRef.current
+      if (!dragMovedRef.current) {
+        newBar = barFromClientX(clientX)
+        dragPreviewBarRef.current = newBar
+        setDragPreviewBar(newBar)
+      }
       dragPreviewBarRef.current = null
       if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
-        try {
-          await onStartBarUpdate(track.id, newBar)
-        } catch { /* ignore */ }
+        await snapStartBar(newBar)
       }
       setDragPreviewBar(null)
     }
+    function onMouseUp(e: MouseEvent) { void onDragEnd(e.clientX) }
+    function onTouchEnd(e: TouchEvent) { void onDragEnd(e.changedTouches[0]?.clientX ?? dragStartXRef.current) }
     window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onDragEnd)
+    window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('touchmove', onTouchMove, { passive: false })
-    window.addEventListener('touchend', onDragEnd)
+    window.addEventListener('touchend', onTouchEnd)
     return () => {
       window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onDragEnd)
+      window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('touchmove', onTouchMove)
-      window.removeEventListener('touchend', onDragEnd)
+      window.removeEventListener('touchend', onTouchEnd)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOffsetDragging, dragPreviewBar, totalBars])
@@ -1770,7 +1768,7 @@ function TrackRow({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 mt-2 flex-wrap">
+        <div className="flex items-center gap-1 mt-2">
           <TrackLetterBtn
             letter="M"
             tooltip="Mute"
@@ -1786,17 +1784,50 @@ function TrackRow({
             onClick={onToggleSolo}
           />
           {isMidi && (
-            <TrackLetterBtn
-              letter="E"
-              tooltip="Edit MIDI"
-              active={pianoRollOpen}
-              activeClass="bg-ember text-white border-ember"
+            <button
+              type="button"
               onClick={() => setPianoRollOpen(p => !p)}
-            />
+              className="text-[9px] uppercase tracking-widest text-ember hover:underline px-0.5"
+            >
+              {pianoRollOpen ? 'Close' : 'Edit ↗'}
+            </button>
           )}
-          {rowHovered && !editing && (
-            <TrackLetterBtn letter="N" tooltip="Rename" onClick={startEdit} />
-          )}
+          <div className="ml-auto flex items-center gap-0.5">
+            {confirmDelete ? (
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition"
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={deleting}
+                  className="h-5 px-1.5 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
+                >
+                  {deleting ? '…' : 'Yes'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <TrackIconBtn tooltip="Replace track" onClick={() => fileRef.current?.click()}>
+                  <ReplaceIcon />
+                </TrackIconBtn>
+                {!isMidi && (
+                  <TrackIconBtn tooltip="Download as WAV" href={`/api/tracks/${track.id}/download`}>
+                    <DownloadIcon />
+                  </TrackIconBtn>
+                )}
+                <TrackIconBtn tooltip="Delete track" danger onClick={() => setConfirmDelete(true)}>
+                  <TrashIcon />
+                </TrackIconBtn>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1804,23 +1835,31 @@ function TrackRow({
       <div
         ref={waveformColRef}
         data-waveform-col
-        className="relative flex-1 min-w-0 overflow-hidden"
+        className="relative flex-1 min-w-0 overflow-hidden border-l border-border/0"
         style={{ minHeight: TRACK_ROW_H }}
       >
+        {!commentMode && (
+          <TactGrid
+            totalBars={totalBars}
+            interactive
+            onTactClick={bar => { void snapStartBar(bar) }}
+          />
+        )}
+
         <div
           style={{
             position: 'absolute',
             left: `${startPercent}%`,
             width: `${layoutWidthPercent}%`,
             height: '100%',
-            cursor: isOffsetDragging ? 'grabbing' : 'grab',
+            cursor: isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
             borderLeft: effectiveStartBar > 0 ? '1px solid var(--border)' : 'none',
             zIndex: 1,
             transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
-            touchAction: 'none',
+            touchAction: commentMode ? 'auto' : 'none',
           }}
-          onMouseDown={handleOffsetMouseDown}
-          onTouchStart={handleOffsetTouchStart}
+          onMouseDown={commentMode ? undefined : handleOffsetMouseDown}
+          onTouchStart={commentMode ? undefined : handleOffsetTouchStart}
         >
           {isMidi ? (
             track.midi_data ? (
@@ -1880,38 +1919,6 @@ function TrackRow({
             </>
           )
         })()}
-      </div>
-
-      {/* Action column */}
-      <div className="shrink-0 border-l border-border flex items-center gap-1 px-2 self-stretch">
-        {confirmDelete ? (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              className="h-5 px-2 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmDelete}
-              disabled={deleting}
-              className="h-5 px-2 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
-            >
-              {deleting ? '…' : 'Delete'}
-            </button>
-          </div>
-        ) : (
-          <>
-            <ActionButton label="R" tooltip="Replace track" onClick={() => fileRef.current?.click()} />
-            {!isMidi && (
-              <ActionButton label="W" tooltip="Download as WAV" href={`/api/tracks/${track.id}/download`} />
-            )}
-            <ActionButton label="D" tooltip="Delete track" danger onClick={() => setConfirmDelete(true)} />
-          </>
-        )}
       </div>
 
       <input ref={fileRef} type="file"
@@ -2439,9 +2446,7 @@ export default function ProjectPage() {
   const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
   // Measure waveform column bounds for structure overlay alignment.
-  // Uses [data-waveform-col] from an actual track row so the right offset
-  // includes the button column (auto). Falls back to header child[3] when
-  // no tracks are rendered yet.
+  // Uses [data-waveform-col] from an actual track row.
   useEffect(() => {
     const listEl = trackListRef.current
     if (!listEl) return

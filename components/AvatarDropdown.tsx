@@ -6,9 +6,9 @@ import { useAuth } from '@/contexts/AuthContext'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { avatarInitials } from '@/lib/avatarTheme'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { UserAvatar } from '@/components/ui/avatar'
 import { ThemePicker } from '@/components/design/ThemePicker'
+import { Spinner } from '@/components/ui/Spinner'
 
 type ActiveSection = null | 'email' | 'username'
 
@@ -118,25 +118,24 @@ export function AvatarDropdown() {
   const triggerInitials = avatarInitials(profile.username, 'user')
 
   return (
-    <div ref={dropRef} className="relative">
+    <div ref={dropRef} className="relative font-display">
       <button
         type="button"
         aria-label="Account menu"
         aria-expanded={open}
         onClick={() => { setOpen(o => !o); if (open) setActiveSection(null) }}
-        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase font-display hover:border-ember transition-colors"
+        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase hover:border-ember transition-colors"
       >
         {triggerInitials}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+8px)] z-100 w-[288px] border border-border bg-popover shadow-2xl font-mono">
-          {/* Profile */}
+        <div className="absolute right-0 top-[calc(100%+8px)] z-100 w-[288px] border border-border bg-popover shadow-2xl">
           <div className="px-3 py-3 border-b border-border">
             <div className="flex items-center gap-3 min-w-0">
               <UserAvatar seed={profile.username} size={40} kind="user" />
               <div className="min-w-0">
-                <p className="text-sm font-normal text-foreground m-0 truncate">@{profile.username}</p>
+                <p className="text-sm font-medium text-foreground m-0 truncate">@{profile.username}</p>
                 <p className="text-xs text-muted-foreground m-0 mt-0.5 truncate">{user?.email}</p>
               </div>
             </div>
@@ -150,12 +149,13 @@ export function AvatarDropdown() {
           />
           {activeSection === 'email' && (
             <div className="px-3 pb-3 space-y-2 border-b border-border">
-              <Input
+              <input
                 value={newEmail}
                 onChange={e => setNewEmail(e.target.value)}
                 type="email"
                 autoFocus
                 disabled={emailStatus === 'saving' || emailStatus === 'sent'}
+                className="flex h-9 w-full border border-border bg-transparent px-3 py-1 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               />
               {emailStatus === 'sent' && (
                 <p className="text-[11px] text-online m-0">Confirmation link sent to new address</p>
@@ -190,22 +190,22 @@ export function AvatarDropdown() {
           {activeSection === 'username' && (
             <div className="px-3 pb-3 space-y-2 border-b border-border">
               <div className="relative">
-                <Input
+                <input
                   value={newUsername}
                   onChange={e => setNewUsername(e.target.value)}
                   autoFocus
                   maxLength={20}
                   disabled={usernameStatus === 'saving' || usernameStatus === 'saved'}
-                  className={`pr-8 ${
+                  className={`flex h-9 w-full border bg-transparent px-3 py-1 pr-8 text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 ${
                     usernameStatus === 'available' || usernameStatus === 'saved'
                       ? 'border-online'
                       : usernameStatus === 'taken' || usernameStatus === 'invalid'
                         ? 'border-destructive'
-                        : ''
+                        : 'border-border'
                   }`}
                 />
                 <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                  {usernameStatus === 'checking' && <MiniSpinner />}
+                  {usernameStatus === 'checking' && <Spinner size={11} tone="muted" />}
                   {(usernameStatus === 'available' || usernameStatus === 'saved') && (
                     <span className="text-[11px] text-online">✓</span>
                   )}
@@ -236,7 +236,6 @@ export function AvatarDropdown() {
             </div>
           )}
 
-          {/* Theme — single uikit theme system */}
           <div className="px-3 py-2 border-b border-border">
             <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Theme</p>
           </div>
@@ -245,7 +244,7 @@ export function AvatarDropdown() {
           <div className="border-t border-border p-1">
             <Button
               variant="ghost"
-              className="w-full justify-start gap-2.5 text-xs text-destructive hover:text-destructive hover:bg-surface px-3"
+              className="w-full justify-start gap-2.5 text-xs text-destructive hover:text-destructive hover:bg-surface px-3 font-normal"
               onClick={handleSignOut}
             >
               <LogoutIcon />
@@ -265,7 +264,7 @@ function MenuRow({ icon, label, active, onClick }: {
     <Button
       variant="ghost"
       onClick={onClick}
-      className={`w-full justify-start gap-2.5 px-3 py-2 h-auto text-xs font-normal rounded-none ${
+      className={`w-full justify-start gap-2.5 px-3 py-2 h-auto text-sm font-normal rounded-none ${
         active ? 'bg-surface text-foreground' : 'text-foreground'
       }`}
     >
@@ -298,15 +297,6 @@ function LogoutIcon() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
       <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
       <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function MiniSpinner() {
-  return (
-    <svg className="animate-spin text-muted-foreground" width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden>
-      <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeWidth="1.2" strokeOpacity="0.3" />
-      <path d="M5.5 1.5A4 4 0 0 1 9.5 5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   )
 }

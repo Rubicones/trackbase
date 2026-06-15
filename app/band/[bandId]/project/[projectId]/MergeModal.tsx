@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useTheme } from 'next-themes'
 import type { BarState, ConflictRange, AutoBarRange } from '@/lib/sectionMerge'
 import { formatTrackStartBar } from '@/lib/trackMerge'
+import { SectionLabel } from '@/components/design/AppShell'
+import { UserAvatar } from '@/components/ui/avatar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,14 +101,6 @@ function trackTitle(t: { display_name?: string | null; name: string }): string {
   return t.display_name?.trim() || t.name
 }
 
-function avatarColor(username: string | null): string {
-  if (!username) return '#6b7280'
-  const colors = ['#6366F1', '#10B981', '#A855F7', '#F59E0B', '#06B6D4', '#ef4444', '#3b82f6', '#f97316']
-  let h = 0
-  for (let i = 0; i < username.length; i++) h = (h * 31 + username.charCodeAt(i)) >>> 0
-  return colors[h % colors.length]
-}
-
 function sectionLabel(state: BarState | null): string {
   if (!state) return 'empty'
   if (state.type === 'custom' && state.customName) return state.customName
@@ -143,25 +137,80 @@ function autoMergeBadge(item: AutoMergeItem): string {
   return 'AUTO · FROM BRANCH'
 }
 
-const ACCENT       = '#6366F1'
-const CONFLICT_RED = '#ef4444'
-const CONFLICT_AMB = '#f59e0b'
-
-const SECTION_FG: Record<string, string> = {
-  intro:        '#6366F1',
-  verse:        '#10B981',
-  chorus:       '#A855F7',
-  'pre-chorus': '#F59E0B',
-  bridge:       '#06B6D4',
-  drop:         '#ef4444',
-  breakdown:    '#6b7280',
-  outro:        '#3b82f6',
-  custom:       '#9ca3af',
+function MergeShell({ children, wide }: { children: ReactNode; wide?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+      <div className={`w-full border border-border bg-popover shadow-2xl flex flex-col max-h-[90vh] ${wide ? 'max-w-[660px]' : 'max-w-md'}`}>
+        {children}
+      </div>
+    </div>
+  )
 }
 
-function sectionColor(state: BarState | null): string {
-  if (!state) return '#6b7280'
-  return SECTION_FG[state.type] ?? '#9ca3af'
+function MergeTitle({ branchName }: { branchName: string }) {
+  return (
+    <h2 className="font-display text-lg uppercase tracking-tight text-foreground m-0">
+      Merge &ldquo;{branchName}&rdquo; into main
+    </h2>
+  )
+}
+
+function AutoCheckIcon() {
+  return (
+    <svg className="shrink-0 mt-0.5 text-ember" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden>
+      <circle cx="6.5" cy="6.5" r="6" className="fill-ember/15" />
+      <path
+        d="M4 6.5l2 2 3-3"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function SectionTag({ state }: { state: BarState | null }) {
+  if (!state) return <span className="text-[11px] text-muted-foreground">cleared</span>
+  return (
+    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 border border-ember/40 text-ember bg-ember/10">
+      {sectionLabel(state)}
+    </span>
+  )
+}
+
+function MergeListBox({ children }: { children: ReactNode }) {
+  return <div className="border border-border overflow-hidden">{children}</div>
+}
+
+function MergeListRow({ children, last }: { children: ReactNode; last?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2.5 px-4 py-2.5 ${last ? '' : 'border-b border-border'}`}>
+      {children}
+    </div>
+  )
+}
+
+function MergeBtn({
+  children, variant = 'ghost', disabled, onClick, className = '',
+}: {
+  children: ReactNode
+  variant?: 'ghost' | 'primary' | 'selected'
+  disabled?: boolean
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void
+  className?: string
+}) {
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5 px-3 py-1.5'
+  const styles = {
+    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember',
+    primary: 'bg-ember text-white border border-ember font-bold hover:brightness-110',
+    selected: 'border border-ember text-ember bg-ember-soft font-medium',
+  }
+  return (
+    <button type="button" disabled={disabled} onClick={onClick} className={`${base} ${styles[variant]} ${className}`}>
+      {children}
+    </button>
+  )
 }
 
 // ─── Mini static waveform ─────────────────────────────────────────────────────
@@ -253,50 +302,34 @@ function FileConflictCard({
   chosen: boolean
   onChoose: () => void
 }) {
-  const color  = chosen ? ACCENT : '#6b7280'
-  const bg     = chosen ? 'rgba(99,102,241,0.08)' : 'transparent'
-  const border = chosen ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)'
-
   return (
     <div
-      className="flex-1 rounded-xl p-3 flex flex-col gap-2 transition-all duration-150"
-      style={{ background: bg, border }}
+      className={`flex-1 border p-3 flex flex-col gap-2 transition-colors ${
+        chosen ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+      }`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[9px] font-semibold tracking-widest uppercase" style={{ color }}>
+        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-ember' : 'text-muted-foreground'}`}>
           {label}
         </span>
         {chosen && (
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <circle cx="6" cy="6" r="5.5" fill={ACCENT} />
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <circle cx="6" cy="6" r="5.5" className="fill-ember" />
             <path d="M3.5 6l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
       </div>
       <div>
-        <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-soft)' }}>
-          {trackTitle(track)}
-        </div>
-        <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
+        <div className="text-xs font-medium truncate text-foreground">{trackTitle(track)}</div>
+        <div className="text-[10px] mt-0.5 text-muted-foreground font-mono">
           {fmtDate(track.created_at)}{track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
           {' · '}{formatTrackStartBar(track.start_bar)}
         </div>
       </div>
-      <MiniWaveform trackId={track.id} color={color} />
-      <button
-        onClick={onChoose}
-        className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
-        style={{
-          background: chosen ? ACCENT : 'transparent',
-          border: chosen ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
-          color: chosen ? 'white' : 'var(--text-muted)',
-          cursor: 'pointer',
-        }}
-        onMouseEnter={e => { if (!chosen) { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT } }}
-        onMouseLeave={e => { if (!chosen) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
-      >
+      <MiniWaveform trackId={track.id} color={chosen ? 'var(--ember)' : '#6b7280'} />
+      <MergeBtn variant={chosen ? 'primary' : 'ghost'} onClick={onChoose} className="w-full justify-center">
         {chosen ? '✓ Keeping this' : 'Keep this'}
-      </button>
+      </MergeBtn>
     </div>
   )
 }
@@ -320,31 +353,15 @@ function RenameConflictPills({
         return (
           <div
             key={side}
-            className="flex-1 rounded-lg p-4 flex flex-col gap-3 transition-all duration-150"
-            style={{
-              background: sel ? 'color-mix(in srgb, var(--accent) 8%, var(--bg-card))' : 'var(--bg-card)',
-              border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
-            }}
+            className={`flex-1 border p-4 flex flex-col gap-3 transition-colors ${
+              sel ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+            }`}
           >
-            <p className="text-[10px] font-semibold uppercase tracking-widest m-0"
-              style={{ color: sel ? ACCENT : 'var(--text-dim)' }}>{label}</p>
-            <p className="text-[14px] font-medium m-0" style={{ color: 'var(--text)' }}>
-              &ldquo;{name}&rdquo;
-            </p>
-            <button
-              onClick={() => onChoose(side)}
-              className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
-              style={{
-                background: sel ? ACCENT : 'transparent',
-                border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
-                color: sel ? 'white' : 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT } }}
-              onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
-            >
+            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-ember' : 'text-muted-foreground'}`}>{label}</p>
+            <p className="text-sm font-medium m-0 text-foreground">&ldquo;{name}&rdquo;</p>
+            <MergeBtn variant={sel ? 'primary' : 'ghost'} onClick={() => onChoose(side)} className="w-full justify-center">
               {sel ? '✓ Keep this' : 'Keep this'}
-            </button>
+            </MergeBtn>
           </div>
         )
       })}
@@ -371,31 +388,15 @@ function OffsetConflictPills({
         return (
           <div
             key={side}
-            className="flex-1 rounded-lg p-4 flex flex-col gap-3 transition-all duration-150"
-            style={{
-              background: sel ? 'color-mix(in srgb, var(--accent) 8%, var(--bg-card))' : 'var(--bg-card)',
-              border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
-            }}
+            className={`flex-1 border p-4 flex flex-col gap-3 transition-colors ${
+              sel ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+            }`}
           >
-            <p className="text-[10px] font-semibold uppercase tracking-widest m-0"
-              style={{ color: sel ? ACCENT : 'var(--text-dim)' }}>{label}</p>
-            <p className="text-[14px] font-medium m-0" style={{ color: 'var(--text)' }}>
-              {formatTrackStartBar(bar)}
-            </p>
-            <button
-              onClick={() => onChoose(side)}
-              className="w-full rounded-lg py-1.5 text-[11px] font-medium transition-all duration-150"
-              style={{
-                background: sel ? ACCENT : 'transparent',
-                border: sel ? `0.5px solid ${ACCENT}` : '0.5px solid var(--border)',
-                color: sel ? 'white' : 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT } }}
-              onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
-            >
+            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-ember' : 'text-muted-foreground'}`}>{label}</p>
+            <p className="text-sm font-medium m-0 text-foreground font-mono tabular-nums">{formatTrackStartBar(bar)}</p>
+            <MergeBtn variant={sel ? 'primary' : 'ghost'} onClick={() => onChoose(side)} className="w-full justify-center">
               {sel ? '✓ Keep this' : 'Keep this'}
-            </button>
+            </MergeBtn>
           </div>
         )
       })}
@@ -413,63 +414,43 @@ function SectionStatePill({
   chosen: boolean
   onChoose: () => void
 }) {
-  const color = sectionColor(state)
-  const sel   = chosen
-
   return (
     <div
-      className="flex-1 rounded-lg p-3 flex flex-col gap-2 transition-all duration-150 cursor-pointer"
-      style={{
-        background: sel ? `${color}18` : 'var(--bg-card)',
-        border: sel ? `0.5px solid ${color}` : '0.5px solid var(--border)',
-      }}
+      className={`flex-1 border p-3 flex flex-col gap-2 transition-colors cursor-pointer ${
+        chosen ? 'border-ember bg-ember-soft/30' : 'border-border bg-background'
+      }`}
       onClick={onChoose}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[9px] font-semibold tracking-widest uppercase"
-          style={{ color: sel ? color : 'var(--text-dim)' }}>
+        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-ember' : 'text-muted-foreground'}`}>
           {label}
         </span>
-        {sel && (
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <circle cx="6" cy="6" r="5.5" fill={color} />
+        {chosen && (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <circle cx="6" cy="6" r="5.5" className="fill-ember" />
             <path d="M3.5 6l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-h-[22px]">
         {state ? (
           <>
-            <span
-              className="text-[11px] font-semibold px-2 py-0.5 rounded"
-              style={{ background: `${color}20`, color }}
-            >
-              {sectionLabel(state)}
-            </span>
+            <SectionTag state={state} />
             {state.chords && (
-              <span className="text-[10px] truncate" style={{ color: 'var(--text-dim)' }}>
-                {state.chords}
-              </span>
+              <span className="text-[10px] truncate text-muted-foreground font-mono">{state.chords}</span>
             )}
           </>
         ) : (
-          <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>no section</span>
+          <span className="text-[11px] text-muted-foreground">no section</span>
         )}
       </div>
-      <button
+      <MergeBtn
+        variant={chosen ? 'primary' : 'ghost'}
         onClick={e => { e.stopPropagation(); onChoose() }}
-        className="w-full rounded-lg py-1 text-[11px] font-medium transition-all duration-150"
-        style={{
-          background: sel ? color : 'transparent',
-          border: sel ? `0.5px solid ${color}` : '0.5px solid var(--border)',
-          color: sel ? 'white' : 'var(--text-muted)',
-          cursor: 'pointer',
-        }}
-        onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = color; e.currentTarget.style.color = color } }}
-        onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)' } }}
+        className="w-full justify-center"
       >
-        {sel ? '✓ Keeping this' : 'Keep this'}
-      </button>
+        {chosen ? '✓ Keeping this' : 'Keep this'}
+      </MergeBtn>
     </div>
   )
 }
@@ -477,22 +458,21 @@ function SectionStatePill({
 // ─── Comment changes section ──────────────────────────────────────────────────
 
 function CommentRow({ c }: { c: CommentPreview }) {
-  const color = avatarColor(c.author_username)
+  const author = c.author_username ?? 'unknown'
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 12px' }}>
-      <div style={{ width: 20, height: 20, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-        <span style={{ fontSize: 10, color: 'white', fontWeight: 600 }}>{(c.author_username ?? '?')[0].toUpperCase()}</span>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-soft)' }}>{c.author_username ?? 'Unknown'}</span>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>·</span>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{fmtMs(c.timecode_start_ms)}</span>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>·</span>
-          <span style={{ fontSize: 10, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.track_name}</span>
-          {c.reply_count > 0 && <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>· {c.reply_count} repl{c.reply_count !== 1 ? 'ies' : 'y'}</span>}
+    <div className="flex items-start gap-2 px-3 py-2">
+      <UserAvatar seed={author} size={20} kind="user" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+          <span className="text-[11px] font-medium text-foreground">{author}</span>
+          <span className="text-[10px] text-muted-foreground">·</span>
+          <span className="text-[10px] tabular-nums text-ember">{fmtMs(c.timecode_start_ms)}</span>
+          <span className="text-[10px] text-muted-foreground truncate">{c.track_name}</span>
+          {c.reply_count > 0 && (
+            <span className="text-[10px] text-muted-foreground">· {c.reply_count} repl{c.reply_count !== 1 ? 'ies' : 'y'}</span>
+          )}
         </div>
-        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.content}</p>
+        <p className="m-0 text-[11px] text-muted-foreground truncate">{c.content}</p>
       </div>
     </div>
   )
@@ -519,68 +499,76 @@ function CommentChangesSection({
   if (added.length === 0 && deleted.length === 0) return null
   return (
     <div>
-      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, marginTop: 0 }}>Comments</p>
+      <div className="mb-2"><SectionLabel>Comments</SectionLabel></div>
 
       {added.length > 0 && (
-        <div style={{ marginBottom: deleted.length > 0 ? 8 : 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(16,185,129,0.06)', border: '0.5px solid rgba(16,185,129,0.2)', borderRadius: 8, padding: '8px 12px' }}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="5.5" stroke="#10B981" strokeWidth="0.9" />
-              <path d="M3.5 6l2 2 3-3" stroke="#10B981" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1 }}>
+        <div className={deleted.length > 0 ? 'mb-2' : ''}>
+          <div className="flex items-center gap-2 bg-ember-soft/40 border border-ember/30 px-3 py-2">
+            <AutoCheckIcon />
+            <span className="text-xs text-foreground flex-1">
               {added.length} comment{added.length !== 1 ? 's' : ''} from branch will be added to main
             </span>
-            <button onClick={onToggleAddedDetail} style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+            <button
+              type="button"
+              onClick={onToggleAddedDetail}
+              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember"
+            >
               {showAddedDetail ? 'Hide ▴' : 'Details ▾'}
             </button>
           </div>
           {showAddedDetail && (
-            <div style={{ marginTop: 4, borderRadius: 8, overflow: 'hidden', border: '0.5px solid var(--border)' }}>
+            <MergeListBox>
               {added.map((c, i) => (
-                <div key={c.id} style={{ borderBottom: i < added.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                <div key={c.id} className={i < added.length - 1 ? 'border-b border-border' : ''}>
                   <CommentRow c={c} />
                 </div>
               ))}
-            </div>
+            </MergeListBox>
           )}
         </div>
       )}
 
       {deleted.length > 0 && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(245,158,11,0.06)', border: '0.5px solid rgba(245,158,11,0.2)', borderRadius: 8, padding: '8px 12px' }}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M6 2.5V7" stroke="#F59E0B" strokeWidth="1.2" strokeLinecap="round" />
-              <circle cx="6" cy="9.5" r="0.75" fill="#F59E0B" />
+          <div className="flex items-center gap-2 bg-surface border border-border px-3 py-2">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 text-ember" aria-hidden>
+              <path d="M6 2.5V7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <circle cx="6" cy="9.5" r="0.75" fill="currentColor" />
             </svg>
-            <span style={{ fontSize: 12, color: 'var(--text-soft)', flex: 1 }}>
-              {deleted.length} comment{deleted.length !== 1 ? 's' : ''} were deleted in branch
+            <span className="text-xs text-foreground flex-1">
+              {deleted.length} comment{deleted.length !== 1 ? 's were' : ' was'} deleted in branch
             </span>
-            <button onClick={onToggleDeletedDetail} style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+            <button
+              type="button"
+              onClick={onToggleDeletedDetail}
+              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember"
+            >
               {showDeletedDetail ? 'Hide ▴' : 'Details ▾'}
             </button>
           </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            {(['keep', 'apply'] as const).map(choice => (
-              <button key={choice} onClick={() => onDeletionChoiceChange(choice)}
-                style={{
-                  fontSize: 11, fontWeight: 500, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-                  border: commentDeletionChoice === choice ? '0.5px solid #F59E0B' : '0.5px solid var(--border)',
-                  background: commentDeletionChoice === choice ? 'rgba(245,158,11,0.12)' : 'transparent',
-                  color: commentDeletionChoice === choice ? '#F59E0B' : 'var(--text-dim)',
-                }}>
-                {choice === 'keep' ? 'Keep in main' : 'Apply deletions'}
-              </button>
-            ))}
+          <div className="flex gap-2 mt-2">
+            <MergeBtn
+              variant={commentDeletionChoice === 'keep' ? 'selected' : 'ghost'}
+              onClick={() => onDeletionChoiceChange('keep')}
+            >
+              Keep in main
+            </MergeBtn>
+            <MergeBtn
+              variant={commentDeletionChoice === 'apply' ? 'selected' : 'ghost'}
+              onClick={() => onDeletionChoiceChange('apply')}
+            >
+              Apply deletions
+            </MergeBtn>
           </div>
           {showDeletedDetail && (
-            <div style={{ marginTop: 4, borderRadius: 8, overflow: 'hidden', border: '0.5px solid var(--border)' }}>
-              {deleted.map((c, i) => (
-                <div key={c.id} style={{ borderBottom: i < deleted.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                  <CommentRow c={c} />
-                </div>
-              ))}
+            <div className="mt-2">
+              <MergeListBox>
+                {deleted.map((c, i) => (
+                  <div key={c.id} className={i < deleted.length - 1 ? 'border-b border-border' : ''}>
+                    <CommentRow c={c} />
+                  </div>
+                ))}
+              </MergeListBox>
             </div>
           )}
         </div>
@@ -680,85 +668,57 @@ export function MergeModal({
   // ── Clean merge confirm ────────────────────────────────────────────────────
   if (!hasConflicts) {
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="rounded-2xl p-5 w-[420px]" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-light)', maxHeight: '90vh', overflowY: 'auto' }}>
-          <p className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-bright)' }}>
-            Merge &ldquo;{preview.branchName}&rdquo; into main
-          </p>
-          <p className="text-[12px] mb-5" style={{ color: 'var(--text-dim)' }}>No conflicts — ready to merge</p>
+      <MergeShell>
+        <div className="p-6 overflow-y-auto">
+          <MergeTitle branchName={preview.branchName} />
+          <p className="text-xs text-muted-foreground mt-1 mb-5 m-0">No conflicts — ready to merge</p>
 
-          {/* Track auto-merge items */}
           {preview.autoMerge.length > 0 && (
             <>
-              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
-                Tracks
-              </p>
-              <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
+              <div className="mb-2"><SectionLabel>Tracks</SectionLabel></div>
+              <MergeListBox>
                 {preview.autoMerge.map((item, i) => (
-                  <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
-                    style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                    <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
-                      <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+                  <MergeListRow key={i} last={i === preview.autoMerge.length - 1}>
+                    <AutoCheckIcon />
                     <div>
-                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{trackTitle(item.track)}</span>
-                      <span className="text-[11px] ml-2" style={{ color: 'var(--text-dim)' }}>
-                        {autoMergeDescription(item)}
-                      </span>
+                      <span className="text-xs font-medium text-foreground">{trackTitle(item.track)}</span>
+                      <span className="text-[11px] ml-2 text-muted-foreground">{autoMergeDescription(item)}</span>
                     </div>
-                  </div>
+                  </MergeListRow>
                 ))}
-              </div>
+              </MergeListBox>
+              <div className="mb-4" />
             </>
           )}
 
-          {/* Section auto-merge items */}
           {sectionAutoItems.length > 0 && (
             <>
-              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
-                Structure
-              </p>
-              <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
+              <div className="mb-2"><SectionLabel>Structure</SectionLabel></div>
+              <MergeListBox>
                 {sectionAutoItems.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2.5 px-4 py-2.5"
-                    style={{ borderBottom: i < sectionAutoItems.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                    <svg className="shrink-0" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(99,102,241,0.15)" />
-                      <path d="M4 6.5l2 2 3-3" stroke={ACCENT} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <span className="text-[12px]" style={{ color: 'var(--text-soft)' }}>
+                  <MergeListRow key={i} last={i === sectionAutoItems.length - 1}>
+                    <AutoCheckIcon />
+                    <span className="text-xs text-foreground font-mono tabular-nums">
                       Bars {item.startBar + 1}–{item.endBar}
                     </span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>→</span>
-                    {item.branchState ? (
-                      <span
-                        className="text-[11px] font-semibold px-2 py-0.5 rounded"
-                        style={{ background: `${sectionColor(item.branchState)}20`, color: sectionColor(item.branchState) }}
-                      >
-                        {sectionLabel(item.branchState)}
-                      </span>
-                    ) : (
-                      <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>cleared</span>
-                    )}
-                  </div>
+                    <span className="text-[11px] text-muted-foreground">→</span>
+                    <SectionTag state={item.branchState} />
+                  </MergeListRow>
                 ))}
-              </div>
+              </MergeListBox>
+              <div className="mb-4" />
             </>
           )}
 
-          {/* No changes at all */}
           {preview.autoMerge.length === 0 && sectionAutoItems.length === 0 &&
             !(preview.commentChanges?.added.length || preview.commentChanges?.deleted.length) && (
-            <div className="rounded-xl mb-4 px-4 py-3 text-[12px]"
-              style={{ color: 'var(--text-dim)', border: '0.5px solid var(--border)' }}>
+            <div className="border border-border px-4 py-3 text-xs text-muted-foreground mb-4">
               No changes — branch is identical to main
             </div>
           )}
 
-          {/* Comments */}
           {preview.commentChanges && (
-            <div style={{ marginBottom: 16 }}>
+            <div className="mb-4">
               <CommentChangesSection
                 commentChanges={preview.commentChanges}
                 commentDeletionChoice={commentDeletionChoice}
@@ -771,337 +731,216 @@ export function MergeModal({
             </div>
           )}
 
-          {mergeErr && <p className="text-[12px] mb-3" style={{ color: '#ef4444' }}>{mergeErr}</p>}
+          {mergeErr && <p className="text-xs text-destructive mb-3 m-0">{mergeErr}</p>}
 
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 rounded-lg text-[12px] transition-colors duration-150"
-              style={{ border: '0.5px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent' }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-            >Cancel</button>
-            <button
-              onClick={handleMerge}
-              disabled={merging}
-              className="px-5 py-1.5 rounded-lg text-[12px] font-medium text-white disabled:opacity-50 transition-opacity"
-              style={{ background: ACCENT, border: `0.5px solid ${ACCENT}`, cursor: merging ? 'not-allowed' : 'pointer' }}
-            >
-              {merging ? (
-                <span className="flex items-center gap-1.5">
-                  <svg className="animate-spin" width="11" height="11" viewBox="0 0 11 11" fill="none">
-                    <circle cx="5.5" cy="5.5" r="4" stroke="white" strokeWidth="1.5" strokeOpacity="0.3" />
-                    <path d="M5.5 1.5A4 4 0 0 1 9.5 5.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  Merging…
-                </span>
-              ) : 'Merge →'}
-            </button>
+          <div className="flex gap-2 justify-end pt-2 border-t border-border">
+            <MergeBtn onClick={onClose}>Cancel</MergeBtn>
+            <MergeBtn variant="primary" disabled={merging} onClick={handleMerge}>
+              {merging ? 'Merging…' : 'Merge →'}
+            </MergeBtn>
           </div>
         </div>
-      </div>
+      </MergeShell>
     )
   }
 
   // ── Conflict resolver ──────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div
-        className="w-full flex flex-col rounded-2xl overflow-hidden"
-        style={{
-          maxWidth: 660,
-          maxHeight: '90vh',
-          background: 'var(--bg-card)',
-          border: '0.5px solid var(--border-light)',
-        }}
-      >
-        {/* Header */}
-        <div className="px-5 pt-5 pb-4 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-          <p className="text-[15px] font-semibold" style={{ color: 'var(--text-bright)' }}>
-            Merge &ldquo;{preview.branchName}&rdquo; into main
-          </p>
-          <p className="text-[12px] mt-0.5" style={{ color: unresolvedCount > 0 ? CONFLICT_AMB : 'var(--text-dim)' }}>
-            {unresolvedCount > 0
-              ? `Resolve ${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} before merging`
-              : 'All conflicts resolved — ready to merge'}
-          </p>
-        </div>
+    <MergeShell wide>
+      <div className="px-5 pt-5 pb-4 shrink-0 border-b border-border">
+        <MergeTitle branchName={preview.branchName} />
+        <p className={`text-xs mt-1 m-0 ${unresolvedCount > 0 ? 'text-ember' : 'text-muted-foreground'}`}>
+          {unresolvedCount > 0
+            ? `Resolve ${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} before merging`
+            : 'All conflicts resolved — ready to merge'}
+        </p>
+      </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+      <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+        {preview.conflicts.length > 0 && (
+          <div className="flex flex-col gap-4">
+            <SectionLabel>Tracks</SectionLabel>
+            {preview.conflicts.map((conflict) => {
+              const res = resolutions[conflict.trackName] ?? {}
+              const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
+              const renameResolved = !conflict.renameConflict || !!res.nameChoice
+              const offsetResolved = !conflict.offsetConflict || !!res.offsetChoice
+              const fullyResolved  = fileResolved && renameResolved && offsetResolved
+              const kinds = trackConflictKinds(conflict)
+              const badgeLabel = fullyResolved
+                ? 'RESOLVED'
+                : kinds.length ? `${kinds.join(' + ')} CONFLICT` : 'CONFLICT'
 
-          {/* ── Track conflicts ── */}
-          {preview.conflicts.length > 0 && (
-            <div className="flex flex-col gap-4">
-              <p className="text-[11px] font-semibold uppercase tracking-widest -mb-1" style={{ color: 'var(--text-muted)' }}>
-                Tracks
-              </p>
-              {preview.conflicts.map((conflict) => {
-                const res = resolutions[conflict.trackName] ?? {}
-                const fileResolved   = !conflict.fileConflict   || !!res.fileChoice
-                const renameResolved = !conflict.renameConflict || !!res.nameChoice
-                const offsetResolved = !conflict.offsetConflict || !!res.offsetChoice
-                const fullyResolved  = fileResolved && renameResolved && offsetResolved
-                const kinds = trackConflictKinds(conflict)
+              const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
+              const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
 
-                const badgeLabel = fullyResolved
-                  ? 'RESOLVED'
-                  : kinds.length ? `${kinds.join(' + ')} CONFLICT` : 'CONFLICT'
-                const badgeBg = fullyResolved
-                  ? 'rgba(34,197,94,0.12)'
-                  : kinds.length > 1
-                  ? 'rgba(239,68,68,0.12)'
-                  : conflict.fileConflict ? 'rgba(245,158,11,0.12)'
-                  : conflict.offsetConflict ? 'rgba(245,158,11,0.12)'
-                  : 'rgba(99,102,241,0.12)'
-                const badgeColor = fullyResolved
-                  ? 'var(--green)'
-                  : kinds.length > 1
-                  ? CONFLICT_RED
-                  : conflict.fileConflict ? CONFLICT_AMB
-                  : conflict.offsetConflict ? CONFLICT_AMB
-                  : ACCENT
-
-                const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
-                const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
-
-                return (
-                  <div key={conflict.trackName}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: fullyResolved ? 'var(--green)' : CONFLICT_RED }} />
-                      <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
-                        {trackTitle(conflict.branchTrack)}
-                      </span>
-                      <span className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
-                        style={{ background: badgeBg, color: badgeColor }}>
-                        {fullyResolved ? 'RESOLVED' : badgeLabel}
-                      </span>
-                    </div>
-
-                    {conflict.fileConflict && (
-                      <div className="flex gap-3">
-                        <FileConflictCard label="MAIN" track={conflict.mainTrack}
-                          chosen={res.fileChoice === 'main'} onChoose={() => setFileChoice(conflict.trackName, 'main')} />
-                        <FileConflictCard label="BRANCH" track={conflict.branchTrack}
-                          chosen={res.fileChoice === 'branch'} onChoose={() => setFileChoice(conflict.trackName, 'branch')} />
-                      </div>
-                    )}
-
-                    {conflict.renameConflict && (
-                      <>
-                        {conflict.fileConflict && (
-                          <>
-                            <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
-                            <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>This track was also renamed:</p>
-                          </>
-                        )}
-                        {!conflict.fileConflict && (
-                          <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>Choose a name for this track:</p>
-                        )}
-                        <RenameConflictPills
-                          mainName={mainDisplayName} branchName={branchDisplayName}
-                          chosen={res.nameChoice} onChoose={c => setNameChoice(conflict.trackName, c)}
-                        />
-                      </>
-                    )}
-
-                    {conflict.offsetConflict && (
-                      <>
-                        {(conflict.fileConflict || conflict.renameConflict) && (
-                          <>
-                            <div style={{ height: '0.5px', background: 'var(--border)', margin: '12px 0 8px' }} />
-                            <p className="text-[12px] m-0 mb-2" style={{ color: 'var(--text-muted)' }}>
-                              This track was also moved on the timeline:
-                            </p>
-                          </>
-                        )}
-                        {!conflict.fileConflict && !conflict.renameConflict && (
-                          <p className="text-[12px] m-0 mb-3" style={{ color: 'var(--text-muted)' }}>
-                            Choose where this track starts on the timeline:
-                          </p>
-                        )}
-                        <OffsetConflictPills
-                          mainStartBar={conflict.mainTrack.start_bar}
-                          branchStartBar={conflict.branchTrack.start_bar}
-                          chosen={res.offsetChoice}
-                          onChoose={c => setOffsetChoice(conflict.trackName, c)}
-                        />
-                      </>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {/* ── Section bar conflicts ── */}
-          {sectionConflicts.length > 0 && (
-            <div className="flex flex-col gap-3">
-              <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                Structure
-              </p>
-              {sectionConflicts.map((conflict) => {
-                const key      = rangeKey(conflict)
-                const chosen   = sectionResolutions[key]
-                const resolved = !!chosen
-
-                return (
-                  <div key={key}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: resolved ? 'var(--green)' : CONFLICT_RED }} />
-                      <span className="text-[13px] font-medium" style={{ color: 'var(--text-soft)' }}>
-                        Bars {conflict.startBar + 1}–{conflict.endBar}
-                      </span>
-                      <span
-                        className="text-[9px] font-semibold tracking-widest uppercase px-[7px] py-[2px] rounded ml-auto"
-                        style={{
-                          background: resolved ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
-                          color: resolved ? 'var(--green)' : CONFLICT_AMB,
-                        }}
-                      >
-                        {resolved ? 'RESOLVED' : 'STRUCTURE CONFLICT'}
-                      </span>
-                    </div>
-                    <div className="flex gap-3">
-                      <SectionStatePill label="MAIN"   state={conflict.mainState}
-                        chosen={chosen === 'main'}   onChoose={() => setSectionChoice(key, 'main')} />
-                      <SectionStatePill label="BRANCH" state={conflict.branchState}
-                        chosen={chosen === 'branch'} onChoose={() => setSectionChoice(key, 'branch')} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {/* ── Section auto items ── */}
-          {sectionAutoItems.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
-                Structure (auto)
-              </p>
-              <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
-                {sectionAutoItems.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2.5 px-4 py-2.5"
-                    style={{ borderBottom: i < sectionAutoItems.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
-                    <svg className="shrink-0" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                      <circle cx="6.5" cy="6.5" r="6" fill="rgba(34,197,94,0.15)" />
-                      <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <span className="text-[12px]" style={{ color: 'var(--text-soft)' }}>
-                      Bars {item.startBar + 1}–{item.endBar}
+              return (
+                <div key={conflict.trackName}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className={`size-1.5 shrink-0 ${fullyResolved ? 'bg-ember' : 'bg-destructive'}`} />
+                    <span className="text-sm font-medium text-foreground">{trackTitle(conflict.branchTrack)}</span>
+                    <span className={`text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 ml-auto border ${
+                      fullyResolved
+                        ? 'border-ember/40 text-ember bg-ember-soft'
+                        : 'border-destructive/40 text-destructive bg-destructive/10'
+                    }`}>
+                      {fullyResolved ? 'RESOLVED' : badgeLabel}
                     </span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>→</span>
-                    {item.branchState ? (
-                      <span
-                        className="text-[11px] font-semibold px-2 py-0.5 rounded"
-                        style={{ background: `${sectionColor(item.branchState)}20`, color: sectionColor(item.branchState) }}
-                      >
-                        {sectionLabel(item.branchState)}
-                      </span>
-                    ) : (
-                      <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>cleared</span>
-                    )}
-                    <span
-                      className="text-[10px] uppercase tracking-wide font-semibold ml-auto px-[7px] py-[2px] rounded"
-                      style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}
-                    >AUTO</span>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* ── Comments ── */}
-          {preview.commentChanges && (
-            <CommentChangesSection
-              commentChanges={preview.commentChanges}
-              commentDeletionChoice={commentDeletionChoice}
-              onDeletionChoiceChange={setCommentDeletionChoice}
-              showAddedDetail={showAddedDetail}
-              onToggleAddedDetail={() => setShowAddedDetail(v => !v)}
-              showDeletedDetail={showDeletedDetail}
-              onToggleDeletedDetail={() => setShowDeletedDetail(v => !v)}
-            />
-          )}
+                  {conflict.fileConflict && (
+                    <div className="flex gap-3">
+                      <FileConflictCard label="MAIN" track={conflict.mainTrack}
+                        chosen={res.fileChoice === 'main'} onChoose={() => setFileChoice(conflict.trackName, 'main')} />
+                      <FileConflictCard label="BRANCH" track={conflict.branchTrack}
+                        chosen={res.fileChoice === 'branch'} onChoose={() => setFileChoice(conflict.trackName, 'branch')} />
+                    </div>
+                  )}
 
-          {/* ── Track auto items ── */}
-          {preview.autoMerge.length > 0 && (
-            <div className="rounded-xl overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
-              {preview.autoMerge.map((item, i) => (
-                <div key={i} className="flex items-start gap-2.5 px-4 py-2.5"
-                  style={{ borderBottom: i < preview.autoMerge.length - 1 ? '0.5px solid var(--border)' : 'none' }}
-                >
-                  <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 13 13" fill="none">
-                    <circle cx="6.5" cy="6.5" r="6" fill="rgba(34,197,94,0.15)" />
-                    <path d="M4 6.5l2 2 3-3" stroke="var(--green)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-soft)' }}>{trackTitle(item.track)}</span>
-                    {item.action === 'apply_rename' ? (
-                      <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
-                        Display name will change: &ldquo;{trackTitle(item.track)}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
-                      </p>
-                    ) : item.action === 'apply_offset' ? (
-                      <p className="text-[11px] mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>
-                        Timeline position: {formatTrackStartBar(item.previousStartBar ?? 0)} → {formatTrackStartBar(item.newStartBar ?? 0)}
-                      </p>
-                    ) : null}
-                  </div>
-                  <span className="text-[10px] uppercase tracking-wide font-semibold shrink-0 px-[7px] py-[2px] rounded"
-                    style={{ background: 'rgba(34,197,94,0.1)', color: 'var(--green)' }}
-                  >
-                    {autoMergeBadge(item)}
-                  </span>
+                  {conflict.renameConflict && (
+                    <>
+                      {conflict.fileConflict && (
+                        <>
+                          <div className="h-px bg-border my-3" />
+                          <p className="text-xs text-muted-foreground m-0 mb-2">This track was also renamed:</p>
+                        </>
+                      )}
+                      {!conflict.fileConflict && (
+                        <p className="text-xs text-muted-foreground m-0 mb-3">Choose a name for this track:</p>
+                      )}
+                      <RenameConflictPills
+                        mainName={mainDisplayName} branchName={branchDisplayName}
+                        chosen={res.nameChoice} onChoose={c => setNameChoice(conflict.trackName, c)}
+                      />
+                    </>
+                  )}
+
+                  {conflict.offsetConflict && (
+                    <>
+                      {(conflict.fileConflict || conflict.renameConflict) && (
+                        <>
+                          <div className="h-px bg-border my-3" />
+                          <p className="text-xs text-muted-foreground m-0 mb-2">This track was also moved on the timeline:</p>
+                        </>
+                      )}
+                      {!conflict.fileConflict && !conflict.renameConflict && (
+                        <p className="text-xs text-muted-foreground m-0 mb-3">Choose where this track starts on the timeline:</p>
+                      )}
+                      <OffsetConflictPills
+                        mainStartBar={conflict.mainTrack.start_bar}
+                        branchStartBar={conflict.branchTrack.start_bar}
+                        chosen={res.offsetChoice}
+                        onChoose={c => setOffsetChoice(conflict.trackName, c)}
+                      />
+                    </>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3"
-          style={{ borderTop: '0.5px solid var(--border)' }}>
-          {mergeErr
-            ? <p className="text-[12px]" style={{ color: '#ef4444' }}>{mergeErr}</p>
-            : <div />
-          }
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 rounded-lg text-[12px] transition-colors duration-150"
-              style={{ border: '0.5px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent' }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-            >Cancel</button>
-            <button
-              onClick={handleMerge}
-              disabled={!canMerge}
-              className="px-5 py-1.5 rounded-lg text-[12px] font-medium text-white disabled:opacity-40 transition-all duration-150"
-              style={{
-                background: canMerge ? '#22c55e' : 'var(--border)',
-                border: `0.5px solid ${canMerge ? '#22c55e' : 'var(--border)'}`,
-                cursor: canMerge ? 'pointer' : 'not-allowed',
-              }}
-            >
-              {merging ? (
-                <span className="flex items-center gap-1.5">
-                  <svg className="animate-spin" width="11" height="11" viewBox="0 0 11 11" fill="none">
-                    <circle cx="5.5" cy="5.5" r="4" stroke="white" strokeWidth="1.5" strokeOpacity="0.3" />
-                    <path d="M5.5 1.5A4 4 0 0 1 9.5 5.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  Merging…
-                </span>
-              ) : unresolvedCount > 0
-                ? `Merge (${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} left)`
-                : 'Merge →'
-              }
-            </button>
+              )
+            })}
           </div>
+        )}
+
+        {sectionConflicts.length > 0 && (
+          <div className="flex flex-col gap-3">
+            <SectionLabel>Structure</SectionLabel>
+            {sectionConflicts.map((conflict) => {
+              const key = rangeKey(conflict)
+              const chosen = sectionResolutions[key]
+              const resolved = !!chosen
+              return (
+                <div key={key}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`size-1.5 shrink-0 ${resolved ? 'bg-ember' : 'bg-destructive'}`} />
+                    <span className="text-sm font-medium text-foreground font-mono tabular-nums">
+                      Bars {conflict.startBar + 1}–{conflict.endBar}
+                    </span>
+                    <span className={`text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 ml-auto border ${
+                      resolved ? 'border-ember/40 text-ember bg-ember-soft' : 'border-destructive/40 text-destructive bg-destructive/10'
+                    }`}>
+                      {resolved ? 'RESOLVED' : 'STRUCTURE CONFLICT'}
+                    </span>
+                  </div>
+                  <div className="flex gap-3">
+                    <SectionStatePill label="MAIN" state={conflict.mainState}
+                      chosen={chosen === 'main'} onChoose={() => setSectionChoice(key, 'main')} />
+                    <SectionStatePill label="BRANCH" state={conflict.branchState}
+                      chosen={chosen === 'branch'} onChoose={() => setSectionChoice(key, 'branch')} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {sectionAutoItems.length > 0 && (
+          <div>
+            <div className="mb-2"><SectionLabel>Structure (auto)</SectionLabel></div>
+            <MergeListBox>
+              {sectionAutoItems.map((item, i) => (
+                <MergeListRow key={i} last={i === sectionAutoItems.length - 1}>
+                  <AutoCheckIcon />
+                  <span className="text-xs text-foreground font-mono tabular-nums">Bars {item.startBar + 1}–{item.endBar}</span>
+                  <span className="text-[11px] text-muted-foreground">→</span>
+                  <SectionTag state={item.branchState} />
+                  <span className="text-[9px] uppercase tracking-widest text-muted-foreground ml-auto border border-border px-2 py-0.5">Auto</span>
+                </MergeListRow>
+              ))}
+            </MergeListBox>
+          </div>
+        )}
+
+        {preview.commentChanges && (
+          <CommentChangesSection
+            commentChanges={preview.commentChanges}
+            commentDeletionChoice={commentDeletionChoice}
+            onDeletionChoiceChange={setCommentDeletionChoice}
+            showAddedDetail={showAddedDetail}
+            onToggleAddedDetail={() => setShowAddedDetail(v => !v)}
+            showDeletedDetail={showDeletedDetail}
+            onToggleDeletedDetail={() => setShowDeletedDetail(v => !v)}
+          />
+        )}
+
+        {preview.autoMerge.length > 0 && (
+          <MergeListBox>
+            {preview.autoMerge.map((item, i) => (
+              <MergeListRow key={i} last={i === preview.autoMerge.length - 1}>
+                <AutoCheckIcon />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-medium text-foreground">{trackTitle(item.track)}</span>
+                  {item.action === 'apply_rename' && (
+                    <p className="text-[11px] mt-0.5 m-0 text-muted-foreground">
+                      Display name: &ldquo;{trackTitle(item.track)}&rdquo; → &ldquo;{item.newDisplayName}&rdquo;
+                    </p>
+                  )}
+                  {item.action === 'apply_offset' && (
+                    <p className="text-[11px] mt-0.5 m-0 text-muted-foreground font-mono">
+                      Timeline: {formatTrackStartBar(item.previousStartBar ?? 0)} → {formatTrackStartBar(item.newStartBar ?? 0)}
+                    </p>
+                  )}
+                </div>
+                <span className="text-[9px] uppercase tracking-widest text-muted-foreground shrink-0 border border-border px-2 py-0.5">
+                  {autoMergeBadge(item)}
+                </span>
+              </MergeListRow>
+            ))}
+          </MergeListBox>
+        )}
+      </div>
+
+      <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3 border-t border-border">
+        {mergeErr ? <p className="text-xs text-destructive m-0">{mergeErr}</p> : <div />}
+        <div className="flex gap-2">
+          <MergeBtn onClick={onClose}>Cancel</MergeBtn>
+          <MergeBtn variant="primary" disabled={!canMerge || merging} onClick={handleMerge}>
+            {merging
+              ? 'Merging…'
+              : unresolvedCount > 0
+                ? `Merge (${unresolvedCount} left)`
+                : 'Merge →'}
+          </MergeBtn>
         </div>
       </div>
-    </div>
+    </MergeShell>
   )
 }
