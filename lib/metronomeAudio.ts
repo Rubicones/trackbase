@@ -13,6 +13,18 @@ export function barDurationSec(bpm: number, timeSignature: string): number {
   return beatDurationSec(bpm) * beatsPerBarFromTimeSig(timeSignature)
 }
 
+/** Snap a timeline position to the start of its current bar (floor). */
+export function snapToPreviousBarSec(
+  positionSec: number,
+  bpm: number,
+  timeSignature: string,
+): number {
+  const barDurSec = barDurationSec(bpm, timeSignature)
+  if (barDurSec <= 0) return 0
+  const snapBar = Math.floor(positionSec / barDurSec)
+  return snapBar * barDurSec
+}
+
 /** Mix a short square-wave click into a mono channel at `timeSec`. */
 function mixClick(
   channel: Float32Array,
@@ -87,21 +99,54 @@ export function generateMetronomeBuffer(
 /**
  * Simple count-in: `beatsPerBar` clicks at project BPM, starting immediately.
  * Independent of playhead position and the metronome track.
+ * Returns a promise and a cancel fn that stops scheduled clicks.
  */
+export function startCountdown(
+  audioCtx: AudioContext,
+  destination: AudioNode,
+  bpm: number,
+  timeSig: string,
+): { promise: Promise<void>; cancel: () => void; takeStartTime: number } {
+  const beatsPerBar = beatsPerBarFromTimeSig(timeSig)
+  const beatDur = beatDurationSec(bpm)
+  const barDur = beatDur * beatsPerBar
+  const countdownStart = audioCtx.currentTime + 0.05
+  const takeStartTime = countdownStart + barDur
+  const oscillators: OscillatorNode[] = []
+
+  for (let i = 0; i < beatsPerBar; i++) {
+    oscillators.push(scheduleClick(audioCtx, destination, countdownStart + i * beatDur, i === 0))
+  }
+
+  let cancelled = false
+  let timeoutId = 0
+  let resolveFn!: () => void
+  const promise = new Promise<void>(resolve => {
+    resolveFn = resolve
+    const delayMs = Math.max(0, (takeStartTime - audioCtx.currentTime) * 1000)
+    timeoutId = window.setTimeout(() => {
+      if (!cancelled) resolve()
+    }, delayMs)
+  })
+
+  const cancel = () => {
+    if (cancelled) return
+    cancelled = true
+    window.clearTimeout(timeoutId)
+    oscillators.forEach(osc => {
+      try { osc.stop(0) } catch { /* ok */ }
+    })
+    resolveFn()
+  }
+
+  return { promise, cancel, takeStartTime }
+}
+
 export function playCountdown(
   audioCtx: AudioContext,
   destination: AudioNode,
   bpm: number,
   timeSig: string,
 ): Promise<void> {
-  const beatsPerBar = beatsPerBarFromTimeSig(timeSig)
-  const beatDur = beatDurationSec(bpm)
-  const barDur = beatDur * beatsPerBar
-  const countdownStart = audioCtx.currentTime + 0.05
-
-  for (let i = 0; i < beatsPerBar; i++) {
-    scheduleClick(audioCtx, destination, countdownStart + i * beatDur, i === 0)
-  }
-
-  return new Promise(resolve => setTimeout(resolve, Math.round(barDur * 1000) + 80))
+  return startCountdown(audioCtx, destination, bpm, timeSig).promise
 }

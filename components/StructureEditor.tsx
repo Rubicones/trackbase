@@ -678,7 +678,7 @@ export default function StructureOverlay({
   const tp = (bar: number) =>
     totalDurationMs > 0 ? (bar * barDurationMs) / totalDurationMs : bar / Math.max(1, totalBars)
 
-  const wl = waveformBounds?.left ?? 228
+  const wl = waveformBounds?.left ?? 192
   const wr = waveformBounds?.right ?? 68
 
   const RULER_H = compact ? 22 : 40

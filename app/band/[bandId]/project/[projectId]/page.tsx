@@ -34,7 +34,8 @@ import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName }
 import {
   METRONOME_TRACK_ID,
   generateMetronomeBuffer,
-  playCountdown,
+  snapToPreviousBarSec,
+  startCountdown,
 } from '@/lib/metronomeAudio'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { RecordingTrackRow } from '@/components/RecordingTrackRow'
@@ -1034,12 +1035,19 @@ function Waveform({
 
 // ─── Player hook ──────────────────────────────────────────────────────────────
 
-function usePlayer(tracks: Track[], versionId: string, project: Project | null) {
+function usePlayer(
+  tracks: Track[],
+  versionId: string,
+  project: Project | null,
+  minPlaybackDuration = 0,
+  timelineDurationSec = 0,
+) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
   const gainsRef = useRef<Map<string, GainNode>>(new Map())
   const masterGainRef = useRef<GainNode | null>(null)
   const bufsRef = useRef<Map<string, AudioBuffer>>(new Map())
+  const metronomeParamsRef = useRef<{ bpm: number; timeSig: string; duration: number } | null>(null)
   const startRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
@@ -1071,6 +1079,17 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   countdownOnRef.current = countdownOn
   const isCountingRef = useRef(false)
   isCountingRef.current = isCounting
+  const countdownCancelRef = useRef<(() => void) | null>(null)
+  const minPlaybackDurationRef = useRef(minPlaybackDuration)
+  minPlaybackDurationRef.current = minPlaybackDuration
+  const timelineDurationSecRef = useRef(timelineDurationSec)
+  timelineDurationSecRef.current = timelineDurationSec
+
+  const getTransportDuration = useCallback(() => Math.max(
+    duration,
+    minPlaybackDurationRef.current,
+    timelineDurationSecRef.current,
+  ), [duration])
 
   // Only load audio tracks (MIDI tracks are handled separately via soundfont)
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
@@ -1098,6 +1117,7 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
     masterGainRef.current = masterGain
     bufsRef.current = new Map()
     bufsRef.current.delete(METRONOME_TRACK_ID)
+    metronomeParamsRef.current = null
     mutedTracksRef.current.add(METRONOME_TRACK_ID)
     setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
     setMetronomeOn(false)
@@ -1178,18 +1198,39 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   }, [tracks])
 
   // Hidden metronome track — generated once audio is loaded and timeline length is known.
-  useEffect(() => {
-    const ctx = actxRef.current
-    const proj = projectRef.current
-    if (!ctx || duration <= 0 || loaded < audioTracks.length) return
-    const metroBuf = generateMetronomeBuffer(
-      ctx,
-      proj?.bpm ?? 120,
-      proj?.time_signature ?? '4/4',
+  const ensureMetronomeBuffer = useCallback((ctx: AudioContext) => {
+    const timelineDur = Math.max(
       duration,
+      minPlaybackDurationRef.current,
+      timelineDurationSecRef.current,
     )
-    bufsRef.current.set(METRONOME_TRACK_ID, metroBuf)
-  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature])
+    if (timelineDur <= 0) return
+    const proj = projectRef.current
+    const bpm = proj?.bpm ?? 120
+    const timeSig = proj?.time_signature ?? '4/4'
+    const prev = metronomeParamsRef.current
+    const existing = bufsRef.current.get(METRONOME_TRACK_ID)
+    const needsRegen = !existing
+      || !prev
+      || prev.bpm !== bpm
+      || prev.timeSig !== timeSig
+      || existing.duration < timelineDur - 0.05
+    if (needsRegen) {
+      bufsRef.current.set(
+        METRONOME_TRACK_ID,
+        generateMetronomeBuffer(ctx, bpm, timeSig, timelineDur),
+      )
+      metronomeParamsRef.current = { bpm, timeSig, duration: timelineDur }
+    }
+  }, [duration])
+
+  useEffect(() => {
+    const ctx = actxRef.current ?? getSharedAudioContext()
+    actxRef.current = ctx
+    const tracksReady = audioTracks.length === 0 || loaded >= audioTracks.length
+    if (!tracksReady) return
+    ensureMetronomeBuffer(ctx)
+  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer])
 
   const stopSources = useCallback(() => {
     sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
@@ -1250,9 +1291,28 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const play = useCallback(async (offset = offsetRef.current, tracksOverride?: Track[]) => {
-    const ctx = actxRef.current
-    if (!ctx) return
+  const ensurePlaybackGraph = useCallback(() => {
+    const ctx = getSharedAudioContext()
+    actxRef.current = ctx
+    if (!masterGainRef.current || masterGainRef.current.context !== ctx) {
+      if (masterGainRef.current) {
+        try { masterGainRef.current.disconnect() } catch { /* ok */ }
+      }
+      const masterGain = ctx.createGain()
+      masterGain.gain.value = volume
+      masterGain.connect(getMasterOutput())
+      masterGainRef.current = masterGain
+    }
+    return ctx
+  }, [volume])
+
+  const play = useCallback(async (
+    offset = offsetRef.current,
+    tracksOverride?: Track[],
+    scheduledStartTime?: number,
+  ) => {
+    const ctx = ensurePlaybackGraph()
+    ensureMetronomeBuffer(ctx)
     stopSources()
     if (ctx.state === 'suspended') await ctx.resume()
     const newGains = new Map<string, GainNode>()
@@ -1264,7 +1324,9 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
     const trackMetaMap = new Map(metaTracks.map(t => [t.id, t]))
     // Capture AudioContext time ONCE before starting any sources — used as
     // absolute reference for both audio scheduling and MIDI note scheduling.
-    const audioCtxPlayTime = ctx.currentTime
+    const audioCtxPlayTime = scheduledStartTime != null
+      ? Math.max(scheduledStartTime, ctx.currentTime)
+      : ctx.currentTime
     bufsRef.current.forEach((buf, id) => {
       const isMetronome = id === METRONOME_TRACK_ID
       const trackMeta = isMetronome ? null : trackMetaMap.get(id)
@@ -1304,7 +1366,7 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
     }
     scheduleMidiNotes(offset, audioCtxPlayTime).catch(console.warn)
     setPlaying(true)
-    const dur = duration || 1
+    const dur = getTransportDuration() || 1
     const tick = () => {
       const elapsed = (actxRef.current?.currentTime ?? 0) - startRef.current
       if (elapsed >= dur) { setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
@@ -1312,12 +1374,14 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [duration, stopSources, scheduleMidiNotes])
+  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer])
 
   const pause = useCallback(() => {
     if (isCountingRef.current) {
       isCountingRef.current = false
       setIsCounting(false)
+      countdownCancelRef.current?.()
+      countdownCancelRef.current = null
       return
     }
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
@@ -1398,31 +1462,64 @@ function usePlayer(tracks: Track[], versionId: string, project: Project | null) 
 
   const toggleCountdown = useCallback(() => setCountdownOn(c => !c), [])
 
+  const prepareTransport = useCallback(() => {
+    const ctx = ensurePlaybackGraph()
+    if (ctx.state === 'suspended') void ctx.resume()
+    ensureMetronomeBuffer(ctx)
+  }, [ensurePlaybackGraph, ensureMetronomeBuffer])
+
+  const snapPlayheadToBar = useCallback((positionSec: number) => {
+    const proj = projectRef.current
+    const snapped = snapToPreviousBarSec(
+      positionSec,
+      proj?.bpm ?? 120,
+      proj?.time_signature ?? '4/4',
+    )
+    offsetRef.current = snapped
+    setCurrentTime(snapped)
+    return snapped
+  }, [])
+
   const playWithCountIn = useCallback(async (offset = offsetRef.current, tracksOverride?: Track[]) => {
+    if (audioTracks.length > 0 && loaded < audioTracks.length) return
+    if (isCountingRef.current) return
+
+    const snapped = snapPlayheadToBar(offset)
+
     if (countdownOnRef.current) {
-      const ctx = actxRef.current
+      const ctx = ensurePlaybackGraph()
       const proj = projectRef.current
-      if (!ctx) return
       if (ctx.state === 'suspended') await ctx.resume()
+      isCountingRef.current = true
       setIsCounting(true)
       const out = masterGainRef.current ?? ctx.destination
-      await playCountdown(
+      const { promise, cancel } = startCountdown(
         ctx,
         out,
         proj?.bpm ?? 120,
         proj?.time_signature ?? '4/4',
       )
+      countdownCancelRef.current = cancel
+      await promise
+      countdownCancelRef.current = null
       if (!isCountingRef.current) return
       setIsCounting(false)
     }
-    await play(offset, tracksOverride)
-  }, [play])
+    await play(snapped, tracksOverride)
+  }, [play, ensurePlaybackGraph, loaded, audioTracks.length, snapPlayheadToBar])
 
   return {
-    playing, currentTime, duration, loaded, total: audioTracks.length,
+    playing, currentTime,
+    duration: getTransportDuration(),
+    loaded, total: audioTracks.length,
     mutedTracks, soloedTracks, volume, setVolume,
     play: () => playWithCountIn(),
-    playTransport: () => play(),
+    playTransport: (scheduledStartTime?: number) => {
+      if (audioTracks.length > 0 && loaded < audioTracks.length) return
+      const snapped = snapPlayheadToBar(offsetRef.current)
+      return play(snapped, undefined, scheduledStartTime)
+    },
+    prepareTransport,
     playWithCountIn,
     pause, seek, toggleMute, toggleSolo,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
@@ -2393,15 +2490,15 @@ function MasterPlayerBar({
         {transportToggles}
         <button
           type="button"
-          onClick={playing ? onPause : onPlay}
-          disabled={total === 0}
+          onClick={(playing || isCounting) ? onPause : onPlay}
+          disabled={duration <= 0 || isLoading}
           className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          aria-label={playing ? 'Pause' : 'Play'}
+          aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
         >
           {isLoading ? (
-            <Spinner size={14} tone="foreground" />
+            <Spinner size={14} tone="white" />
           ) : (
-            <span className="text-sm translate-x-px">{playing ? '❚❚' : '▶'}</span>
+            <span className="text-sm translate-x-px">{(playing || isCounting) ? '❚❚' : '▶'}</span>
           )}
         </button>
         <div
@@ -2431,15 +2528,15 @@ function MasterPlayerBar({
         {transportToggles}
         <button
           type="button"
-          onClick={playing ? onPause : onPlay}
-          disabled={total === 0}
+          onClick={(playing || isCounting) ? onPause : onPlay}
+          disabled={duration <= 0 || isLoading}
           className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          aria-label={playing ? 'Pause' : 'Play'}
+          aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
         >
           {isLoading ? (
-            <Spinner size={14} tone="foreground" />
+            <Spinner size={14} tone="white" />
           ) : (
-            <span className="text-sm translate-x-px">{playing ? '❚❚' : '▶'}</span>
+            <span className="text-sm translate-x-px">{(playing || isCounting) ? '❚❚' : '▶'}</span>
           )}
         </button>
         <div className="font-mono text-xs tabular-nums">
@@ -2762,6 +2859,7 @@ export default function ProjectPage() {
   const tracksBodyRef = useRef<HTMLDivElement>(null)
   const [recordingSessions, setRecordingSessions] = useState<{ id: string; name: string }[]>([])
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
+  const [recordingPreviewEnds, setRecordingPreviewEnds] = useState<Record<string, number>>({})
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false)
   const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
@@ -2906,7 +3004,7 @@ export default function ProjectPage() {
     const obs = new ResizeObserver(measure)
     obs.observe(listEl)
     return () => obs.disconnect()
-  }, [activeTracks.length, isMobilePortrait])
+  }, [activeTracks.length, recordingSessions.length, isMobilePortrait])
 
   // Orientation detection — switches between ReadingMode and mixer, collapses topbar on short landscape
   useEffect(() => {
@@ -2929,16 +3027,24 @@ export default function ProjectPage() {
   const mainHashes = new Set((mainVersion?.tracks ?? []).map(t => t.file_hash))
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
 
-  const player = usePlayer(activeTracks, activeVersionId, project)
+  const recordingPreviewEndSec = Math.max(0, ...Object.values(recordingPreviewEnds))
+  const baselineTimelineSec = Math.max(
+    16 * ((60000 / (project?.bpm ?? 120)) * (parseInt((project?.time_signature ?? '4/4').split('/')[0]) || 4)) / 1000,
+    recordingPreviewEndSec,
+    1,
+  )
+
+  const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, baselineTimelineSec)
   const playerRef = useRef(player)
   playerRef.current = player
   const activeRecordingIdRef = useRef(activeRecordingId)
   activeRecordingIdRef.current = activeRecordingId
+  const recordingStopRef = useRef<(() => void) | null>(null)
 
-  const playRecordingCountdown = useCallback(async (bpm: number, timeSig: string) => {
+  const beginRecordingCountdown = useCallback(async (bpm: number, timeSig: string) => {
     const ctx = getSharedAudioContext()
     if (ctx.state === 'suspended') await ctx.resume()
-    await playCountdown(ctx, getMasterOutput(), bpm, timeSig)
+    return startCountdown(ctx, getMasterOutput(), bpm, timeSig)
   }, [])
 
   const getRecordingPlaybackMs = useCallback(() => playerRef.current.currentTime * 1000, [])
@@ -2946,6 +3052,7 @@ export default function ProjectPage() {
   useEffect(() => {
     setRecordingSessions([])
     setActiveRecordingId(null)
+    setRecordingPreviewEnds({})
   }, [activeVersionId])
 
   function handleAddRecordingTrack() {
@@ -2974,6 +3081,20 @@ export default function ProjectPage() {
   function handleRecordingDelete(id: string) {
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
+    setRecordingPreviewEnds(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }
+
+  function handleRecordingPreviewTimeline(id: string, endSec: number | null) {
+    setRecordingPreviewEnds(prev => {
+      const next = { ...prev }
+      if (endSec != null && endSec > 0) next[id] = endSec
+      else delete next[id]
+      return next
+    })
   }
 
   function handleRecordingNameChange(id: string, name: string) {
@@ -2991,17 +3112,26 @@ export default function ProjectPage() {
         el.tagName === 'SELECT' ||
         el.isContentEditable
       ) return
-      if (activeRecordingIdRef.current) return
 
       e.preventDefault()
+
+      if (recordingStopRef.current) {
+        recordingStopRef.current()
+        return
+      }
+
       const p = playerRef.current
-      if (p.total === 0 && recordingSessions.length === 0) return
-      if (p.playing) p.pause()
+      if (p.total > 0 && p.loaded < p.total) return
+
+      const canPlay = p.duration > 0 || p.total > 0
+      if (!canPlay) return
+
+      if (p.playing || p.isCounting) p.pause()
       else p.play()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [recordingSessions.length])
+  }, [])
 
   const durationMs = player.duration * 1000
   const projBpm = project?.bpm ?? 120
@@ -3862,7 +3992,7 @@ export default function ProjectPage() {
               {/* Tact grid + section boundary overlays */}
               {totalProjectBars > 0 && (() => {
                 const { barDurationMs } = getBarMath(project!, totalProjectDurationMs)
-                const wl = waveformBounds?.left ?? 228
+                const wl = waveformBounds?.left ?? TRACK_LABEL_W
                 const wr = waveformBounds?.right ?? 68
                 return (
                   <div style={{
@@ -3953,7 +4083,10 @@ export default function ProjectPage() {
                   onPlaybackStart={player.playTransport}
                   onPlaybackStop={player.pause}
                   onSeekTo={player.seek}
-                  playCountdown={playRecordingCountdown}
+                  onPreparePlayback={player.prepareTransport}
+                  onPreviewTimelineChange={handleRecordingPreviewTimeline}
+                  recordingStopRef={recordingStopRef}
+                  playCountdown={beginRecordingCountdown}
                 />
               ))}
 
@@ -4007,7 +4140,7 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={handleAddRecordingTrack}
-                    disabled={!activeVersionId || isMobileLandscape}
+                    disabled={!activeVersionId}
                     className="w-full min-h-[48px] px-4 text-left text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:bg-surface/30 transition disabled:opacity-40 disabled:cursor-not-allowed border-t border-border flex items-center gap-2"
                   >
                     <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />

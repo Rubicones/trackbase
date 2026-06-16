@@ -7,8 +7,8 @@ let _ctx: AudioContext | null = null
 export function getRecordingAudioContext(): AudioContext {
   if (!_ctx || _ctx.state === 'closed') {
     _ctx = new AudioContext({
-      latencyHint: 'interactive',
-      sampleRate: 48000,
+      latencyHint: 0,     // request minimum buffer size
+      sampleRate: 22050,  // half rate → smaller buffers, lower latency
     })
   }
   return _ctx

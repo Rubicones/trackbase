@@ -1,10 +1,11 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback, memo } from 'react'
+import { useRef, useState, useEffect, useCallback, memo, type MutableRefObject } from 'react'
 import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
 import { TactGrid } from '@/components/design/TactGrid'
+import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
 
 const TRACK_LABEL_W = 192
@@ -152,10 +153,16 @@ export interface RecordingTrackRowProps {
   onRelease: (id: string) => void
   onSaved:   (id: string, track: Track) => void
   onDelete:  (id: string) => void
-  onPlaybackStart: () => void
+  onPlaybackStart: (atTime?: number) => void
   onPlaybackStop:  () => void
   onSeekTo: (positionSec: number) => void
-  playCountdown: (bpm: number, timeSig: string) => Promise<void>
+  onPreviewTimelineChange?: (id: string, endSec: number | null) => void
+  recordingStopRef?: MutableRefObject<(() => void) | null>
+  onPreparePlayback?: () => void
+  playCountdown: (bpm: number, timeSig: string) => Promise<{
+    promise: Promise<void>
+    takeStartTime: number
+  }>
 }
 
 export const RecordingTrackRow = memo(function RecordingTrackRow({
@@ -165,6 +172,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   isActiveRecording,
   onArm, onRelease, onSaved, onDelete,
   onPlaybackStart, onPlaybackStop, onSeekTo,
+  onPreviewTimelineChange,
+  recordingStopRef,
+  onPreparePlayback,
   playCountdown,
 }: RecordingTrackRowProps) {
   const [state, setState]           = useState<RecordState>('idle')
@@ -190,17 +200,19 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const audioBufferRef  = useRef<AudioBuffer | null>(null)
   const startBarRef     = useRef(0)
   const previewSrcRef   = useRef<AudioBufferSourceNode | null>(null)
-  const monitorAudioRef = useRef<HTMLAudioElement | null>(null)
   const recordTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const armGenRef       = useRef(0)
   const armInFlightRef  = useRef(false)
   const stateRef        = useRef<RecordState>('idle')
   stateRef.current = state
+  const monitorVolRef   = useRef(monitorVol)
+  monitorVolRef.current = monitorVol
   const meterSourceRef  = useRef<MediaStreamAudioSourceNode | null>(null)
   const meterAnalyserRef = useRef<AnalyserNode | null>(null)
-  const meterSilentRef  = useRef<GainNode | null>(null)
+  // Holds the monitor GainNode — gain.value == monitorVol so we can update it live
+  const meterMonitorRef = useRef<GainNode | null>(null)
   const meterRafRef     = useRef(0)
-  const meterDataRef    = useRef<Float32Array | null>(null)
+  const meterDataRef    = useRef<Float32Array<ArrayBuffer> | null>(null)
   const lastMeterRenderRef = useRef(0)
 
   const stopMeter = useCallback(() => {
@@ -208,10 +220,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     meterRafRef.current = 0
     try { meterSourceRef.current?.disconnect() } catch { /* ok */ }
     try { meterAnalyserRef.current?.disconnect() } catch { /* ok */ }
-    try { meterSilentRef.current?.disconnect() } catch { /* ok */ }
+    try { meterMonitorRef.current?.disconnect() } catch { /* ok */ }
     meterSourceRef.current = null
     meterAnalyserRef.current = null
-    meterSilentRef.current = null
+    meterMonitorRef.current = null
     meterDataRef.current = null
     setInputLevel(0)
   }, [])
@@ -221,17 +233,21 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     const ctx = await resumeRecordingAudioContext()
     const source = ctx.createMediaStreamSource(stream)
     const analyser = ctx.createAnalyser()
-    analyser.fftSize = 2048
+    analyser.fftSize = 512
     analyser.smoothingTimeConstant = 0.3
-    const silent = ctx.createGain()
-    silent.gain.value = 0
+    // Route source → analyser → monitorGain → destination.
+    // This keeps the graph pulled (so the analyser gets data) and provides
+    // low-latency Web Audio monitoring — no <audio> element buffering involved.
+    const monGain = ctx.createGain()
+    monGain.gain.value = monitorVolRef.current
     source.connect(analyser)
-    source.connect(silent)
-    silent.connect(ctx.destination)
+    analyser.connect(monGain)
+    monGain.connect(ctx.destination)
     meterSourceRef.current = source
     meterAnalyserRef.current = analyser
-    meterSilentRef.current = silent
-    meterDataRef.current = new Float32Array(analyser.fftSize)
+    meterMonitorRef.current = monGain
+    const meterBuf = new Float32Array(analyser.fftSize) as Float32Array<ArrayBuffer>
+    meterDataRef.current = meterBuf
     lastMeterRenderRef.current = 0
 
     const tick = (now: number) => {
@@ -271,32 +287,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       clearInterval(recordTimerRef.current)
       recordTimerRef.current = null
     }
-    const monitor = monitorAudioRef.current
-    if (monitor) {
-      monitor.pause()
-      monitor.srcObject = null
-    }
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
   }, [stopMeter])
-
-  const attachMonitor = useCallback((stream: MediaStream, vol: number) => {
-    if (vol <= 0) return
-    const el = monitorAudioRef.current
-    if (!el) return
-    el.srcObject = stream
-    el.volume = vol
-    el.muted = false
-    void el.play().catch(() => {})
-  }, [])
-
-  const detachMonitor = useCallback(() => {
-    const el = monitorAudioRef.current
-    if (!el) return
-    el.pause()
-    el.muted = true
-    el.srcObject = null
-  }, [])
 
   const acquireMic = useCallback(async (deviceId: string, gen: number) => {
     if (streamRef.current) stopStream()
@@ -305,6 +298,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
+      sampleRate: { ideal: 22050 },
+      channelCount: { ideal: 1 },
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
     if (gen !== armGenRef.current) {
@@ -412,12 +407,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
   async function handleDeviceChange(deviceId: string) {
     setSelectedDevice(deviceId)
-    detachMonitor()
     const gen = armGenRef.current
     try {
       const stream = await acquireMic(deviceId, gen)
       if (stream) {
-        if (monitorVol > 0) attachMonitor(stream, monitorVol)
         if (stateRef.current === 'armed' || stateRef.current === 'countdown' || stateRef.current === 'recording') {
           void startMeter(stream)
         }
@@ -429,10 +422,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
   function handleMonitorChange(vol: number) {
     setMonitorVol(vol)
-    const stream = streamRef.current
-    if (!stream) return
-    if (vol > 0) attachMonitor(stream, vol)
-    else detachMonitor()
+    // Update the Web Audio monitor gain in real-time — no restart needed.
+    if (meterMonitorRef.current) meterMonitorRef.current.gain.value = vol
   }
 
   async function handleStartRecord() {
@@ -453,19 +444,20 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       }
     }
 
-    const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
-    const barDurMs    = (60000 / bpm) * beatsPerBar
+    const barDurSec = barDurationSec(bpm, timeSig)
 
     // Snap to the previous bar boundary and always play count-in.
     // Seek the player NOW so offsetRef is locked to the bar start — when
     // onPlaybackStart fires after the countdown, playback resumes from exactly
     // that bar, not from wherever the user originally paused.
-    const snapBar    = Math.floor(getPlaybackMs() / barDurMs)
-    const snapPosSec = snapBar * (barDurMs / 1000)
+    const snapPosSec = snapToPreviousBarSec(getPlaybackMs() / 1000, bpm, timeSig)
+    const snapBar    = Math.round(snapPosSec / barDurSec)
     onSeekTo(snapPosSec)
+    onPreparePlayback?.()
 
     setState('countdown')
-    await playCountdown(bpm, timeSig)
+    const { promise, takeStartTime } = await playCountdown(bpm, timeSig)
+    onPlaybackStart(takeStartTime)
 
     startBarRef.current = snapBar
     setRecordStartBar(snapBar)
@@ -483,7 +475,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
     let recorder: MediaRecorder
     try {
-      recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 })
+      recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64000 })
     } catch {
       try {
         recorder = new MediaRecorder(stream, { mimeType })
@@ -499,20 +491,17 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingBars([])
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
 
-    // Stop HTML monitor before MediaRecorder uses the same stream.
-    detachMonitor()
-
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     recorder.onstop = () => { void processBlob(mimeType) }
     recorderRef.current = recorder
+
+    await promise
 
     setState('recording')
     recorder.start(250)
     recordTimerRef.current = setInterval(() => {
       setRecordingSec(s => s + 0.25)
     }, 250)
-
-    window.setTimeout(() => onPlaybackStart(), 300)
   }
 
   function handleStopRecord() {
@@ -528,6 +517,22 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setState('preview')
   }
 
+  const handleStopRecordRef = useRef(handleStopRecord)
+  handleStopRecordRef.current = handleStopRecord
+
+  useEffect(() => {
+    if (!recordingStopRef || state !== 'recording') return
+    recordingStopRef.current = () => { handleStopRecordRef.current() }
+    return () => { recordingStopRef.current = null }
+  }, [state, recordingStopRef])
+
+  const previewMutedRef = useRef(previewMuted)
+  previewMutedRef.current = previewMuted
+
+  const notifyPreviewTimeline = useCallback((endSec: number | null) => {
+    onPreviewTimelineChange?.(id, endSec)
+  }, [id, onPreviewTimelineChange])
+
   async function processBlob(mimeType: string) {
     const blob   = new Blob(chunksRef.current, { type: mimeType })
     const arrBuf = await blob.arrayBuffer()
@@ -538,61 +543,74 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       audioBufferRef.current = decoded
       setStaticBars(barsFromBuffer(decoded))
       setRecordedDurationSec(decoded.duration)
+      const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
+      const barDurSec = (60 / bpm) * beatsPerBar
+      notifyPreviewTimeline(startBarRef.current * barDurSec + decoded.duration)
     } catch (e) {
       console.error('[RecordingTrackRow] decode failed:', e)
       setError('Could not decode recording')
+      notifyPreviewTimeline(null)
     }
   }
 
-  const previewMutedRef = useRef(previewMuted)
-  previewMutedRef.current = previewMuted
-
   useEffect(() => {
-    if (stateRef.current !== 'preview' || !audioBufferRef.current) return
-    const audioCtx = getSharedAudioContext()
+    if (state !== 'preview' || !audioBufferRef.current || recordedDurationSec <= 0) return
 
-    if (isPlaying && !previewMutedRef.current) {
+    let cancelled = false
+
+    const run = async () => {
+      if (!isPlaying || previewMutedRef.current) {
+        previewSrcRef.current?.stop()
+        previewSrcRef.current = null
+        return
+      }
+
+      const audioCtx = getSharedAudioContext()
+      if (audioCtx.state === 'suspended') await audioCtx.resume()
+      if (cancelled) return
+
       const beatsPerBar       = parseInt(timeSig.split('/')[0]) || 4
       const barDurSec         = (60 / bpm) * beatsPerBar
       const recordingStartSec = startBarRef.current * barDurSec
       const buf               = audioBufferRef.current
+      if (!buf) return
       const recordingEndSec   = recordingStartSec + buf.duration
       const playNowSec        = getPlaybackMs() / 1000
 
       previewSrcRef.current?.stop()
       previewSrcRef.current = null
 
-      // Only schedule if playhead hasn't passed the end of the recording
       if (playNowSec < recordingEndSec) {
         const src = audioCtx.createBufferSource()
         src.buffer = buf
         src.connect(getMasterOutput())
 
-        // Derive the AudioContext "song zero" time:
-        // ctx.currentTime ≈ acxZero + playNowSec  →  acxZero = ctx.currentTime - playNowSec
         const acxNow  = audioCtx.currentTime
         const acxZero = acxNow - playNowSec
 
         if (playNowSec < recordingStartSec) {
-          // Playhead is before the recording — schedule start at the right AC time
           src.start(acxZero + recordingStartSec, 0)
         } else {
-          // Playhead is inside the recording — start immediately from the correct offset
           src.start(acxNow, playNowSec - recordingStartSec)
         }
         previewSrcRef.current = src
       }
-    } else {
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
       previewSrcRef.current?.stop()
       previewSrcRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, state, previewMuted])
+  }, [isPlaying, state, previewMuted, recordedDurationSec, bpm, timeSig, getPlaybackMs])
 
   async function handleReRecord() {
     previewSrcRef.current?.stop()
     previewSrcRef.current = null
     audioBufferRef.current = null
+    notifyPreviewTimeline(null)
     chunksRef.current = []
     setStaticBars([])
     setRecordedDurationSec(0)
@@ -604,7 +622,6 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     try {
       const stream = await acquireMic(selectedDevice, gen)
       if (stream) {
-        if (monitorVol > 0) attachMonitor(stream, monitorVol)
         void startMeter(stream)
       }
     } catch { /* ok */ }
@@ -618,6 +635,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setUploadProgress(0)
     previewSrcRef.current?.stop()
     previewSrcRef.current = null
+    notifyPreviewTimeline(null)
     try {
       const wavBlob  = encodeWAV(decoded, 0)
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
@@ -680,6 +698,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     previewSrcRef.current?.stop()
     recorderRef.current?.stop()
     stopStream()
+    notifyPreviewTimeline(null)
     onRelease(id)
     onDelete(id)
   }
@@ -732,9 +751,6 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           : 'var(--surface)',
       }}
     >
-      {/* Hidden element for zero-latency-style monitor — no Web Audio graph */}
-      <audio ref={monitorAudioRef} className="hidden" playsInline />
-
       <div
         className="shrink-0 border-r border-border flex flex-col justify-between py-2 px-3"
         style={{ width: TRACK_LABEL_W }}
@@ -879,7 +895,11 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         </div>
       </div>
 
-      <div className="flex-1 min-w-0 relative overflow-hidden border-l border-border/0" style={{ minHeight: 80 }}>
+      <div
+        data-waveform-col
+        className="flex-1 min-w-0 relative overflow-hidden border-l border-border/0"
+        style={{ minHeight: 80 }}
+      >
         <TactGrid totalBars={totalBars} />
 
         {showLiveVolumeBar && (

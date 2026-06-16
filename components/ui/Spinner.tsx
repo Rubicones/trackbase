@@ -4,13 +4,16 @@ type SpinnerProps = {
   size?: number
   className?: string
   label?: string
-  tone?: 'ember' | 'foreground' | 'muted'
+  tone?: 'ember' | 'foreground' | 'muted' | 'white'
 }
 
 /** Brutalist 8-tick rotor — matches trackbase-uikit spinner. */
 export function Spinner({ size = 20, className, label, tone = 'ember' }: SpinnerProps) {
   const color =
-    tone === 'ember' ? 'var(--ember)' : tone === 'muted' ? 'var(--muted-foreground)' : 'var(--foreground)'
+    tone === 'ember' ? 'var(--ember)'
+      : tone === 'muted' ? 'var(--muted-foreground)'
+      : tone === 'white' ? '#fff'
+      : 'var(--foreground)'
   return (
     <span
       role="status"
