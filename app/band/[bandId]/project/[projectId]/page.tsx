@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
+import React, { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -711,13 +711,13 @@ const COMPACT_TRACK_ROW_H = 48
 // ─── Waveform ─────────────────────────────────────────────────────────────────
 
 function Waveform({
-  trackId, muted, playedRatio, color, durationMs,
+  trackId, muted, color, durationMs,
   commentMode, comments, activeInput, audioReady,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
   currentUserId, isOwner, onReplyCreate, currentUser, onCommentInteractionChange,
   compact = false, barCount = 96,
 }: {
-  trackId: string; muted: boolean; playedRatio: number; color: string; durationMs: number
+  trackId: string; muted: boolean; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
@@ -917,21 +917,18 @@ function Waveform({
       onTouchMove={commentMode ? handleTouchMove : undefined}
     >
       <div className="absolute inset-x-1 top-2 bottom-2 flex items-center gap-px z-[1]">
-        {bars.map((h, i) => {
-          const played = (i / bars.length) < playedRatio
-          return (
-            <div
-              key={i}
-              className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
-              style={{
-                height: `${Math.max(8, h * 100)}%`,
-                background: color,
-                opacity: muted ? 0.12 : played ? 0.95 : 0.4,
-                animationDelay: ready ? `${i * 4}ms` : undefined,
-              }}
-            />
-          )
-        })}
+        {bars.map((h, i) => (
+          <div
+            key={i}
+            className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
+            style={{
+              height: `${Math.max(8, h * 100)}%`,
+              background: color,
+              opacity: muted ? 0.12 : 0.4,
+              animationDelay: ready ? `${i * 4}ms` : undefined,
+            }}
+          />
+        ))}
       </div>
 
       {commentMode && !dragRect && (
@@ -1035,6 +1032,9 @@ function Waveform({
 
 // ─── Player hook ──────────────────────────────────────────────────────────────
 
+/** Short gain ramp to avoid audible clicks at every source start/stop boundary. */
+const RAMP_SECS = 0.008
+
 function usePlayer(
   tracks: Track[],
   versionId: string,
@@ -1047,6 +1047,9 @@ function usePlayer(
   const gainsRef = useRef<Map<string, GainNode>>(new Map())
   const masterGainRef = useRef<GainNode | null>(null)
   const bufsRef = useRef<Map<string, AudioBuffer>>(new Map())
+  /** Updated every rAF frame — use for smooth visual updates (waveform overlays,
+   *  progress bar fill). React state `currentTime` is throttled to ~5 Hz. */
+  const currentTimeRef = useRef(0)
   const metronomeParamsRef = useRef<{ bpm: number; timeSig: string; duration: number } | null>(null)
   const startRef = useRef(0)
   const offsetRef = useRef(0)
@@ -1233,7 +1236,25 @@ function usePlayer(
   }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer])
 
   const stopSources = useCallback(() => {
-    sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+    const ctx = actxRef.current
+    if (ctx) {
+      // Ramp all per-track gains to 0 before stopping to avoid audible clicks.
+      const now = ctx.currentTime
+      gainsRef.current.forEach(g => {
+        try {
+          g.gain.cancelScheduledValues(now)
+          g.gain.setValueAtTime(g.gain.value, now)
+          g.gain.linearRampToValueAtTime(0, now + RAMP_SECS)
+        } catch { /* ok */ }
+      })
+      // Defer the actual .stop() call until after the ramp completes.
+      const toStop = [...sourcesRef.current]
+      setTimeout(() => {
+        toStop.forEach(s => { try { s.stop() } catch { /* ok */ } })
+      }, RAMP_SECS * 1000 + 4)
+    } else {
+      sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+    }
     sourcesRef.current = []
     cancelAnimationFrame(rafRef.current)
     // Stop scheduled MIDI notes
@@ -1337,11 +1358,13 @@ function usePlayer(
       if (trackEndSec <= offset) return
       const g = ctx.createGain()
       const hasSolos = soloedTracksRef.current.size > 0
-      if (isMetronome) {
-        g.gain.value = metronomeOnRef.current ? 1 : 0
-      } else {
-        g.gain.value = (hasSolos ? !soloedTracksRef.current.has(id) : mutedTracksRef.current.has(id)) ? 0 : 1
-      }
+      // Compute target gain for this track
+      const targetGain = isMetronome
+        ? (metronomeOnRef.current ? 1 : 0)
+        : ((hasSolos ? !soloedTracksRef.current.has(id) : mutedTracksRef.current.has(id)) ? 0 : 1)
+      // Ramp from 0 → target over RAMP_SECS to avoid start-of-playback click
+      g.gain.setValueAtTime(0, audioCtxPlayTime)
+      g.gain.linearRampToValueAtTime(targetGain, audioCtxPlayTime + RAMP_SECS)
       g.connect(masterGainRef.current ?? ctx.destination)
       newGains.set(id, g)
       const src = ctx.createBufferSource()
@@ -1367,10 +1390,20 @@ function usePlayer(
     scheduleMidiNotes(offset, audioCtxPlayTime).catch(console.warn)
     setPlaying(true)
     const dur = getTransportDuration() || 1
+    // Track last tick bucket for 5 Hz state throttle (avoids 60fps React re-renders)
+    let lastStateTick = -1
     const tick = () => {
       const elapsed = (actxRef.current?.currentTime ?? 0) - startRef.current
-      if (elapsed >= dur) { setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
-      setCurrentTime(elapsed)
+      // Always update the ref — consumed by DOM-direct visual updates (waveform overlays,
+      // progress bar fill) without triggering any React re-render.
+      currentTimeRef.current = elapsed
+      if (elapsed >= dur) { currentTimeRef.current = 0; setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
+      // Throttle React state to ~5 Hz so text display updates smoothly but cheaply.
+      const bucket = Math.floor(elapsed * 5)
+      if (bucket !== lastStateTick) {
+        lastStateTick = bucket
+        setCurrentTime(elapsed)
+      }
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -1385,11 +1418,13 @@ function usePlayer(
       return
     }
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
+    currentTimeRef.current = offsetRef.current
     stopSources(); setPlaying(false)
   }, [stopSources])
 
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
+    currentTimeRef.current = t
     if (playing) play(t, tracksOverride)
     else setCurrentTime(t)
   }, [playing, play])
@@ -1402,7 +1437,18 @@ function usePlayer(
     setMutedTracks(next)
 
     const g = gainsRef.current.get(id)
-    if (g) g.gain.value = next.has(id) ? 0 : 1
+    if (g) {
+      const ctx = actxRef.current
+      const targetVal = next.has(id) ? 0 : 1
+      if (ctx) {
+        const now = ctx.currentTime
+        g.gain.cancelScheduledValues(now)
+        g.gain.setValueAtTime(g.gain.value, now)
+        g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
+      } else {
+        g.gain.value = targetVal
+      }
+    }
 
     // Reschedule MIDI notes when muting/unmuting during playback
     if (playingRef.current) {
@@ -1425,8 +1471,17 @@ function usePlayer(
 
     // Soloing one track affects ALL gain nodes — update them all at once.
     const hasSolos = next.size > 0
+    const ctx = actxRef.current
+    const now = ctx?.currentTime
     gainsRef.current.forEach((g, trackId) => {
-      g.gain.value = (hasSolos ? !next.has(trackId) : mutedTracksRef.current.has(trackId)) ? 0 : 1
+      const targetVal = (hasSolos ? !next.has(trackId) : mutedTracksRef.current.has(trackId)) ? 0 : 1
+      if (ctx && now !== undefined) {
+        g.gain.cancelScheduledValues(now)
+        g.gain.setValueAtTime(g.gain.value, now)
+        g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
+      } else {
+        g.gain.value = targetVal
+      }
     })
 
     // Reschedule MIDI notes while playing so solo state takes effect immediately.
@@ -1457,7 +1512,18 @@ function usePlayer(
     mutedTracksRef.current = nextMuted
     setMutedTracks(nextMuted)
     const g = gainsRef.current.get(METRONOME_TRACK_ID)
-    if (g) g.gain.value = next ? 1 : 0
+    if (g) {
+      const ctx = actxRef.current
+      const targetVal = next ? 1 : 0
+      if (ctx) {
+        const now = ctx.currentTime
+        g.gain.cancelScheduledValues(now)
+        g.gain.setValueAtTime(g.gain.value, now)
+        g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
+      } else {
+        g.gain.value = targetVal
+      }
+    }
   }, [])
 
   const toggleCountdown = useCallback(() => setCountdownOn(c => !c), [])
@@ -1476,6 +1542,7 @@ function usePlayer(
       proj?.time_signature ?? '4/4',
     )
     offsetRef.current = snapped
+    currentTimeRef.current = snapped
     setCurrentTime(snapped)
     return snapped
   }, [])
@@ -1524,6 +1591,8 @@ function usePlayer(
     pause, seek, toggleMute, toggleSolo,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
     audioContext: actxRef, trackDurations,
+    /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
+    currentTimeRef,
   }
 }
 
@@ -1750,8 +1819,8 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
 
 // ─── TrackRow ─────────────────────────────────────────────────────────────────
 
-function TrackRow({
-  track, index, muted, soloed, changed, currentTimeMs,
+const TrackRow = React.memo(function TrackRow({
+  track, index, muted, soloed, changed, currentTimeRef,
   commentMode, activeInput, audioReady,
   onToggleMute, onToggleSolo, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
@@ -1762,7 +1831,8 @@ function TrackRow({
   compact = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
-  currentTimeMs: number; commentMode: boolean
+  /** Ref updated every rAF frame — read directly by DOM updates, never triggers re-render. */
+  currentTimeRef: React.RefObject<number>; commentMode: boolean
   activeInput: ActiveCommentInput | null; audioReady: boolean
   onToggleMute: () => void; onToggleSolo: () => void; onReplace: (f: File) => void
   onCommentPlace: (input: ActiveCommentInput) => void
@@ -1812,6 +1882,13 @@ function TrackRow({
   const origStartBarRef = useRef(0)
   const dragPreviewBarRef = useRef<number | null>(null)
   const waveformColRef = useRef<HTMLDivElement>(null)
+  /** Ref to the inner waveform clip container — updated directly during drag. */
+  const waveformClipRef = useRef<HTMLDivElement>(null)
+  /** Ref to the snap-indicator line inside the waveform column. */
+  const snapIndicatorRef = useRef<HTMLDivElement>(null)
+  /** Pending clientX for rAF-throttled drag move. */
+  const pendingDragXRef = useRef<number | null>(null)
+  const dragRafRef = useRef<number | null>(null)
   const commentUiActiveRef = useRef(false)
   const activeCommentInteractionsRef = useRef(new Set<string>())
 
@@ -1857,11 +1934,7 @@ function TrackRow({
   const trackOwnDurationMs = durationKnown
     ? rawContentMs
     : trackDurationBars * barDurationMsRow
-  // Playhead position relative to this track's content
-  const trackLocalTimeMs = Math.max(0, currentTimeMs - trackOffsetMs)
-  const trackPlayedRatio = trackOwnDurationMs > 0
-    ? Math.min(1, trackLocalTimeMs / trackOwnDurationMs)
-    : 0
+
   // Waveform column layout
   const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
   const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
@@ -1921,20 +1994,50 @@ function TrackRow({
 
   useEffect(() => {
     if (!isOffsetDragging) return
-    function moveAt(clientX: number) {
-      const colEl = waveformColRef.current
-      if (!colEl) return
-      const containerWidth = colEl.offsetWidth
-      const barsPerPixel = totalBars / containerWidth
+
+    // Reads the container width once per drag start — avoids getBoundingClientRect inside hot path.
+    const colEl = waveformColRef.current
+    const containerWidth = colEl?.offsetWidth ?? 1
+    const barsPerPixel = totalBars / containerWidth
+
+    function applyDragPosition(clientX: number) {
       const deltaX = clientX - dragStartXRef.current
       if (Math.abs(deltaX) > 3) dragMovedRef.current = true
-      const newStartBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
-      dragPreviewBarRef.current = newStartBar
-      setDragPreviewBar(newStartBar)
+      const newBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
+      dragPreviewBarRef.current = newBar
+      // DOM-direct update — no React state, no re-render per frame.
+      const startPct = totalBars > 0 ? (newBar / totalBars) * 100 : 0
+      if (waveformClipRef.current) {
+        waveformClipRef.current.style.left = `${startPct}%`
+      }
+      if (snapIndicatorRef.current) {
+        snapIndicatorRef.current.style.left = `${startPct}%`
+      }
     }
-    function onMouseMove(e: MouseEvent) { moveAt(e.clientX) }
-    function onTouchMove(e: TouchEvent) { e.preventDefault(); moveAt(e.touches[0].clientX) }
+
+    function onMouseMove(e: MouseEvent) {
+      pendingDragXRef.current = e.clientX
+      if (dragRafRef.current !== null) return
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null
+        if (pendingDragXRef.current !== null) applyDragPosition(pendingDragXRef.current)
+      })
+    }
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault()
+      pendingDragXRef.current = e.touches[0].clientX
+      if (dragRafRef.current !== null) return
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null
+        if (pendingDragXRef.current !== null) applyDragPosition(pendingDragXRef.current)
+      })
+    }
+
     async function onDragEnd(e: MouseEvent | TouchEvent) {
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
       const endTarget = 'changedTouches' in e
         ? e.changedTouches[0]?.target ?? null
         : e.target
@@ -1952,9 +2055,10 @@ function TrackRow({
           ? e.changedTouches[0]?.clientX ?? dragStartXRef.current
           : e.clientX)
         dragPreviewBarRef.current = newBar
-        setDragPreviewBar(newBar)
       }
       dragPreviewBarRef.current = null
+      // Commit final position as React state (one re-render at drag end).
+      setDragPreviewBar(newBar)
       if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
         await snapStartBar(newBar)
       }
@@ -1967,13 +2071,14 @@ function TrackRow({
     window.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('touchend', onTouchEnd)
     return () => {
+      if (dragRafRef.current !== null) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = null }
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', onTouchEnd)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOffsetDragging, dragPreviewBar, totalBars])
+  }, [isOffsetDragging, totalBars])
 
   // ── Inline rename ──────────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false)
@@ -2205,6 +2310,7 @@ function TrackRow({
         )}
 
         <div
+          ref={waveformClipRef}
           style={{
             position: 'absolute',
             left: `${startPercent}%`,
@@ -2238,48 +2344,42 @@ function TrackRow({
             )
           ) : (
             <Waveform
-              trackId={track.id} muted={muted} playedRatio={trackPlayedRatio} color={col.fg}
-              durationMs={trackOwnDurationMs} commentMode={commentMode}
-              barCount={displayBarCount}
-              comments={(track.comments ?? []).map(c => ({
-                ...c,
-                timecode_start_ms: c.timecode_start_ms - trackOffsetMs,
-                timecode_end_ms: c.timecode_end_ms - trackOffsetMs,
-              }))}
-              activeInput={activeInput} audioReady={audioReady}
-              onCommentPlace={input => onCommentPlace({
-                ...input,
-                startMs: input.startMs + trackOffsetMs,
-                endMs: input.endMs + trackOffsetMs,
-              })}
-              onCommentDelete={onCommentDelete}
-              onCommentCreate={(tid, sMs, eMs, content) =>
-                onCommentCreate(tid, trackOffsetMs + sMs, trackOffsetMs + eMs, content)
-              }
-              onCloseInput={onCloseInput}
-              onReady={() => setWaveformReady(true)}
-              currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
-              currentUser={currentUser}
-              onCommentInteractionChange={handleCommentInteractionChange}
-              compact={compact}
-            />
+                trackId={track.id} muted={muted} color={col.fg}
+                durationMs={trackOwnDurationMs} commentMode={commentMode}
+                barCount={displayBarCount}
+                comments={(track.comments ?? []).map(c => ({
+                  ...c,
+                  timecode_start_ms: c.timecode_start_ms - trackOffsetMs,
+                  timecode_end_ms: c.timecode_end_ms - trackOffsetMs,
+                }))}
+                activeInput={activeInput} audioReady={audioReady}
+                onCommentPlace={input => onCommentPlace({
+                  ...input,
+                  startMs: input.startMs + trackOffsetMs,
+                  endMs: input.endMs + trackOffsetMs,
+                })}
+                onCommentDelete={onCommentDelete}
+                onCommentCreate={(tid, sMs, eMs, content) =>
+                  onCommentCreate(tid, trackOffsetMs + sMs, trackOffsetMs + eMs, content)
+                }
+                onCloseInput={onCloseInput}
+                onReady={() => setWaveformReady(true)}
+                currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
+                currentUser={currentUser}
+                onCommentInteractionChange={handleCommentInteractionChange}
+                compact={compact}
+              />
           )}
         </div>
 
-        {isOffsetDragging && dragPreviewBar !== null && (() => {
-          const snapPct = totalBars > 0 ? (dragPreviewBar / totalBars) * 100 : 0
-          return (
-            <>
-              <div className="absolute top-0 h-full w-px bg-ember z-10 pointer-events-none" style={{ left: `${snapPct}%` }} />
-              <div
-                className="absolute top-0.5 z-10 pointer-events-none bg-ember text-white text-[10px] px-1.5 py-0.5 whitespace-nowrap"
-                style={{ left: `${snapPct}%`, transform: 'translateX(-50%)' }}
-              >
-                Bar {dragPreviewBar + 1}
-              </div>
-            </>
-          )
-        })()}
+        {/* Snap indicator — positioned via ref during drag (no React state per frame). */}
+        {isOffsetDragging && (
+          <div
+            ref={snapIndicatorRef}
+            className="absolute top-0 h-full w-px bg-ember z-10 pointer-events-none"
+            style={{ left: `${startPercent}%` }}
+          />
+        )}
       </div>
 
       <input ref={fileRef} type="file"
@@ -2318,7 +2418,7 @@ function TrackRow({
     </div>
     </>
   )
-}
+})
 
 // ─── Upload progress row ──────────────────────────────────────────────────────
 
@@ -2418,22 +2518,73 @@ function UploadRow({ upload, onRetry, onDismiss }: {
 // ─── Master player (bottom bar) ───────────────────────────────────────────────
 
 function MasterPlayerBar({
-  playing, currentTime, duration, loaded, total, volume,
+  playing, currentTime, currentTimeRef, duration, loaded, total, volume,
   onPlay, onPause, onSeek, onVolume,
   metronomeOn, countdownOn, isCounting,
   onToggleMetronome, onToggleCountdown,
   compact = false,
 }: {
-  playing: boolean; currentTime: number; duration: number; loaded: number; total: number; volume: number
+  playing: boolean; currentTime: number
+  /** Updated every rAF — used to drive the progress bar DOM directly. */
+  currentTimeRef: React.RefObject<number>
+  duration: number; loaded: number; total: number; volume: number
   onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
   metronomeOn: boolean; countdownOn: boolean; isCounting: boolean
   onToggleMetronome: () => void; onToggleCountdown: () => void
   compact?: boolean
 }) {
-  const pct = duration > 0 ? currentTime / duration : 0
-  const [dragging, setDragging] = useState(false)
   const barRef = useRef<HTMLDivElement>(null)
+  const fillRef = useRef<HTMLDivElement>(null)
+  const fillRefC = useRef<HTMLDivElement>(null)   // compact version
+  const cursorRef = useRef<HTMLDivElement>(null)
+  const cursorRefC = useRef<HTMLDivElement>(null) // compact version
+  const draggingRef = useRef(false)
+  const seekPreviewRef = useRef<number | null>(null)
+  const durationRef = useRef(duration)
+  durationRef.current = duration
   const isLoading = loaded < total && total > 0
+
+  // Drive progress bar fill + cursor via rAF — no React state per frame.
+  useEffect(() => {
+    let raf: number
+    function update() {
+      const ct = seekPreviewRef.current ?? currentTimeRef.current ?? 0
+      const dur = durationRef.current
+      const pct = dur > 0 ? Math.min(1, ct / dur) * 100 : 0
+      const w = `${pct}%`
+      if (fillRef.current)   fillRef.current.style.width   = w
+      if (fillRefC.current)  fillRefC.current.style.width  = w
+      if (cursorRef.current) cursorRef.current.style.left  = w
+      if (cursorRefC.current) cursorRefC.current.style.left = w
+      raf = requestAnimationFrame(update)
+    }
+    raf = requestAnimationFrame(update)
+    return () => cancelAnimationFrame(raf)
+  // Intentionally stable — reads refs, not state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function clientXToPct(clientX: number) {
+    const r = barRef.current?.getBoundingClientRect()
+    if (!r) return 0
+    return Math.max(0, Math.min(1, (clientX - r.left) / r.width))
+  }
+
+  function startDrag(clientX: number) {
+    draggingRef.current = true
+    seekPreviewRef.current = clientXToPct(clientX) * durationRef.current
+  }
+  function moveDrag(clientX: number) {
+    if (!draggingRef.current) return
+    seekPreviewRef.current = clientXToPct(clientX) * durationRef.current
+  }
+  function commitDrag() {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    const t = seekPreviewRef.current
+    seekPreviewRef.current = null
+    if (t !== null) onSeek(t)
+  }
 
   function TransportToggle({
     label, active, onClick, title,
@@ -2474,16 +2625,6 @@ function MasterPlayerBar({
     </div>
   )
 
-  function posToTime(clientX: number) {
-    const r = barRef.current?.getBoundingClientRect()
-    if (!r) return 0
-    return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration
-  }
-
-  function onBarPointer(clientX: number) {
-    onSeek(posToTime(clientX))
-  }
-
   if (compact) {
     return (
       <div className="border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 h-10">
@@ -2504,16 +2645,16 @@ function MasterPlayerBar({
         <div
           ref={barRef}
           className="flex-1 min-w-0 h-1 bg-surface-2 relative cursor-pointer select-none"
-          onMouseDown={e => { setDragging(true); onBarPointer(e.clientX) }}
-          onMouseMove={e => { if (dragging) onBarPointer(e.clientX) }}
-          onMouseUp={() => setDragging(false)}
-          onMouseLeave={() => setDragging(false)}
-          onTouchStart={e => { setDragging(true); onBarPointer(e.touches[0].clientX) }}
-          onTouchMove={e => { if (dragging) onBarPointer(e.touches[0].clientX) }}
-          onTouchEnd={() => setDragging(false)}
+          onMouseDown={e => startDrag(e.clientX)}
+          onMouseMove={e => moveDrag(e.clientX)}
+          onMouseUp={commitDrag}
+          onMouseLeave={commitDrag}
+          onTouchStart={e => startDrag(e.touches[0].clientX)}
+          onTouchMove={e => moveDrag(e.touches[0].clientX)}
+          onTouchEnd={commitDrag}
         >
-          <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct * 100}%` }} />
-          <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${pct * 100}%` }} />
+          <div ref={fillRefC} className="absolute inset-y-0 left-0 bg-ember" style={{ width: '0%' }} />
+          <div ref={cursorRefC} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
         </div>
         <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 w-[4.5rem] text-right">
           {fmtTime(currentTime)}
@@ -2548,13 +2689,13 @@ function MasterPlayerBar({
       <div
         ref={barRef}
         className="flex-1 min-w-[200px] h-2 bg-surface-2 relative cursor-pointer select-none"
-        onMouseDown={e => { setDragging(true); onBarPointer(e.clientX) }}
-        onMouseMove={e => { if (dragging) onBarPointer(e.clientX) }}
-        onMouseUp={() => setDragging(false)}
-        onMouseLeave={() => setDragging(false)}
+        onMouseDown={e => startDrag(e.clientX)}
+        onMouseMove={e => moveDrag(e.clientX)}
+        onMouseUp={commitDrag}
+        onMouseLeave={commitDrag}
       >
-        <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct * 100}%` }} />
-        <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${pct * 100}%` }} />
+        <div ref={fillRef} className="absolute inset-y-0 left-0 bg-ember" style={{ width: '0%' }} />
+        <div ref={cursorRef} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
       </div>
 
       <div className="flex items-center gap-3">
@@ -4032,7 +4173,7 @@ export default function ProjectPage() {
                 <TrackRow
                   key={t.id} track={t} index={i}
                   muted={player.mutedTracks.has(t.id)} soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
-                  currentTimeMs={player.currentTime * 1000}
+                  currentTimeRef={player.currentTimeRef}
                   commentMode={commentMode} activeInput={activeCommentInput}
                   audioReady={player.loaded >= player.total && player.total > 0}
                   onToggleMute={() => player.toggleMute(t.id)}
@@ -4204,6 +4345,7 @@ export default function ProjectPage() {
       <MasterPlayerBar
         playing={player.playing}
         currentTime={player.currentTime}
+        currentTimeRef={player.currentTimeRef}
         duration={player.duration}
         loaded={player.loaded}
         total={player.total}

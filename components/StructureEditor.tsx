@@ -803,19 +803,34 @@ export default function StructureOverlay({
     window.addEventListener('mouseup', onUp)
   }
 
-  function seekFromTimelineEl(clientX: number, el: HTMLElement) {
-    if (totalDurationMs <= 0) return
+  function ratioFromTimelineEl(clientX: number, el: HTMLElement): number {
+    if (totalDurationMs <= 0) return 0
     const rect = el.getBoundingClientRect()
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-    onSeek((ratio * totalDurationMs) / 1000)
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
   }
 
   function attachTimelineScrub(el: HTMLElement, clientX: number) {
-    seekFromTimelineEl(clientX, el)
-    function onMove(ev: MouseEvent) { seekFromTimelineEl(ev.clientX, el) }
+    // Initial click — preview position immediately but don't rebuild audio graph yet.
+    let pendingRatio = ratioFromTimelineEl(clientX, el)
+    let rafId: number | null = null
+    let latestClientX = clientX
+
+    function onMove(ev: MouseEvent) {
+      latestClientX = ev.clientX
+      // Throttle to one rAF per frame — avoids saturating the main thread.
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        pendingRatio = ratioFromTimelineEl(latestClientX, el)
+        // No onSeek here — only update visual preview.
+      })
+    }
     function onUp() {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      // Commit seek ONCE on release — rebuilds audio graph exactly one time.
+      onSeek((pendingRatio * totalDurationMs) / 1000)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
