@@ -684,8 +684,29 @@ export default function StructureOverlay({
   const RULER_H = compact ? 22 : 40
   const RIBBON_H = compact ? 24 : 56
   const tactCount = Math.ceil(totalBars / BARS_PER_TACT)
-  const showBarGrid = !compact && totalBars <= 160
-  const showTactLabel = (tactIndex: number) => compact ? tactIndex % 2 === 0 : true
+  // Grid step: how many bars between each rendered tick/line.
+  // Thins progressively so the grid stays visible at all bar counts
+  // instead of disappearing entirely above a hard limit.
+  // Steps are powers of 2 so lines land on musically meaningful boundaries.
+  const barGridStep = !compact ? (() => {
+    // Each threshold is 160 × 2^n — same base as the original 160-bar cutoff
+    // but stepped progressively rather than cut off entirely.
+    for (const [max, step] of [
+      [160, 1], [320, 2], [640, 4], [1280, 8], [2560, 16], [5120, 32],
+    ] as [number, number][]) {
+      if (totalBars <= max) return step
+    }
+    return 64
+  })() : 4  // compact always shows tact-level lines
+  // Pick a label step so the ruler never shows more than ~14 labels.
+  const tactLabelStep = (() => {
+    for (const s of [1, 2, 4, 8, 16, 32, 64]) {
+      if (tactCount / s <= 14) return s
+    }
+    return 64
+  })()
+  const showTactLabel = (tactIndex: number) =>
+    compact ? tactIndex % 2 === 0 : tactIndex % tactLabelStep === 0
 
   const activeSection = activeEdit
     ? sections.find(s => s.id === activeEdit.sectionId)
@@ -1208,7 +1229,8 @@ export default function StructureOverlay({
                   </span>
                 )
               })}
-              {showBarGrid && Array.from({ length: totalBars }, (_, i) => {
+              {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
+                const i = idx * barGridStep
                 const isTact = i % BARS_PER_TACT === 0
                 return (
                   <div
@@ -1231,7 +1253,8 @@ export default function StructureOverlay({
               className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
               style={{ height: RIBBON_H, cursor: stripCursor }}
             >
-              {showBarGrid && Array.from({ length: totalBars }, (_, i) => {
+              {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
+                const i = idx * barGridStep
                 const isTact = i % BARS_PER_TACT === 0
                 return (
                   <div

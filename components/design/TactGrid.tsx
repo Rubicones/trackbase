@@ -9,6 +9,8 @@ export function TactGrid({
   barsPerTact = BARS_PER_TACT,
   interactive = false,
   onTactClick,
+  barDurationMs,
+  totalDurationMs,
 }: {
   totalBars: number
   className?: string
@@ -16,9 +18,24 @@ export function TactGrid({
   /** When true, tact columns accept clicks (e.g. to set track start bar). */
   interactive?: boolean
   onTactClick?: (startBar: number) => void
+  /**
+   * When both barDurationMs and totalDurationMs are provided, tact columns
+   * are positioned using time-based math — matching the StructureEditor ruler
+   * formula (bar * barDurationMs / totalDurationMs). Without these props,
+   * the fallback is bar / totalBars, which drifts when totalDurationMs >
+   * totalBars * barDurationMs (e.g. player.duration exceeds the bar grid).
+   */
+  barDurationMs?: number
+  totalDurationMs?: number
 }) {
   if (totalBars <= 0) return null
   const tactCount = Math.ceil(totalBars / barsPerTact)
+
+  // Time-based positioning matches StructureEditor ruler; falls back to bar-count ratio.
+  const toFraction = (bar: number): number =>
+    barDurationMs && totalDurationMs && totalDurationMs > 0
+      ? (bar * barDurationMs) / totalDurationMs
+      : bar / totalBars
 
   return (
     <div
@@ -31,8 +48,8 @@ export function TactGrid({
       {Array.from({ length: tactCount }, (_, i) => {
         const bar = i * barsPerTact
         const span = Math.min(barsPerTact, totalBars - bar)
-        const leftPct = (bar / totalBars) * 100
-        const widthPct = (span / totalBars) * 100
+        const leftPct = toFraction(bar) * 100
+        const widthPct = (toFraction(bar + span) - toFraction(bar)) * 100
         const heavy = (i + 1) % 4 === 0
         return (
           <button

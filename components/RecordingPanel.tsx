@@ -4,10 +4,30 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { getSharedAudioContext } from '@/lib/audioContext'
 import type { Project } from '@/lib/types'
 
+// ─── Latency compensation ──────────────────────────────────────────────────────
+//
+// When the user records, the captured audio is delayed relative to when the
+// sound was actually made.  The AudioContext exposes the output-side portion of
+// that delay (baseLatency + outputLatency), but there is NO browser API for the
+// input-side (microphone / ADC / interface hardware) delay.
+//
+// We compensate automatically by trimming the corresponding number of samples
+// from the front of the WAV before saving, rather than adjusting start_bar.
+// Trimming gives exact sample-level precision; start_bar is bar-granular
+// (integer) and can't represent sub-bar offsets.  If the result is still
+// slightly off, the track drag-to-offset feature covers bar-level correction.
+//
+// INPUT_LATENCY_BUFFER_SECS is a fixed estimate for the unmeasured input side.
+// Even on good hardware, input latency is rarely zero (typical: 2–15 ms for
+// an audio interface, higher for built-in mics).  20 ms is a conservative but
+// reasonable default; tune via user feedback or a future loopback calibration
+// flow.
+const INPUT_LATENCY_BUFFER_SECS = 0.020   // 20 ms — adjust based on real-world testing
+
 // ─── WAV encoder ──────────────────────────────────────────────────────────────
 // Writes a standard 16-bit PCM WAV file from an AudioBuffer.
-// latencyOffsetSeconds: trim this many seconds from the start to compensate
-// for round-trip latency (baseLatency + outputLatency).
+// latencyOffsetSeconds: trim this many seconds from the front of the buffer to
+// shift the recorded audio earlier, compensating for the capture delay.
 
 function encodeWAV(audioBuffer: AudioBuffer, latencyOffsetSeconds: number): Blob {
   const sampleRate = audioBuffer.sampleRate
@@ -180,10 +200,20 @@ export function RecordingPanel({
   const [recordWithPlayback, setRecordWithPlayback] = useState(false)
 
   // ── Internals ──────────────────────────────────────────────────────────────
+  // AbortController for the current in-flight openStream call.
+  // openStream aborts the previous controller at the start of each call so that
+  // if two calls run concurrently (React StrictMode double-mount or rapid device
+  // switch), the earlier one detects it was superseded after getUserMedia resolves
+  // and stops its own stream before writing orphaned nodes into the shared graph.
+  // teardownStream() does NOT touch this — it only disconnects existing nodes.
+  const openStreamAbortRef = useRef<AbortController | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const recordingStartAcxTimeRef = useRef(0)   // AudioContext time when recording began
   const recordingStartBarRef = useRef(0)        // bar index when recording began
+  // Cached at stream-open time so the displayed value and the applied trimming
+  // are always derived from the same measurement.
+  const latencyCompensationSecsRef = useRef(0)
   const metronomeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const metronomeStateRef = useRef<{ nextBeatTime: number; beat: number; running: boolean } | null>(null)
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -192,6 +222,9 @@ export function RecordingPanel({
   useEffect(() => {
     requestPermission()
     return () => {
+      // Abort any in-flight openStream so it doesn't wire up nodes after unmount.
+      openStreamAbortRef.current?.abort()
+      openStreamAbortRef.current = null
       teardownStream()
       stopMetronome()
       clearInterval(elapsedTimerRef.current!)
@@ -233,6 +266,12 @@ export function RecordingPanel({
   }, [permState, selectedDeviceId])
 
   async function openStream(deviceId: string) {
+    // Abort the previous in-flight openStream (if any), then claim a fresh slot.
+    // This must happen BEFORE teardownStream so the new abort signal is in place.
+    openStreamAbortRef.current?.abort()
+    const abort = new AbortController()
+    openStreamAbortRef.current = abort
+
     teardownStream()
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -246,6 +285,14 @@ export function RecordingPanel({
         },
         video: false,
       })
+
+      // A newer openStream() or the unmount cleanup ran while we awaited
+      // getUserMedia — stop this stream and bail without wiring any nodes.
+      if (abort.signal.aborted) {
+        stream.getTracks().forEach(t => t.stop())
+        return
+      }
+
       streamRef.current = stream
 
       // Check actual settings
@@ -259,9 +306,14 @@ export function RecordingPanel({
       const actx = getSharedAudioContext()
       if (actx.state === 'suspended') await actx.resume()
 
-      // Latency display
-      const totalLatency = (actx.baseLatency ?? 0) + (actx.outputLatency ?? 0)
-      setLatencyMs(Math.round(totalLatency * 1000))
+      // Estimate total latency compensation to apply at recording stop.
+      // AudioContext reports output-side delay only (baseLatency + outputLatency).
+      // We add INPUT_LATENCY_BUFFER_SECS as a fixed estimate for the unmeasured
+      // input-side (microphone / ADC / interface) delay — see the constant above.
+      const outputLatencySecs = (actx.baseLatency ?? 0) + (actx.outputLatency ?? 0)
+      const totalCompensationSecs = outputLatencySecs + INPUT_LATENCY_BUFFER_SECS
+      latencyCompensationSecsRef.current = totalCompensationSecs
+      setLatencyMs(Math.round(totalCompensationSecs * 1000))
 
       // Default monitor volume: 0 for built-in mics (feedback prevention), 0.8 for interfaces
       const label = stream.getAudioTracks()[0]?.label ?? ''
@@ -292,6 +344,9 @@ export function RecordingPanel({
   }
 
   function teardownStream() {
+    // Disconnect and stop everything tracked in refs.
+    // Does NOT touch openStreamAbortRef — that is managed by openStream() and
+    // the mount-cleanup effect so teardownStream stays safe to call from anywhere.
     cancelAnimationFrame(levelRafRef.current)
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
@@ -446,6 +501,17 @@ export function RecordingPanel({
     if (!stream) return
 
     const actx = getSharedAudioContext()
+
+    // Re-measure latency now that audio has been running through the count-in.
+    // At stream-open time, AudioContext.outputLatency is often 0 because no audio
+    // has played yet (Chrome only populates it after the pipeline warms up).
+    // By beginRecording, at least one bar of click track has played, so the
+    // value is reliable.
+    const outputLatencySecs = (actx.baseLatency ?? 0) + (actx.outputLatency ?? 0)
+    const totalCompensationSecs = outputLatencySecs + INPUT_LATENCY_BUFFER_SECS
+    latencyCompensationSecsRef.current = totalCompensationSecs
+    setLatencyMs(Math.round(totalCompensationSecs * 1000))
+
     recordingStartAcxTimeRef.current = actx.currentTime
     chunksRef.current = []
 
@@ -512,14 +578,24 @@ export function RecordingPanel({
 
   async function finaliseRecording() {
     const actx = getSharedAudioContext()
-    const latencyOffset = (actx.baseLatency ?? 0) + (actx.outputLatency ?? 0)
+
+    // Use the compensation measured at stream-open time so the applied trim
+    // exactly matches what was shown to the user in the UI.  This covers:
+    //   • output-side delay:  actx.baseLatency + actx.outputLatency
+    //   • input-side estimate: INPUT_LATENCY_BUFFER_SECS (fixed constant)
+    // There is no browser API for input-side latency, so this is an
+    // approximation.  For perfect accuracy a loopback calibration flow would
+    // be needed.
+    const latencyOffset = latencyCompensationSecsRef.current
 
     // Assemble blob from chunks
     const blob = new Blob(chunksRef.current, { type: mediaRecorderRef.current?.mimeType ?? 'audio/webm' })
     chunksRef.current = []
 
     try {
-      // Decode to verify and apply latency compensation
+      // Decode and apply latency compensation by trimming leading samples.
+      // Trimming the WAV (rather than adjusting start_bar) gives sub-bar
+      // precision — start_bar is integer-bar only.
       const ab = await blob.arrayBuffer()
       const decoded = await actx.decodeAudioData(ab)
 
@@ -581,8 +657,12 @@ export function RecordingPanel({
           </span>
           <span className="text-[13px] font-medium" style={{ color: 'var(--text-sec)' }}>Record Track</span>
           {latencyMs !== null && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-surface)', color: 'var(--text-dim)' }}>
-              ~{latencyMs}ms latency
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded"
+              style={{ background: 'var(--bg-surface)', color: 'var(--text-dim)' }}
+              title={`Estimated auto-correction applied to each recording (AudioContext output latency + ${Math.round(INPUT_LATENCY_BUFFER_SECS * 1000)}ms input estimate). Approximate only — drag the track left/right to fine-tune if needed.`}
+            >
+              ~{latencyMs}ms correction
             </span>
           )}
           {actualChannelCount !== null && (

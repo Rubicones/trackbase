@@ -148,6 +148,11 @@ export interface RecordingTrackRowProps {
   countdownEnabled: boolean
   getPlaybackMs: () => number
   isPlaying: boolean
+  /** Incremented by the player on every seek. Including this in the preview
+   *  useEffect dep array ensures the AudioBufferSourceNode is stopped and
+   *  restarted from the new position when the user seeks while playing,
+   *  because isPlaying alone doesn't change in that case. */
+  seekEpoch?: number
   isActiveRecording: boolean
   onArm:     (id: string) => void
   onRelease: (id: string) => void
@@ -168,7 +173,7 @@ export interface RecordingTrackRowProps {
 export const RecordingTrackRow = memo(function RecordingTrackRow({
   id, name, onNameChange,
   versionId, bpm, timeSig, totalBars, countdownEnabled,
-  getPlaybackMs, isPlaying,
+  getPlaybackMs, isPlaying, seekEpoch = 0,
   isActiveRecording,
   onArm, onRelease, onSaved, onDelete,
   onPlaybackStart, onPlaybackStop, onSeekTo,
@@ -604,7 +609,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       previewSrcRef.current?.stop()
       previewSrcRef.current = null
     }
-  }, [isPlaying, state, previewMuted, recordedDurationSec, bpm, timeSig, getPlaybackMs])
+  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, bpm, timeSig, getPlaybackMs])
 
   async function handleReRecord() {
     previewSrcRef.current?.stop()

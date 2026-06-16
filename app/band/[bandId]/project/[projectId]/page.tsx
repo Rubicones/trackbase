@@ -1065,6 +1065,9 @@ function usePlayer(
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  // Incremented on every seek so RecordingTrackRow's preview effect re-runs
+  // and restarts the AudioBufferSourceNode from the correct position.
+  const [seekEpoch, setSeekEpoch] = useState(0)
   const [loaded, setLoaded] = useState(0)
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
   const mutedTracksRef = useRef<Set<string>>(new Set())
@@ -1083,6 +1086,19 @@ function usePlayer(
   const isCountingRef = useRef(false)
   isCountingRef.current = isCounting
   const countdownCancelRef = useRef<(() => void) | null>(null)
+
+  /** Metronome ignores solo/mute sets — only the Metro toggle controls it. */
+  const gainForTrack = useCallback((
+    trackId: string,
+    soloSet: Set<string>,
+    mutedSet: Set<string>,
+  ) => {
+    if (trackId === METRONOME_TRACK_ID) {
+      return metronomeOnRef.current ? 1 : 0
+    }
+    const hasSolos = soloSet.size > 0
+    return (hasSolos ? !soloSet.has(trackId) : mutedSet.has(trackId)) ? 0 : 1
+  }, [])
   const minPlaybackDurationRef = useRef(minPlaybackDuration)
   minPlaybackDurationRef.current = minPlaybackDuration
   const timelineDurationSecRef = useRef(timelineDurationSec)
@@ -1357,11 +1373,7 @@ function usePlayer(
       // Skip tracks that end before the playback position
       if (trackEndSec <= offset) return
       const g = ctx.createGain()
-      const hasSolos = soloedTracksRef.current.size > 0
-      // Compute target gain for this track
-      const targetGain = isMetronome
-        ? (metronomeOnRef.current ? 1 : 0)
-        : ((hasSolos ? !soloedTracksRef.current.has(id) : mutedTracksRef.current.has(id)) ? 0 : 1)
+      const targetGain = gainForTrack(id, soloedTracksRef.current, mutedTracksRef.current)
       // Ramp from 0 → target over RAMP_SECS to avoid start-of-playback click
       g.gain.setValueAtTime(0, audioCtxPlayTime)
       g.gain.linearRampToValueAtTime(targetGain, audioCtxPlayTime + RAMP_SECS)
@@ -1407,7 +1419,7 @@ function usePlayer(
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer])
+  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack])
 
   const pause = useCallback(() => {
     if (isCountingRef.current) {
@@ -1425,6 +1437,11 @@ function usePlayer(
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
     currentTimeRef.current = t
+    // Bump epoch so RecordingTrackRow preview effect re-runs and restarts its
+    // AudioBufferSourceNode from the new position (isPlaying doesn't change
+    // on seek-while-playing, so without this the preview keeps playing from
+    // the old position).
+    setSeekEpoch(e => e + 1)
     if (playing) play(t, tracksOverride)
     else setCurrentTime(t)
   }, [playing, play])
@@ -1470,11 +1487,10 @@ function usePlayer(
     setSoloedTracks(next)
 
     // Soloing one track affects ALL gain nodes — update them all at once.
-    const hasSolos = next.size > 0
     const ctx = actxRef.current
     const now = ctx?.currentTime
     gainsRef.current.forEach((g, trackId) => {
-      const targetVal = (hasSolos ? !next.has(trackId) : mutedTracksRef.current.has(trackId)) ? 0 : 1
+      const targetVal = gainForTrack(trackId, next, mutedTracksRef.current)
       if (ctx && now !== undefined) {
         g.gain.cancelScheduledValues(now)
         g.gain.setValueAtTime(g.gain.value, now)
@@ -1494,7 +1510,7 @@ function usePlayer(
         scheduleMidiNotes(elapsed, ctx.currentTime).catch(console.warn)
       }
     }
-  }, [scheduleMidiNotes])
+  }, [scheduleMidiNotes, gainForTrack])
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
@@ -1588,7 +1604,7 @@ function usePlayer(
     },
     prepareTransport,
     playWithCountIn,
-    pause, seek, toggleMute, toggleSolo,
+    pause, seek, seekEpoch, toggleMute, toggleSolo,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
     audioContext: actxRef, trackDurations,
     /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
@@ -1828,6 +1844,7 @@ const TrackRow = React.memo(function TrackRow({
   onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
+  timelineDurationMs,
   compact = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
@@ -1856,6 +1873,8 @@ const TrackRow = React.memo(function TrackRow({
   project: Project
   totalBars: number
   runtimeDurationMs: number
+  /** Total project duration in ms — passed to TactGrid for time-based positioning that matches the ruler. */
+  timelineDurationMs?: number
   compact?: boolean
 }) {
   const { resolvedTheme } = useTheme()
@@ -1886,6 +1905,8 @@ const TrackRow = React.memo(function TrackRow({
   const waveformClipRef = useRef<HTMLDivElement>(null)
   /** Ref to the snap-indicator line inside the waveform column. */
   const snapIndicatorRef = useRef<HTMLDivElement>(null)
+  /** Ref to the bar-number label inside the snap indicator — updated DOM-directly during drag. */
+  const snapBarLabelRef = useRef<HTMLSpanElement>(null)
   /** Pending clientX for rAF-throttled drag move. */
   const pendingDragXRef = useRef<number | null>(null)
   const dragRafRef = useRef<number | null>(null)
@@ -2012,6 +2033,9 @@ const TrackRow = React.memo(function TrackRow({
       }
       if (snapIndicatorRef.current) {
         snapIndicatorRef.current.style.left = `${startPct}%`
+      }
+      if (snapBarLabelRef.current) {
+        snapBarLabelRef.current.textContent = `bar ${newBar + 1}`
       }
     }
 
@@ -2304,6 +2328,8 @@ const TrackRow = React.memo(function TrackRow({
         {!commentMode && (
           <TactGrid
             totalBars={totalBars}
+            barDurationMs={barDurationMsRow}
+            totalDurationMs={timelineDurationMs}
             interactive
             onTactClick={bar => { void snapStartBar(bar) }}
           />
@@ -2376,9 +2402,18 @@ const TrackRow = React.memo(function TrackRow({
         {isOffsetDragging && (
           <div
             ref={snapIndicatorRef}
-            className="absolute top-0 h-full w-px bg-ember z-10 pointer-events-none"
-            style={{ left: `${startPercent}%` }}
-          />
+            className="absolute top-0 h-full pointer-events-none z-10"
+            style={{ left: `${startPercent}%`, width: 0 }}
+          >
+            {/* 1px vertical line */}
+            <div className="absolute top-0 bottom-0 w-px bg-ember" />
+            {/* Bar number label — textContent updated DOM-directly in applyDragPosition */}
+            <span
+              ref={snapBarLabelRef}
+              className="absolute top-1 left-1.5 text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px"
+              style={{ background: 'var(--ember)', color: '#fff', lineHeight: '1.3' }}
+            />
+          </div>
         )}
       </div>
 
@@ -3001,6 +3036,9 @@ export default function ProjectPage() {
   const [recordingSessions, setRecordingSessions] = useState<{ id: string; name: string }[]>([])
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
   const [recordingPreviewEnds, setRecordingPreviewEnds] = useState<Record<string, number>>({})
+  // Extra bars added during a live recording so the ruler doesn't stop at the
+  // default 16-bar ceiling.  Reset when the recording session ends.
+  const [recordingExtraBars, setRecordingExtraBars] = useState(0)
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false)
   const [isDraggingAddRow, setIsDraggingAddRow] = useState(false)
@@ -3188,7 +3226,17 @@ export default function ProjectPage() {
     return startCountdown(ctx, getMasterOutput(), bpm, timeSig)
   }, [])
 
-  const getRecordingPlaybackMs = useCallback(() => playerRef.current.currentTime * 1000, [])
+  // Read from currentTimeRef (updated synchronously on every seek/tick) rather
+  // than playerRef.current.currentTime (the 5Hz React state).  During
+  // seek-while-playing, seek() sets currentTimeRef immediately but does NOT
+  // call setCurrentTime(), so the React state is stale until the next rAF
+  // tick.  Without this fix, RecordingTrackRow's preview effect fires (due to
+  // seekEpoch) but reads the old position and re-schedules the source inside
+  // the recording's range even when the user has seeked past it.
+  const getRecordingPlaybackMs = useCallback(
+    () => (playerRef.current.currentTimeRef.current ?? 0) * 1000,
+    [],
+  )
 
   useEffect(() => {
     setRecordingSessions([])
@@ -3288,16 +3336,44 @@ export default function ProjectPage() {
       player.trackDurations.get(t.id),
     )
   }
-  const totalProjectBars = activeTracks.length > 0 ? (() => {
-    const barDurMs = projBarDurationMs || 2000
-    const endBars = activeTracks.map(t => {
-      const dMs = effectiveTrackDurationMs(t)
-      const bars = Math.ceil((dMs || 0) / barDurMs)
-      return (t.start_bar ?? 0) + bars
-    })
-    return Math.max(...endBars, 16)
-  })() : 16
+  const totalProjectBars = (() => {
+    const base = activeTracks.length > 0 ? (() => {
+      const barDurMs = projBarDurationMs || 2000
+      const endBars = activeTracks.map(t => {
+        const dMs = effectiveTrackDurationMs(t)
+        const bars = Math.ceil((dMs || 0) / barDurMs)
+        return (t.start_bar ?? 0) + bars
+      })
+      return Math.max(...endBars, 16)
+    })() : 16
+    // During an active recording session, extend the ruler by the extra bars
+    // accumulated via the auto-extend effect below so the playhead and ruler
+    // never hit the ceiling mid-session.
+    return base + (activeRecordingId !== null ? recordingExtraBars : 0)
+  })()
   const totalProjectDurationMs = Math.max(totalProjectBars * projBarDurationMs, durationMs, 1)
+
+  // ── Auto-extend ruler during live recording ────────────────────────────────
+  // When an empty project is being recorded into, totalProjectBars starts at 16.
+  // As the playhead approaches the end, we add 16 bars at a time so the ruler
+  // and the player both keep going without hitting the ceiling.
+  // Uses player.currentTime (5 Hz) — coarse enough to be cheap but fine enough
+  // to add bars several seconds before the player reaches the old end.
+  useEffect(() => {
+    if (activeRecordingId === null) {
+      // Reset when recording session ends so the next session starts fresh.
+      setRecordingExtraBars(0)
+      return
+    }
+    if (projBarDurationMs <= 0) return
+    const currentBar = player.currentTime / (projBarDurationMs / 1000)
+    // Extend when within 4 bars of the current ceiling — plenty of headroom
+    // to update React state and re-render before the player hits the old end.
+    if (currentBar >= totalProjectBars - 4) {
+      setRecordingExtraBars(n => n + 16)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.currentTime, activeRecordingId])
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -4141,7 +4217,7 @@ export default function ProjectPage() {
                     left: wl, right: wr,
                     pointerEvents: 'none', zIndex: 1,
                   }}>
-                    <TactGrid totalBars={totalProjectBars} />
+                    <TactGrid totalBars={totalProjectBars} barDurationMs={barDurationMs} totalDurationMs={totalProjectDurationMs} />
                     {sections.length > 0 && totalProjectDurationMs > 0 && [...new Set(sections.flatMap(s => [
                       ...(s.start_bar > 0 ? [s.start_bar] : []),
                       s.end_bar,
@@ -4200,6 +4276,7 @@ export default function ProjectPage() {
                   project={project}
                   totalBars={totalProjectBars}
                   runtimeDurationMs={effectiveTrackDurationMs(t)}
+                  timelineDurationMs={totalProjectDurationMs}
                   compact={isMobileLandscape}
                 />
               ))}
@@ -4216,6 +4293,7 @@ export default function ProjectPage() {
                   countdownEnabled={player.countdownOn}
                   getPlaybackMs={getRecordingPlaybackMs}
                   isPlaying={player.playing}
+                  seekEpoch={player.seekEpoch}
                   isActiveRecording={activeRecordingId !== null && activeRecordingId !== session.id}
                   onArm={handleRecordingArm}
                   onRelease={handleRecordingRelease}
@@ -4289,7 +4367,7 @@ export default function ProjectPage() {
                   </button>
                 </div>
                 <div className="flex-1 min-h-[108px] relative overflow-hidden">
-                  <TactGrid totalBars={totalProjectBars} />
+                  <TactGrid totalBars={totalProjectBars} barDurationMs={projBarDurationMs} totalDurationMs={totalProjectDurationMs} />
                 </div>
               </div>
               {uploads.some(u => u.status !== 'done' && u.status !== 'error') && (
