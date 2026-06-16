@@ -1,0 +1,3 @@
+-- This migration was reverted. waveform_bars column is not needed:
+-- amplitude data is computed client-side by decoding the FLAC, which is
+-- already fetched and cached for playback. No separate DB storage required.

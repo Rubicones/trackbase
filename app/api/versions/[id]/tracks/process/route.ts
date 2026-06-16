@@ -82,6 +82,9 @@ export async function POST(
     fileSize?: number
     mimetype?: string
     midiStartBar?: number
+    startBar?: number
+    /** Client-computed recording duration — used as fallback when ffprobe returns 0. */
+    durationMs?: number
   }
   try {
     body = await req.json()
@@ -95,6 +98,8 @@ export async function POST(
     fileSize,
     mimetype = '',
     midiStartBar = 0,
+    startBar = 0,
+    durationMs: clientDurationMs,
   } = body
 
   if (!tempKey || typeof tempKey !== 'string') {
@@ -227,6 +232,8 @@ export async function POST(
       if (existing) {
         storagePath = existing.storage_path
         fileSizeBytes = existing.file_size_bytes ?? fileSize ?? 0
+        // Fill in duration from client if the stored value is missing
+        if (!audioDurationMs && clientDurationMs) audioDurationMs = clientDurationMs
         console.log('[process] dedup hit — reusing', storagePath)
       } else {
         let flacBuffer: Buffer
@@ -234,7 +241,9 @@ export async function POST(
           console.log('[process] converting to FLAC from file:', tempFilePath)
           const result = await audioToFlacFromFile(tempFilePath, inputFormat)
           flacBuffer = result.flac
-          audioDurationMs = result.durationMs
+          // ffprobe can return 0 for browser-recorded WAV (missing duration header);
+          // fall back to the client-reported duration in that case.
+          audioDurationMs = result.durationMs || clientDurationMs || 0
           console.log('[process] FLAC done, size:', flacBuffer.byteLength, 'duration:', audioDurationMs, 'ms')
         } catch (err) {
           console.error('[process] ffmpeg conversion failed:', err)
@@ -259,6 +268,7 @@ export async function POST(
         console.warn('[process] temp R2 cleanup failed:', err),
       )
 
+      const audioStartBar = isNaN(startBar) ? 0 : Math.max(0, startBar)
       const { data: track, error: trkErr } = await supabase
         .from('tracks')
         .insert({
@@ -272,6 +282,7 @@ export async function POST(
           position,
           icon_color: DEFAULT_TRACK_ICON_COLOR,
           file_type: 'audio',
+          start_bar: audioStartBar,
         })
         .select()
         .single()
