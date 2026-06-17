@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { requireBandMember } from '@/lib/supabase/server'
+import { markPreviewMixStale } from '@/lib/previewMix'
 
 // PATCH /api/projects/[id] — update project metadata (name, bpm, key)
 export async function PATCH(
@@ -58,7 +59,7 @@ export async function PATCH(
     // Fetch current values for change detection
     const { data: existing } = await supabase
       .from('projects')
-      .select('name, bpm, key')
+      .select('name, bpm, key, time_signature')
       .eq('id', projectId)
       .single()
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -71,6 +72,13 @@ export async function PATCH(
       .single()
     if (error) throw error
 
+    // bpm or time_signature changes affect the rendered audio timing
+    const bpmChanged = updates.bpm !== undefined && updates.bpm !== existing.bpm
+    const timeSigChanged = updates.time_signature !== undefined && updates.time_signature !== existing.time_signature
+    if (bpmChanged || timeSigChanged) {
+      void markPreviewMixStale(projectId)
+    }
+
     if (updates.name !== undefined && updates.name !== existing.name) {
       void logActivity({
         bandId: project.band_id,
@@ -81,7 +89,7 @@ export async function PATCH(
         projectId,
       })
     }
-    if (updates.bpm !== undefined && updates.bpm !== existing.bpm) {
+    if (bpmChanged) {
       void logActivity({
         bandId: project.band_id,
         userId,

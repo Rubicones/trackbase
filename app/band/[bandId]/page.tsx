@@ -25,7 +25,7 @@ interface Band { id: string; name: string; created_at: string }
 
 interface EnhancedProject {
   id: string; name: string; bpm: number | null; key: string | null; created_at: string
-  track_count: number; total_duration_ms: number; version_count: number
+  track_count: number; audio_track_count: number; total_duration_ms: number; version_count: number
   comment_count: number; last_updated_at: string; first_track_id: string | null
   roadmap_configured: boolean
   roadmap_steps: { name: string }[]
@@ -351,7 +351,7 @@ const ProjectRow = memo(function ProjectRow({
             playActive
               ? 'bg-ember border-ember text-white'
               : 'border-border bg-surface-2 hover:bg-ember hover:border-ember hover:text-white'
-          } ${!project.first_track_id ? 'opacity-40 cursor-not-allowed' : ''}`}
+          } ${project.audio_track_count === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
         >
           {error
             ? <IconPlayError />
@@ -723,8 +723,9 @@ export default function BandPage() {
     const project = projectsRef.current.find(p => p.id === projectId)
     if (!project) return
 
-    // No tracks → nothing to play
-    if (!project.first_track_id) return
+    // No audio tracks → nothing to preview (play button should already be
+    // disabled, but guard here too).
+    if (project.audio_track_count === 0) return
 
     // Pause / stop if clicking currently playing or loading project
     if (playingProjectId === project.id || loadingProjectId === project.id) {
@@ -777,7 +778,12 @@ export default function BandPage() {
       showError()
     }
 
-    audio.src = `/api/projects/${pid}/mix`
+    // Use the server-cached preview mix instead of client-side mixing individual
+    // FLAC tracks. For 'none' status this endpoint blocks until the mix is
+    // generated (the spinner on the play button handles the wait). For cached
+    // states ('fresh' / 'stale' / 'computing') it redirects immediately to a
+    // presigned R2 URL and the audio starts playing at once.
+    audio.src = `/api/projects/${pid}/preview-mix`
   }, [playingProjectId, loadingProjectId])
 
   const openProject = useCallback((projectId: string) => {

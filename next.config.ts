@@ -12,6 +12,8 @@ const ffmpegRoutes = [
   '/api/versions/[id]/export',
   '/api/tracks/[id]/download',
   '/api/projects/[id]/mix',
+  '/api/projects/[id]/preview-mix',
+  '/api/projects/[id]/preview-mix/recompute',
 ] as const
 
 const nextConfig: NextConfig = {
