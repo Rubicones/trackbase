@@ -3,16 +3,17 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import type { ProjectResource } from '@/lib/types'
+import { TbButton } from '@/components/design/TbButton'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
-function IconMic({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
+function IconMic({ size = 14, className }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="9" y="2" width="6" height="11" rx="3" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M5 10a7 7 0 0 0 14 0" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <line x1="12" y1="21" x2="12" y2="17" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="9" y1="21" x2="15" y2="21" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <rect x="9" y="2" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 10a7 7 0 0 0 14 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="12" y1="21" x2="12" y2="17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="9" y1="21" x2="15" y2="21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
 }
@@ -100,151 +101,55 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
   const lc = lineCount(text)
 
   return createPortal(
-    <>
-      {/* Backdrop */}
+    <div
+      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
       <div
-        onClick={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.55)',
-          zIndex: 8000,
-          backdropFilter: 'blur(2px)',
-        }}
-      />
-      {/* Modal */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          zIndex: 8001,
-          width: 'min(640px, calc(100vw - 32px))',
-          maxHeight: 'calc(100vh - 64px)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--bg-card)',
-          border: '0.5px solid var(--border-light)',
-          borderRadius: 12,
-          overflow: 'hidden',
-        }}
+        className="w-full max-w-[640px] max-h-[calc(100vh-64px)] flex flex-col border border-border bg-popover shadow-2xl"
+        onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '14px 16px',
-            borderBottom: '0.5px solid var(--border)',
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <IconMic size={16} color="var(--accent)" />
-            <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <IconMic size={16} className="text-ember shrink-0" />
+            <span className="font-display text-sm uppercase tracking-tight text-foreground truncate">
               Lyrics — {projectName}
             </span>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--text-dim)',
-              cursor: 'pointer',
-            }}
+            aria-label="Close"
+            className="size-8 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors shrink-0"
           >
-            <IconX size={15} />
+            <IconX size={14} />
           </button>
         </div>
 
-        {/* Textarea */}
-        <div style={{ flex: 1, overflow: 'hidden', padding: 16, display: 'flex', flexDirection: 'column' }}>
+        <div className="flex-1 overflow-hidden p-4 flex flex-col min-h-0">
           <textarea
             ref={textareaRef}
             value={text}
             onChange={e => setText(e.target.value)}
             placeholder={'Verse 1\n...\n\nChorus\n...'}
-            style={{
-              flex: 1,
-              width: '100%',
-              minHeight: 360,
-              maxHeight: 'calc(100vh - 260px)',
-              fontFamily: 'var(--font-mono, monospace)',
-              fontSize: 14,
-              lineHeight: 1.7,
-              color: 'var(--text)',
-              background: 'var(--bg)',
-              border: '0.5px solid var(--border)',
-              borderRadius: 8,
-              padding: 16,
-              resize: 'vertical',
-              outline: 'none',
-              boxSizing: 'border-box',
-            }}
-            onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border)' }}
+            className="flex-1 w-full min-h-[360px] max-h-[calc(100vh-260px)] font-mono text-sm leading-relaxed text-foreground bg-background border border-border p-4 resize-y outline-none focus:border-ember placeholder:text-muted-foreground/60"
           />
         </div>
 
-        {/* Footer */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '10px 16px',
-            borderTop: '0.5px solid var(--border)',
-            flexShrink: 0,
-          }}
-        >
-          <p style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-border shrink-0">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground m-0">
             {wc} word{wc !== 1 ? 's' : ''} · {lc} line{lc !== 1 ? 's' : ''}
           </p>
-          {error && <p style={{ fontSize: 11, color: 'var(--danger)' }}>{error}</p>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={onClose}
-              style={{
-                fontSize: 12,
-                color: 'var(--text-muted)',
-                padding: '5px 14px',
-                borderRadius: 6,
-                border: '0.5px solid var(--border)',
-                background: 'transparent',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              style={{
-                fontSize: 12,
-                color: '#fff',
-                padding: '5px 14px',
-                borderRadius: 6,
-                border: 'none',
-                background: 'var(--accent)',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                opacity: saving ? 0.7 : 1,
-              }}
-            >
+          <div className="flex items-center gap-2 ml-auto">
+            {error && <p className="text-[11px] text-destructive m-0">{error}</p>}
+            <TbButton onClick={onClose}>Cancel</TbButton>
+            <TbButton variant="primary" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save'}
-            </button>
+            </TbButton>
           </div>
         </div>
       </div>
-    </>,
+    </div>,
     document.body
   )
 }
@@ -285,7 +190,7 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-sec)' }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
         >
-          <IconMic size={13} color="var(--accent)" />
+          <IconMic size={13} className="text-ember" />
           {lyrics?.content?.trim() ? 'Open lyrics' : 'Add lyrics'}
         </button>
         {editorOpen && (
@@ -311,23 +216,12 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
   if (!lyrics) {
     return (
       <>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <IconMic size={14} color="var(--text-dim)" />
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>No lyrics added</span>
-          <button
-            onClick={() => setEditorOpen(true)}
-            style={{
-              fontSize: 12,
-              color: 'var(--accent)',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-              marginLeft: 4,
-            }}
-          >
-            + Add lyrics
-          </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <IconMic size={14} className="text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">No lyrics added</span>
+          <TbButton className="ml-1" onClick={() => setEditorOpen(true)}>
+            Add lyrics
+          </TbButton>
         </div>
 
         {editorOpen && (
@@ -346,16 +240,11 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
   return (
     <>
       {!isDrawer && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <IconMic size={15} color="var(--accent)" />
-          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', flex: 1 }}>Lyrics</span>
-          <button
-            onClick={() => setEditorOpen(true)}
-            style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-          >
-            Edit
-          </button>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <IconMic size={15} className="text-ember shrink-0" />
+          <span className="text-sm font-medium text-foreground flex-1">Lyrics</span>
+          <TbButton onClick={() => setEditorOpen(true)}>Edit</TbButton>
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
             Last edited {fmtRelative(lyrics.updated_at)}
           </span>
         </div>
@@ -407,17 +296,9 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
       {/* Show more / Show less */}
       {needsTruncation && !isDrawer && (
         <button
+          type="button"
           onClick={() => setExpanded(v => !v)}
-          style={{
-            fontSize: 12,
-            color: 'var(--accent)',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: 0,
-            marginTop: 4,
-            display: 'block',
-          }}
+          className="mt-1 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
         >
           {expanded ? 'Show less' : `Show more (${lines.length - PREVIEW_LINES} more lines)`}
         </button>

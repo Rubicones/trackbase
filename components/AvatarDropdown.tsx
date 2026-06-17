@@ -8,6 +8,7 @@ import { avatarInitials } from '@/lib/avatarTheme'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar'
 import { ThemePicker } from '@/components/design/ThemePicker'
+import { TbMenuButton } from '@/components/design/TbButton'
 import { Spinner } from '@/components/ui/Spinner'
 
 type ActiveSection = null | 'email' | 'username'
@@ -241,15 +242,11 @@ export function AvatarDropdown() {
           </div>
           <ThemePicker />
 
-          <div className="border-t border-border p-1">
-            <Button
-              variant="ghost"
-              className="w-full justify-start gap-2.5 text-xs text-destructive hover:text-destructive hover:bg-surface px-3 font-normal"
-              onClick={handleSignOut}
-            >
-              <LogoutIcon />
+          <div className="border-t border-border flex flex-col overflow-hidden">
+            <TbMenuButton danger className="gap-2.5" onClick={handleSignOut}>
+              <span className="text-muted-foreground shrink-0"><LogoutIcon /></span>
               Sign out
-            </Button>
+            </TbMenuButton>
           </div>
         </div>
       )}
@@ -261,16 +258,10 @@ function MenuRow({ icon, label, active, onClick }: {
   icon: React.ReactNode; label: string; active?: boolean; onClick: () => void
 }) {
   return (
-    <Button
-      variant="ghost"
-      onClick={onClick}
-      className={`w-full justify-start gap-2.5 px-3 py-2 h-auto text-sm font-normal rounded-none ${
-        active ? 'bg-surface text-foreground' : 'text-foreground'
-      }`}
-    >
+    <TbMenuButton active={active} className="gap-2.5" onClick={onClick}>
       <span className="text-muted-foreground shrink-0">{icon}</span>
       {label}
-    </Button>
+    </TbMenuButton>
   )
 }
 

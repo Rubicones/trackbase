@@ -9,7 +9,7 @@ async function loadRoadmap(projectId: string) {
   const [{ data: project }, { data: steps }] = await Promise.all([
     supabase
       .from('projects')
-      .select('roadmap_step_index, stage_since')
+      .select('roadmap_step_index, stage_since, created_at')
       .eq('id', projectId)
       .single(),
     supabase
@@ -31,10 +31,15 @@ async function loadRoadmap(projectId: string) {
     stepIndex = null
   }
 
+  let stageSince = project?.stage_since ?? null
+  if (configured && stepIndex != null && !stageSince) {
+    stageSince = project?.created_at ?? null
+  }
+
   return {
     steps: ordered,
     stepIndex,
-    stageSince: project?.stage_since ?? null,
+    stageSince,
     configured,
   }
 }

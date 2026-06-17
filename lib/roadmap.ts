@@ -11,7 +11,9 @@ export type ProjectRoadmap = {
   configured: boolean
 }
 
-export function stageStuckLevel(stageSince: string): 'fresh' | 'ok' | 'stale' {
+export type StageStuckLevel = 'fresh' | 'ok' | 'stale'
+
+export function stageStuckLevel(stageSince: string): StageStuckLevel {
   const days = (Date.now() - new Date(stageSince).getTime()) / 86_400_000
   if (days < 3) return 'fresh'
   if (days < 14) return 'ok'
@@ -20,14 +22,48 @@ export function stageStuckLevel(stageSince: string): 'fresh' | 'ok' | 'stale' {
 
 export function formatRelativeStage(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
+  if (diff < 60_000) return 'just now'
+  const min = Math.round(diff / 60_000)
+  if (min < 60) return `${min}m ago`
+  const h = Math.round(diff / 3_600_000)
+  if (h < 24) return `${h}h ago`
   const day = 86_400_000
-  if (diff < day) {
-    const h = Math.max(1, Math.round(diff / 3_600_000))
-    return h <= 1 ? 'just now' : `${h}h ago`
-  }
   const d = Math.round(diff / day)
   if (d < 14) return `${d}d ago`
   return `${Math.round(d / 7)}w ago`
+}
+
+export function roadmapStuckCopy(level: StageStuckLevel): string {
+  switch (level) {
+    case 'stale':
+      return "Stuck — hasn't moved in a while."
+    case 'ok':
+      return 'Holding steady.'
+    default:
+      return 'Fresh — just moved.'
+  }
+}
+
+export function roadmapStuckTextClass(level: StageStuckLevel): string {
+  switch (level) {
+    case 'stale':
+      return 'text-destructive'
+    case 'ok':
+      return 'text-chart-4'
+    default:
+      return 'text-online'
+  }
+}
+
+export function roadmapStuckDotClass(level: StageStuckLevel): string {
+  switch (level) {
+    case 'stale':
+      return 'bg-destructive'
+    case 'ok':
+      return 'bg-chart-4'
+    default:
+      return 'bg-ember'
+  }
 }
 
 export function shortStepName(name: string, max = 8): string {

@@ -4,6 +4,8 @@
 // variant="chip"  — small inline tag (project header, project list)
 // variant="bar"   — chip + step pips + "since" caption (quick panels)
 
+import { formatRelativeStage, roadmapStuckDotClass, stageStuckLevel } from '@/lib/roadmap'
+
 export type StageId =
   | 'idea'
   | 'demo'
@@ -35,25 +37,6 @@ export function stageIndex(id: StageId) {
   return i === -1 ? 0 : i
 }
 
-export function stageStuckLevel(stageSince: string): 'fresh' | 'ok' | 'stale' {
-  const days = (Date.now() - new Date(stageSince).getTime()) / 86_400_000
-  if (days < 3) return 'fresh'
-  if (days < 14) return 'ok'
-  return 'stale'
-}
-
-export function formatRelativeStage(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const day = 86_400_000
-  if (diff < day) {
-    const h = Math.max(1, Math.round(diff / 3_600_000))
-    return h <= 1 ? 'just now' : `${h}h ago`
-  }
-  const d = Math.round(diff / day)
-  if (d < 14) return `${d}d ago`
-  return `${Math.round(d / 7)}w ago`
-}
-
 export function StagePill({
   stage,
   stageSince,
@@ -68,10 +51,7 @@ export function StagePill({
   const idx = stageIndex(stage)
   const meta = STAGES[idx]
   const stuck = stageStuckLevel(stageSince)
-  const dot =
-    stuck === 'stale' ? 'bg-destructive'
-    : stuck === 'ok'  ? 'bg-chart-4'
-    : 'bg-online'
+  const dot = roadmapStuckDotClass(stuck)
 
   if (variant === 'chip') {
     return (

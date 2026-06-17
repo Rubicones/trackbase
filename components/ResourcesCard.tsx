@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
 import type { ProjectResource } from '@/lib/types'
 import { SectionLabel } from '@/components/design/AppShell'
+import { TbButton, TbMenuButton } from '@/components/design/TbButton'
+import { TbInput } from '@/components/design/TbInput'
 import { ResourcesLyrics } from './ResourcesLyrics'
 import { ResourcesFileRow } from './ResourcesFileRow'
 import { ResourcesLinkRow } from './ResourcesLinkRow'
@@ -190,30 +191,6 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
 
   const [showLyricsTrigger, setShowLyricsTrigger] = useState(false)
 
-  const inputStyle: CSSProperties = {
-    fontSize: 12,
-    color: 'var(--text)',
-    background: 'var(--bg-card)',
-    border: '0.5px solid var(--border)',
-    borderRadius: 5,
-    padding: '5px 9px',
-    outline: 'none',
-  }
-
-  const btnOutline: CSSProperties = {
-    fontSize: 12,
-    color: 'var(--text-muted)',
-    padding: '5px 12px',
-    borderRadius: 6,
-    border: '0.5px solid var(--border)',
-    background: 'transparent',
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 5,
-    transition: 'color 0.12s, border-color 0.12s',
-  }
-
   function SectionHeader({ children }: { children: React.ReactNode }) {
     if (isDrawer) return <SectionLabel>{children}</SectionLabel>
     return (
@@ -223,80 +200,47 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
     )
   }
 
+  const showHeaderAdd = !isEmpty || showLinkForm
+  const showHeader = !isDrawer || showHeaderAdd
+
   const content = (
     <div className={isDrawer ? 'space-y-6 text-sm' : undefined}>
       {/* Card header */}
+      {showHeader && (
       <div
         style={{ display: 'flex', alignItems: 'center', justifyContent: isDrawer ? 'flex-end' : 'space-between', marginBottom: loading ? 0 : isEmpty ? 16 : isDrawer ? 0 : 16 }}
         className={isDrawer && !loading && !isEmpty ? 'mb-0' : undefined}
       >
         {!isDrawer && <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)' }}>Resources</span>}
-        <div style={{ position: 'relative' }} ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen(v => !v)}
-            className={isDrawer ? 'border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5 transition inline-flex items-center gap-1 bg-transparent cursor-pointer' : undefined}
-            style={isDrawer ? undefined : {
-              ...btnOutline,
-              fontSize: 12,
-              padding: '4px 10px',
-            }}
-            onMouseEnter={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-light)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-            onMouseLeave={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
-          >
+        {showHeaderAdd && (
+        <div className="relative" ref={menuRef}>
+          <TbButton className="inline-flex items-center gap-1.5 h-9 px-3" onClick={() => setMenuOpen(v => !v)}>
             <IconPlus size={11} />
-            {isDrawer ? 'Add' : 'Add'}
-          </button>
+            Add
+          </TbButton>
 
           {menuOpen && (
-            <div
-              className={isDrawer ? 'absolute right-0 top-full mt-1 z-50 min-w-[150px] border border-border bg-popover shadow-2xl py-1' : undefined}
-              style={isDrawer ? undefined : {
-                position: 'absolute',
-                top: 'calc(100% + 4px)',
-                right: 0,
-                zIndex: 100,
-                background: 'var(--bg-card)',
-                border: '0.5px solid var(--border-light)',
-                borderRadius: 8,
-                padding: '4px 0',
-                minWidth: 150,
-                boxShadow: '0 4px 20px rgba(0,0,0,0.14)',
-              }}
-            >
+            <div className="absolute right-0 top-full mt-1 z-50 min-w-[150px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
               {[
                 { key: 'file', Icon: IconUpload, label: 'Add files' },
                 { key: 'link', Icon: IconLink, label: 'Add link' },
                 ...(!lyrics ? [{ key: 'lyrics', Icon: IconMic, label: 'Edit lyrics' }] : []),
               ].map(({ key, Icon, label }) => (
-                <button
+                <TbMenuButton
                   key={key}
+                  className="gap-2"
                   onClick={() => openAddMenu(key as 'file' | 'link' | 'lyrics')}
-                  className={isDrawer ? 'flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:bg-surface hover:text-foreground bg-transparent border-0 cursor-pointer text-left' : undefined}
-                  style={isDrawer ? undefined : {
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    width: '100%',
-                    padding: '7px 12px',
-                    fontSize: 12,
-                    color: 'var(--text-muted)',
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'background 0.1s, color 0.1s',
-                  }}
-                  onMouseEnter={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-                  onMouseLeave={isDrawer ? undefined : e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
                 >
                   <Icon size={13} />
                   {label}
-                </button>
+                </TbMenuButton>
               ))}
             </div>
           )}
         </div>
+        )}
       </div>
+      )}
 
       {loading ? (
         <p style={{ fontSize: 12, color: 'var(--text-dim)', padding: '8px 0' }}>Loading…</p>
@@ -306,28 +250,30 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
         <>
           {/* Empty state */}
           {isEmpty && !showLinkForm && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', gap: 6 }}>
-              <div style={{ color: 'var(--text-dim)' }}>
-                <IconFolder size={28} />
+            <div className="flex flex-col items-center text-center py-10 px-4 gap-3 border border-border bg-surface/40">
+              <div className="size-10 border border-border grid place-items-center text-muted-foreground shrink-0">
+                <IconFolder size={18} />
               </div>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No resources yet</p>
-              <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>Attach files, links, or lyrics for quick access</p>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <p className="font-display text-lg uppercase tracking-tight text-foreground m-0">
+                No resources yet
+              </p>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/70 m-0 max-w-[18rem] leading-relaxed">
+                Attach WAV / MP3 / MIDI / PDF / DAW files, links, or lyrics
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
                 {[
                   { action: 'file', Icon: IconUpload, label: 'Add files' },
                   { action: 'link', Icon: IconLink, label: 'Add link' },
                   { action: 'lyrics', Icon: IconMic, label: 'Add lyrics' },
                 ].map(({ action, Icon, label }) => (
-                  <button
+                  <TbButton
                     key={action}
+                    className="h-9 px-3 gap-1.5"
                     onClick={() => openAddMenu(action as 'file' | 'link' | 'lyrics')}
-                    style={btnOutline}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-light)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
                   >
                     <Icon size={12} />
                     {label}
-                  </button>
+                  </TbButton>
                 ))}
               </div>
             </div>
@@ -379,53 +325,38 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
 
           {/* Add link inline form */}
           {showLinkForm && (
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: 8,
-                background: 'var(--bg-surface)',
-                border: '0.5px solid var(--accent)',
-                marginBottom: links.length > 0 ? 8 : 0,
-              }}
-            >
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
+            <div className="border border-ember bg-surface p-3 mb-2 space-y-2">
+              <div className="flex gap-2">
+                <TbInput
                   type="text"
                   placeholder="Title (optional)"
                   value={linkTitle}
                   onChange={e => setLinkTitle(e.target.value)}
-                  style={{ ...inputStyle, flex: 1 }}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border)' }}
+                  className="flex-1 text-xs py-1.5"
                 />
-                <input
+                <TbInput
                   autoFocus
                   type="url"
                   placeholder="https://…"
                   value={linkUrl}
                   onChange={e => { setLinkUrl(e.target.value); setLinkUrlError('') }}
                   onKeyDown={e => { if (e.key === 'Enter') handleAddLink() }}
-                  style={{ ...inputStyle, flex: 2, borderColor: linkUrlError ? 'var(--danger)' : 'var(--border)' }}
-                  onFocus={e => { if (!linkUrlError) e.target.style.borderColor = 'var(--accent)' }}
-                  onBlur={e => { if (!linkUrlError) e.target.style.borderColor = 'var(--border)' }}
+                  className={`flex-2 text-xs py-1.5 ${linkUrlError ? 'border-destructive focus:border-destructive' : ''}`}
                 />
               </div>
-              {linkUrlError && <p style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>{linkUrlError}</p>}
-              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 8 }}>
-                <button
+              {linkUrlError && (
+                <p className="text-[11px] text-destructive m-0">{linkUrlError}</p>
+              )}
+              <div className="flex gap-2 justify-end">
+                <TbButton
                   onClick={() => { setShowLinkForm(false); setLinkTitle(''); setLinkUrl(''); setLinkUrlError('') }}
-                  style={{ fontSize: 11, color: 'var(--text-dim)', padding: '3px 10px', borderRadius: 5, border: '0.5px solid var(--border)', background: 'transparent', cursor: 'pointer' }}
                 >
                   Cancel
-                </button>
-                <button
-                  onClick={handleAddLink}
-                  disabled={linkSaving}
-                  style={{ fontSize: 11, color: '#fff', padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', cursor: linkSaving ? 'not-allowed' : 'pointer', opacity: linkSaving ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 4 }}
-                >
+                </TbButton>
+                <TbButton variant="primary" onClick={handleAddLink} disabled={linkSaving} className="gap-1">
                   <IconCheck size={11} />
                   Add
-                </button>
+                </TbButton>
               </div>
             </div>
           )}
@@ -450,20 +381,12 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
             </div>
           )}
 
-          {/* Upload zone — always visible at bottom */}
-          <div
-            className={isDrawer ? 'mt-2' : undefined}
-            style={isDrawer ? undefined : {
-              marginTop: 16,
-              paddingTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? 16 : 0,
-              borderTop: (lyrics || files.length > 0 || links.length > 0 || showLinkForm) ? '0.5px solid var(--border)' : 'none',
-            }}
-          >
+          {/* Upload zone — always mounted so Add files / file picker ref works */}
+          <div className={`mt-4 ${!isEmpty || showLinkForm ? 'pt-4 border-t border-border' : ''}`}>
             <ResourcesUploadZone
               ref={uploadRef}
               projectId={projectId}
               onUploadComplete={r => { upsertResource(r) }}
-              variant={isDrawer ? 'drawer' : 'default'}
             />
           </div>
         </>

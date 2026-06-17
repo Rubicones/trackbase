@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { SectionLabel } from '@/components/design/AppShell'
+import { TbMenuButton } from '@/components/design/TbButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,27 +131,28 @@ function AssigneePicker({
       {open && (
         <>
           <span className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute z-40 top-full left-0 mt-1 w-44 border border-border bg-popover shadow-2xl">
-            <button
+          <div className="absolute z-40 top-full left-0 mt-1 w-44 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+            <TbMenuButton
+              active={!item.assignee_id}
+              className="justify-between"
               onClick={() => { onAssign(null); setOpen(false) }}
-              className="w-full text-left px-3 py-2 text-[11px] hover:bg-surface flex items-center justify-between"
             >
               <span className="text-muted-foreground">Unassigned</span>
               {!item.assignee_id && <IconCheck size={11} />}
-            </button>
-            <div className="border-t border-border" />
+            </TbMenuButton>
             {members.map(m => (
-              <button
+              <TbMenuButton
                 key={m.user_id}
+                active={item.assignee_id === m.user_id}
+                className="gap-2"
                 onClick={() => { onAssign(m.user_id); setOpen(false) }}
-                className="w-full text-left px-3 py-2 text-[11px] hover:bg-surface flex items-center gap-2"
               >
                 <span className="size-5 bg-surface-2 border border-border grid place-items-center text-[9px] font-bold shrink-0">
                   {initials(m.username)}
                 </span>
-                <span className="flex-1 truncate">{m.display_name ?? `@${m.username}`}</span>
+                <span className="flex-1 truncate text-left">{m.display_name ?? `@${m.username}`}</span>
                 {item.assignee_id === m.user_id && <IconCheck size={11} />}
-              </button>
+              </TbMenuButton>
             ))}
           </div>
         </>
@@ -372,7 +374,7 @@ export function SongChecklist({
   onAdd?: (text: string, assigneeId: string | null) => void
 }) {
   const [filter, setFilter] = useState<'open' | 'done' | 'all'>('all')
-  const { done, total, pct } = progress(items)
+  const { done, total } = progress(items)
 
   const visible = items.filter(i =>
     filter === 'all' ? true : filter === 'open' ? !i.done : i.done,
@@ -406,12 +408,6 @@ export function SongChecklist({
               </button>
             ))}
           </div>
-        </div>
-        <div className="mt-2 h-1 bg-surface-2 relative overflow-hidden">
-          <div
-            className="absolute inset-y-0 left-0 bg-ember transition-all duration-300"
-            style={{ width: `${pct}%` }}
-          />
         </div>
       </header>
 

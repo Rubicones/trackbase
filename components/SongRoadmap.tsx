@@ -8,6 +8,9 @@ import {
   roadmapProgress,
   roadmapStageLabel,
   roadmapStepState,
+  roadmapStuckCopy,
+  roadmapStuckDotClass,
+  roadmapStuckTextClass,
   stageStuckLevel,
   type ProjectRoadmap,
   type RoadmapStep,
@@ -208,15 +211,16 @@ export function SongRoadmap({
   const { completedCount, allDone, currentIndex } = roadmapProgress(stepIndex, steps.length)
   const current = steps[currentIndex]
   const [editingSteps, setEditingSteps] = useState(false)
-  const stuck = stageSince ? stageStuckLevel(stageSince) : 'fresh'
-  const stuckCopy =
-    stuck === 'stale' ? "Stuck — hasn't moved in a while."
-    : stuck === 'ok'  ? 'Holding steady.'
-    : 'Fresh — just moved.'
-  const stuckColor =
-    stuck === 'stale' ? 'text-destructive'
-    : stuck === 'ok'  ? 'text-chart-4'
-    : 'text-online'
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!stageSince) return
+    const id = setInterval(() => setTick(t => t + 1), 60_000)
+    return () => clearInterval(id)
+  }, [stageSince])
+
+  const stuck = stageSince ? stageStuckLevel(stageSince) : null
+  const sinceLabel = stageSince ? formatRelativeStage(stageSince) : null
 
   async function saveSteps(names: string[]) {
     if (!onRoadmapChange) return
@@ -366,12 +370,16 @@ export function SongRoadmap({
       </div>
 
       <footer className="border-t border-border px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] uppercase tracking-widest">
-        <span className="text-ember font-bold">
-          ● {allDone ? 'Complete' : current?.name}
+        <span className="inline-flex items-center gap-1.5 font-bold text-foreground">
+          <span
+            className={`size-1.5 rounded-full shrink-0 ${stuck ? roadmapStuckDotClass(stuck) : 'bg-ember'}`}
+            aria-hidden
+          />
+          {allDone ? 'Complete' : (current?.name ?? '—')}
         </span>
-        {stageSince && (
-          <span className={`ml-auto ${stuckColor}`}>
-            Since {formatRelativeStage(stageSince)} · {stuckCopy}
+        {sinceLabel && stuck && (
+          <span className={`ml-auto ${roadmapStuckTextClass(stuck)}`}>
+            Since {sinceLabel} · {roadmapStuckCopy(stuck)}
           </span>
         )}
       </footer>

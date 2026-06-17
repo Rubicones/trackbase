@@ -6,11 +6,12 @@ import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
-import { activityDotColor, activityVerb } from '@/lib/activityFormat'
+import { activityColorClass, activityDotClass, activityVerb } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
@@ -110,45 +111,6 @@ function formatLimit(bytes: number): string {
 
 function formatFoundedHero(iso: string): string {
   return new Date(iso).toLocaleDateString('en', { month: 'short', year: 'numeric' }).toUpperCase()
-}
-
-function activityColorClass(action: string): string {
-  switch (action) {
-    case 'merge': return 'text-ember'
-    case 'branch': return 'text-chart-3'
-    case 'upload': return 'text-chart-2'
-    case 'comment': return 'text-chart-5'
-    case 'structure': return 'text-chart-4'
-    case 'resource':
-    case 'resource_update':
-    case 'resource_remove': return 'text-chart-4'
-    case 'export': return 'text-foreground'
-    case 'meta': return 'text-chart-4'
-    default: return 'text-muted-foreground'
-  }
-}
-
-function TbButton({
-  children,
-  variant = 'ghost',
-  className = '',
-  type = 'button',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'ghost' | 'primary' | 'danger' | 'solid'
-}) {
-  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none'
-  const styles = {
-    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
-    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
-    solid: 'bg-foreground text-background px-3 py-1.5 font-bold uppercase hover:bg-ember transition-colors',
-    danger: 'bg-destructive text-destructive-foreground px-3 py-1.5 font-bold',
-  }
-  return (
-    <button type={type} className={`${base} ${styles[variant]} ${className}`} {...props}>
-      {children}
-    </button>
-  )
 }
 
 function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -306,10 +268,67 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
   )
 }
 
+// ─── Rename project modal ──────────────────────────────────────────────────────
+
+function RenameProjectModal({ projectId, initialName, onClose, onRenamed }: {
+  projectId: string
+  initialName: string
+  onClose: () => void
+  onRenamed: (name: string) => void
+}) {
+  const [name, setName] = useState(initialName)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleRename(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === initialName) {
+      onClose()
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
+      const { project } = await res.json()
+      onRenamed(project.name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">Rename project</p>
+      <form onSubmit={handleRename} className="flex flex-col gap-3">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Project name</label>
+          <TbInput value={name} onChange={e => setName(e.target.value)} placeholder="Project name" autoFocus required />
+        </div>
+        {error && <p className="text-destructive text-xs m-0">{error}</p>}
+        <div className="flex gap-2 justify-end mt-1">
+          <TbButton type="button" onClick={onClose}>Cancel</TbButton>
+          <TbButton variant="primary" type="submit" disabled={loading || !name.trim()}>
+            {loading ? 'Saving…' : 'Save'}
+          </TbButton>
+        </div>
+      </form>
+    </TbModal>
+  )
+}
+
 // ─── Project row ──────────────────────────────────────────────────────────────
 
 const ProjectRow = memo(function ProjectRow({
-  project, index, playing, loading, error, onPlay, onOpen, onQuick, onDelete, onMetaUpdated, isOwner,
+  project, index, playing, loading, error, onPlay, onOpen, onQuick, onRename, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
   index: number
@@ -319,6 +338,7 @@ const ProjectRow = memo(function ProjectRow({
   onPlay: (e: React.MouseEvent, projectId: string) => void
   onOpen: (projectId: string) => void
   onQuick: (e: React.MouseEvent, projectId: string) => void
+  onRename: (projectId: string, name: string) => void
   onDelete?: (projectId: string, name: string) => void
   onMetaUpdated: (projectId: string, patch: { bpm: number | null; key: string | null }) => void
   isOwner: boolean
@@ -423,16 +443,14 @@ const ProjectRow = memo(function ProjectRow({
             <IconDotsV />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-2 z-50 w-52 border border-border bg-popover shadow-2xl">
-              <button
-                type="button"
-                onClick={() => { setMenuOpen(false); onOpen(project.id) }}
-                className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-foreground hover:bg-surface transition-colors"
-              >
+            <div className="absolute right-0 top-full mt-2 z-50 w-52 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+              <TbMenuButton onClick={() => { setMenuOpen(false); onOpen(project.id) }}>
                 Open project
-              </button>
-              <div className="h-px bg-border" />
-              <div className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+              </TbMenuButton>
+              <TbMenuButton onClick={() => { setMenuOpen(false); onRename(project.id, project.name) }}>
+                Rename
+              </TbMenuButton>
+              <div className="px-3 py-2 border-b border-border" onClick={e => e.stopPropagation()}>
                 <ProjectMetaFields
                   projectId={project.id}
                   bpm={project.bpm}
@@ -442,16 +460,12 @@ const ProjectRow = memo(function ProjectRow({
                 />
               </div>
               {isOwner && (
-                <>
-                  <div className="h-px bg-border" />
-                  <button
-                    type="button"
-                    onClick={() => { setMenuOpen(false); onDelete?.(project.id, project.name) }}
-                    className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    Delete project
-                  </button>
-                </>
+                <TbMenuButton
+                  danger
+                  onClick={() => { setMenuOpen(false); onDelete?.(project.id, project.name) }}
+                >
+                  Delete project
+                </TbMenuButton>
               )}
             </div>
           )}
@@ -501,6 +515,9 @@ export default function BandPage() {
   const [editRoleLabel, setEditRoleLabel] = useState('')
   const [memberMenu, setMemberMenu] = useState<string | null>(null)
   const [deleteModal, setDeleteModal] = useState<{ id: string; name: string } | null>(null)
+  const [renameModal, setRenameModal] = useState<{ id: string; name: string } | null>(null)
+  const [projectSearch, setProjectSearch] = useState('')
+  const projectSearchRef = useRef<HTMLInputElement>(null)
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -802,6 +819,16 @@ export default function BandPage() {
     setDeleteError('')
   }, [])
 
+  const openRenameProject = useCallback((projectId: string, name: string) => {
+    setRenameModal({ id: projectId, name })
+  }, [])
+
+  const handleProjectRenamed = useCallback((projectId: string, name: string) => {
+    setProjects(prev => prev.map(p => p.id === projectId ? { ...p, name } : p))
+    setPreviewProject(prev => prev?.id === projectId ? { ...prev, name } : prev)
+    setRenameModal(null)
+  }, [])
+
   const updateProjectMeta = useCallback((projectId: string, patch: { bpm: number | null; key: string | null }) => {
     setProjects(prev => prev.map(x => x.id === projectId ? { ...x, ...patch } : x))
   }, [])
@@ -873,6 +900,29 @@ export default function BandPage() {
     }
     return groups
   }, [activityItems])
+
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase()
+    if (!q) return projects
+    return projects.filter(p => {
+      if (p.name.toLowerCase().includes(q)) return true
+      if (p.key?.toLowerCase().includes(q)) return true
+      if (p.bpm != null && String(p.bpm).includes(q)) return true
+      return false
+    })
+  }, [projects, projectSearch])
+
+  useEffect(() => {
+    if (activeTab !== 'projects') return
+    function handler(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        projectSearchRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [activeTab])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
@@ -1026,29 +1076,66 @@ export default function BandPage() {
         <div className="min-w-0">
           {activeTab === 'projects' ? (
             <div>
-              <div className="flex items-center justify-between mb-4 gap-3">
-                <SectionLabel>{projects.length} PROJECT{projects.length !== 1 ? 'S' : ''}</SectionLabel>
+              <div className="flex items-center justify-between mb-3 gap-3">
+                <SectionLabel>
+                  {projectSearch.trim()
+                    ? `${filteredProjects.length} OF ${projects.length} PROJECT${projects.length !== 1 ? 'S' : ''}`
+                    : `${projects.length} PROJECT${projects.length !== 1 ? 'S' : ''}`}
+                </SectionLabel>
                 <TbButton variant="primary" className="sm:hidden" onClick={() => setShowNewProject(true)}>
                   + New
                 </TbButton>
               </div>
+              <div className="flex items-center border border-border bg-surface/60 px-3 h-10 mb-4 focus-within:border-ember transition-colors">
+                <span className="text-[10px] uppercase tracking-widest text-muted-foreground mr-3 shrink-0">Search</span>
+                <input
+                  ref={projectSearchRef}
+                  value={projectSearch}
+                  onChange={e => setProjectSearch(e.target.value)}
+                  placeholder="Find a project…"
+                  aria-label="Search projects"
+                  className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none text-foreground min-w-0"
+                />
+                {projectSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => setProjectSearch('')}
+                    className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0 ml-2 shrink-0"
+                  >
+                    Clear
+                  </button>
+                ) : (
+                  <kbd className="hidden sm:inline text-[10px] uppercase tracking-widest text-muted-foreground/60 ml-2 shrink-0 border border-border px-1.5 py-0.5 bg-background">
+                    ⌘K
+                  </kbd>
+                )}
+              </div>
               <div className="grid gap-px bg-border border border-border overflow-visible isolate">
-                {projects.map((p, i) => (
-                  <ProjectRow
-                    key={p.id}
-                    project={p}
-                    index={i}
-                    playing={playingProjectId === p.id}
-                    loading={loadingProjectId === p.id}
-                    error={errorProjectId === p.id}
-                    onPlay={handlePlay}
-                    onOpen={openProject}
-                    onQuick={openQuickPeek}
-                    onDelete={openDeleteProject}
-                    onMetaUpdated={updateProjectMeta}
-                    isOwner={myRole === 'owner'}
-                  />
-                ))}
+                {filteredProjects.length === 0 && projectSearch.trim() ? (
+                  <div className="bg-background px-4 py-10 text-center">
+                    <p className="text-sm text-muted-foreground m-0">
+                      No projects matching &ldquo;{projectSearch.trim()}&rdquo;
+                    </p>
+                  </div>
+                ) : (
+                  filteredProjects.map((p, i) => (
+                    <ProjectRow
+                      key={p.id}
+                      project={p}
+                      index={i}
+                      playing={playingProjectId === p.id}
+                      loading={loadingProjectId === p.id}
+                      error={errorProjectId === p.id}
+                      onPlay={handlePlay}
+                      onOpen={openProject}
+                      onQuick={openQuickPeek}
+                      onRename={openRenameProject}
+                      onDelete={openDeleteProject}
+                      onMetaUpdated={updateProjectMeta}
+                      isOwner={myRole === 'owner'}
+                    />
+                  ))
+                )}
                 <button
                   type="button"
                   onClick={() => setShowNewProject(true)}
@@ -1217,14 +1304,10 @@ export default function BandPage() {
                             <IconDotsV size={12} />
                           </button>
                           {memberMenu === m.user_id && (
-                            <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] border border-border bg-popover shadow-2xl py-1">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveMember(m.user_id)}
-                                className="block w-full text-left px-3 py-2 text-xs text-destructive hover:bg-destructive/10"
-                              >
+                            <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+                              <TbMenuButton danger onClick={() => handleRemoveMember(m.user_id)}>
                                 Remove from band
-                              </button>
+                              </TbMenuButton>
                             </div>
                           )}
                         </div>
@@ -1302,8 +1385,7 @@ export default function BandPage() {
                   recentActivity.map(item => (
                     <div key={item.id} className="flex gap-3 px-3 py-2.5">
                       <div
-                        className="size-2 rounded-full shrink-0 mt-1.5"
-                        style={{ background: activityDotColor(item.action) }}
+                        className={`size-2 rounded-full shrink-0 mt-1.5 ${activityDotClass(item.action)}`}
                       />
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground m-0 leading-relaxed">
@@ -1391,6 +1473,16 @@ export default function BandPage() {
           bandId={bandId}
           onClose={() => setShowNewProject(false)}
           onCreated={projectId => { setShowNewProject(false); router.push(`/band/${bandId}/project/${projectId}`) }}
+        />
+      )}
+
+      {renameModal && (
+        <RenameProjectModal
+          key={renameModal.id}
+          projectId={renameModal.id}
+          initialName={renameModal.name}
+          onClose={() => setRenameModal(null)}
+          onRenamed={name => handleProjectRenamed(renameModal.id, name)}
         />
       )}
 

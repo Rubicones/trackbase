@@ -1,19 +1,65 @@
 /** Shared band-activity display helpers for dashboard + band pages. */
 
-export function activityDotColor(action: string): string {
+type ActivityColorToken =
+  | 'ember'
+  | 'chart-2'
+  | 'chart-3'
+  | 'chart-4'
+  | 'chart-5'
+  | 'foreground'
+  | 'muted-foreground'
+
+function activityColorToken(action: string): ActivityColorToken {
   switch (action) {
-    case 'merge':            return 'var(--dot-merge)'
-    case 'branch':           return 'var(--dot-branch)'
-    case 'comment':          return 'var(--dot-comment)'
-    case 'upload':           return 'var(--dot-upload)'
-    case 'structure':        return 'var(--dot-structure)'
-    case 'resource':         return 'var(--dot-resource)'
-    case 'resource_update':  return 'var(--dot-resource)'
-    case 'resource_remove':  return 'var(--dot-resource)'
-    case 'meta':             return 'var(--dot-meta)'
-    case 'export':           return 'var(--dot-export)'
-    default:                 return 'var(--text-dim)'
+    case 'merge':
+      return 'ember'
+    case 'branch':
+      return 'chart-3'
+    case 'upload':
+      return 'chart-2'
+    case 'comment':
+      return 'chart-5'
+    case 'structure':
+      return 'chart-4'
+    case 'resource':
+    case 'resource_update':
+    case 'resource_remove':
+      return 'chart-4'
+    case 'meta':
+      return 'chart-4'
+    case 'export':
+      return 'foreground'
+    default:
+      return 'muted-foreground'
   }
+}
+
+const ACTIVITY_TEXT_CLASS: Record<ActivityColorToken, string> = {
+  ember: 'text-ember',
+  'chart-2': 'text-chart-2',
+  'chart-3': 'text-chart-3',
+  'chart-4': 'text-chart-4',
+  'chart-5': 'text-chart-5',
+  foreground: 'text-foreground',
+  'muted-foreground': 'text-muted-foreground',
+}
+
+const ACTIVITY_BG_CLASS: Record<ActivityColorToken, string> = {
+  ember: 'bg-ember',
+  'chart-2': 'bg-chart-2',
+  'chart-3': 'bg-chart-3',
+  'chart-4': 'bg-chart-4',
+  'chart-5': 'bg-chart-5',
+  foreground: 'bg-foreground',
+  'muted-foreground': 'bg-muted-foreground',
+}
+
+export function activityColorClass(action: string): string {
+  return ACTIVITY_TEXT_CLASS[activityColorToken(action)]
+}
+
+export function activityDotClass(action: string): string {
+  return ACTIVITY_BG_CLASS[activityColorToken(action)]
 }
 
 export function activityVerb(action: string): string {

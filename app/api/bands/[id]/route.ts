@@ -4,6 +4,7 @@ import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
+import { logActivity } from '@/lib/activity'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -375,14 +376,34 @@ export async function PATCH(
     return NextResponse.json({ error: 'name must be 50 characters or fewer' }, { status: 400 })
   }
 
+  const { data: existing } = await supabase
+    .from('bands')
+    .select('name')
+    .eq('id', bandId)
+    .single()
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const trimmed = name.trim()
+  if (trimmed === existing.name) {
+    return NextResponse.json({ band: { id: bandId, name: existing.name } })
+  }
+
   const { data: band, error } = await supabase
     .from('bands')
-    .update({ name: name.trim() })
+    .update({ name: trimmed })
     .eq('id', bandId)
     .select('id, name, created_at, invite_code')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  void logActivity({
+    bandId,
+    userId,
+    action: 'meta',
+    subject: 'Band name',
+    detail: `${existing.name} → ${trimmed}`,
+  })
 
   return NextResponse.json({ band })
 }

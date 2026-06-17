@@ -55,10 +55,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
     }
 
-    // Fetch current values for change detection (bpm/key diffing)
+    // Fetch current values for change detection
     const { data: existing } = await supabase
       .from('projects')
-      .select('bpm, key')
+      .select('name, bpm, key')
       .eq('id', projectId)
       .single()
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -71,6 +71,16 @@ export async function PATCH(
       .single()
     if (error) throw error
 
+    if (updates.name !== undefined && updates.name !== existing.name) {
+      void logActivity({
+        bandId: project.band_id,
+        userId,
+        action: 'meta',
+        subject: 'Project name',
+        detail: `${existing.name} → ${updates.name}`,
+        projectId,
+      })
+    }
     if (updates.bpm !== undefined && updates.bpm !== existing.bpm) {
       void logActivity({
         bandId: project.band_id,

@@ -9,6 +9,7 @@ import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { Toast } from '@/components/design/Toast'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ interface DashboardBand {
 }
 
 type FilterTab = 'all' | 'owner' | 'member' | 'recent'
+type SortOption = 'recent' | 'name-asc' | 'name-desc' | 'projects' | 'storage'
 
 const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -37,6 +39,39 @@ const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'member', label: 'Member' },
   { id: 'recent', label: 'Recently active' },
 ]
+
+const SORT_OPTIONS: { id: SortOption; label: string }[] = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'name-asc', label: 'Name A–Z' },
+  { id: 'name-desc', label: 'Name Z–A' },
+  { id: 'projects', label: 'Most projects' },
+  { id: 'storage', label: 'Most storage' },
+]
+
+function compareBands(a: DashboardBand, b: DashboardBand, sort: SortOption): number {
+  if (a.isPending !== b.isPending) return a.isPending ? 1 : -1
+
+  switch (sort) {
+    case 'name-asc':
+      return a.name.localeCompare(b.name)
+    case 'name-desc':
+      return b.name.localeCompare(a.name)
+    case 'projects':
+      return b.projectCount - a.projectCount || a.name.localeCompare(b.name)
+    case 'storage':
+      return b.storageBytes - a.storageBytes || a.name.localeCompare(b.name)
+    case 'recent':
+    default: {
+      const aAct = a.isPending
+        ? (a.joinRequestedAt ?? '')
+        : (a.latestActivity?.created_at ?? a.lastUpdated)
+      const bAct = b.isPending
+        ? (b.joinRequestedAt ?? '')
+        : (b.latestActivity?.created_at ?? b.lastUpdated)
+      return bAct.localeCompare(aAct)
+    }
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -74,27 +109,6 @@ function displayName(username?: string | null): string {
 }
 
 // ─── Shared uikit primitives ──────────────────────────────────────────────────
-
-function TbButton({
-  children,
-  variant = 'ghost',
-  className = '',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'ghost' | 'primary' | 'danger'
-}) {
-  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none'
-  const styles = {
-    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
-    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
-    danger: 'bg-destructive text-destructive-foreground px-3 py-1.5 font-bold',
-  }
-  return (
-    <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
-      {children}
-    </button>
-  )
-}
 
 function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -416,12 +430,11 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
                 <DotsVIcon />
               </button>
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl py-1">
-                  <DropItem label="Open band" onClick={() => { setMenuOpen(false); onNavigate() }} />
-                  <div className="h-px bg-border my-1" />
+                <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+                  <TbMenuButton onClick={() => { setMenuOpen(false); onNavigate() }}>Open band</TbMenuButton>
                   {isOwner
-                    ? <DropItem label="Delete band" danger onClick={() => { setMenuOpen(false); onDelete() }} />
-                    : <DropItem label="Leave band" danger onClick={() => { setMenuOpen(false); onLeave() }} />
+                    ? <TbMenuButton danger onClick={() => { setMenuOpen(false); onDelete() }}>Delete band</TbMenuButton>
+                    : <TbMenuButton danger onClick={() => { setMenuOpen(false); onLeave() }}>Leave band</TbMenuButton>
                   }
                 </div>
               )}
@@ -476,22 +489,6 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
   )
 }
 
-function DropItem({ label, danger, onClick }: {
-  label: string; danger?: boolean; onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest transition-colors hover:bg-surface ${
-        danger ? 'text-destructive' : 'text-foreground'
-      }`}
-    >
-      {label}
-    </button>
-  )
-}
-
 function DotsVIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -517,6 +514,9 @@ export default function DashboardPage() {
 
   const [filter, setFilter] = useState<FilterTab>('all')
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortOption>('recent')
+  const [sortOpen, setSortOpen] = useState(false)
+  const sortRef = useRef<HTMLDivElement>(null)
 
   const [showNewBand, setShowNewBand] = useState(false)
   const [showJoinBand, setShowJoinBand] = useState(false)
@@ -569,6 +569,15 @@ export default function DashboardPage() {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
+  useEffect(() => {
+    if (!sortOpen) return
+    function handler(e: MouseEvent) {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) setSortOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [sortOpen])
+
   function showToastMsg(msg: string) {
     setToast(msg); setTimeout(() => setToast(null), 3000)
   }
@@ -581,11 +590,9 @@ export default function DashboardPage() {
       return true
     })
     .filter(b => !search || b.name.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => {
-      const aAct = a.latestActivity?.created_at ?? a.lastUpdated
-      const bAct = b.latestActivity?.created_at ?? b.lastUpdated
-      return bAct.localeCompare(aAct)
-    })
+    .sort((a, b) => compareBands(a, b, sort))
+
+  const sortLabel = SORT_OPTIONS.find(o => o.id === sort)?.label ?? 'Recent'
 
   const totalStorageBytes = bands
     .filter(b => !b.isPending)
@@ -703,7 +710,35 @@ export default function DashboardPage() {
           <>
             <div className="flex items-center justify-between mb-6">
               <SectionLabel>{filteredBands.length} ACTIVE COLLECTIVE{filteredBands.length !== 1 ? 'S' : ''}</SectionLabel>
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">SORT: RECENT ↓</div>
+              <div className="relative" ref={sortRef}>
+                <button
+                  type="button"
+                  onClick={() => setSortOpen(open => !open)}
+                  className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember transition-colors"
+                  aria-expanded={sortOpen}
+                  aria-haspopup="listbox"
+                >
+                  SORT: {sortLabel.toUpperCase()} {sortOpen ? '↑' : '↓'}
+                </button>
+                {sortOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute right-0 top-full z-20 mt-1 min-w-[11rem] border border-border bg-popover flex flex-col overflow-hidden shadow-lg"
+                  >
+                    {SORT_OPTIONS.map(opt => (
+                      <TbMenuButton
+                        key={opt.id}
+                        role="option"
+                        aria-selected={sort === opt.id}
+                        active={sort === opt.id}
+                        onClick={() => { setSort(opt.id); setSortOpen(false) }}
+                      >
+                        {opt.label}
+                      </TbMenuButton>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {filteredBands.length === 0 && search ? (

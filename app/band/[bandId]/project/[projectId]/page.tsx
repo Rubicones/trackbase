@@ -15,6 +15,7 @@ import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectResourcesButton } from '@/components/ResourcesModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { TbMenuButton, tbMenuButtonClassName } from '@/components/design/TbButton'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
@@ -3569,6 +3570,20 @@ export default function ProjectPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  useEffect(() => {
+    if (!commentMode) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (showBranchModal || mergeModal || showTour) return
+      const el = e.target as HTMLElement
+      if (el.closest('[role="dialog"]')) return
+      setCommentMode(false)
+      setActiveCommentInput(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [commentMode, showBranchModal, mergeModal, showTour])
+
   const durationMs = player.duration * 1000
   // Total bars: max(start_bar + durationBars) across ALL tracks.
   // Duration uses project BPM for all track types (including MIDI).
@@ -4140,16 +4155,24 @@ export default function ProjectPage() {
           ⋯
         </button>
         {moreOpen && (
-          <div className="absolute right-0 top-full mt-2 w-52 z-50 border border-border bg-popover shadow-2xl text-[11px]">
-            <button type="button" onClick={() => { setMoreOpen(false); setShowTour(true) }} className="w-full text-left px-3 py-2 hover:bg-surface flex items-center justify-between">
+          <div className="absolute right-0 top-full mt-2 w-52 z-50 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+            <TbMenuButton onClick={() => { setMoreOpen(false); setShowTour(true) }} className="justify-between">
               <span>Restart tour</span><span className="text-ember">?</span>
-            </button>
-            <button type="button" onClick={() => { handleShare(); setMoreOpen(false) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden">Share</button>
-            <button type="button" onClick={() => { if (canSaveVersion) handleMergeClick(activeVersionId); setMoreOpen(false) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden" disabled={!canSaveVersion}>Save Version</button>
-            <a href={`/api/versions/${activeVersionId}/export`} className="block w-full text-left px-3 py-2 hover:bg-surface sm:hidden">Export WAV</a>
-            <button type="button" onClick={() => { setMoreOpen(false); setSidebarOpen(o => !o) }} className="w-full text-left px-3 py-2 hover:bg-surface lg:hidden">
+            </TbMenuButton>
+            <TbMenuButton onClick={() => { handleShare(); setMoreOpen(false) }} className="lg:hidden">Share</TbMenuButton>
+            <TbMenuButton
+              onClick={() => { if (canSaveVersion) handleMergeClick(activeVersionId); setMoreOpen(false) }}
+              className="lg:hidden"
+              disabled={!canSaveVersion}
+            >
+              Save Version
+            </TbMenuButton>
+            <a href={`/api/versions/${activeVersionId}/export`} className={`${tbMenuButtonClassName()} sm:hidden no-underline`}>
+              Export WAV
+            </a>
+            <TbMenuButton onClick={() => { setMoreOpen(false); setSidebarOpen(o => !o) }} className="lg:hidden">
               {sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            </button>
+            </TbMenuButton>
           </div>
         )}
       </div>
