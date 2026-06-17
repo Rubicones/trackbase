@@ -1,4 +1,4 @@
-import { audioArrayBufferCache, waveformBarsCache, fetchTrackAudioBuffer } from '@/lib/waveformCache'
+import { audioArrayBufferCache, waveformBarsCache, waveformDurationCache, fetchTrackAudioBuffer } from '@/lib/waveformCache'
 import type { Track } from '@/lib/types'
 
 /** Decode peak bars for a single track (uses module caches). */
@@ -33,7 +33,9 @@ export async function decodeWaveformBars(
     }
     const max = Math.max(...amps, 0.001)
     const bars = amps.map(a => a / max)
+    const decodedMs = Math.round(decoded.duration * 1000)
     waveformBarsCache.set(trackId, bars)
+    if (decodedMs > 0) waveformDurationCache.set(trackId, decodedMs)
     return bars
   } catch {
     return null

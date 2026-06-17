@@ -4,8 +4,11 @@
  * lifetime of the browser tab.
  */
 
-/** Decoded waveform bar amplitudes per track ID (72 floats, normalised 0–1). */
+/** Decoded waveform bar amplitudes per track ID (96 floats, normalised 0–1). */
 export const waveformBarsCache = new Map<string, number[]>()
+
+/** Decoded duration in ms — paired with waveformBarsCache for instant layout on cache hit. */
+export const waveformDurationCache = new Map<string, number>()
 
 /** Raw audio ArrayBuffer per track ID.
  *  decodeAudioData() detaches the buffer, so callers must .slice(0) before decoding. */

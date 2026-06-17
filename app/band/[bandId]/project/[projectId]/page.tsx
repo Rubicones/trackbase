@@ -27,7 +27,7 @@ import { FloatingPopover } from '@/components/design/FloatingPopover'
 import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
-import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
+import { waveformBarsCache, waveformDurationCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
@@ -172,7 +172,10 @@ function trackContentDurationMs(
     const lastEnd = Math.max(...t.midi_data.notes.map(n => n.startSixteenth + n.durationSixteenths))
     return Math.ceil(lastEnd * sixthMs)
   }
-  return (runtimeMs && runtimeMs > 0 ? runtimeMs : t.duration_ms) ?? 0
+  const stored = t.duration_ms ?? waveformDurationCache.get(t.id) ?? 0
+  const runtime = runtimeMs ?? 0
+  // Never let a short/flaky decode shrink layout below the server-reported duration.
+  return Math.max(stored, runtime)
 }
 
 /** End position on the project timeline in seconds (start_bar + content). */
@@ -764,7 +767,7 @@ function Waveform({
       if (cachedBars) {
         barsRef.current = cachedBars
         setReady(true)
-        onReadyRef.current?.()
+        onReadyRef.current?.(waveformDurationCache.get(trackId))
         return
       }
       try {
@@ -784,10 +787,14 @@ function Waveform({
         const max = Math.max(...amps, 0.001)
         if (!cancelled) {
           const bars = amps.map(a => a / max)
+          const decodedMs = Math.round(decoded.duration * 1000)
+          const cachedMs = waveformDurationCache.get(trackId) ?? 0
+          const bestMs = Math.max(decodedMs, cachedMs)
           waveformBarsCache.set(trackId, bars)
+          if (bestMs > 0) waveformDurationCache.set(trackId, bestMs)
           barsRef.current = bars
           setReady(true)
-          onReadyRef.current?.(Math.round(decoded.duration * 1000))
+          onReadyRef.current?.(bestMs)
         }
         actx.close()
       } catch { /* silent */ }
@@ -1154,9 +1161,10 @@ function usePlayer(
   const noteTrackDuration = useCallback((trackId: string, ms: number) => {
     if (ms <= 0) return
     setTrackDurations(prev => {
-      if (prev.get(trackId) === ms) return prev
+      const merged = Math.max(ms, prev.get(trackId) ?? 0)
+      if (prev.get(trackId) === merged) return prev
       const next = new Map(prev)
-      next.set(trackId, ms)
+      next.set(trackId, merged)
       return next
     })
     recomputeTransportDuration()
@@ -1237,11 +1245,17 @@ function usePlayer(
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
           const decodedMs = Math.round(decoded.duration * 1000)
-          setTrackDurations(prev => {
-            const next = new Map(prev)
-            next.set(t.id, decodedMs)
-            return next
-          })
+          const storedMs = t.duration_ms ?? waveformDurationCache.get(t.id) ?? 0
+          const mergedMs = Math.max(decodedMs, storedMs)
+          if (mergedMs > 0) {
+            setTrackDurations(prev => {
+              const best = Math.max(mergedMs, prev.get(t.id) ?? 0)
+              if (prev.get(t.id) === best) return prev
+              const next = new Map(prev)
+              next.set(t.id, best)
+              return next
+            })
+          }
           setLoaded(c => c + 1)
         }
       } catch { /* skip */ }
@@ -2026,23 +2040,23 @@ const TrackRow = React.memo(function TrackRow({
   const trackOffsetMs = effectiveStartBar * barDurationMsRow
   // Prefer runtime decoded duration (populated once audio buffer loads); fall back to DB value.
   const rawContentMs = trackContentDurationMs(track, projBpmRow, runtimeDurationMs)
-  const durationKnown = rawContentMs > 0
+  const awaitingWaveformConfirm = !isMidi && waveformBarsCache.has(track.id) && !waveformReady
+  const layoutContentMs = awaitingWaveformConfirm ? 0 : rawContentMs
+  const durationKnown = layoutContentMs > 0
   const trackDurationBars = durationKnown
-    ? durationMsToBars(rawContentMs, projBpmRow, projTimeSigRow)
+    ? durationMsToBars(layoutContentMs, projBpmRow, projTimeSigRow)
     : Math.max(1, totalBars - effectiveStartBar)
   const trackOwnDurationMs = durationKnown
-    ? rawContentMs
+    ? layoutContentMs
     : trackDurationBars * barDurationMsRow
 
   // Waveform column layout
   const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
   const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
-  // Scale bar count so each bar stays ~12px wide regardless of clip length.
-  const displayBarCount = 96
+  // Scale bar count to clip length so short recordings don't cram 96 bars into a few pixels.
+  const displayBarCount = Math.max(4, Math.min(96, Math.round(96 * (trackDurationBars / Math.max(1, totalBars)))))
   const isAudioLoading = !isMidi && !waveformReady
-  // Only expand to fill the remaining timeline while loading if we don't yet know the
-  // clip's duration — prevents a flash-to-full-width when duration_ms is already stored.
-  const layoutWidthPercent = isAudioLoading && !durationKnown
+  const layoutWidthPercent = isAudioLoading
     ? Math.max(widthPercent, 100 - startPercent)
     : widthPercent
 
@@ -3509,11 +3523,38 @@ export default function ProjectPage() {
   async function handleRecordingSaved(id: string, track: Track) {
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
-    setVersions(prev => prev.map(v =>
-      v.id === activeVersionId ? { ...v, tracks: [...v.tracks, track] } : v
-    ))
-    cache.invalidate(activeVersionId)
-    await loadProject()
+    setRecordingPreviewEnds(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+
+    const durationMs = track.duration_ms ?? waveformDurationCache.get(track.id) ?? 0
+    const savedTrack = durationMs > 0
+      ? { ...track, duration_ms: track.duration_ms ?? durationMs }
+      : track
+
+    setVersions(prev => {
+      const next = prev.map(v => {
+        if (v.id !== activeVersionId) return v
+        const tracks = v.tracks.some(t => t.id === savedTrack.id)
+          ? v.tracks.map(t => t.id === savedTrack.id ? savedTrack : t)
+          : [...v.tracks, savedTrack]
+        const comments: Record<string, TrackComment[]> = {}
+        const cached = cache.getVersion(activeVersionId)
+        for (const t of tracks) {
+          comments[t.id] = cached?.comments[t.id] ?? t.comments ?? []
+        }
+        cache.setVersion(activeVersionId, { tracks, comments, fetchedAt: Date.now() })
+        return { ...v, tracks }
+      })
+      return next
+    })
+
+    fetch(`/api/projects/${projectId}/storage`)
+      .then(r => r.json())
+      .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500 * 1024 * 1024) })
+      .catch(() => {})
   }
 
   function handleRecordingDelete(id: string) {
@@ -3598,11 +3639,13 @@ export default function ProjectPage() {
   const totalProjectDurationMs = Math.max(totalProjectBars * projBarDurationMs, durationMs, 1)
 
   function handleTrackDuration(trackId: string, ms: number) {
+    if (ms <= 0) return
     playerRef.current.noteTrackDuration(trackId, ms)
     setDecodedDurationMs(prev => {
-      if (prev.get(trackId) === ms) return prev
+      const merged = Math.max(ms, prev.get(trackId) ?? 0)
+      if (prev.get(trackId) === merged) return prev
       const next = new Map(prev)
-      next.set(trackId, ms)
+      next.set(trackId, merged)
       return next
     })
     setVersions(prev => prev.map(v => ({
@@ -3648,14 +3691,17 @@ export default function ProjectPage() {
       let changed = false
       const next = new Map(prev)
       for (const [id, ms] of player.trackDurations) {
-        if (prev.get(id) !== ms) {
-          next.set(id, ms)
+        const track = activeTracks.find(t => t.id === id)
+        const stored = track?.duration_ms ?? waveformDurationCache.get(id) ?? 0
+        const merged = Math.max(ms, prev.get(id) ?? 0, stored)
+        if (prev.get(id) !== merged) {
+          next.set(id, merged)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [player.trackDurations])
+  }, [player.trackDurations, activeTracks])
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -3715,6 +3761,9 @@ export default function ProjectPage() {
       ...v,
       tracks: v.tracks.filter(t => t.id !== trackId),
     })))
+    waveformBarsCache.delete(trackId)
+    waveformDurationCache.delete(trackId)
+    audioArrayBufferCache.delete(trackId)
     cache.invalidate(activeVersionId)
   }
 
@@ -4021,6 +4070,7 @@ export default function ProjectPage() {
       if (!res.ok) throw new Error((await res.json()).error)
       await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
       waveformBarsCache.delete(track.id)
+      waveformDurationCache.delete(track.id)
       audioArrayBufferCache.delete(track.id)
       cache.invalidate(activeVersionId)
       await loadProject(true, true)

@@ -6,7 +6,7 @@ import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
 import { TactGrid } from '@/components/design/TactGrid'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
-import { waveformBarsCache } from '@/lib/waveformCache'
+import { waveformBarsCache, waveformDurationCache } from '@/lib/waveformCache'
 
 const TRACK_LABEL_W = 192
 const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
@@ -732,7 +732,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       // Seed the waveform cache so the regular TrackRow renders the bars immediately
       // (without waiting for the audio stream to re-download and decode).
+      const durationMs = Math.round(adjusted.duration * 1000)
       waveformBarsCache.set(track.id, barsFromBuffer(adjusted))
+      if (durationMs > 0) waveformDurationCache.set(track.id, durationMs)
       onRelease(id)
       onSaved(id, track)
     } catch (err) {
