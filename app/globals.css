@@ -616,7 +616,7 @@ html.dark[data-palette="green"] .theme-avatar {
   .btn-accent-sm {
     padding: 0 14px;
     height: 26px;
-    border-radius: 5px;
+    border-radius: 0;
     font-size: 11px;
     font-weight: 500;
     background: var(--accent);

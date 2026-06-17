@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -2627,6 +2627,25 @@ function UploadRow({ upload, onRetry, onDismiss }: {
 
 // ─── Master player (bottom bar) ───────────────────────────────────────────────
 
+const TransportToggle = memo(function TransportToggle({
+  label, active, onClick, title,
+}: { label: string; active: boolean; onClick: () => void; title: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest ${
+        active
+          ? 'border-ember bg-ember text-white'
+          : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+      }`}
+    >
+      {label}
+    </button>
+  )
+})
+
 function MasterPlayerBar({
   playing, currentTime, currentTimeRef, duration, loaded, total, volume,
   onPlay, onPause, onSeek, onVolume,
@@ -2694,25 +2713,6 @@ function MasterPlayerBar({
     const t = seekPreviewRef.current
     seekPreviewRef.current = null
     if (t !== null) onSeek(t)
-  }
-
-  function TransportToggle({
-    label, active, onClick, title,
-  }: { label: string; active: boolean; onClick: () => void; title: string }) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        title={title}
-        className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest transition ${
-          active
-            ? 'border-ember bg-ember text-white'
-            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-        }`}
-      >
-        {label}
-      </button>
-    )
   }
 
   const transportToggles = (
@@ -3103,6 +3103,7 @@ export default function ProjectPage() {
     if (typeof window === 'undefined') return false
     return window.innerWidth > window.innerHeight && window.innerWidth < 1024
   })
+  const isDesktopMixer = !isMobilePortrait && !isMobileLandscape
 
   // Structure editing is desktop-only — keep mobile mixer light
   useEffect(() => {
@@ -3292,14 +3293,14 @@ export default function ProjectPage() {
 
   // Sync stage from project once loaded — roadmap loads via useProjectRoadmap
 
-  // Auto-start tour for first-time visitors
+  // Auto-start tour for first-time visitors — desktop mixer only
   useEffect(() => {
+    if (!isDesktopMixer) return
     if (!loading && profile && !profile.onboarding?.project_tour_completed && !profile.onboarding?.project_tour_skipped) {
-      // Small delay to let the page settle
       const t = setTimeout(() => setShowTour(true), 400)
       return () => clearTimeout(t)
     }
-  }, [loading, profile])
+  }, [loading, profile, isDesktopMixer])
 
   // On version switch: serve from cache if available, otherwise fetch fresh data.
   async function loadVersionData(versionId: string) {
@@ -4836,7 +4837,7 @@ export default function ProjectPage() {
       {/* Onboarding tour */}
       <ProjectTour
         projectName={project?.name ?? 'this project'}
-        show={showTour}
+        show={showTour && isDesktopMixer}
         onFinish={() => {
           setShowTour(false)
           updateOnboarding('project_tour_completed', true)

@@ -10,6 +10,7 @@ import {
   sectionTimeRangeSec,
   sliceSectionFromToneBuffer,
 } from '@/lib/mergedAudioBuffer'
+import { TbButton } from '@/components/design/TbButton'
 
 /** Stored on section rows for merge/API; UI uses ember tokens, not this value. */
 const SECTION_STORED_COLOR = 'oklch(0.68 0.22 35 / 0.12)'
@@ -1160,7 +1161,9 @@ export default function StructureOverlay({
                   Cancel
                 </button>
               )}
-              <button type="button" onClick={handleDone} className="btn-accent-sm">Done</button>
+              <TbButton variant="primary" onClick={handleDone} className="h-[26px] px-3.5">
+                Done
+              </TbButton>
             </div>
           </div>
         )}
