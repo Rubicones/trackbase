@@ -20,6 +20,7 @@ import {
   AuthHint,
   AuthDivider,
 } from '@/components/auth/AuthPrimitives'
+import { DevPasteMagicLink } from '@/components/auth/DevPasteMagicLink'
 
 export default function AuthPage() {
   return (
@@ -137,6 +138,8 @@ function AuthPageContent() {
               <AuthButton variant="link" onClick={() => setSent(false)} className="w-auto mx-auto">
                 Wrong email?
               </AuthButton>
+
+              <DevPasteMagicLink />
             </AuthCardBody>
           </>
         ) : (
@@ -173,6 +176,8 @@ function AuthPageContent() {
 
                 <AuthHint>Magic link only — we never ask for a password.</AuthHint>
               </form>
+
+              <DevPasteMagicLink />
             </AuthCardBody>
           </>
         )}
