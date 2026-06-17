@@ -8,7 +8,7 @@ import { createReadStream } from 'fs'
 import { supabase } from '@/lib/supabase'
 import { streamR2ObjectToFile, uploadToR2, deleteFromR2, r2Key } from '@/lib/r2'
 import { audioToFlacFromFile } from '@/lib/ffmpeg'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { randomTrackIconColor } from '@/lib/trackIcon'
@@ -60,20 +60,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: versionId } = await params
-  const userId = (() => {
-    const t = req.cookies.get('sb-at')?.value
-    return t ? getUserIdFromToken(t) : null
-  })()
 
-  // Verify version
-  const { data: version, error: verErr } = await supabase
-    .from('versions')
-    .select('id, project_id')
-    .eq('id', versionId)
-    .single()
-  if (verErr) {
-    return NextResponse.json({ error: 'Version not found' }, { status: 404 })
-  }
+  // Verify version and enforce band membership
+  const access = await requireBandMemberForVersion(req, versionId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+  const { userId, version } = access
 
   // Parse body
   let body: {

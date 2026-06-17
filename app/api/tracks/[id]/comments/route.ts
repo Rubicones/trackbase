@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, fmtTimecode } from '@/lib/activity'
 
 // POST /api/tracks/[id]/comments
@@ -10,11 +10,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const token = req.cookies.get('sb-at')?.value
-    const userId = token ? getUserIdFromToken(token) : null
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const { id: trackId } = await params
+
+    const access = await requireBandMemberForTrack(req, trackId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, track } = access
+
     const body = await req.json()
     const { content, timecode_start_ms, timecode_end_ms } = body
 
@@ -30,14 +31,6 @@ export async function POST(
     if (timecode_end_ms <= timecode_start_ms) {
       return NextResponse.json({ error: 'timecode_end_ms must be greater than timecode_start_ms' }, { status: 400 })
     }
-
-    // Get version_id from track
-    const { data: track, error: trkErr } = await supabase
-      .from('tracks')
-      .select('id, version_id')
-      .eq('id', trackId)
-      .single()
-    if (trkErr) return NextResponse.json({ error: 'Track not found' }, { status: 404 })
 
     const { data: comment, error } = await supabase
       .from('track_comments')

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { requireBandMember } from '@/lib/supabase/server'
 import {
   buildBarMap,
   groupConsecutiveBars,
@@ -79,6 +80,10 @@ export async function POST(
 ) {
   try {
     const { id: projectId } = await params
+
+    const access = await requireBandMember(req, projectId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const { branch_id } = await req.json()
 
     if (!branch_id) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // GET /api/tracks/[id]/stream
 // Streams the FLAC file for a track.
@@ -11,6 +12,9 @@ export async function GET(
 ) {
   try {
     const { id: trackId } = await params
+
+    const access = await requireBandMemberForTrack(req, trackId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const { data: track, error } = await supabase
       .from('tracks')

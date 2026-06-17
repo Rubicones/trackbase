@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { supabase } from '@/lib/supabase'
 import { getPresignedUploadUrl } from '@/lib/r2'
+import { requireBandMemberForVersion } from '@/lib/supabase/server'
 
 // ── File size + type limits ────────────────────────────────────────────────────
 
@@ -40,15 +40,9 @@ export async function POST(
 ) {
   const { id: versionId } = await params
 
-  // Verify version exists
-  const { error: verErr } = await supabase
-    .from('versions')
-    .select('id')
-    .eq('id', versionId)
-    .single()
-  if (verErr) {
-    return NextResponse.json({ error: 'Version not found' }, { status: 404 })
-  }
+  // Verify version exists and enforce band membership
+  const access = await requireBandMemberForVersion(req, versionId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
   // Parse body
   let body: { filename?: string; fileSize?: number; contentType?: string }

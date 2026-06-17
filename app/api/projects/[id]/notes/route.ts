@@ -1,30 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
-import { getUserIdFromToken } from '@/lib/supabase/server'
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function verifyAccess(projectId: string, userId: string | null) {
-  const { data: project } = await supabase
-    .from('projects')
-    .select('id, band_id')
-    .eq('id', projectId)
-    .single()
-  if (!project) return null
-
-  if (userId) {
-    const { data: member } = await supabase
-      .from('band_members')
-      .select('id')
-      .eq('band_id', project.band_id)
-      .eq('user_id', userId)
-      .maybeSingle()
-    if (!member) return null
-  }
-
-  return project
-}
+import { requireBandMember } from '@/lib/supabase/server'
 
 // ── GET /api/projects/[id]/notes ─────────────────────────────────────────────
 
@@ -33,11 +10,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: projectId } = await params
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
 
-  const project = await verifyAccess(projectId, userId)
-  if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const access = await requireBandMember(req, projectId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
   const { data } = await supabase
     .from('project_resources')
@@ -56,12 +31,10 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: projectId } = await params
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const project = await verifyAccess(projectId, userId)
-  if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const access = await requireBandMember(req, projectId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+  const { userId, project } = access
 
   let body: { content?: string }
   try {

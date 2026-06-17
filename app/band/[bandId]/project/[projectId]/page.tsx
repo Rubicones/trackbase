@@ -15,6 +15,10 @@ import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectResourcesButton } from '@/components/ResourcesModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
+import { RoadmapPreview } from '@/components/RoadmapPreview'
+import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
+import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
 import { Toast } from '@/components/design/Toast'
 import { TactGrid } from '@/components/design/TactGrid'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
@@ -36,6 +40,7 @@ import {
   startCountdown,
 } from '@/lib/metronomeAudio'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
+import { registerPlaybackStop } from '@/lib/playbackSession'
 import { RecordingTrackRow } from '@/components/RecordingTrackRow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1317,10 +1322,30 @@ function usePlayer(
     metronomeSrcRef.current = src
   }, [timelineDurationSec, ensureMetronomeBuffer])
 
+  const stopSourcesImmediate = useCallback(() => {
+    countdownCancelRef.current?.()
+    countdownCancelRef.current = null
+    isCountingRef.current = false
+
+    sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+    sourcesRef.current = []
+    metronomeSrcRef.current = null
+    cancelAnimationFrame(rafRef.current)
+    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+    midiScheduledRef.current = []
+    gainsRef.current.forEach(g => {
+      try { g.disconnect() } catch { /* ok */ }
+    })
+    gainsRef.current.clear()
+    if (masterGainRef.current) {
+      try { masterGainRef.current.disconnect() } catch { /* ok */ }
+      masterGainRef.current = null
+    }
+  }, [])
+
   const stopSources = useCallback(() => {
     const ctx = actxRef.current
-    if (ctx) {
-      // Ramp all per-track gains to 0 before stopping to avoid audible clicks.
+    if (ctx && sourcesRef.current.length > 0) {
       const now = ctx.currentTime
       gainsRef.current.forEach(g => {
         try {
@@ -1329,21 +1354,32 @@ function usePlayer(
           g.gain.linearRampToValueAtTime(0, now + RAMP_SECS)
         } catch { /* ok */ }
       })
-      // Defer the actual .stop() call until after the ramp completes.
       const toStop = [...sourcesRef.current]
+      sourcesRef.current = []
+      metronomeSrcRef.current = null
+      cancelAnimationFrame(rafRef.current)
+      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+      midiScheduledRef.current = []
       setTimeout(() => {
         toStop.forEach(s => { try { s.stop() } catch { /* ok */ } })
       }, RAMP_SECS * 1000 + 4)
-    } else {
-      sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+      return
     }
-    sourcesRef.current = []
-    metronomeSrcRef.current = null
-    cancelAnimationFrame(rafRef.current)
-    // Stop scheduled MIDI notes
-    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-    midiScheduledRef.current = []
-  }, [])
+    stopSourcesImmediate()
+  }, [stopSourcesImmediate])
+
+  useEffect(() => {
+    const cleanup = () => {
+      stopSourcesImmediate()
+      setPlaying(false)
+      setIsCounting(false)
+    }
+    const unregister = registerPlaybackStop(cleanup)
+    return () => {
+      unregister()
+      cleanup()
+    }
+  }, [stopSourcesImmediate])
 
   // audioCtxPlayTime: ctx.currentTime captured at the moment playback started,
   // BEFORE any async work. This ensures notes are scheduled relative to the
@@ -2880,7 +2916,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
         compact ? 'bg-surface' : 'bg-surface/30'
       }${isOpen ? ' sidebar-open' : ''}`}
     >
-      <div className={`flex-1 overflow-y-auto flex flex-col ${compact ? 'p-3 gap-4' : 'p-4 gap-6'}`}>
+      <div className={`flex-1 overflow-y-auto scrollbar-none flex flex-col ${compact ? 'p-3 gap-4' : 'p-4 gap-6'}`}>
         <div>
           <SectionLabel>VERSION HISTORY</SectionLabel>
           <div className={compact ? 'mt-2 space-y-1' : 'mt-4 space-y-3'}>
@@ -3025,7 +3061,7 @@ export default function ProjectPage() {
   const [versions, setVersions] = useState<Version[]>([])
   const [activeVersionId, setActiveVersionId] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   const [showBranchModal, setShowBranchModal] = useState(false)
   const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -3041,6 +3077,12 @@ export default function ProjectPage() {
   const [sections, setSections] = useState<Section[]>([])
   const [editStructure, setEditStructure] = useState(false)
   const [showTour, setShowTour] = useState(false)
+
+  // ── Roadmap + checklist ──────────────────────────────────────────────────────
+  const [planOpen, setPlanOpen] = useState(false)
+  const { roadmap, setRoadmap } = useProjectRoadmap(projectId)
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([])
+  const [checklistMembers, setChecklistMembers] = useState<ChecklistMember[]>([])
   const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
   // Responsive sidebar (collapsed by default on tablet/mobile)
   const [sidebarOpen, setSidebarOpen] = useState(() =>
@@ -3099,6 +3141,58 @@ export default function ProjectPage() {
     setTimeout(() => { projectNameInputRef.current?.select() }, 0)
   }
 
+  // ── Roadmap + checklist handlers ─────────────────────────────────────────────
+  function handleRoadmapChange(next: typeof roadmap) {
+    setRoadmap(next)
+  }
+
+  async function handleChecklistAdd(text: string, assigneeId: string | null) {
+    const res = await fetch(`/api/projects/${projectId}/checklist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, assignee_id: assigneeId }),
+    })
+    if (res.ok) {
+      const { item } = await res.json()
+      setChecklist(prev => [...prev, item])
+    }
+  }
+
+  async function handleChecklistToggle(id: string) {
+    const item = checklist.find(i => i.id === id)
+    if (!item) return
+    const newDone = !item.done
+    setChecklist(prev => prev.map(i => i.id === id ? { ...i, done: newDone, done_at: newDone ? new Date().toISOString() : null } : i))
+    await fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done: newDone }),
+    }).catch(() => {})
+  }
+
+  async function handleChecklistUpdate(id: string, text: string) {
+    setChecklist(prev => prev.map(i => i.id === id ? { ...i, text } : i))
+    await fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).catch(() => {})
+  }
+
+  async function handleChecklistDelete(id: string) {
+    setChecklist(prev => prev.filter(i => i.id !== id))
+    await fetch(`/api/projects/${projectId}/checklist/${id}`, { method: 'DELETE' }).catch(() => {})
+  }
+
+  async function handleChecklistAssign(id: string, assigneeId: string | null) {
+    setChecklist(prev => prev.map(i => i.id === id ? { ...i, assignee_id: assigneeId } : i))
+    await fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee_id: assigneeId }),
+    }).catch(() => {})
+  }
+
   async function commitProjectRename() {
     if (!project) return
     const trimmed = projectNameValue.trim()
@@ -3128,7 +3222,17 @@ export default function ProjectPage() {
 
     try {
       const res = await fetch(`/api/projects/${projectId}`)
-      if (!res.ok) throw new Error('Not found')
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        if (res.status === 403 || body?.code === 'ACCESS_DENIED') {
+          setError('access_denied')
+        } else if (res.status === 404 || body?.code === 'NOT_FOUND') {
+          setError('not_found')
+        } else {
+          setError('unknown')
+        }
+        return
+      }
       const data = await res.json()
       setProject(data.project)
       setVersions(data.versions)
@@ -3151,14 +3255,41 @@ export default function ProjectPage() {
         .then(r => r.json())
         .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
         .catch(() => {})
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error')
+    } catch {
+      setError('unknown')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { loadProject(false) }, [projectId]) // eslint-disable-line
+
+  // Load stage, checklist, and band members in parallel once projectId is known
+  useEffect(() => {
+    if (!projectId) return
+    // Stage is included in the project response (loaded above); fetch checklist + members separately
+    fetch(`/api/projects/${projectId}/checklist`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setChecklist(d.items ?? []) })
+      .catch(() => {})
+    fetch(`/api/bands/${bandId}/members`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.members) {
+          setChecklistMembers(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (d.members as any[]).map((m: any) => ({
+              user_id: m.user_id,
+              username: m.profiles?.username ?? m.user_id,
+              display_name: m.profiles?.display_name ?? null,
+            }))
+          )
+        }
+      })
+      .catch(() => {})
+  }, [projectId, bandId]) // eslint-disable-line
+
+  // Sync stage from project once loaded — roadmap loads via useProjectRoadmap
 
   // Auto-start tour for first-time visitors
   useEffect(() => {
@@ -4026,9 +4157,38 @@ export default function ProjectPage() {
   )
 
   if (loading) return <BrandSpinner />
-  if (error || !project) return (
-    <div className="min-h-screen flex items-center justify-center text-[13px] text-danger">{error || 'Project not found'}</div>
-  )
+
+  if (error || !project) {
+    const isAccessDenied = error === 'access_denied'
+    const isNotFound = error === 'not_found' || !project
+
+    return (
+      <ResourceErrorScreen
+        crumbs={<span className="text-muted-foreground">Project</span>}
+        accessDenied={isAccessDenied}
+        title={
+          isAccessDenied
+            ? "You don't have access to this project"
+            : isNotFound
+            ? 'Project not found'
+            : 'Something went wrong'
+        }
+        description={
+          isAccessDenied
+            ? "This project belongs to a band you're not a member of. Ask a band member to invite you if you need access."
+            : isNotFound
+            ? "This project doesn't exist or may have been deleted."
+            : 'We had trouble loading this project. Try refreshing the page.'
+        }
+        actions={[
+          { label: 'Go to My Bands', href: '/dashboard', primary: true },
+          ...(!isAccessDenied
+            ? [{ label: 'Retry', onClick: () => window.location.reload() }]
+            : []),
+        ]}
+      />
+    )
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
@@ -4268,6 +4428,24 @@ export default function ProjectPage() {
                       </button>
                     </div>
                   )}
+                  {roadmap.configured && roadmap.stepIndex != null && (
+                    <RoadmapPreview
+                      steps={roadmap.steps}
+                      stepIndex={roadmap.stepIndex}
+                      stageSince={roadmap.stageSince}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPlanOpen(o => !o)}
+                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
+                      planOpen
+                        ? 'bg-ember text-white border-ember'
+                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                    }`}
+                  >
+                    {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setEditStructure(p => !p)}
@@ -4327,6 +4505,28 @@ export default function ProjectPage() {
           </section>
           )}
 
+          {/* Roadmap + checklist panel */}
+          {planOpen && (
+            <section className="border-b border-border bg-background shrink-0">
+              <div className="px-4 sm:px-6 py-5 grid gap-5 lg:grid-cols-[1fr_minmax(300px,420px)] items-start">
+                <SongRoadmap
+                  projectId={projectId}
+                  roadmap={roadmap}
+                  onRoadmapChange={handleRoadmapChange}
+                />
+                <SongChecklist
+                  items={checklist}
+                  members={checklistMembers}
+                  onToggle={handleChecklistToggle}
+                  onUpdate={handleChecklistUpdate}
+                  onDelete={handleChecklistDelete}
+                  onAssign={handleChecklistAssign}
+                  onAdd={handleChecklistAdd}
+                />
+              </div>
+            </section>
+          )}
+
           {/* Structure + transport — bar ruler, sections, play/time/volume */}
           {project && (
             <StructureOverlay
@@ -4357,7 +4557,7 @@ export default function ProjectPage() {
           )}
 
           {/* Track list */}
-          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden relative">
+          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none relative">
             <div ref={tracksBodyRef} className="relative">
 
               {/* Tact grid + section boundary overlays */}

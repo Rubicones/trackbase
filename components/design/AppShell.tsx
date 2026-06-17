@@ -29,13 +29,6 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
       </div>
       <div className="flex items-center gap-3">
         {right}
-        <Link
-          href="/uikit"
-          className="hidden md:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember no-underline"
-          title="UI Kit & Brandbook"
-        >
-          UI Kit
-        </Link>
         <AvatarDropdown />
       </div>
     </nav>
@@ -54,6 +47,13 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
       </div>
       <div className="flex gap-6 items-center shrink-0">
         {right}
+        <Link
+          href="/uikit"
+          className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember no-underline"
+          title="UI Kit & Brandbook"
+        >
+          UI Kit
+        </Link>
         <span className="text-foreground font-bold tracking-widest hidden sm:inline">TRACKBASE // v0.9</span>
       </div>
     </footer>

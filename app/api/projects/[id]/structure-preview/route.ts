@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMember } from '@/lib/supabase/server'
 import { projectTimelineDurationMs } from '@/lib/trackMerge'
-
-function getUserId(req: NextRequest): string | null {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
 
 // GET /api/projects/[id]/structure-preview
 export async function GET(
@@ -14,10 +9,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = getUserId(req)
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const { id: projectId } = await params
+
+    const access = await requireBandMember(req, projectId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const { data: project, error: projErr } = await supabase
       .from('projects')
@@ -28,15 +23,6 @@ export async function GET(
     if (projErr || !project) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
-
-    const { data: membership } = await supabase
-      .from('band_members')
-      .select('role')
-      .eq('band_id', project.band_id)
-      .eq('user_id', userId)
-      .maybeSingle()
-
-    if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const { data: versions, error: verErr } = await supabase
       .from('versions')

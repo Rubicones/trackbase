@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { uploadToR2 } from '@/lib/r2'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 /**
  * PUT /api/tracks/[id]/midi-upload
@@ -14,7 +15,10 @@ export async function PUT(
   try {
     const { id } = await params
 
-    // Verify track exists and is MIDI
+    const access = await requireBandMemberForTrack(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
+    // Verify track is MIDI type
     const { data: track, error } = await supabase
       .from('tracks')
       .select('id, file_type, version_id')

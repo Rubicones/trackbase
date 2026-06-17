@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { flacToWav } from '@/lib/ffmpeg'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // GET /api/tracks/[id]/download
 // Fetches the FLAC from R2, converts to WAV, returns as a downloadable attachment.
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: trackId } = await params
+
+    const access = await requireBandMemberForTrack(req, trackId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const { data: track, error } = await supabase
       .from('tracks')

@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { requireBandMember } from '@/lib/supabase/server'
 
 const LIMIT_BYTES = 500 * 1024 * 1024 // 500 MB
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: projectId } = await params
+
+  const access = await requireBandMember(req, projectId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
   // Get all version IDs for this project
   const { data: versions } = await supabase

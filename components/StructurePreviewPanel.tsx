@@ -7,9 +7,13 @@ import { getBarMath, sectionLabel } from '@/components/StructureEditor'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { SectionLabel } from '@/components/design/AppShell'
+import { RoadmapPreview } from '@/components/RoadmapPreview'
+import { SongRoadmap, fetchProjectRoadmap } from '@/components/SongRoadmap'
+import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
+import type { ProjectRoadmap } from '@/lib/roadmap'
 import type { Project, Section } from '@/lib/types'
 
-type PanelTab = 'resources' | 'structure' | 'notes'
+type PanelTab = 'roadmap' | 'checklist' | 'resources' | 'structure' | 'notes'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -68,18 +72,42 @@ interface StructurePreviewData {
   sections: Section[]
 }
 
-const TABS: PanelTab[] = ['resources', 'structure', 'notes']
+const TABS: PanelTab[] = ['resources', 'roadmap', 'checklist', 'structure', 'notes']
+
+const EMPTY_ROADMAP: ProjectRoadmap = {
+  steps: [],
+  stepIndex: null,
+  stageSince: null,
+  configured: false,
+}
 
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 export function StructurePreviewPanel({
   projectId,
+  projectName,
   bandId,
+  initialRoadmap,
+  bandMembers,
+  currentUserId,
+  onRoadmapChange,
+  onChecklistPreviewChange,
   onClose,
 }: {
   projectId: string | null
+  projectName: string
   accentColor: string
   bandId: string
+  initialRoadmap?: {
+    configured: boolean
+    steps: { name: string }[]
+    stepIndex: number | null
+    stageSince: string | null
+  } | null
+  bandMembers: ChecklistMember[]
+  currentUserId: string | null
+  onRoadmapChange?: (roadmap: ProjectRoadmap) => void
+  onChecklistPreviewChange?: (cardTasks: { id: string; text: string; assignee_id: string | null }[], myDone: number, myTotal: number) => void
   onClose: () => void
 }) {
   const router = useRouter()
@@ -93,6 +121,14 @@ export function StructurePreviewPanel({
   const [contentVisible, setContentVisible] = useState(true)
   const [versionLoading, setVersionLoading] = useState(false)
   const prevProjectIdRef = useRef<string | null>(null)
+  const structureRequestedRef = useRef(false)
+
+  const [roadmap, setRoadmap] = useState<ProjectRoadmap>(EMPTY_ROADMAP)
+  const [roadmapLoaded, setRoadmapLoaded] = useState(false)
+
+  // Checklist state
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([])
+  const [checklistLoaded, setChecklistLoaded] = useState(false)
 
   const [activeTab, setActiveTab] = useState<PanelTab>('resources')
 
@@ -169,16 +205,49 @@ export function StructurePreviewPanel({
       prevProjectIdRef.current = null
       return
     }
+
+    const isNewProject = prevProjectIdRef.current !== projectId
+    if (!isNewProject) return
+
     setActiveTab('resources')
     setResourcesMounted(true)
-    const isSwap = prevProjectIdRef.current !== null && prevProjectIdRef.current !== projectId
+    setContentVisible(true)
+    setData(null)
+    setSections([])
+    setSelectedVersionId(null)
+    setLoading(false)
+    setError('')
+    structureRequestedRef.current = false
+
+    const isSwap = prevProjectIdRef.current !== null
     if (isSwap) {
       setNotesContent('')
       setNotesLoaded(false)
+      setChecklist([])
+      setChecklistLoaded(false)
     }
     prevProjectIdRef.current = projectId
-    loadPreview(projectId, isSwap)
-  }, [projectId, loadPreview])
+
+    if (initialRoadmap?.configured) {
+      setRoadmap({
+        steps: initialRoadmap.steps.map((s, i) => ({ id: `seed-${i}`, name: s.name, position: i })),
+        stepIndex: initialRoadmap.stepIndex,
+        stageSince: initialRoadmap.stageSince,
+        configured: true,
+      })
+      setRoadmapLoaded(true)
+    } else {
+      setRoadmap(EMPTY_ROADMAP)
+      setRoadmapLoaded(false)
+    }
+  }, [projectId, initialRoadmap])
+
+  async function ensureRoadmapLoaded(id: string) {
+    if (roadmapLoaded) return
+    const data = await fetchProjectRoadmap(id)
+    setRoadmap(data)
+    setRoadmapLoaded(true)
+  }
 
   async function loadNotes(id: string) {
     if (notesLoaded) return
@@ -194,10 +263,115 @@ export function StructurePreviewPanel({
     }
   }
 
+  async function loadChecklist(id: string) {
+    if (checklistLoaded) return
+    try {
+      const res = await fetch(`/api/projects/${id}/checklist`)
+      if (res.ok) {
+        const { items } = await res.json()
+        setChecklist(items ?? [])
+        setChecklistLoaded(true)
+      }
+    } catch {
+      setChecklistLoaded(true)
+    }
+  }
+
   function handleTabChange(tab: PanelTab) {
     setActiveTab(tab)
-    if (tab === 'notes' && projectId && !notesLoaded) loadNotes(projectId)
+    if (!projectId) return
+    if (tab === 'notes' && !notesLoaded) loadNotes(projectId)
+    if (tab === 'checklist' && !checklistLoaded) loadChecklist(projectId)
+    if (tab === 'roadmap') void ensureRoadmapLoaded(projectId)
+    if (tab === 'structure' && !structureRequestedRef.current) {
+      structureRequestedRef.current = true
+      void loadPreview(projectId)
+    }
     if (tab === 'resources') setResourcesMounted(true)
+  }
+
+  function handleRoadmapChange(next: ProjectRoadmap) {
+    setRoadmap(next)
+    onRoadmapChange?.(next)
+  }
+
+  function handleChecklistToggle(id: string) {
+    if (!projectId) return
+    setChecklist(prev => {
+      const updated = prev.map(item =>
+        item.id === id ? { ...item, done: !item.done, done_at: !item.done ? new Date().toISOString() : null } : item
+      )
+      syncChecklistPreview(updated)
+      return updated
+    })
+    fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done: !checklist.find(i => i.id === id)?.done }),
+    }).catch(() => {})
+  }
+
+  function handleChecklistUpdate(id: string, text: string) {
+    if (!projectId) return
+    setChecklist(prev => prev.map(item => item.id === id ? { ...item, text } : item))
+    fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).catch(() => {})
+  }
+
+  function handleChecklistDelete(id: string) {
+    if (!projectId) return
+    setChecklist(prev => {
+      const updated = prev.filter(item => item.id !== id)
+      syncChecklistPreview(updated)
+      return updated
+    })
+    fetch(`/api/projects/${projectId}/checklist/${id}`, { method: 'DELETE' }).catch(() => {})
+  }
+
+  function handleChecklistAssign(id: string, assigneeId: string | null) {
+    if (!projectId) return
+    setChecklist(prev => {
+      const updated = prev.map(item => item.id === id ? { ...item, assignee_id: assigneeId } : item)
+      syncChecklistPreview(updated)
+      return updated
+    })
+    fetch(`/api/projects/${projectId}/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee_id: assigneeId }),
+    }).catch(() => {})
+  }
+
+  async function handleChecklistAdd(text: string, assigneeId: string | null) {
+    if (!projectId) return
+    try {
+      const res = await fetch(`/api/projects/${projectId}/checklist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, assignee_id: assigneeId }),
+      })
+      if (res.ok) {
+        const { item } = await res.json()
+        setChecklist(prev => {
+          const updated = [...prev, item]
+          syncChecklistPreview(updated)
+          return updated
+        })
+      }
+    } catch { /* ignore */ }
+  }
+
+  function syncChecklistPreview(items: ChecklistItem[]) {
+    const myItems = items.filter(i => i.assignee_id === currentUserId)
+    const myTotal = myItems.length
+    const myDone = myItems.filter(i => i.done).length
+    const cardTasks = myItems
+      .filter(i => !i.done)
+      .map(i => ({ id: i.id, text: i.text, assignee_id: i.assignee_id }))
+    onChecklistPreviewChange?.(cardTasks, myDone, myTotal)
   }
 
   function handleNotesChange(value: string) {
@@ -279,19 +453,29 @@ export function StructurePreviewPanel({
       <aside
         role="dialog"
         aria-modal="true"
-        aria-label={project ? `${project.name} quick access` : 'Quick access'}
+        aria-label={projectName ? `${projectName} quick peek` : 'Quick peek'}
         onClick={e => e.stopPropagation()}
         className={`relative flex h-full w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl transition-transform duration-250 ease-out ${
-          panelOpen ? 'translate-x-0 animate-slide-in' : 'translate-x-full'
+          panelOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
           <div className="min-w-0 pr-3">
-            <SectionLabel>QUICK ACCESS</SectionLabel>
+            <SectionLabel>QUICK PEEK</SectionLabel>
             <div className="font-display mt-0.5 truncate text-lg uppercase tracking-tight text-foreground">
-              {project?.name ?? 'Loading…'}
+              {projectName || 'Loading…'}
             </div>
+            {roadmap.configured && roadmap.stepIndex != null && (
+              <div className="mt-1">
+                <RoadmapPreview
+                  steps={roadmap.steps}
+                  stepIndex={roadmap.stepIndex}
+                  stageSince={roadmap.stageSince}
+                  showCaption
+                />
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -330,13 +514,44 @@ export function StructurePreviewPanel({
           }}
         >
           {/* Resources */}
-          {activeTab === 'resources' && resourcesMounted && project && (
+          {activeTab === 'resources' && resourcesMounted && projectId && (
             <ResourcesCard
-              projectId={project.id}
-              projectName={project.name}
+              projectId={projectId}
+              projectName={projectName}
               bare
               variant="drawer"
             />
+          )}
+
+          {/* Roadmap */}
+          {activeTab === 'roadmap' && (
+            !roadmapLoaded ? (
+              <BrandSpinner fullscreen={false} label="Loading roadmap" />
+            ) : (
+              <SongRoadmap
+                projectId={projectId!}
+                roadmap={roadmap}
+                onRoadmapChange={handleRoadmapChange}
+              />
+            )
+          )}
+
+          {/* Checklist */}
+          {activeTab === 'checklist' && (
+            !checklistLoaded ? (
+              <BrandSpinner fullscreen={false} label="Loading checklist" />
+            ) : (
+              <SongChecklist
+                items={checklist}
+                members={bandMembers}
+                variant="compact"
+                onToggle={handleChecklistToggle}
+                onUpdate={handleChecklistUpdate}
+                onDelete={handleChecklistDelete}
+                onAssign={handleChecklistAssign}
+                onAdd={handleChecklistAdd}
+              />
+            )
           )}
 
           {/* Structure */}

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { getRequestUserId } from '@/lib/supabase/server'
 
 // POST /api/projects
 // Body: { name: string, band_id?: string, bpm?: number, key?: string }
 export async function POST(req: NextRequest) {
   try {
+    const userId = getRequestUserId(req)
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const body = await req.json()
     const { name, band_id, bpm, key } = body
 

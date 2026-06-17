@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { requireBandMemberForSection } from '@/lib/supabase/server'
 
 // PUT /api/sections/[id]
 export async function PUT(
@@ -8,6 +9,10 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
+
+    const access = await requireBandMemberForSection(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const body = await req.json()
     const { type, custom_name, start_bar, end_bar, chords, color, position } = body
 
@@ -36,11 +41,15 @@ export async function PUT(
 
 // DELETE /api/sections/[id]
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
+
+    const access = await requireBandMemberForSection(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const { error } = await supabase.from('sections').delete().eq('id', id)
     if (error) throw error
     return NextResponse.json({ ok: true })

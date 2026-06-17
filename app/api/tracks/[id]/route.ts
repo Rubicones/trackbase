@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // DELETE /api/tracks/[id]
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
+
+    const access = await requireBandMemberForTrack(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const { error } = await supabase.from('tracks').delete().eq('id', id)
     if (error) throw error
     return NextResponse.json({ deleted: true })
@@ -25,6 +30,10 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
+
+    const access = await requireBandMemberForTrack(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const body = await req.json()
 
     const allowed = ['file_hash', 'storage_path', 'midi_data', 'duration_ms', 'file_size_bytes', 'midi_start_bar', 'start_bar']

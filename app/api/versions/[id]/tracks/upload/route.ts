@@ -3,7 +3,7 @@ import { createHash } from 'crypto'
 import { supabase } from '@/lib/supabase'
 import { uploadToR2, r2Key } from '@/lib/r2'
 import { audioToFlac } from '@/lib/ffmpeg'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { randomTrackIconColor } from '@/lib/trackIcon'
@@ -43,19 +43,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: versionId } = await params
-  const userId = (() => { const t = req.cookies.get('sb-at')?.value; return t ? getUserIdFromToken(t) : null })()
   console.log('[upload] versionId:', versionId)
 
-  // 1. Verify version
-  const { data: version, error: verErr } = await supabase
-    .from('versions')
-    .select('id, project_id')
-    .eq('id', versionId)
-    .single()
-  if (verErr) {
-    console.error('[upload] version lookup failed:', verErr)
-    return NextResponse.json({ error: 'Version not found' }, { status: 404 })
-  }
+  // 1. Verify version and enforce band membership
+  const access = await requireBandMemberForVersion(req, versionId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+  const { userId, version } = access
   console.log('[upload] version ok, project_id:', version.project_id)
 
   // 2. Parse form

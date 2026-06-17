@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMemberForReply } from '@/lib/supabase/server'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const token = req.cookies.get('sb-at')?.value
-    const userId = token ? getUserIdFromToken(token) : null
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const { id } = await params
-    // RLS handles auth — only creator can delete
-    const { error } = await supabase.from('comment_replies').delete().eq('id', id).eq('created_by', userId)
+
+    // Verify band membership and that the requester is the author
+    const access = await requireBandMemberForReply(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, reply } = access
+
+    if (reply.created_by !== userId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const { error } = await supabase.from('comment_replies').delete().eq('id', id)
     if (error) throw error
     return NextResponse.json({ deleted: true })
   } catch (err) {

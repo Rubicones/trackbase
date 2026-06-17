@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { requireBandMemberForVersion } from '@/lib/supabase/server'
 
 // GET /api/versions/[id]/sections
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: versionId } = await params
+
+    const access = await requireBandMemberForVersion(req, versionId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
     const { data, error } = await supabase
       .from('sections')
       .select('*')
@@ -28,16 +33,13 @@ export async function POST(
 ) {
   try {
     const { id: versionId } = await params
+
+    const access = await requireBandMemberForVersion(req, versionId)
+    if (  'error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { version } = access
+
     const body = await req.json()
     const { type, custom_name, start_bar, end_bar, chords, color, position } = body
-
-    // Fetch version to get project_id
-    const { data: version, error: vErr } = await supabase
-      .from('versions')
-      .select('project_id')
-      .eq('id', versionId)
-      .single()
-    if (vErr || !version) return NextResponse.json({ error: 'Version not found' }, { status: 404 })
 
     const { data, error } = await supabase
       .from('sections')

@@ -7,15 +7,19 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { writeFile, readFile, unlink } from 'fs/promises'
 import path from 'path'
+import { requireBandMember } from '@/lib/supabase/server'
 
 // GET /api/projects/[id]/mix
 // Downloads all tracks from the project's main version, mixes them with ffmpeg
 // amix, and returns the result as MP3.
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: projectId } = await params
+
+  const access = await requireBandMember(req, projectId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
   // Find the main version
   const { data: mainVersion, error: mvErr } = await supabase

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
+import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { flacToWav } from '@/lib/ffmpeg'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
@@ -15,13 +16,16 @@ const execAsync = promisify(exec)
 // GET /api/versions/[id]/export
 // Returns a zip archive of all tracks converted back to WAV.
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const tmpDir = path.join(tmpdir(), randomUUID())
 
   try {
     const { id: versionId } = await params
+
+    const access = await requireBandMemberForVersion(req, versionId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     // Fetch tracks
     const { data: tracks, error } = await supabase

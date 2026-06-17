@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
@@ -11,6 +11,10 @@ import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
+import { RoadmapPreview } from '@/components/RoadmapPreview'
+import type { ProjectRoadmap } from '@/lib/roadmap'
+import { registerPlaybackStop } from '@/lib/playbackSession'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,6 +24,12 @@ interface EnhancedProject {
   id: string; name: string; bpm: number | null; key: string | null; created_at: string
   track_count: number; total_duration_ms: number; version_count: number
   comment_count: number; last_updated_at: string; first_track_id: string | null
+  roadmap_configured: boolean
+  roadmap_steps: { name: string }[]
+  roadmap_step_index: number | null
+  stage_since: string | null
+  checklist_my_total: number; checklist_my_done: number
+  checklist_card_tasks: { id: string; text: string; assignee_id: string | null }[]
 }
 
 interface BandMember {
@@ -298,7 +308,7 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
 
 // ─── Project row ──────────────────────────────────────────────────────────────
 
-function ProjectRow({
+const ProjectRow = memo(function ProjectRow({
   project, index, playing, loading, error, onPlay, onOpen, onQuick, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
@@ -306,11 +316,11 @@ function ProjectRow({
   playing: boolean
   loading: boolean
   error: boolean
-  onPlay: (e: React.MouseEvent) => void
-  onOpen: () => void
-  onQuick: (e: React.MouseEvent) => void
-  onDelete?: () => void
-  onMetaUpdated: (patch: { bpm: number | null; key: string | null }) => void
+  onPlay: (e: React.MouseEvent, projectId: string) => void
+  onOpen: (projectId: string) => void
+  onQuick: (e: React.MouseEvent, projectId: string) => void
+  onDelete?: (projectId: string, name: string) => void
+  onMetaUpdated: (projectId: string, patch: { bpm: number | null; key: string | null }) => void
   isOwner: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -337,7 +347,7 @@ function ProjectRow({
       <div className="flex items-center gap-3 sm:contents min-w-0">
         <button
           type="button"
-          onClick={onPlay}
+          onClick={e => onPlay(e, project.id)}
           disabled={loading && !playing}
           aria-label={playing ? `Pause ${project.name}` : `Play ${project.name}`}
           className={`size-10 shrink-0 border grid place-items-center transition group ${
@@ -357,11 +367,36 @@ function ProjectRow({
 
         <button
           type="button"
-          onClick={onOpen}
+          onClick={() => onOpen(project.id)}
           className="min-w-0 flex-1 text-left sm:flex-none"
         >
-          <div className="font-display text-lg uppercase tracking-tight truncate hover:text-ember transition-colors">
-            {project.name}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-display text-lg uppercase tracking-tight truncate hover:text-ember transition-colors">
+              {project.name}
+            </div>
+            {project.roadmap_configured && project.roadmap_step_index != null && (
+              <RoadmapPreview
+                steps={project.roadmap_steps}
+                stepIndex={project.roadmap_step_index}
+                stageSince={project.stage_since}
+                animate
+                animateBaseDelayMs={index * 40 + 320}
+              />
+            )}
+            {project.checklist_my_total > 0 && (
+              <span
+                className="inline-flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-muted-foreground"
+                title={project.checklist_card_tasks.map(t => t.text).join('\n')}
+              >
+                <span className="h-1 w-10 bg-surface-2 border border-border inline-block overflow-hidden">
+                  <span
+                    className="block h-full bg-ember"
+                    style={{ width: `${Math.round((project.checklist_my_done / project.checklist_my_total) * 100)}%` }}
+                  />
+                </span>
+                {project.checklist_my_done}/{project.checklist_my_total}
+              </span>
+            )}
           </div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
             <span>{project.track_count} TRACKS</span>
@@ -376,8 +411,8 @@ function ProjectRow({
       </div>
 
       <div className="flex items-center gap-1 shrink-0 sm:justify-end">
-        <TbButton onClick={onQuick}>Quick</TbButton>
-        <TbButton variant="solid" onClick={onOpen}>Open ↗</TbButton>
+        <TbButton onClick={e => onQuick(e, project.id)}>Quick peek</TbButton>
+        <TbButton variant="solid" onClick={() => onOpen(project.id)}>Open ↗</TbButton>
         <div ref={menuRef} className="relative">
           <button
             type="button"
@@ -391,7 +426,7 @@ function ProjectRow({
             <div className="absolute right-0 top-full mt-2 z-50 w-52 border border-border bg-popover shadow-2xl">
               <button
                 type="button"
-                onClick={() => { setMenuOpen(false); onOpen() }}
+                onClick={() => { setMenuOpen(false); onOpen(project.id) }}
                 className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-foreground hover:bg-surface transition-colors"
               >
                 Open project
@@ -402,7 +437,7 @@ function ProjectRow({
                   projectId={project.id}
                   bpm={project.bpm}
                   keySig={project.key}
-                  onUpdated={onMetaUpdated}
+                  onUpdated={patch => onMetaUpdated(project.id, patch)}
                   variant="menu"
                 />
               </div>
@@ -411,7 +446,7 @@ function ProjectRow({
                   <div className="h-px bg-border" />
                   <button
                     type="button"
-                    onClick={() => { setMenuOpen(false); onDelete?.() }}
+                    onClick={() => { setMenuOpen(false); onDelete?.(project.id, project.name) }}
                     className="block w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest text-destructive hover:bg-destructive/10 transition-colors"
                   >
                     Delete project
@@ -424,7 +459,7 @@ function ProjectRow({
       </div>
     </div>
   )
-}
+})
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -444,7 +479,7 @@ export default function BandPage() {
   const [totalActivity, setTotalActivity] = useState(0)
   const [storageLimitBytes, setStorageLimitBytes] = useState(10 * 1024 * 1024 * 1024)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'projects' | 'activity'>('projects')
@@ -470,11 +505,15 @@ export default function BandPage() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [previewProject, setPreviewProject] = useState<EnhancedProject | null>(null)
+  const previewProjectRef = useRef(previewProject)
+  previewProjectRef.current = previewProject
   const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
   const [bandNameEditing, setBandNameEditing] = useState(false)
   const [bandNameValue, setBandNameValue] = useState('')
   const [bandNameFlash, setBandNameFlash] = useState(false)
   const bandNameInputRef = useRef<HTMLInputElement>(null)
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
 
   function stopPlayback() {
     const audio = audioRef.current
@@ -485,14 +524,25 @@ export default function BandPage() {
       audio.onerror = null
       audio.onstalled = null
       audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
       audioRef.current = null
     }
     playbackGenRef.current += 1
   }
 
-  // ── Cleanup audio on unmount ────────────────────────────────────────────────
+  // ── Cleanup audio on unmount / navigation ───────────────────────────────────
   useEffect(() => {
-    return () => { stopPlayback() }
+    const cleanup = () => {
+      stopPlayback()
+      setPlayingProjectId(null)
+      setLoadingProjectId(null)
+    }
+    const unregister = registerPlaybackStop(cleanup)
+    return () => {
+      unregister()
+      cleanup()
+    }
   }, [])
 
   // ── Tab from URL ────────────────────────────────────────────────────────────
@@ -518,7 +568,14 @@ export default function BandPage() {
   // ── Load data ────────────────────────────────────────────────────────────────
   async function loadBand() {
     const res = await fetch(`/api/bands/${bandId}`)
-    if (!res.ok) { setError('Band not found'); setLoading(false); return }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
+      else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
+      else setError('unknown')
+      setLoading(false)
+      return
+    }
     const data = await res.json()
     setBand(data.band)
     setProjects(data.projects ?? [])
@@ -667,8 +724,10 @@ export default function BandPage() {
   }
 
   // ── Audio playback ───────────────────────────────────────────────────────────
-  function handlePlay(e: React.MouseEvent, project: EnhancedProject) {
+  const handlePlay = useCallback((e: React.MouseEvent, projectId: string) => {
     e.stopPropagation()
+    const project = projectsRef.current.find(p => p.id === projectId)
+    if (!project) return
 
     // No tracks → nothing to play
     if (!project.first_track_id) return
@@ -692,9 +751,8 @@ export default function BandPage() {
     const pid = project.id
     const isStale = () => gen !== playbackGenRef.current
 
-    function showError(reason: string) {
+    function showError() {
       if (isStale()) return
-      console.error('[play] playback failed:', reason, 'project:', pid)
       setLoadingProjectId(null)
       setPlayingProjectId(null)
       setErrorProjectId(pid)
@@ -703,38 +761,118 @@ export default function BandPage() {
 
     audio.oncanplay = () => {
       if (isStale()) return
-      console.log('[play] canplay fired — starting playback')
       audio.play().catch(err => {
         if (isStale()) return
         if (err instanceof DOMException && err.name === 'AbortError') return
-        showError(err instanceof Error ? err.message : String(err))
+        showError()
       })
     }
     audio.onplaying = () => {
       if (isStale()) return
-      console.log('[play] playing — audio started')
       setLoadingProjectId(null)
       setPlayingProjectId(pid)
     }
     audio.onended = () => {
       if (isStale()) return
-      console.log('[play] ended')
       setPlayingProjectId(null)
     }
     audio.onerror = () => {
       if (isStale()) return
       const err = audio.error
       if (err?.code === MediaError.MEDIA_ERR_ABORTED) return
-      showError(err ? `MediaError code=${err.code} msg="${err.message}"` : 'unknown')
-    }
-    audio.onstalled = () => {
-      if (isStale()) return
-      console.warn('[play] stalled — network may be slow, waiting...')
+      showError()
     }
 
-    console.log('[play] loading mix for project', pid)
     audio.src = `/api/projects/${pid}/mix`
-  }
+  }, [playingProjectId, loadingProjectId])
+
+  const openProject = useCallback((projectId: string) => {
+    router.push(`/band/${bandId}/project/${projectId}`)
+  }, [bandId, router])
+
+  const openQuickPeek = useCallback((e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation()
+    const p = projectsRef.current.find(x => x.id === projectId)
+    if (p) setPreviewProject(p)
+  }, [])
+
+  const openDeleteProject = useCallback((projectId: string, name: string) => {
+    setDeleteModal({ id: projectId, name })
+    setDeleteConfirmName('')
+    setDeleteError('')
+  }, [])
+
+  const updateProjectMeta = useCallback((projectId: string, patch: { bpm: number | null; key: string | null }) => {
+    setProjects(prev => prev.map(x => x.id === projectId ? { ...x, ...patch } : x))
+  }, [])
+
+  const handleRoadmapChange = useCallback((roadmap: ProjectRoadmap) => {
+    setProjects(prev => prev.map(p => {
+      if (p.id !== previewProjectRef.current?.id) return p
+      return {
+        ...p,
+        roadmap_configured: roadmap.configured,
+        roadmap_steps: roadmap.steps.map(s => ({ name: s.name })),
+        roadmap_step_index: roadmap.stepIndex,
+        stage_since: roadmap.stageSince,
+      }
+    }))
+    setPreviewProject(prev => {
+      if (!prev || prev.id !== previewProjectRef.current?.id) return prev
+      return {
+        ...prev,
+        roadmap_configured: roadmap.configured,
+        roadmap_steps: roadmap.steps.map(s => ({ name: s.name })),
+        roadmap_step_index: roadmap.stepIndex,
+        stage_since: roadmap.stageSince,
+      }
+    })
+  }, [])
+
+  const handleChecklistPreviewChange = useCallback((
+    cardTasks: { id: string; text: string; assignee_id: string | null }[],
+    myDone: number,
+    myTotal: number,
+  ) => {
+    const pid = previewProjectRef.current?.id
+    if (!pid) return
+    setProjects(prev => prev.map(p =>
+      p.id === pid ? { ...p, checklist_card_tasks: cardTasks, checklist_my_done: myDone, checklist_my_total: myTotal } : p
+    ))
+    setPreviewProject(prev => prev?.id === pid ? {
+      ...prev,
+      checklist_card_tasks: cardTasks,
+      checklist_my_done: myDone,
+      checklist_my_total: myTotal,
+    } : prev)
+  }, [])
+
+  const bandMembersForPanel = useMemo(() => members.map(m => ({
+    user_id: m.user_id,
+    username: m.profiles?.username ?? m.user_id,
+    display_name: m.profiles?.display_name ?? null,
+  })), [members])
+
+  const initialRoadmapForPreview = useMemo(() => {
+    if (!previewProject?.roadmap_configured) return null
+    return {
+      configured: true,
+      steps: previewProject.roadmap_steps,
+      stepIndex: previewProject.roadmap_step_index,
+      stageSince: previewProject.stage_since,
+    }
+  }, [previewProject])
+
+  const groupedActivity = useMemo(() => {
+    const groups: Array<{ date: string; items: ActivityItem[] }> = []
+    for (const item of activityItems) {
+      const date = formatGroupDate(item.created_at)
+      const last = groups[groups.length - 1]
+      if (last && last.date === date) last.items.push(item)
+      else groups.push({ date, items: [item] })
+    }
+    return groups
+  }, [activityItems])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
@@ -743,20 +881,27 @@ export default function BandPage() {
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
 
   if (authLoading || loading) return <BrandSpinner />
-  if (error) return (
-    <div className="min-h-screen grid place-items-center p-6">
-      <p className="text-destructive text-sm m-0">{error}</p>
-    </div>
-  )
 
-  // ── Activity feed (grouped by date) ─────────────────────────────────────────
-  const itemsForFeed = activityItems.length > 0 ? activityItems : []
-  const groupedActivity: Array<{ date: string; items: ActivityItem[] }> = []
-  for (const item of itemsForFeed) {
-    const date = formatGroupDate(item.created_at)
-    const last = groupedActivity[groupedActivity.length - 1]
-    if (last && last.date === date) { last.items.push(item) }
-    else { groupedActivity.push({ date, items: [item] }) }
+  if (error) {
+    const isAccessDenied = error === 'access_denied'
+    return (
+      <ResourceErrorScreen
+        crumbs={<span className="text-muted-foreground">Band</span>}
+        accessDenied={isAccessDenied}
+        title={isAccessDenied ? "You're not in this band" : 'Band not found'}
+        description={
+          isAccessDenied
+            ? "This band exists, but you're not a member. Ask an owner to add you or share an invite code."
+            : "This band doesn't exist or the link is broken."
+        }
+        actions={[
+          { label: '← My bands', href: '/', primary: true },
+          ...(isAccessDenied
+            ? [{ label: 'Join a band with a code', href: '/dashboard' }]
+            : []),
+        ]}
+      />
+    )
   }
 
   return (
@@ -896,11 +1041,11 @@ export default function BandPage() {
                     playing={playingProjectId === p.id}
                     loading={loadingProjectId === p.id}
                     error={errorProjectId === p.id}
-                    onPlay={e => handlePlay(e, p)}
-                    onOpen={() => router.push(`/band/${bandId}/project/${p.id}`)}
-                    onQuick={e => { e.stopPropagation(); setPreviewProject(p) }}
-                    onDelete={() => { setDeleteModal({ id: p.id, name: p.name }); setDeleteConfirmName(''); setDeleteError('') }}
-                    onMetaUpdated={patch => setProjects(prev => prev.map(x => x.id === p.id ? { ...x, ...patch } : x))}
+                    onPlay={handlePlay}
+                    onOpen={openProject}
+                    onQuick={openQuickPeek}
+                    onDelete={openDeleteProject}
+                    onMetaUpdated={updateProjectMeta}
                     isOwner={myRole === 'owner'}
                   />
                 ))}
@@ -926,7 +1071,7 @@ export default function BandPage() {
               <SectionLabel>ALL ACTIVITY</SectionLabel>
               {activityLoading ? (
                 <p className="text-sm text-muted-foreground mt-4 m-0">Loading activity…</p>
-              ) : itemsForFeed.length === 0 ? (
+              ) : activityItems.length === 0 ? (
                 <p className="text-sm text-muted-foreground/70 mt-4 m-0">No activity yet.</p>
               ) : (
                 <div className="mt-4 border border-border bg-surface divide-y divide-border">
@@ -1229,7 +1374,7 @@ export default function BandPage() {
             <SectionLabel>WELCOME</SectionLabel>
             <p className="text-xs text-muted-foreground mt-2 leading-relaxed m-0">
               This is {band?.name}&apos;s workspace. Songs, people, and activity all live here.
-              Click any project to open it, or hit <strong className="text-foreground font-bold">Quick</strong> for resources and structure.
+              Click any project to open it, or hit <strong className="text-foreground font-bold">Quick peek</strong> for resources and structure.
             </p>
           </div>
         </aside>
@@ -1283,8 +1428,14 @@ export default function BandPage() {
 
       <StructurePreviewPanel
         projectId={previewProject?.id ?? null}
+        projectName={previewProject?.name ?? ''}
         accentColor={previewProject ? avatarColor(previewProject.name, palette) : 'var(--accent)'}
         bandId={bandId}
+        initialRoadmap={initialRoadmapForPreview}
+        bandMembers={bandMembersForPanel}
+        currentUserId={user?.id ?? null}
+        onRoadmapChange={handleRoadmapChange}
+        onChecklistPreviewChange={handleChecklistPreviewChange}
         onClose={() => setPreviewProject(null)}
       />
 

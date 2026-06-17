@@ -3,39 +3,39 @@
  * Selected via [data-theme] on <html>.
  */
 
-/* ─── Default (studio-light) — visible before hydration ─── */
+/* ─── Default (ember-dark) — visible before / without data-theme ─── */
 :root {
   --radius: 0.125rem;
-  --background: oklch(0.985 0.003 80);
-  --foreground: oklch(0.22 0.01 260);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.95 0.004 80);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.01 260);
-  --primary: oklch(0.52 0.14 282);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.94 0.005 80);
-  --secondary-foreground: oklch(0.22 0.01 260);
-  --muted: oklch(0.94 0.005 80);
-  --muted-foreground: oklch(0.46 0.01 260);
-  --accent: oklch(0.52 0.14 282);
-  --accent-foreground: oklch(0.99 0 0);
-  --ember: oklch(0.52 0.14 282);
-  --ember-soft: oklch(0.52 0.14 282 / 0.10);
-  --destructive: oklch(0.55 0.22 22);
-  --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.88 0.005 80);
-  --grid: oklch(0.92 0.005 80);
-  --input: oklch(0.92 0.005 80);
-  --ring: oklch(0.52 0.14 282);
-  --chart-1: oklch(0.52 0.14 282);
-  --chart-2: oklch(0.58 0.18 145);
-  --chart-3: oklch(0.55 0.16 240);
-  --chart-4: oklch(0.60 0.18 90);
-  --chart-5: oklch(0.52 0.20 320);
-  --online: oklch(0.55 0.18 145);
+  --background: oklch(0.13 0 0);
+  --foreground: oklch(0.93 0 0);
+  --surface: oklch(0.16 0 0);
+  --surface-2: oklch(0.19 0 0);
+  --card: oklch(0.16 0 0);
+  --card-foreground: oklch(0.93 0 0);
+  --popover: oklch(0.16 0 0);
+  --popover-foreground: oklch(0.93 0 0);
+  --primary: oklch(0.68 0.22 35);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.22 0 0);
+  --secondary-foreground: oklch(0.93 0 0);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.58 0 0);
+  --accent: oklch(0.68 0.22 35);
+  --accent-foreground: oklch(0.98 0 0);
+  --ember: oklch(0.68 0.22 35);
+  --ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --destructive: oklch(0.62 0.22 22);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.26 0 0);
+  --grid: oklch(0.22 0 0);
+  --input: oklch(0.22 0 0);
+  --ring: oklch(0.68 0.22 35);
+  --chart-1: oklch(0.68 0.22 35);
+  --chart-2: oklch(0.78 0.18 145);
+  --chart-3: oklch(0.72 0.16 240);
+  --chart-4: oklch(0.80 0.18 90);
+  --chart-5: oklch(0.68 0.20 320);
+  --online: oklch(0.78 0.18 145);
 }
 
 /* ─── ember-dark ─── */
@@ -375,6 +375,32 @@
 
 @utility animate-slide-in {
   animation: tb-slide-in 0.6s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes tb-roadmap-segment-in {
+  from { opacity: 0; transform: scaleX(0.2); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility animate-roadmap-segment {
+  animation: tb-roadmap-segment-in 0.4s cubic-bezier(0.32, 0.72, 0, 1) both;
+  transform-origin: left center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-roadmap-segment {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @utility animate-pulse-dot {

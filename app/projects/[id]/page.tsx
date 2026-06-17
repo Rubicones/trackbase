@@ -14,6 +14,11 @@ import { ResourcesCard } from '@/components/ResourcesCard'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
 import { Toast } from '@/components/design/Toast'
+import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
+import { registerPlaybackStop } from '@/lib/playbackSession'
+import { RoadmapPreview } from '@/components/RoadmapPreview'
+import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
+import { SongChecklist, type ChecklistItem } from '@/components/SongChecklist'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -675,6 +680,29 @@ function usePlayer(tracks: Track[], versionId: string) {
   const [loaded, setLoaded] = useState(0)
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
 
+  const stopSources = useCallback(() => {
+    sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+    sourcesRef.current = []
+    cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  useEffect(() => {
+    const cleanup = () => {
+      stopSources()
+      setPlaying(false)
+      const ctx = actxRef.current
+      if (ctx && ctx.state !== 'closed') {
+        void ctx.close()
+        actxRef.current = null
+      }
+    }
+    const unregister = registerPlaybackStop(cleanup)
+    return () => {
+      unregister()
+      cleanup()
+    }
+  }, [stopSources])
+
   useEffect(() => {
     if (!tracks.length) return
     let cancelled = false
@@ -699,15 +727,9 @@ function usePlayer(tracks: Track[], versionId: string) {
         if (!cancelled) { bufsRef.current.set(t.id, decoded); maxDur = Math.max(maxDur, decoded.duration); setLoaded(c => c + 1) }
       } catch { /* skip */ }
     })).then(() => { if (!cancelled) setDuration(maxDur) })
-    return () => { cancelled = true; ctx.close(); cancelAnimationFrame(rafRef.current) }
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versionId])
-
-  const stopSources = useCallback(() => {
-    sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
-    sourcesRef.current = []
-    cancelAnimationFrame(rafRef.current)
-  }, [])
 
   const play = useCallback(async (offset = offsetRef.current) => {
     const ctx = actxRef.current
@@ -1243,7 +1265,7 @@ export default function ProjectPage() {
   const [versions, setVersions] = useState<Version[]>([])
   const [activeVersionId, setActiveVersionId] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   const [showBranchModal, setShowBranchModal] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1256,6 +1278,9 @@ export default function ProjectPage() {
   const [storageUsed, setStorageUsed] = useState(0)
   const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
   const [shareCopied, setShareCopied] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
+  const { roadmap } = useProjectRoadmap(projectId)
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([])
 
   async function loadProject(keepActiveVersion = true) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
@@ -1266,7 +1291,17 @@ export default function ProjectPage() {
 
     try {
       const res = await fetch(`/api/projects/${projectId}`)
-      if (!res.ok) throw new Error('Not found')
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        if (res.status === 403 || body?.code === 'ACCESS_DENIED') {
+          setError('access_denied')
+        } else if (res.status === 404 || body?.code === 'NOT_FOUND') {
+          setError('not_found')
+        } else {
+          setError('unknown')
+        }
+        return
+      }
       const data = await res.json()
       setProject(data.project)
       setVersions(data.versions)
@@ -1289,8 +1324,8 @@ export default function ProjectPage() {
         .then(r => r.json())
         .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
         .catch(() => {})
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error')
+    } catch {
+      setError('unknown')
     } finally {
       setLoading(false)
     }
@@ -1315,6 +1350,14 @@ export default function ProjectPage() {
     if (activeVersionId) loadVersionData(activeVersionId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVersionId])
+
+  useEffect(() => {
+    if (!projectId) return
+    fetch(`/api/projects/${projectId}/checklist`)
+      .then(r => r.ok ? r.json() : { items: [] })
+      .then(d => setChecklist(d.items ?? []))
+      .catch(() => {})
+  }, [projectId])
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
@@ -1481,9 +1524,38 @@ export default function ProjectPage() {
   }
 
   if (loading) return <BrandSpinner />
-  if (error || !project) return (
-    <div className="min-h-screen flex items-center justify-center text-[13px] text-danger">{error || 'Project not found'}</div>
-  )
+
+  if (error || !project) {
+    const isAccessDenied = error === 'access_denied'
+    const isNotFound = error === 'not_found' || !project
+
+    return (
+      <ResourceErrorScreen
+        crumbs={<span className="text-muted-foreground">Project</span>}
+        accessDenied={isAccessDenied}
+        title={
+          isAccessDenied
+            ? "You don't have access to this project"
+            : isNotFound
+            ? 'Project not found'
+            : 'Something went wrong'
+        }
+        description={
+          isAccessDenied
+            ? "This project belongs to a band you're not a member of. If you think you should have access, ask a band member to invite you."
+            : isNotFound
+            ? "This project doesn't exist or may have been deleted."
+            : 'We had trouble loading this project. Try refreshing — if the problem persists, contact support.'
+        }
+        actions={[
+          { label: 'Go to My Bands', href: '/', primary: true },
+          ...(!isAccessDenied
+            ? [{ label: 'Retry', onClick: () => window.location.reload() }]
+            : []),
+        ]}
+      />
+    )
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
@@ -1555,11 +1627,32 @@ export default function ProjectPage() {
 
           {/* Project header */}
           <div className="px-[22px] pt-4 pb-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-            <h1 className="text-[17px] font-medium text-bright">{project.name}</h1>
-            <p className="text-[11px] text-dim mt-0.5">
-              {activeTracks.length} track{activeTracks.length !== 1 ? 's' : ''}
-              {player.duration > 0 ? ` · ${fmtTime(player.duration)}` : ''}{' · updated today'}
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="text-[17px] font-medium text-bright">{project.name}</h1>
+                <p className="text-[11px] text-dim mt-0.5">
+                  {activeTracks.length} track{activeTracks.length !== 1 ? 's' : ''}
+                  {player.duration > 0 ? ` · ${fmtTime(player.duration)}` : ''}{' · updated today'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                {roadmap.configured && roadmap.stepIndex != null && (
+                  <RoadmapPreview
+                    steps={roadmap.steps}
+                    stepIndex={roadmap.stepIndex}
+                    stageSince={roadmap.stageSince}
+                  />
+                )}
+                <button
+                  onClick={() => setPlanOpen(v => !v)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] transition-colors duration-150"
+                  style={{ border: '0.5px solid var(--border)', background: planOpen ? 'var(--bg-card)' : 'transparent', color: planOpen ? 'var(--text-sec)' : 'var(--text-muted)' }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x="1" y="1" width="3.5" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1"/><rect x="6.5" y="1" width="3.5" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1"/><rect x="1" y="6.5" width="3.5" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1"/><path d="M6.5 8.25h3.5M8.25 6.5v3.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
+                  Plan
+                </button>
+              </div>
+            </div>
             <div className="flex items-center gap-1.5 mt-3 flex-wrap">
               <span className="text-[11px] text-dim mr-1">View:</span>
               {versions.map(v => {
@@ -1581,6 +1674,18 @@ export default function ProjectPage() {
               })}
             </div>
           </div>
+
+          {/* Roadmap + checklist panel (read-only) */}
+          {planOpen && (
+            <div className="shrink-0 overflow-y-auto" style={{ borderBottom: '0.5px solid var(--border)', background: 'var(--bg)', maxHeight: '420px' }}>
+              <div className="px-[22px] py-5 grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr)' }}>
+                <SongRoadmap projectId={projectId} roadmap={roadmap} readOnly />
+                {checklist.length > 0 && (
+                  <SongChecklist items={checklist} members={[]} readOnly />
+                )}
+              </div>
+            </div>
+          )}
 
           <PlayerBar playing={player.playing} currentTime={player.currentTime} duration={player.duration} loaded={player.loaded} total={player.total} onPlay={player.play} onPause={player.pause} onSeek={player.seek} />
 

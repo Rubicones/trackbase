@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
-import { getUserIdFromToken } from '@/lib/supabase/server'
-import { createClient } from '@supabase/supabase-js'
-const adminSupabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
-
-function getUserId(req: NextRequest): string | null {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
+import { requireBandMember } from '@/lib/supabase/server'
 
 // PATCH /api/projects/[id] — update project metadata (name, bpm, key)
 export async function PATCH(
@@ -16,10 +9,12 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = getUserId(req)
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const { id: projectId } = await params
+
+    const access = await requireBandMember(req, projectId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, project } = access
+
     const body = await req.json()
     const { name, bpm, key } = body as { name?: string; bpm?: number | null; key?: string | null }
 
@@ -60,20 +55,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
     }
 
+    // Fetch current values for change detection (bpm/key diffing)
     const { data: existing } = await supabase
       .from('projects')
-      .select('band_id, bpm, key')
+      .select('bpm, key')
       .eq('id', projectId)
       .single()
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-    const { data: membership } = await supabase
-      .from('band_members')
-      .select('role')
-      .eq('band_id', existing.band_id)
-      .eq('user_id', userId)
-      .maybeSingle()
-    if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const { data, error } = await supabase
       .from('projects')
@@ -85,7 +73,7 @@ export async function PATCH(
 
     if (updates.bpm !== undefined && updates.bpm !== existing.bpm) {
       void logActivity({
-        bandId: existing.band_id,
+        bandId: project.band_id,
         userId,
         action: 'meta',
         subject: 'BPM',
@@ -95,7 +83,7 @@ export async function PATCH(
     }
     if (updates.key !== undefined && updates.key !== existing.key) {
       void logActivity({
-        bandId: existing.band_id,
+        bandId: project.band_id,
         userId,
         action: 'meta',
         subject: 'Key',
@@ -119,18 +107,39 @@ export async function PATCH(
 // GET /api/projects/[id]
 // Returns project + all versions + tracks (with comments) per version
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
+
+    // Enforce band membership before returning any data
+    const access = await requireBandMember(req, id)
+    if ('error' in access) {
+      // Distinguish "project doesn't exist" from "no access" so the client
+      // can show the right error screen without leaking existence information.
+      // We return 403 for access-denied so the UI knows to show "no access"
+      // rather than "not found" when the project does exist.
+      if (access.status === 404) {
+        // Could be truly missing or could be a non-member — check existence
+        const { data: exists } = await supabase
+          .from('projects')
+          .select('id')
+          .eq('id', id)
+          .single()
+        if (exists) {
+          return NextResponse.json({ error: 'Access denied', code: 'ACCESS_DENIED' }, { status: 403 })
+        }
+      }
+      return NextResponse.json({ error: access.error, code: 'NOT_FOUND' }, { status: access.status })
+    }
 
     const { data: project, error: projErr } = await supabase
       .from('projects')
       .select('*, bands(name)')
       .eq('id', id)
       .single()
-    if (projErr) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (projErr) return NextResponse.json({ error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
 
     // Flatten band name into project object
     if (project.bands) {
@@ -158,7 +167,7 @@ export async function GET(
 
     // Load comments with author usernames
     const { data: rawComments } = trackIds.length
-      ? await adminSupabase
+      ? await supabase
           .from('track_comments')
           .select('*')
           .in('track_id', trackIds)
@@ -168,14 +177,14 @@ export async function GET(
     // Fetch profiles for comment authors
     const authorIds = [...new Set((rawComments ?? []).map((c: { created_by: string }) => c.created_by).filter(Boolean))]
     const { data: authorProfiles } = authorIds.length
-      ? await adminSupabase.from('profiles').select('id, username').in('id', authorIds)
+      ? await supabase.from('profiles').select('id, username').in('id', authorIds)
       : { data: [] }
     const authorMap = new Map((authorProfiles ?? []).map((p: { id: string; username: string }) => [p.id, p.username]))
 
     // Load replies for all comments
     const commentIds = (rawComments ?? []).map((c: { id: string }) => c.id)
     const { data: rawReplies } = commentIds.length
-      ? await adminSupabase
+      ? await supabase
           .from('comment_replies')
           .select('*')
           .in('comment_id', commentIds)
@@ -184,7 +193,7 @@ export async function GET(
 
     const replyAuthorIds = [...new Set((rawReplies ?? []).map((r: { created_by: string }) => r.created_by).filter(Boolean))]
     const { data: replyAuthorProfiles } = replyAuthorIds.length
-      ? await adminSupabase.from('profiles').select('id, username').in('id', replyAuthorIds)
+      ? await supabase.from('profiles').select('id, username').in('id', replyAuthorIds)
       : { data: [] }
     const replyAuthorMap = new Map((replyAuthorProfiles ?? []).map((p: { id: string; username: string }) => [p.id, p.username]))
 
@@ -228,29 +237,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const token = req.cookies.get('sb-at')?.value
-    const userId = token ? getUserIdFromToken(token) : null
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const { id: projectId } = await params
 
-    // Get band_id for this project
-    const { data: project } = await supabase
-      .from('projects')
-      .select('band_id, name')
-      .eq('id', projectId)
-      .single()
-    if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const access = await requireBandMember(req, projectId)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, project, role } = access
 
-    // Verify requester is band owner
-    const { data: membership } = await supabase
-      .from('band_members')
-      .select('role')
-      .eq('band_id', project.band_id)
-      .eq('user_id', userId)
-      .maybeSingle()
-    if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (membership.role !== 'owner') {
+    if (role !== 'owner') {
       return NextResponse.json({ error: 'Only band owners can delete projects' }, { status: 403 })
     }
 

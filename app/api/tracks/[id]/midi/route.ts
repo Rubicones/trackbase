@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { parseMidiFile } from '@/lib/midi'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // GET /api/tracks/[id]/midi
 // Returns cached midi_data, or fetches + parses from R2 and caches it.
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
+
+    const access = await requireBandMemberForTrack(req, id)
+    if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const { data: track, error } = await supabase
       .from('tracks')

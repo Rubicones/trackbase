@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useState } from 'react'
 import {
   normalizePaletteId,
   PALETTE_STORAGE_KEY,
@@ -23,12 +23,10 @@ function applyPalette(id: PaletteId) {
 export function PaletteProvider({ children }: { children: React.ReactNode }) {
   const [palette, setPaletteState] = useState<PaletteId>(() => {
     if (typeof window === 'undefined') return 'default'
-    return normalizePaletteId(localStorage.getItem(PALETTE_STORAGE_KEY))
+    const id = normalizePaletteId(localStorage.getItem(PALETTE_STORAGE_KEY))
+    applyPalette(id)
+    return id
   })
-
-  useEffect(() => {
-    applyPalette(palette)
-  }, [palette])
 
   const setPalette = useCallback((id: PaletteId) => {
     document.documentElement.classList.add('theme-transition')

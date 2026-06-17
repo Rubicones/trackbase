@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // PATCH /api/tracks/[id]/rename — update display_name (cosmetic metadata only)
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const { id: trackId } = await params
+
+  const access = await requireBandMemberForTrack(req, trackId)
+  if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+
   const { name } = await req.json()
 
   if (typeof name !== 'string' || !name.trim()) {

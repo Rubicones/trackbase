@@ -37,7 +37,11 @@ export async function GET(
     .eq('band_id', bandId)
     .eq('user_id', userId)
     .maybeSingle()
-  if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!membership) {
+    const { data: bandExists } = await supabase.from('bands').select('id').eq('id', bandId).maybeSingle()
+    if (bandExists) return NextResponse.json({ error: 'Access denied', code: 'ACCESS_DENIED' }, { status: 403 })
+    return NextResponse.json({ error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+  }
 
   const adminSupabase = createClient(
     process.env.SUPABASE_URL!,
@@ -48,7 +52,7 @@ export async function GET(
   const [bandRes, projectsRes, membersRes] = await Promise.all([
     supabase.from('bands').select('*').eq('id', bandId).single(),
     supabase.from('projects')
-      .select('id, name, bpm, key, time_signature, created_at')
+      .select('id, name, bpm, key, time_signature, created_at, roadmap_step_index, stage_since')
       .eq('band_id', bandId)
       .order('created_at', { ascending: false }),
     adminSupabase.from('band_members')
@@ -64,7 +68,7 @@ export async function GET(
   // ── Phase 2: version + profile fetches (parallel) ─────────────────────────
   const memberUserIds = (membersRes.data ?? []).map((m: { user_id: string }) => m.user_id)
 
-  const [versionsRes, profilesRes] = await Promise.all([
+  const [versionsRes, profilesRes, checklistRes, roadmapRes] = await Promise.all([
     projectIds.length > 0
       ? supabase.from('versions')
           .select('id, project_id, type, merged_at, created_at')
@@ -75,7 +79,44 @@ export async function GET(
           .select('id, username, display_name, avatar_color')
           .in('id', memberUserIds)
       : Promise.resolve({ data: [] as { id: string; username: string; display_name: string | null; avatar_color: string | null }[] }),
+    projectIds.length > 0
+      ? supabase.from('project_checklist_items')
+          .select('project_id, done, assignee_id, text, id, position')
+          .in('project_id', projectIds)
+          .order('position', { ascending: true })
+      : Promise.resolve({ data: [] as { project_id: string; done: boolean; assignee_id: string | null; text: string; id: string; position: number }[] }),
+    projectIds.length > 0
+      ? supabase.from('project_roadmap_steps')
+          .select('project_id, name, position')
+          .in('project_id', projectIds)
+          .order('position', { ascending: true })
+      : Promise.resolve({ data: [] as { project_id: string; name: string; position: number }[] }),
   ])
+
+  // Checklist progress per project — card shows tasks assigned to current user
+  const checklistByProject = new Map<string, {
+    myTotal: number
+    myDone: number
+    cardTasks: { id: string; text: string; assignee_id: string | null }[]
+  }>()
+  for (const item of (checklistRes.data ?? [])) {
+    const c = checklistByProject.get(item.project_id) ?? { myTotal: 0, myDone: 0, cardTasks: [] }
+    if (item.assignee_id === userId) {
+      c.myTotal++
+      if (item.done) c.myDone++
+      if (!item.done) {
+        c.cardTasks.push({ id: item.id, text: item.text, assignee_id: item.assignee_id })
+      }
+    }
+    checklistByProject.set(item.project_id, c)
+  }
+
+  const roadmapByProject = new Map<string, { name: string }[]>()
+  for (const step of (roadmapRes.data ?? [])) {
+    const arr = roadmapByProject.get(step.project_id) ?? []
+    arr.push({ name: step.name })
+    roadmapByProject.set(step.project_id, arr)
+  }
 
   const allVersions = versionsRes.data ?? []
   const allVersionIds = allVersions.map((v: { id: string }) => v.id)
@@ -129,7 +170,7 @@ export async function GET(
     if (pid) commentsByProject.set(pid, (commentsByProject.get(pid) ?? 0) + 1)
   }
 
-  const enhancedProjects = projects.map((p: { id: string; name: string; bpm: number | null; key: string | null; time_signature: string | null; created_at: string }) => {
+  const enhancedProjects = projects.map((p: { id: string; name: string; bpm: number | null; key: string | null; time_signature: string | null; created_at: string; roadmap_step_index: number | null; stage_since: string | null }) => {
     const mainVersionId = mainVersionByProject.get(p.id)
     const mainTracks = mainVersionId ? (tracksByVersion.get(mainVersionId) ?? []) : []
     const projectVersions = versionsByProject.get(p.id) ?? []
@@ -141,6 +182,18 @@ export async function GET(
       (a, b) => ((a as { position: number }).position ?? 0) - ((b as { position: number }).position ?? 0)
     )[0] as { id: string } | undefined
 
+    const cl = checklistByProject.get(p.id) ?? { myTotal: 0, myDone: 0, cardTasks: [] }
+    const roadmapSteps = roadmapByProject.get(p.id) ?? []
+    const roadmapConfigured = roadmapSteps.length > 0
+    let roadmapStepIndex = p.roadmap_step_index
+    if (roadmapConfigured && roadmapStepIndex != null) {
+      roadmapStepIndex = Math.min(Math.max(0, roadmapStepIndex), roadmapSteps.length)
+    } else if (roadmapConfigured) {
+      roadmapStepIndex = 0
+    } else {
+      roadmapStepIndex = null
+    }
+
     return {
       ...p,
       track_count: mainTracks.length,
@@ -149,6 +202,12 @@ export async function GET(
       comment_count: commentsByProject.get(p.id) ?? 0,
       last_updated_at: lastVersion?.created_at ?? p.created_at,
       first_track_id: firstTrack?.id ?? null,
+      checklist_my_total: cl.myTotal,
+      checklist_my_done: cl.myDone,
+      checklist_card_tasks: cl.cardTasks,
+      roadmap_configured: roadmapConfigured,
+      roadmap_steps: roadmapSteps,
+      roadmap_step_index: roadmapStepIndex,
     }
   })
 
