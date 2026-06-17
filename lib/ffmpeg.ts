@@ -8,10 +8,27 @@ import { writeFile, readFile, unlink } from 'fs/promises'
 import path from 'path'
 
 function resolveFfmpegPath(): string {
-  // 1. ffmpeg-static (bundled binary)
-  if (ffmpegStatic && existsSync(ffmpegStatic)) return ffmpegStatic
+  const candidates: string[] = []
 
-  // 2. System ffmpeg (e.g. installed via `brew install ffmpeg`)
+  if (typeof ffmpegStatic === 'string') candidates.push(ffmpegStatic)
+
+  candidates.push(
+    path.join(/* turbopackIgnore: true */ process.cwd(), 'node_modules/ffmpeg-static/ffmpeg'),
+  )
+
+  // Traced binary may sit beside the compiled handler on Vercel.
+  if (typeof __dirname !== 'undefined') {
+    candidates.push(
+      path.join(__dirname, 'ffmpeg'),
+      path.join(__dirname, 'node_modules/ffmpeg-static/ffmpeg'),
+    )
+  }
+
+  for (const p of candidates) {
+    if (p && existsSync(p)) return p
+  }
+
+  // System ffmpeg (local dev fallback)
   try {
     const p = execSync('which ffmpeg', { encoding: 'utf8' }).trim()
     if (p && existsSync(p)) return p
