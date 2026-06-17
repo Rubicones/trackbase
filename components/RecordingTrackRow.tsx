@@ -71,6 +71,32 @@ function downsampleBars(bars: number[], target = BAR_COUNT): number[] {
   return out.map(v => v / max)
 }
 
+/** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
+function applyNudgeToBuffer(buffer: AudioBuffer, nudgeMs: number): AudioBuffer {
+  if (nudgeMs === 0) return buffer
+
+  const sr = buffer.sampleRate
+  const numCh = buffer.numberOfChannels
+  const sampleDelta = Math.round((nudgeMs / 1000) * sr)
+
+  if (sampleDelta < 0) {
+    const skip = Math.min(Math.abs(sampleDelta), buffer.length - 1)
+    if (skip <= 0) return buffer
+    const out = new AudioBuffer({ length: buffer.length - skip, numberOfChannels: numCh, sampleRate: sr })
+    for (let c = 0; c < numCh; c++) {
+      out.getChannelData(c).set(buffer.getChannelData(c).subarray(skip))
+    }
+    return out
+  }
+
+  if (sampleDelta === 0) return buffer
+  const out = new AudioBuffer({ length: buffer.length + sampleDelta, numberOfChannels: numCh, sampleRate: sr })
+  for (let c = 0; c < numCh; c++) {
+    out.getChannelData(c).set(buffer.getChannelData(c), sampleDelta)
+  }
+  return out
+}
+
 function BarWaveform({
   bars, leftPct, widthPct, opacity = 0.95, minBarPct = 8, bottom = false,
   animate = false, barCount = BAR_COUNT,
@@ -132,6 +158,14 @@ function LiveVolumeBar({
         }}
       />
     </div>
+  )
+}
+
+function NudgeArrowIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden className="block">
+      <polygon points={direction === 'left' ? '6,1 2,4 6,7' : '2,1 6,4 2,7'} />
+    </svg>
   )
 }
 
@@ -198,6 +232,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [inputLevel, setInputLevel] = useState(0)
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
+  const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
 
   const streamRef       = useRef<MediaStream | null>(null)
   const recorderRef     = useRef<MediaRecorder | null>(null)
@@ -495,6 +530,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+    setNudgeOffsetMs(0)
 
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     recorder.onstop = () => { void processBlob(mimeType) }
@@ -576,7 +612,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       const beatsPerBar       = parseInt(timeSig.split('/')[0]) || 4
       const barDurSec         = (60 / bpm) * beatsPerBar
-      const recordingStartSec = startBarRef.current * barDurSec
+      const nudgeSec          = nudgeOffsetMs / 1000
+      const recordingStartSec = startBarRef.current * barDurSec + nudgeSec
       const buf               = audioBufferRef.current
       if (!buf) return
       const recordingEndSec   = recordingStartSec + buf.duration
@@ -609,7 +646,15 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       previewSrcRef.current?.stop()
       previewSrcRef.current = null
     }
-  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, bpm, timeSig, getPlaybackMs])
+  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, nudgeOffsetMs, bpm, timeSig, getPlaybackMs])
+
+  useEffect(() => {
+    if (state !== 'preview' || !audioBufferRef.current || recordedDurationSec <= 0) return
+    const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
+    const barDurSec = (60 / bpm) * beatsPerBar
+    const effectiveStartSec = startBarRef.current * barDurSec + nudgeOffsetMs / 1000
+    notifyPreviewTimeline(effectiveStartSec + audioBufferRef.current.duration)
+  }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, notifyPreviewTimeline])
 
   async function handleReRecord() {
     previewSrcRef.current?.stop()
@@ -622,6 +667,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+    setNudgeOffsetMs(0)
     setState('armed')
     const gen = armGenRef.current
     try {
@@ -642,7 +688,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     previewSrcRef.current = null
     notifyPreviewTimeline(null)
     try {
-      const wavBlob  = encodeWAV(decoded, 0)
+      const adjusted = applyNudgeToBuffer(decoded, nudgeOffsetMs)
+      const wavBlob  = encodeWAV(adjusted, 0)
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
       const filename = `${safeName.replace(/\s+/g, '_')}_${Date.now()}.wav`
 
@@ -677,7 +724,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           fileSize: wavBlob.size,
           mimetype: 'audio/wav',
           startBar: startBarRef.current,
-          durationMs: Math.round(recordedDurationSec * 1000),
+          durationMs: Math.round(adjusted.duration * 1000),
         }),
       })
       if (!processRes.ok) throw new Error(`Process ${processRes.status}`)
@@ -685,7 +732,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       // Seed the waveform cache so the regular TrackRow renders the bars immediately
       // (without waiting for the audio stream to re-download and decode).
-      if (staticBars.length > 0) waveformBarsCache.set(track.id, staticBars)
+      waveformBarsCache.set(track.id, barsFromBuffer(adjusted))
       onRelease(id)
       onSaved(id, track)
     } catch (err) {
@@ -723,8 +770,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const recordedBars = recordedDurationSec > 0 ? recordedDurationSec / barDurSec : 0
   const liveRecordedBars = recordingSec > 0 ? recordingSec / barDurSec : 0
   const timelineStartBar = isRecording || isPreview || isSaving ? recordStartBar : armedAtBar
+  const nudgeBarOffset = (isPreview || isSaving) ? nudgeOffsetMs / 1000 / barDurSec : 0
+  const visualStartBar = timelineStartBar + nudgeBarOffset
   const waveformLeft = totalBars > 0
-    ? `${(timelineStartBar / totalBars) * 100}%`
+    ? `${(visualStartBar / totalBars) * 100}%`
     : '0'
   const waveformWidth = totalBars > 0
     ? `${Math.min(100, Math.max((1 / totalBars) * 100, ((isRecording ? liveRecordedBars : recordedBars) / totalBars) * 100))}%`
@@ -846,23 +895,50 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           )}
 
           {isPreview && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => setPreviewMuted(m => !m)}
-                className="text-[9px] uppercase tracking-widest"
-                style={{ color: previewMuted ? 'var(--muted-foreground)' : 'var(--ember)' }}
-              >
-                {previewMuted ? 'Muted' : 'Mix'}
-              </button>
-              <button type="button" onClick={() => void handleSave()}
-                className="text-[9px] uppercase tracking-widest font-semibold text-ember">
-                Save
-              </button>
-              <button type="button" onClick={handleDiscard}
-                className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
-                Discard
-              </button>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMuted(m => !m)}
+                  className="text-[9px] uppercase tracking-widest"
+                  style={{ color: previewMuted ? 'var(--ember)' : 'var(--muted-foreground)' }}
+                >
+                  {previewMuted ? 'Muted' : 'Mute'}
+                </button>
+                <button type="button" onClick={() => void handleSave()}
+                  className="text-[9px] uppercase tracking-widest font-semibold text-ember">
+                  Save
+                </button>
+                <button type="button" onClick={handleDiscard}
+                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
+                  Discard
+                </button>
+              </div>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  title="-10ms"
+                  onClick={() => setNudgeOffsetMs(ms => ms - 10)}
+                  className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+                  aria-label="Nudge 10ms earlier"
+                >
+                  <NudgeArrowIcon direction="left" />
+                </button>
+                <button
+                  type="button"
+                  title="+10ms"
+                  onClick={() => setNudgeOffsetMs(ms => ms + 10)}
+                  className="w-5 h-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+                  aria-label="Nudge 10ms later"
+                >
+                  <NudgeArrowIcon direction="right" />
+                </button>
+                {nudgeOffsetMs !== 0 && (
+                  <span className="text-[9px] tabular-nums text-muted-foreground min-w-10">
+                    {nudgeOffsetMs > 0 ? `+${nudgeOffsetMs}` : nudgeOffsetMs}ms
+                  </span>
+                )}
+              </div>
             </div>
           )}
 

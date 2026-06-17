@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { setAuthCookies } from '@/lib/auth/cookies'
 import { getSiteUrl } from '@/lib/site-url'
 import {
   AuthShell,
@@ -45,6 +46,7 @@ function AuthPageContent() {
     const supabase = getSupabaseClient()
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
+        setAuthCookies(session)
         const meta = session.user.user_metadata
         if (!meta?.username) {
           router.replace('/onboarding')
@@ -56,7 +58,7 @@ function AuthPageContent() {
               await supabase.auth.updateUser({ data: { onboarding_complete: true } })
               const { data: { session: refreshed } } = await supabase.auth.refreshSession()
               if (refreshed) {
-                document.cookie = `sb-at=${refreshed.access_token}; path=/; max-age=${refreshed.expires_in ?? 3600}; SameSite=Lax`
+                setAuthCookies(refreshed)
               }
               router.replace(next)
             } else {

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { setAuthCookies } from '@/lib/auth/cookies'
 import { AuthShell } from '@/components/auth/AuthShell'
 import { Spinner } from '@/components/ui/Spinner'
 
@@ -31,16 +32,13 @@ export default function AuthCallbackPage() {
       return '/dashboard'
     }
 
-    async function refreshAuthCookie(session: { access_token: string; expires_in?: number }) {
-      document.cookie = `sb-at=${session.access_token}; path=/; max-age=${session.expires_in ?? 3600}; SameSite=Lax`
-    }
-
     async function resolveDestination(session: {
       user: { id: string; user_metadata?: { username?: string; onboarding_complete?: boolean } }
       access_token: string
+      refresh_token: string
       expires_in?: number
     }) {
-      await refreshAuthCookie(session)
+      setAuthCookies(session)
 
       const meta = session.user.user_metadata
       if (!meta?.username) {
@@ -63,7 +61,7 @@ export default function AuthCallbackPage() {
         if (!error) {
           const { data: { session: refreshed } } = await supabase.auth.refreshSession()
           if (refreshed) {
-            await refreshAuthCookie(refreshed)
+            setAuthCookies(refreshed)
           }
         }
         router.replace(readNext())

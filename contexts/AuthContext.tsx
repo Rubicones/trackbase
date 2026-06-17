@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,18 +33,6 @@ interface AuthContextValue extends AuthState {
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
   updateOnboarding: (key: keyof OnboardingData, value: boolean) => Promise<void>
-}
-
-// ─── Cookie helpers ───────────────────────────────────────────────────────────
-
-const COOKIE_NAME = 'sb-at'
-
-function setAuthCookie(token: string, expiresIn: number) {
-  document.cookie = `${COOKIE_NAME}=${token}; path=/; SameSite=Lax; max-age=${expiresIn}`
-}
-
-function clearAuthCookie() {
-  document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -115,32 +104,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    clearAuthCookie()
+    clearAuthCookies()
     await supabase.auth.signOut()
     setState({ user: null, profile: null, session: null, loading: false })
   }, [supabase])
 
   useEffect(() => {
-    // Initial session check
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    async function syncSession() {
+      const { data: { session: existing } } = await supabase.auth.getSession()
+      const { data: { session } } = existing
+        ? await supabase.auth.refreshSession()
+        : { data: { session: null as Session | null } }
+
       if (session) {
-        setAuthCookie(session.access_token, session.expires_in ?? 3600)
+        setAuthCookies(session)
         const profile = await fetchProfile(session.user.id)
         setState({ user: session.user, profile, session, loading: false })
       } else {
         setState(prev => ({ ...prev, loading: false }))
       }
-    })
+    }
 
-    // Subscribe to auth state changes
+    syncSession()
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      async (_event, session) => {
         if (session) {
-          setAuthCookie(session.access_token, session.expires_in ?? 3600)
+          setAuthCookies(session)
           const profile = await fetchProfile(session.user.id)
           setState({ user: session.user, profile, session, loading: false })
         } else {
-          clearAuthCookie()
+          clearAuthCookies()
           setState({ user: null, profile: null, session: null, loading: false })
         }
       }

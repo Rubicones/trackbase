@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { setAuthCookies } from '@/lib/auth/cookies'
 import { avatarInitials } from '@/lib/avatarTheme'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar'
@@ -81,7 +82,7 @@ export function AvatarDropdown() {
       if (metaErr) throw metaErr
       const { data: { session } } = await supabase.auth.refreshSession()
       if (session) {
-        document.cookie = `sb-at=${session.access_token}; path=/; SameSite=Lax; max-age=${session.expires_in ?? 3600}`
+        setAuthCookies(session)
       }
       await refreshProfile()
       setUsernameStatus('saved')
