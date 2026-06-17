@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
-import { activityColorClass, activityDotClass, activityVerb } from '@/lib/activityFormat'
+import { activityCategoryLabel, activityColorClass, activityDescriptionParts, activityDotClass } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
@@ -1150,16 +1150,22 @@ export default function BandPage() {
                           className="grid grid-cols-1 sm:grid-cols-[80px_1fr_auto] sm:items-center gap-2 sm:gap-4 px-4 py-3 text-xs hover:bg-background transition-colors"
                         >
                           <span className={`text-[9px] font-bold tracking-widest uppercase ${activityColorClass(item.action)}`}>
-                            {item.action.replace(/_/g, ' ')}
+                            {activityCategoryLabel(item.action)}
                           </span>
                           <div className="min-w-0">
                             <span className="text-foreground font-bold">@{item.username}</span>{' '}
-                            <span className="text-muted-foreground">{activityVerb(item.action)}</span>{' '}
-                            <span className="text-foreground">{item.subject}</span>
-                            {item.detail && <span className="text-muted-foreground"> · {item.detail}</span>}
-                            {item.action !== 'comment' && item.project_name && (
-                              <span className="text-muted-foreground/70"> · {item.project_name}</span>
-                            )}
+                            <span className="text-muted-foreground">
+                              {activityDescriptionParts(
+                                item.action,
+                                item.subject,
+                                item.detail,
+                                item.project_name,
+                              ).map((part, i) => (
+                                <span key={i} className={part.emphasis ? 'text-foreground' : undefined}>
+                                  {part.text}
+                                </span>
+                              ))}
+                            </span>
                           </div>
                           <span className="text-muted-foreground tabular-nums sm:text-right">{formatRelative(item.created_at)}</span>
                         </div>
@@ -1367,12 +1373,17 @@ export default function BandPage() {
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground m-0 leading-relaxed">
                           <span className="font-bold text-foreground">{item.username}</span>
-                          {' '}{activityVerb(item.action)}{' '}
-                          <span>{item.subject}</span>
-                          {item.detail && <span> · {item.detail}</span>}
-                          {item.action !== 'comment' && item.project_name && (
-                            <span className="text-muted-foreground/70"> · {item.project_name}</span>
-                          )}
+                          {' '}
+                          {activityDescriptionParts(
+                            item.action,
+                            item.subject,
+                            item.detail,
+                            item.project_name,
+                          ).map((part, i) => (
+                            <span key={i} className={part.emphasis ? 'text-foreground font-normal' : undefined}>
+                              {part.text}
+                            </span>
+                          ))}
                         </p>
                         <p className="text-[10px] text-muted-foreground/60 mt-0.5 m-0 tabular-nums">
                           {formatRelative(item.created_at)}

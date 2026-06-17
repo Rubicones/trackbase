@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
+import { logActivity, trackActivityLabel } from '@/lib/activity'
 
 // DELETE /api/tracks/[id]
 export async function DELETE(
@@ -12,9 +13,25 @@ export async function DELETE(
 
     const access = await requireBandMemberForTrack(req, id)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, project } = access
+
+    const { data: trackRow } = await supabase
+      .from('tracks')
+      .select('name, display_name, original_filename')
+      .eq('id', id)
+      .single()
 
     const { error } = await supabase.from('tracks').delete().eq('id', id)
     if (error) throw error
+
+    void logActivity({
+      bandId: project.band_id,
+      userId,
+      action: 'track_remove',
+      subject: trackActivityLabel(trackRow ?? {}),
+      projectId: project.id,
+    })
+
     return NextResponse.json({ deleted: true })
   } catch (err) {
     console.error(err)

@@ -257,6 +257,12 @@ export async function DELETE(
       return NextResponse.json({ error: 'Only band owners can delete projects' }, { status: 403 })
     }
 
+    const { data: projectMeta } = await supabase
+      .from('projects')
+      .select('name')
+      .eq('id', projectId)
+      .single()
+
     // Get all version IDs
     const { data: versions } = await supabase
       .from('versions')
@@ -303,6 +309,13 @@ export async function DELETE(
       .delete()
       .eq('id', projectId)
     if (error) throw error
+
+    void logActivity({
+      bandId: project.band_id,
+      userId,
+      action: 'project_remove',
+      subject: projectMeta?.name ?? 'Project',
+    })
 
     return NextResponse.json({ ok: true })
   } catch (err) {

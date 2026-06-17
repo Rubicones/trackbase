@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { sectionLabel } from '@/components/StructureEditor'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { Spinner } from '@/components/ui/Spinner'
 import { buildCompositeWaveform } from '@/lib/waveform-decode'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 
@@ -171,6 +173,36 @@ function VersionDrawer({
   )
 }
 
+// ─── Transport toggle (matches mixer bottom bar) ─────────────────────────────
+
+function RehearsalTransportToggle({
+  label, active, onClick, tooltip, disabled = false,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  tooltip: string
+  disabled?: boolean
+}) {
+  return (
+    <HoverTooltip label={tooltip} className="shrink-0">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={tooltip}
+        className={`h-9 px-2.5 border text-[9px] font-bold uppercase tracking-widest transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
+          active
+            ? 'border-ember bg-ember text-white'
+            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+        }`}
+      >
+        {label}
+      </button>
+    </HoverTooltip>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ReadingMode({
@@ -185,6 +217,14 @@ export function ReadingMode({
   activeTracks,
   barDurationMs,
   visible,
+  sectionLoopOn,
+  sectionLoopEnabled,
+  onToggleSectionLoop,
+  metronomeOn,
+  countdownOn,
+  isCounting,
+  onToggleMetronome,
+  onToggleCountdown,
 }: {
   project: Project
   player: ReadingModePlayer
@@ -197,6 +237,14 @@ export function ReadingMode({
   activeTracks: Track[]
   barDurationMs: number
   visible: boolean
+  sectionLoopOn: boolean
+  sectionLoopEnabled: boolean
+  onToggleSectionLoop: () => void
+  metronomeOn: boolean
+  countdownOn: boolean
+  isCounting: boolean
+  onToggleMetronome: () => void
+  onToggleCountdown: () => void
 }) {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
   const [composite, setComposite] = useState<number[]>(() => new Array(REHEARSAL_BAR_COUNT).fill(0.12))
@@ -421,7 +469,7 @@ export function ReadingMode({
                 <button
                   key={section.id}
                   type="button"
-                  onClick={() => player.seek((section.start_bar * barDurationMs) / 1000)}
+                  onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
                 >
                   <div className="text-[9px] font-bold uppercase tracking-widest text-ember w-16 shrink-0 truncate">
@@ -457,23 +505,48 @@ export function ReadingMode({
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
               Resources
             </div>
-            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} />
+            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} hideUploadZone />
           </div>
         )}
       </div>
 
       {/* Fixed master player — above rotate bar */}
-      <div className="absolute bottom-[52px] left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 flex items-center gap-3 z-10">
+      <div className="absolute bottom-[52px] left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 grid grid-cols-[auto_1fr] grid-rows-2 gap-x-3 gap-y-2 items-center z-10">
         <button
           type="button"
-          onClick={() => (player.playing ? player.pause() : player.play())}
+          onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}
           disabled={!isReady || player.total === 0}
-          className="size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-label={player.playing ? 'Pause' : 'Play'}
+          className="row-span-2 size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed self-center"
+          aria-label={(player.playing || isCounting) ? 'Pause' : isLoading ? 'Loading' : 'Play'}
         >
-          <span className="text-base translate-x-px">{player.playing ? '❚❚' : '▶'}</span>
+          {isLoading ? (
+            <Spinner size={16} tone="white" />
+          ) : (
+            <span className="text-base translate-x-px">{(player.playing || isCounting) ? '❚❚' : '▶'}</span>
+          )}
         </button>
-        <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <RehearsalTransportToggle
+            label="Metro"
+            active={metronomeOn}
+            onClick={onToggleMetronome}
+            tooltip="Metronome click track"
+          />
+          <RehearsalTransportToggle
+            label="CD"
+            active={countdownOn}
+            onClick={onToggleCountdown}
+            tooltip="One-bar count-in before play"
+          />
+          <RehearsalTransportToggle
+            label="Loop"
+            active={sectionLoopOn}
+            onClick={onToggleSectionLoop}
+            tooltip={sectionLoopOn ? 'Stop looping this section' : 'Loops structure sections only'}
+            disabled={!sectionLoopEnabled}
+          />
+        </div>
+        <div className="min-w-0 self-stretch flex flex-col justify-center">
           <div
             className="h-1.5 bg-surface-2 relative cursor-pointer"
             onClick={e => {

@@ -6,7 +6,7 @@ import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
 import { TactGrid } from '@/components/design/TactGrid'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
-import { waveformBarsCache, waveformDurationCache } from '@/lib/waveformCache'
+import { waveformBarsCache } from '@/lib/waveformCache'
 
 const TRACK_LABEL_W = 192
 const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
@@ -570,9 +570,12 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const previewMutedRef = useRef(previewMuted)
   previewMutedRef.current = previewMuted
 
+  const onPreviewTimelineChangeRef = useRef(onPreviewTimelineChange)
+  onPreviewTimelineChangeRef.current = onPreviewTimelineChange
+
   const notifyPreviewTimeline = useCallback((endSec: number | null) => {
-    onPreviewTimelineChange?.(id, endSec)
-  }, [id, onPreviewTimelineChange])
+    onPreviewTimelineChangeRef.current?.(id, endSec)
+  }, [id])
 
   async function processBlob(mimeType: string) {
     const blob   = new Blob(chunksRef.current, { type: mimeType })
@@ -653,8 +656,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
     const barDurSec = (60 / bpm) * beatsPerBar
     const effectiveStartSec = startBarRef.current * barDurSec + nudgeOffsetMs / 1000
-    notifyPreviewTimeline(effectiveStartSec + audioBufferRef.current.duration)
-  }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, notifyPreviewTimeline])
+    onPreviewTimelineChangeRef.current?.(id, effectiveStartSec + audioBufferRef.current.duration)
+  }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, id])
 
   async function handleReRecord() {
     previewSrcRef.current?.stop()
@@ -732,9 +735,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       // Seed the waveform cache so the regular TrackRow renders the bars immediately
       // (without waiting for the audio stream to re-download and decode).
-      const durationMs = Math.round(adjusted.duration * 1000)
       waveformBarsCache.set(track.id, barsFromBuffer(adjusted))
-      if (durationMs > 0) waveformDurationCache.set(track.id, durationMs)
       onRelease(id)
       onSaved(id, track)
     } catch (err) {

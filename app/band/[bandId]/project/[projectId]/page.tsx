@@ -27,7 +27,7 @@ import { FloatingPopover } from '@/components/design/FloatingPopover'
 import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
-import { waveformBarsCache, waveformDurationCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
+import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
@@ -40,6 +40,7 @@ import {
   snapToPreviousBarSec,
   startCountdown,
 } from '@/lib/metronomeAudio'
+import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { registerPlaybackStop } from '@/lib/playbackSession'
 import { RecordingTrackRow } from '@/components/RecordingTrackRow'
@@ -172,10 +173,7 @@ function trackContentDurationMs(
     const lastEnd = Math.max(...t.midi_data.notes.map(n => n.startSixteenth + n.durationSixteenths))
     return Math.ceil(lastEnd * sixthMs)
   }
-  const stored = t.duration_ms ?? waveformDurationCache.get(t.id) ?? 0
-  const runtime = runtimeMs ?? 0
-  // Never let a short/flaky decode shrink layout below the server-reported duration.
-  return Math.max(stored, runtime)
+  return (runtimeMs && runtimeMs > 0 ? runtimeMs : t.duration_ms) ?? 0
 }
 
 /** End position on the project timeline in seconds (start_bar + content). */
@@ -767,7 +765,7 @@ function Waveform({
       if (cachedBars) {
         barsRef.current = cachedBars
         setReady(true)
-        onReadyRef.current?.(waveformDurationCache.get(trackId))
+        onReadyRef.current?.()
         return
       }
       try {
@@ -787,14 +785,10 @@ function Waveform({
         const max = Math.max(...amps, 0.001)
         if (!cancelled) {
           const bars = amps.map(a => a / max)
-          const decodedMs = Math.round(decoded.duration * 1000)
-          const cachedMs = waveformDurationCache.get(trackId) ?? 0
-          const bestMs = Math.max(decodedMs, cachedMs)
           waveformBarsCache.set(trackId, bars)
-          if (bestMs > 0) waveformDurationCache.set(trackId, bestMs)
           barsRef.current = bars
           setReady(true)
-          onReadyRef.current?.(bestMs)
+          onReadyRef.current?.(Math.round(decoded.duration * 1000))
         }
         actx.close()
       } catch { /* silent */ }
@@ -1103,6 +1097,11 @@ function usePlayer(
   isCountingRef.current = isCounting
   const countdownCancelRef = useRef<(() => void) | null>(null)
 
+  type SectionLoopRange = { id: string; startBar: number; endBar: number }
+  const sectionLoopRef = useRef<SectionLoopRange | null>(null)
+  const [sectionLoopOn, setSectionLoopOn] = useState(false)
+  const playFnRef = useRef<(offset?: number) => Promise<void>>(async () => {})
+
   /** Metronome ignores solo/mute sets — only the Metro toggle controls it. */
   const gainForTrack = useCallback((
     trackId: string,
@@ -1161,10 +1160,9 @@ function usePlayer(
   const noteTrackDuration = useCallback((trackId: string, ms: number) => {
     if (ms <= 0) return
     setTrackDurations(prev => {
-      const merged = Math.max(ms, prev.get(trackId) ?? 0)
-      if (prev.get(trackId) === merged) return prev
+      if (prev.get(trackId) === ms) return prev
       const next = new Map(prev)
-      next.set(trackId, merged)
+      next.set(trackId, ms)
       return next
     })
     recomputeTransportDuration()
@@ -1193,6 +1191,8 @@ function usePlayer(
     mutedTracksRef.current.add(METRONOME_TRACK_ID)
     setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
     setMetronomeOn(false)
+    sectionLoopRef.current = null
+    setSectionLoopOn(false)
   }, [versionId])
 
   // Load audio buffers — re-runs when tracks are added/removed within a version.
@@ -1245,17 +1245,11 @@ function usePlayer(
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
           const decodedMs = Math.round(decoded.duration * 1000)
-          const storedMs = t.duration_ms ?? waveformDurationCache.get(t.id) ?? 0
-          const mergedMs = Math.max(decodedMs, storedMs)
-          if (mergedMs > 0) {
-            setTrackDurations(prev => {
-              const best = Math.max(mergedMs, prev.get(t.id) ?? 0)
-              if (prev.get(t.id) === best) return prev
-              const next = new Map(prev)
-              next.set(t.id, best)
-              return next
-            })
-          }
+          setTrackDurations(prev => {
+            const next = new Map(prev)
+            next.set(t.id, decodedMs)
+            return next
+          })
           setLoaded(c => c + 1)
         }
       } catch { /* skip */ }
@@ -1525,9 +1519,21 @@ function usePlayer(
     const tick = () => {
       const elapsed = (actxRef.current?.currentTime ?? 0) - startRef.current
       const dur = getTransportDuration() || 1
-      // Always update the ref — consumed by DOM-direct visual updates (waveform overlays,
-      // progress bar fill) without triggering any React re-render.
       currentTimeRef.current = elapsed
+
+      const loop = sectionLoopRef.current
+      if (loop) {
+        const proj = projectRef.current
+        const loopBpm = proj?.bpm ?? 120
+        const loopBeats = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
+        const loopBarDur = (60 / loopBpm) * loopBeats
+        const loopEnd = loop.endBar * loopBarDur
+        if (elapsed >= loopEnd - 0.002) {
+          void playFnRef.current(loop.startBar * loopBarDur)
+          return
+        }
+      }
+
       if (elapsed >= dur) { currentTimeRef.current = 0; setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
       // Throttle React state to ~5 Hz so text display updates smoothly but cheaply.
       const bucket = Math.floor(elapsed * 5)
@@ -1539,6 +1545,29 @@ function usePlayer(
     }
     rafRef.current = requestAnimationFrame(tick)
   }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack])
+
+  playFnRef.current = play
+
+  const clearSectionLoop = useCallback(() => {
+    sectionLoopRef.current = null
+    setSectionLoopOn(false)
+  }, [])
+
+  const setSectionLoop = useCallback((range: SectionLoopRange | null) => {
+    sectionLoopRef.current = range
+    setSectionLoopOn(range !== null)
+  }, [])
+
+  const toggleSectionLoop = useCallback((range: SectionLoopRange | null) => {
+    if (sectionLoopRef.current) {
+      clearSectionLoop()
+      return false
+    }
+    if (!range) return false
+    sectionLoopRef.current = range
+    setSectionLoopOn(true)
+    return true
+  }, [clearSectionLoop])
 
   const pause = useCallback(() => {
     if (isCountingRef.current) {
@@ -1556,14 +1585,17 @@ function usePlayer(
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
     currentTimeRef.current = t
-    // Bump epoch so RecordingTrackRow preview effect re-runs and restarts its
-    // AudioBufferSourceNode from the new position (isPlaying doesn't change
-    // on seek-while-playing, so without this the preview keeps playing from
-    // the old position).
+    const loop = sectionLoopRef.current
+    if (loop) {
+      const proj = projectRef.current
+      const barDur = ((60 / (proj?.bpm ?? 120)) * (parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4))
+      const bar = Math.floor(t / barDur)
+      if (bar < loop.startBar || bar >= loop.endBar) clearSectionLoop()
+    }
     setSeekEpoch(e => e + 1)
     if (playing) play(t, tracksOverride)
     else setCurrentTime(t)
-  }, [playing, play])
+  }, [playing, play, clearSectionLoop])
 
   const toggleMute = useCallback((id: string) => {
     const next = new Set(mutedTracksRef.current)
@@ -1725,6 +1757,7 @@ function usePlayer(
     playWithCountIn,
     pause, seek, seekEpoch, toggleMute, toggleSolo,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
+    sectionLoopOn, toggleSectionLoop, clearSectionLoop, setSectionLoop,
     audioContext: actxRef, trackDurations,
     /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
     currentTimeRef,
@@ -2040,23 +2073,23 @@ const TrackRow = React.memo(function TrackRow({
   const trackOffsetMs = effectiveStartBar * barDurationMsRow
   // Prefer runtime decoded duration (populated once audio buffer loads); fall back to DB value.
   const rawContentMs = trackContentDurationMs(track, projBpmRow, runtimeDurationMs)
-  const awaitingWaveformConfirm = !isMidi && waveformBarsCache.has(track.id) && !waveformReady
-  const layoutContentMs = awaitingWaveformConfirm ? 0 : rawContentMs
-  const durationKnown = layoutContentMs > 0
+  const durationKnown = rawContentMs > 0
   const trackDurationBars = durationKnown
-    ? durationMsToBars(layoutContentMs, projBpmRow, projTimeSigRow)
+    ? durationMsToBars(rawContentMs, projBpmRow, projTimeSigRow)
     : Math.max(1, totalBars - effectiveStartBar)
   const trackOwnDurationMs = durationKnown
-    ? layoutContentMs
+    ? rawContentMs
     : trackDurationBars * barDurationMsRow
 
   // Waveform column layout
   const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
   const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
-  // Scale bar count to clip length so short recordings don't cram 96 bars into a few pixels.
-  const displayBarCount = Math.max(4, Math.min(96, Math.round(96 * (trackDurationBars / Math.max(1, totalBars)))))
+  // Scale bar count so each bar stays ~12px wide regardless of clip length.
+  const displayBarCount = Math.max(4, Math.round(96 * (trackDurationBars / Math.max(1, totalBars))))
   const isAudioLoading = !isMidi && !waveformReady
-  const layoutWidthPercent = isAudioLoading
+  // Only expand to fill the remaining timeline while loading if we don't yet know the
+  // clip's duration — prevents a flash-to-full-width when duration_ms is already stored.
+  const layoutWidthPercent = isAudioLoading && !durationKnown
     ? Math.max(widthPercent, 100 - startPercent)
     : widthPercent
 
@@ -2642,21 +2675,24 @@ function UploadRow({ upload, onRetry, onDismiss }: {
 // ─── Master player (bottom bar) ───────────────────────────────────────────────
 
 const TransportToggle = memo(function TransportToggle({
-  label, active, onClick, title,
-}: { label: string; active: boolean; onClick: () => void; title: string }) {
+  label, active, onClick, tooltip, disabled = false,
+}: { label: string; active: boolean; onClick: () => void; tooltip: string; disabled?: boolean }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest ${
-        active
-          ? 'border-ember bg-ember text-white'
-          : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-      }`}
-    >
-      {label}
-    </button>
+    <HoverTooltip label={tooltip} className="shrink-0">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={tooltip}
+        className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
+          active
+            ? 'border-ember bg-ember text-white'
+            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+        }`}
+      >
+        {label}
+      </button>
+    </HoverTooltip>
   )
 })
 
@@ -2665,6 +2701,7 @@ function MasterPlayerBar({
   onPlay, onPause, onSeek, onVolume,
   metronomeOn, countdownOn, isCounting,
   onToggleMetronome, onToggleCountdown,
+  sectionLoopOn, sectionLoopEnabled, onToggleSectionLoop,
   compact = false,
 }: {
   playing: boolean; currentTime: number
@@ -2674,6 +2711,7 @@ function MasterPlayerBar({
   onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
   metronomeOn: boolean; countdownOn: boolean; isCounting: boolean
   onToggleMetronome: () => void; onToggleCountdown: () => void
+  sectionLoopOn: boolean; sectionLoopEnabled: boolean; onToggleSectionLoop: () => void
   compact?: boolean
 }) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -2735,13 +2773,20 @@ function MasterPlayerBar({
         label="Metro"
         active={metronomeOn}
         onClick={onToggleMetronome}
-        title="Metronome click track"
+        tooltip="Metronome click track"
       />
       <TransportToggle
         label="CD"
         active={countdownOn}
         onClick={onToggleCountdown}
-        title="One-bar count-in before play"
+        tooltip="One-bar count-in before play"
+      />
+      <TransportToggle
+        label="Loop"
+        active={sectionLoopOn}
+        onClick={onToggleSectionLoop}
+        tooltip={sectionLoopOn ? 'Stop looping this section' : 'Loops structure sections only'}
+        disabled={!sectionLoopEnabled}
       />
       {isCounting && (
         <span className="text-[9px] uppercase tracking-widest text-amber shrink-0">Count-in…</span>
@@ -3479,6 +3524,55 @@ export default function ProjectPage() {
   const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, timelineDurationSec)
   const playerRef = useRef(player)
   playerRef.current = player
+
+  const [activeLoopSectionId, setActiveLoopSectionId] = useState<string | null>(null)
+  const sectionRanges = useMemo(() => buildSectionRanges(sections), [sections])
+  const projBarDurationSec = projBarDurationMs / 1000
+  const playheadSec = player.currentTimeRef.current ?? player.currentTime
+  const canLoopSection = findSectionRangeAtTime(sectionRanges, playheadSec, projBarDurationSec) != null
+  const sectionLoopButtonEnabled = player.sectionLoopOn || canLoopSection
+
+  const handleToggleSectionLoop = useCallback(() => {
+    const p = playerRef.current
+    if (p.sectionLoopOn) {
+      p.clearSectionLoop()
+      setActiveLoopSectionId(null)
+      return
+    }
+    const range = findSectionRangeAtTime(
+      sectionRanges,
+      p.currentTimeRef.current,
+      projBarDurationSec,
+    )
+    if (!range) return
+    p.setSectionLoop({ id: range.id, startBar: range.start_bar, endBar: range.end_bar })
+    setActiveLoopSectionId(range.id)
+  }, [sectionRanges, projBarDurationSec])
+
+  useEffect(() => {
+    if (!activeLoopSectionId) return
+    const sec = sections.find(s => s.id === activeLoopSectionId)
+    if (!sec) {
+      playerRef.current.clearSectionLoop()
+      setActiveLoopSectionId(null)
+      return
+    }
+    playerRef.current.setSectionLoop({
+      id: sec.id,
+      startBar: sec.start_bar,
+      endBar: sec.end_bar,
+    })
+  }, [sections, activeLoopSectionId])
+
+  useEffect(() => {
+    setActiveLoopSectionId(null)
+    playerRef.current.clearSectionLoop()
+  }, [activeVersionId])
+
+  useEffect(() => {
+    if (!player.sectionLoopOn) setActiveLoopSectionId(null)
+  }, [player.sectionLoopOn])
+
   const activeRecordingIdRef = useRef(activeRecordingId)
   activeRecordingIdRef.current = activeRecordingId
   const recordingStopRef = useRef<(() => void) | null>(null)
@@ -3523,38 +3617,11 @@ export default function ProjectPage() {
   async function handleRecordingSaved(id: string, track: Track) {
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
-    setRecordingPreviewEnds(prev => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-
-    const durationMs = track.duration_ms ?? waveformDurationCache.get(track.id) ?? 0
-    const savedTrack = durationMs > 0
-      ? { ...track, duration_ms: track.duration_ms ?? durationMs }
-      : track
-
-    setVersions(prev => {
-      const next = prev.map(v => {
-        if (v.id !== activeVersionId) return v
-        const tracks = v.tracks.some(t => t.id === savedTrack.id)
-          ? v.tracks.map(t => t.id === savedTrack.id ? savedTrack : t)
-          : [...v.tracks, savedTrack]
-        const comments: Record<string, TrackComment[]> = {}
-        const cached = cache.getVersion(activeVersionId)
-        for (const t of tracks) {
-          comments[t.id] = cached?.comments[t.id] ?? t.comments ?? []
-        }
-        cache.setVersion(activeVersionId, { tracks, comments, fetchedAt: Date.now() })
-        return { ...v, tracks }
-      })
-      return next
-    })
-
-    fetch(`/api/projects/${projectId}/storage`)
-      .then(r => r.json())
-      .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500 * 1024 * 1024) })
-      .catch(() => {})
+    setVersions(prev => prev.map(v =>
+      v.id === activeVersionId ? { ...v, tracks: [...v.tracks, track] } : v
+    ))
+    cache.invalidate(activeVersionId)
+    await loadProject()
   }
 
   function handleRecordingDelete(id: string) {
@@ -3569,9 +3636,13 @@ export default function ProjectPage() {
 
   function handleRecordingPreviewTimeline(id: string, endSec: number | null) {
     setRecordingPreviewEnds(prev => {
+      if (endSec != null && endSec > 0) {
+        if (prev[id] === endSec) return prev
+        return { ...prev, [id]: endSec }
+      }
+      if (!(id in prev)) return prev
       const next = { ...prev }
-      if (endSec != null && endSec > 0) next[id] = endSec
-      else delete next[id]
+      delete next[id]
       return next
     })
   }
@@ -3639,13 +3710,11 @@ export default function ProjectPage() {
   const totalProjectDurationMs = Math.max(totalProjectBars * projBarDurationMs, durationMs, 1)
 
   function handleTrackDuration(trackId: string, ms: number) {
-    if (ms <= 0) return
     playerRef.current.noteTrackDuration(trackId, ms)
     setDecodedDurationMs(prev => {
-      const merged = Math.max(ms, prev.get(trackId) ?? 0)
-      if (prev.get(trackId) === merged) return prev
+      if (prev.get(trackId) === ms) return prev
       const next = new Map(prev)
-      next.set(trackId, merged)
+      next.set(trackId, ms)
       return next
     })
     setVersions(prev => prev.map(v => ({
@@ -3691,17 +3760,14 @@ export default function ProjectPage() {
       let changed = false
       const next = new Map(prev)
       for (const [id, ms] of player.trackDurations) {
-        const track = activeTracks.find(t => t.id === id)
-        const stored = track?.duration_ms ?? waveformDurationCache.get(id) ?? 0
-        const merged = Math.max(ms, prev.get(id) ?? 0, stored)
-        if (prev.get(id) !== merged) {
-          next.set(id, merged)
+        if (prev.get(id) !== ms) {
+          next.set(id, ms)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [player.trackDurations, activeTracks])
+  }, [player.trackDurations])
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -3761,9 +3827,6 @@ export default function ProjectPage() {
       ...v,
       tracks: v.tracks.filter(t => t.id !== trackId),
     })))
-    waveformBarsCache.delete(trackId)
-    waveformDurationCache.delete(trackId)
-    audioArrayBufferCache.delete(trackId)
     cache.invalidate(activeVersionId)
   }
 
@@ -4070,7 +4133,6 @@ export default function ProjectPage() {
       if (!res.ok) throw new Error((await res.json()).error)
       await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
       waveformBarsCache.delete(track.id)
-      waveformDurationCache.delete(track.id)
       audioArrayBufferCache.delete(track.id)
       cache.invalidate(activeVersionId)
       await loadProject(true, true)
@@ -4289,6 +4351,14 @@ export default function ProjectPage() {
         activeTracks={activeTracks}
         barDurationMs={projBarDurationMs}
         visible={isMobilePortrait}
+        sectionLoopOn={player.sectionLoopOn}
+        sectionLoopEnabled={sectionLoopButtonEnabled}
+        onToggleSectionLoop={handleToggleSectionLoop}
+        metronomeOn={player.metronomeOn}
+        countdownOn={player.countdownOn}
+        isCounting={player.isCounting}
+        onToggleMetronome={player.toggleMetronome}
+        onToggleCountdown={player.toggleCountdown}
       />
 
       {!isMobilePortrait && (
@@ -4866,6 +4936,9 @@ export default function ProjectPage() {
         isCounting={player.isCounting}
         onToggleMetronome={player.toggleMetronome}
         onToggleCountdown={player.toggleCountdown}
+        sectionLoopOn={player.sectionLoopOn}
+        sectionLoopEnabled={sectionLoopButtonEnabled}
+        onToggleSectionLoop={handleToggleSectionLoop}
         compact={isMobileLandscape}
       />
 

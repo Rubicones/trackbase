@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForSection } from '@/lib/supabase/server'
+import { logActivity, sectionActivityLabel } from '@/lib/activity'
 
 // PUT /api/sections/[id]
 export async function PUT(
@@ -49,9 +50,25 @@ export async function DELETE(
 
     const access = await requireBandMemberForSection(req, id)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, project } = access
+
+    const { data: sectionRow } = await supabase
+      .from('sections')
+      .select('type, custom_name')
+      .eq('id', id)
+      .single()
 
     const { error } = await supabase.from('sections').delete().eq('id', id)
     if (error) throw error
+
+    void logActivity({
+      bandId: project.band_id,
+      userId,
+      action: 'structure_remove',
+      subject: sectionActivityLabel(sectionRow ?? { type: 'section' }),
+      projectId: project.id,
+    })
+
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error(err)

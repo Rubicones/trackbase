@@ -9,9 +9,6 @@ import { Analytics } from "@vercel/analytics/next"
 export const metadata: Metadata = {
   title: 'Trackbase',
   description: 'Git-like versioning for music demos',
-  icons: {
-    icon: '/icon.svg',
-  },
   viewport: {
     width: 'device-width',
     initialScale: 1,
