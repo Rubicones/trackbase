@@ -342,7 +342,7 @@ export function StructurePreviewPanel({
           {/* Structure */}
           {activeTab === 'structure' && (
             loading ? (
-              <BrandSpinner fullscreen={false} />
+              <BrandSpinner fullscreen={false} label="Reading structure" />
             ) : error ? (
               <p className="text-destructive text-sm m-0">{error}</p>
             ) : sections.length === 0 ? (

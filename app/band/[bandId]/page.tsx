@@ -39,6 +39,13 @@ interface BandStats {
   storage_bytes: number; tracks: number
 }
 
+interface JoinRequest {
+  id: string
+  user_id: string
+  created_at: string
+  profile: { username: string; display_name: string | null; avatar_color: string | null } | null
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDuration(ms: number): string {
@@ -447,9 +454,14 @@ export default function BandPage() {
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null)
   const [errorProjectId, setErrorProjectId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const playbackGenRef = useRef(0)
   const [showNewProject, setShowNewProject] = useState(false)
   const [inviteCopied, setInviteCopied] = useState(false)
   const [inviteCopying, setInviteCopying] = useState(false)
+  const [inviteCode, setInviteCode] = useState<string | null>(null)
+  const [regeneratingCode, setRegeneratingCode] = useState(false)
+  const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
+  const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(null)
   const [editingMember, setEditingMember] = useState<string | null>(null)
   const [editRoleLabel, setEditRoleLabel] = useState('')
   const [memberMenu, setMemberMenu] = useState<string | null>(null)
@@ -459,12 +471,28 @@ export default function BandPage() {
   const [deleteError, setDeleteError] = useState('')
   const [previewProject, setPreviewProject] = useState<EnhancedProject | null>(null)
   const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
+  const [bandNameEditing, setBandNameEditing] = useState(false)
+  const [bandNameValue, setBandNameValue] = useState('')
+  const [bandNameFlash, setBandNameFlash] = useState(false)
+  const bandNameInputRef = useRef<HTMLInputElement>(null)
+
+  function stopPlayback() {
+    const audio = audioRef.current
+    if (audio) {
+      audio.oncanplay = null
+      audio.onplaying = null
+      audio.onended = null
+      audio.onerror = null
+      audio.onstalled = null
+      audio.pause()
+      audioRef.current = null
+    }
+    playbackGenRef.current += 1
+  }
 
   // ── Cleanup audio on unmount ────────────────────────────────────────────────
   useEffect(() => {
-    return () => {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = '' }
-    }
+    return () => { stopPlayback() }
   }, [])
 
   // ── Tab from URL ────────────────────────────────────────────────────────────
@@ -500,6 +528,8 @@ export default function BandPage() {
     setRecentActivity(data.recentActivity ?? [])
     setTotalActivity(data.totalActivity ?? 0)
     setStorageLimitBytes(data.storageLimitBytes ?? 10 * 1024 * 1024 * 1024)
+    setInviteCode(data.inviteCode ?? null)
+    setPendingJoinRequests(data.pendingJoinRequests ?? [])
     setLoading(false)
   }
 
@@ -539,17 +569,45 @@ export default function BandPage() {
   }, [memberMenu])
 
   // ── Actions ──────────────────────────────────────────────────────────────────
-  async function handleCopyInvite() {
+  async function handleCopyInviteCode() {
+    if (!inviteCode) return
     setInviteCopying(true)
     try {
-      const res = await fetch(`/api/bands/${bandId}/invites/current`)
-      if (!res.ok) return
-      const { invite } = await res.json()
-      await navigator.clipboard.writeText(`${window.location.origin}/invite/${invite.token}`)
+      await navigator.clipboard.writeText(inviteCode)
       setInviteCopied(true)
       setTimeout(() => setInviteCopied(false), 2000)
     } catch { /* ignore */ }
     finally { setInviteCopying(false) }
+  }
+
+  async function handleRegenerateInviteCode() {
+    if (myRole !== 'owner' || regeneratingCode) return
+    if (!window.confirm('Regenerate invite code? The old code will stop working immediately.')) return
+    setRegeneratingCode(true)
+    try {
+      const res = await fetch(`/api/bands/${bandId}/invite-code`, { method: 'POST' })
+      if (!res.ok) return
+      const { invite_code } = await res.json()
+      setInviteCode(invite_code)
+    } finally {
+      setRegeneratingCode(false)
+    }
+  }
+
+  async function handleResolveJoinRequest(requestId: string, action: 'approve' | 'reject') {
+    if (myRole !== 'owner' || resolvingRequestId) return
+    setResolvingRequestId(requestId)
+    try {
+      const res = await fetch(`/api/bands/${bandId}/join-requests/${requestId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      if (!res.ok) return
+      await loadBand()
+    } finally {
+      setResolvingRequestId(null)
+    }
   }
 
   async function handleSaveRoleLabel(memberId: string) {
@@ -581,6 +639,33 @@ export default function BandPage() {
     finally { setDeleting(false) }
   }
 
+  function startBandRename() {
+    if (!band || myRole !== 'owner') return
+    setBandNameValue(band.name)
+    setBandNameEditing(true)
+    setTimeout(() => { bandNameInputRef.current?.select() }, 0)
+  }
+
+  async function commitBandRename() {
+    if (!band) return
+    const trimmed = bandNameValue.trim()
+    setBandNameEditing(false)
+    if (!trimmed || trimmed === band.name) return
+    try {
+      const res = await fetch(`/api/bands/${bandId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (res.ok) {
+        const { band: updated } = await res.json()
+        setBand(updated)
+        setBandNameFlash(true)
+        setTimeout(() => setBandNameFlash(false), 400)
+      }
+    } catch { /* ignore */ }
+  }
+
   // ── Audio playback ───────────────────────────────────────────────────────────
   function handlePlay(e: React.MouseEvent, project: EnhancedProject) {
     e.stopPropagation()
@@ -590,31 +675,25 @@ export default function BandPage() {
 
     // Pause / stop if clicking currently playing or loading project
     if (playingProjectId === project.id || loadingProjectId === project.id) {
-      audioRef.current?.pause()
+      stopPlayback()
       setPlayingProjectId(null)
       setLoadingProjectId(null)
       return
     }
 
-    // Stop any currently playing / loading audio
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.oncanplay = null
-      audioRef.current.onplaying = null
-      audioRef.current.onended = null
-      audioRef.current.onerror = null
-      audioRef.current.src = ''
-    }
+    stopPlayback()
     setPlayingProjectId(null)
     setLoadingProjectId(project.id)
     setErrorProjectId(null)
 
+    const gen = playbackGenRef.current
     const audio = new Audio()
     audioRef.current = audio
     const pid = project.id
-    console.log('[play] starting mix for project', pid)
+    const isStale = () => gen !== playbackGenRef.current
 
     function showError(reason: string) {
+      if (isStale()) return
       console.error('[play] playback failed:', reason, 'project:', pid)
       setLoadingProjectId(null)
       setPlayingProjectId(null)
@@ -623,30 +702,38 @@ export default function BandPage() {
     }
 
     audio.oncanplay = () => {
-      console.log('[play] canplay fired — resuming')
+      if (isStale()) return
+      console.log('[play] canplay fired — starting playback')
+      audio.play().catch(err => {
+        if (isStale()) return
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        showError(err instanceof Error ? err.message : String(err))
+      })
     }
     audio.onplaying = () => {
+      if (isStale()) return
       console.log('[play] playing — audio started')
       setLoadingProjectId(null)
       setPlayingProjectId(pid)
     }
     audio.onended = () => {
+      if (isStale()) return
       console.log('[play] ended')
       setPlayingProjectId(null)
     }
     audio.onerror = () => {
+      if (isStale()) return
       const err = audio.error
+      if (err?.code === MediaError.MEDIA_ERR_ABORTED) return
       showError(err ? `MediaError code=${err.code} msg="${err.message}"` : 'unknown')
     }
     audio.onstalled = () => {
+      if (isStale()) return
       console.warn('[play] stalled — network may be slow, waiting...')
     }
 
+    console.log('[play] loading mix for project', pid)
     audio.src = `/api/projects/${pid}/mix`
-    console.log('[play] set src, calling play()')
-    audio.play().catch(err => {
-      showError(err instanceof Error ? err.message : String(err))
-    })
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -697,11 +784,45 @@ export default function BandPage() {
           <div className="min-w-0">
             {band && (
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
-                FOUNDED {formatFoundedHero(band.created_at)}
+                ON TRACKBASE SINCE {formatFoundedHero(band.created_at)}
               </div>
             )}
-            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter truncate m-0">
-              {band?.name}
+            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter m-0 min-w-0">
+              {bandNameEditing ? (
+                <input
+                  ref={bandNameInputRef}
+                  value={bandNameValue}
+                  onChange={e => setBandNameValue(e.target.value.slice(0, 50))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') commitBandRename()
+                    if (e.key === 'Escape') setBandNameEditing(false)
+                  }}
+                  onBlur={commitBandRename}
+                  className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter bg-background border border-ember px-2 py-1 outline-none w-full max-w-full"
+                />
+              ) : (
+                <span
+                  className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' ? 'cursor-text' : ''}`}
+                  onDoubleClick={myRole === 'owner' ? startBandRename : undefined}
+                >
+                  <span className={`truncate transition-colors ${bandNameFlash ? 'text-ember' : ''}`}>
+                    {band?.name}
+                  </span>
+                  {myRole === 'owner' && (
+                    <button
+                      type="button"
+                      onClick={startBandRename}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
+                      title="Rename band"
+                      aria-label="Rename band"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden>
+                        <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  )}
+                </span>
+              )}
             </h1>
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
               {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} · {members.length} MEMBER{members.length !== 1 ? 'S' : ''} · {roleLabel}
@@ -846,16 +967,60 @@ export default function BandPage() {
         <aside className="space-y-6 lg:space-y-8 min-w-0">
           {/* Members */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <SectionLabel>MEMBERS</SectionLabel>
-              <button
-                type="button"
-                onClick={handleCopyInvite}
-                className="text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
-              >
-                + Invite
-              </button>
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <SectionLabel>MEMBERS</SectionLabel>
+                {myRole === 'owner' && pendingJoinRequests.length > 0 && (
+                  <span className="text-[9px] font-bold uppercase tracking-widest bg-ember text-white px-1.5 py-0.5 shrink-0">
+                    {pendingJoinRequests.length} pending
+                  </span>
+                )}
+              </div>
             </div>
+
+            {myRole === 'owner' && pendingJoinRequests.length > 0 && (
+              <div className="mb-3 border border-ember/40 bg-ember-soft/30">
+                <div className="px-3 py-2 border-b border-ember/20 text-[9px] font-bold uppercase tracking-widest text-ember">
+                  Join requests
+                </div>
+                <div className="divide-y divide-border">
+                  {pendingJoinRequests.map(req => {
+                    const username = req.profile?.username ?? 'user'
+                    const initials = avatarInitials(username, 'user')
+                    return (
+                      <div key={req.id} className="flex items-center gap-3 px-3 py-2.5">
+                        <div className="size-8 bg-surface-2 grid place-items-center text-[10px] font-bold shrink-0">
+                          {initials}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold truncate">@{username}</div>
+                          <div className="text-[9px] text-muted-foreground">Wants to join</div>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={resolvingRequestId === req.id}
+                            onClick={() => handleResolveJoinRequest(req.id, 'approve')}
+                            className="text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online hover:bg-online/10 bg-transparent cursor-pointer disabled:opacity-50"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            disabled={resolvingRequestId === req.id}
+                            onClick={() => handleResolveJoinRequest(req.id, 'reject')}
+                            className="text-[9px] uppercase tracking-widest px-2 py-1 border border-border text-muted-foreground hover:border-destructive hover:text-destructive bg-transparent cursor-pointer disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="border border-border bg-surface divide-y divide-border">
               {members.map(m => {
                 const username = m.profiles?.username ?? 'user'
@@ -942,19 +1107,43 @@ export default function BandPage() {
                 )
               })}
             </div>
-            <button
-              type="button"
-              onClick={handleCopyInvite}
-              disabled={inviteCopying}
-              className={`w-full mt-3 flex items-center justify-center gap-2 border px-3 py-2 text-[10px] uppercase tracking-widest transition ${
-                inviteCopied
-                  ? 'border-online text-online'
-                  : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-              } bg-transparent cursor-pointer disabled:opacity-50`}
-            >
-              {inviteCopied ? <IconCheck /> : <IconCopy />}
-              {inviteCopied ? 'Copied!' : 'Copy invite link'}
-            </button>
+
+            {myRole === 'owner' && inviteCode && (
+              <div className="mt-3 border border-border bg-surface px-3 py-3 space-y-2">
+                <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Invite code
+                </div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 font-mono text-sm tracking-wider text-foreground bg-background border border-border px-3 py-2">
+                    {inviteCode}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={handleCopyInviteCode}
+                    disabled={inviteCopying}
+                    className={`shrink-0 size-9 border grid place-items-center transition bg-transparent cursor-pointer disabled:opacity-50 ${
+                      inviteCopied
+                        ? 'border-online text-online'
+                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                    }`}
+                    aria-label="Copy invite code"
+                  >
+                    {inviteCopied ? <IconCheck /> : <IconCopy />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground m-0 leading-relaxed">
+                  Share this code so others can request to join. You approve each request.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRegenerateInviteCode}
+                  disabled={regeneratingCode}
+                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
+                >
+                  {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Recent activity — projects tab only */}

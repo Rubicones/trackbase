@@ -31,42 +31,60 @@ export default function AuthCallbackPage() {
       return '/dashboard'
     }
 
-    async function resolveDestination(userId: string, accessToken: string, expiresIn: number) {
-      document.cookie = `sb-at=${accessToken}; path=/; max-age=${expiresIn}; SameSite=Lax`
+    async function refreshAuthCookie(session: { access_token: string; expires_in?: number }) {
+      document.cookie = `sb-at=${session.access_token}; path=/; max-age=${session.expires_in ?? 3600}; SameSite=Lax`
+    }
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('id', userId)
-        .maybeSingle()
+    async function resolveDestination(session: {
+      user: { id: string; user_metadata?: { username?: string; onboarding_complete?: boolean } }
+      access_token: string
+      expires_in?: number
+    }) {
+      await refreshAuthCookie(session)
 
-      if (profile?.username) {
-        router.replace(readNext())
-      } else {
+      const meta = session.user.user_metadata
+      if (!meta?.username) {
         router.replace('/onboarding')
+        return
       }
+
+      if (meta.onboarding_complete) {
+        router.replace(readNext())
+        return
+      }
+
+      const statusRes = await fetch('/api/me/setup-status')
+      const status = statusRes.ok ? await statusRes.json() : null
+
+      if (status?.can_use_app) {
+        const { error } = await supabase.auth.updateUser({
+          data: { onboarding_complete: true },
+        })
+        if (!error) {
+          const { data: { session: refreshed } } = await supabase.auth.refreshSession()
+          if (refreshed) {
+            await refreshAuthCookie(refreshed)
+          }
+        }
+        router.replace(readNext())
+        return
+      }
+
+      router.replace('/onboarding?step=3')
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event !== 'SIGNED_IN' || !session) return
         subscription.unsubscribe()
-        resolveDestination(
-          session.user.id,
-          session.access_token,
-          session.expires_in ?? 3600,
-        )
+        resolveDestination(session)
       }
     )
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) return
       subscription.unsubscribe()
-      resolveDestination(
-        session.user.id,
-        session.access_token,
-        session.expires_in ?? 3600,
-      )
+      resolveDestination(session)
     })
 
     return () => subscription.unsubscribe()

@@ -24,6 +24,9 @@ interface DashboardBand {
   projectCount: number; memberCount: number; lastUpdated: string
   latestActivity: ActivityItem | null
   storageBytes: number; storageLimitBytes: number
+  isPending?: boolean
+  joinRequestId?: string
+  joinRequestedAt?: string
 }
 
 type FilterTab = 'all' | 'owner' | 'member' | 'recent'
@@ -119,6 +122,86 @@ function TbModal({ children, onClose }: { children: React.ReactNode; onClose: ()
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
+
+function JoinBandModal({ onClose, onSubmitted }: {
+  onClose: () => void
+  onSubmitted: (bandName: string) => void
+}) {
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [preview, setPreview] = useState<{ band_name: string; member_count: number } | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  useEffect(() => {
+    const raw = code.trim()
+    if (!raw) { setPreview(null); setError(''); return }
+    setChecking(true)
+    const t = setTimeout(async () => {
+      const res = await fetch(`/api/bands/join/check?code=${encodeURIComponent(raw)}`)
+      const data = await res.json()
+      if (data.valid) {
+        setPreview({ band_name: data.band_name, member_count: data.member_count })
+        setError('')
+      } else {
+        setPreview(null)
+        setError(data.error ?? 'Invalid invite code')
+      }
+      setChecking(false)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [code])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!code.trim() || !preview) return
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/bands/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      onSubmitted(data.band_name ?? preview.band_name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-1 m-0">Join a band</p>
+      <p className="text-sm text-muted-foreground m-0 mb-4">
+        Enter the invite code from the band owner. They&apos;ll need to approve your request.
+      </p>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <TbInput
+          value={code}
+          onChange={e => setCode(e.target.value.toUpperCase())}
+          placeholder="e.g. BLUE-JAM-42"
+          autoFocus
+          className="font-mono tracking-wider"
+        />
+        {checking && <p className="text-xs text-muted-foreground m-0">Checking code…</p>}
+        {preview && !checking && (
+          <p className="text-xs text-muted-foreground m-0">
+            Request to join <span className="text-foreground font-bold">{preview.band_name}</span>
+            {' '}({preview.member_count} member{preview.member_count !== 1 ? 's' : ''})
+          </p>
+        )}
+        {error && <p className="text-destructive text-xs m-0">{error}</p>}
+        <div className="flex gap-2 justify-end mt-1">
+          <TbButton onClick={onClose}>Cancel</TbButton>
+          <TbButton type="submit" variant="primary" disabled={loading || !preview || checking} className="px-4">
+            {loading ? 'Sending…' : 'Send request'}
+          </TbButton>
+        </div>
+      </form>
+    </TbModal>
+  )
+}
 
 function NewBandModal({ onClose, onCreated }: {
   onClose: () => void; onCreated: (bandId: string) => void
@@ -260,12 +343,15 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const { palette } = usePalette()
-  const isOwner = band.userRole === 'owner'
+  const isPending = band.isPending === true
+  const isOwner = !isPending && band.userRole === 'owner'
   const color = avatarColor(band.name, palette)
   const initials = avatarInitials(band.name, 'band')
-  const storagePct = band.storageBytes / band.storageLimitBytes
-  const roleLabel = (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
-  const activityLine = band.latestActivity
+  const storagePct = band.storageLimitBytes > 0 ? band.storageBytes / band.storageLimitBytes : 0
+  const roleLabel = isPending
+    ? 'pending'
+    : (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
+  const activityLine = !isPending && band.latestActivity
     ? formatActivityLine(
         band.latestActivity.action,
         band.latestActivity.subject,
@@ -285,59 +371,82 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
 
   return (
     <article
-      role="link"
-      tabIndex={0}
-      onClick={onNavigate}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate() } }}
-      className="group relative bg-background p-5 hover:bg-surface transition-colors animate-slide-in cursor-pointer text-left"
+      role={isPending ? 'group' : 'link'}
+      tabIndex={isPending ? -1 : 0}
+      onClick={isPending ? undefined : onNavigate}
+      onKeyDown={isPending ? undefined : e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate() }
+      }}
+      aria-disabled={isPending}
+      className={`group relative bg-background p-5 transition-colors animate-slide-in text-left ${
+        isPending
+          ? 'opacity-60 cursor-not-allowed border border-dashed border-border'
+          : 'hover:bg-surface cursor-pointer'
+      }`}
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex items-start justify-between mb-5">
         <div
-          className="size-12 grid place-items-center font-display font-bold text-lg text-background shrink-0"
-          style={{ backgroundColor: color }}
+          className={`size-12 grid place-items-center font-display font-bold text-lg shrink-0 ${
+            isPending ? 'text-muted-foreground bg-surface-2 border border-border' : 'text-background'
+          }`}
+          style={isPending ? undefined : { backgroundColor: color }}
         >
           {initials}
         </div>
         <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
           <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
-            isOwner ? 'border-ember text-ember' : 'border-border text-muted-foreground'
+            isPending
+              ? 'border-ember/50 text-ember'
+              : isOwner
+                ? 'border-ember text-ember'
+                : 'border-border text-muted-foreground'
           }`}>
             {roleLabel}
           </span>
-          <div ref={menuRef} className="relative">
-            <button
-              type="button"
-              aria-label="Band options"
-              aria-expanded={menuOpen}
-              onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
-              className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
-            >
-              <DotsVIcon />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl py-1">
-                <DropItem label="Open band" onClick={() => { setMenuOpen(false); onNavigate() }} />
-                <div className="h-px bg-border my-1" />
-                {isOwner
-                  ? <DropItem label="Delete band" danger onClick={() => { setMenuOpen(false); onDelete() }} />
-                  : <DropItem label="Leave band" danger onClick={() => { setMenuOpen(false); onLeave() }} />
-                }
-              </div>
-            )}
-          </div>
+          {!isPending && (
+            <div ref={menuRef} className="relative">
+              <button
+                type="button"
+                aria-label="Band options"
+                aria-expanded={menuOpen}
+                onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
+                className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+              >
+                <DotsVIcon />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl py-1">
+                  <DropItem label="Open band" onClick={() => { setMenuOpen(false); onNavigate() }} />
+                  <div className="h-px bg-border my-1" />
+                  {isOwner
+                    ? <DropItem label="Delete band" danger onClick={() => { setMenuOpen(false); onDelete() }} />
+                    : <DropItem label="Leave band" danger onClick={() => { setMenuOpen(false); onLeave() }} />
+                  }
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      <h3 className="font-display text-xl uppercase tracking-tight group-hover:text-ember transition-colors m-0">
+      <h3 className={`font-display text-xl uppercase tracking-tight m-0 ${
+        isPending ? 'text-muted-foreground' : 'group-hover:text-ember transition-colors'
+      }`}>
         {band.name}
       </h3>
       <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
-        {band.projectCount} PROJECTS · {band.memberCount} MEMBERS · {formatRelative(band.lastUpdated)}
+        {isPending
+          ? `REQUESTED ${formatRelative(band.joinRequestedAt ?? band.lastUpdated).toUpperCase()}`
+          : `${band.projectCount} PROJECTS · ${band.memberCount} MEMBERS · ${formatRelative(band.lastUpdated)}`}
       </div>
 
       <div className="mt-5 space-y-3">
-        {activityLine ? (
+        {isPending ? (
+          <div className="text-[10px] text-muted-foreground line-clamp-2 border-l-2 border-ember/60 pl-2 leading-relaxed">
+            Waiting for the owner to approve your join request. You&apos;ll get access once they do.
+          </div>
+        ) : activityLine ? (
           <div className="text-[10px] text-muted-foreground line-clamp-1 border-l-2 border-ember/60 pl-2" title={activityLine}>
             {activityLine}
           </div>
@@ -346,20 +455,22 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
             No recent activity
           </div>
         )}
-        <div>
-          <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
-            <span>STORAGE</span>
-            <span className="tabular-nums text-foreground">
-              {formatBytes(band.storageBytes)} / {formatLimit(band.storageLimitBytes)}
-            </span>
+        {!isPending && (
+          <div>
+            <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
+              <span>STORAGE</span>
+              <span className="tabular-nums text-foreground">
+                {formatBytes(band.storageBytes)} / {formatLimit(band.storageLimitBytes)}
+              </span>
+            </div>
+            <div className="h-1 bg-surface-2 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-ember'}`}
+                style={{ width: `${Math.min(storagePct * 100, 100)}%` }}
+              />
+            </div>
           </div>
-          <div className="h-1 bg-surface-2 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-ember'}`}
-              style={{ width: `${Math.min(storagePct * 100, 100)}%` }}
-            />
-          </div>
-        </div>
+        )}
       </div>
     </article>
   )
@@ -408,6 +519,7 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('')
 
   const [showNewBand, setShowNewBand] = useState(false)
+  const [showJoinBand, setShowJoinBand] = useState(false)
   const [deletingBand, setDeletingBand] = useState<DashboardBand | null>(null)
   const [leavingBand, setLeavingBand] = useState<DashboardBand | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -435,6 +547,17 @@ export default function DashboardPage() {
       .finally(() => setLoadingData(false))
   }, [authLoading, user])
 
+  function reloadDashboard() {
+    fetch('/api/dashboard')
+      .then(r => r.json())
+      .then(data => {
+        setBands(data.bands ?? [])
+        setTotalBands(data.totalBands ?? 0)
+        setTotalProjects(data.totalProjects ?? 0)
+        setTotalCollaborators(data.totalCollaborators ?? 0)
+      })
+  }
+
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -452,6 +575,7 @@ export default function DashboardPage() {
 
   const filteredBands = bands
     .filter(b => {
+      if (b.isPending) return filter === 'all' || filter === 'recent'
       if (filter === 'owner') return b.userRole === 'owner'
       if (filter === 'member') return b.userRole === 'member'
       return true
@@ -463,7 +587,11 @@ export default function DashboardPage() {
       return bAct.localeCompare(aAct)
     })
 
-  const totalStorageBytes = bands.reduce((s, b) => s + b.storageBytes, 0)
+  const totalStorageBytes = bands
+    .filter(b => !b.isPending)
+    .reduce((s, b) => s + b.storageBytes, 0)
+
+  const pendingBandCount = bands.filter(b => b.isPending).length
 
   if (authLoading) return <BrandSpinner />
 
@@ -481,7 +609,11 @@ export default function DashboardPage() {
               <span className="text-ember">{displayName(profile?.username)}</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-3 max-w-md m-0">
-              {totalBands} band{totalBands !== 1 ? 's' : ''}. {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
+              {totalBands} band{totalBands !== 1 ? 's' : ''}
+              {pendingBandCount > 0 && (
+                <>, {pendingBandCount} pending</>
+              )}
+              . {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
               {totalCollaborators > 0 && (
                 <> {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''} across your roster.</>
               )}
@@ -539,6 +671,9 @@ export default function DashboardPage() {
             <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="h-10 px-4 shrink-0">
               + New band
             </TbButton>
+            <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
+              Join band
+            </TbButton>
           </div>
         </div>
       </section>
@@ -547,20 +682,20 @@ export default function DashboardPage() {
       <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">
         {loadingData ? (
           <div className="py-20 flex justify-center">
-            <BrandSpinner fullscreen={false} />
+            <BrandSpinner fullscreen={false} label="Fetching bands" />
           </div>
         ) : bands.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center border border-border bg-surface/30 px-6">
             <div className="font-display text-2xl uppercase tracking-tight text-muted-foreground">No bands yet</div>
             <p className="text-sm text-muted-foreground max-w-sm m-0">
-              Create your first band or join one with an invite link
+              Create your first band or request to join one with an invite code
             </p>
             <div className="flex flex-wrap gap-3 justify-center mt-2">
               <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="px-4 py-2">
                 Create a band
               </TbButton>
-              <TbButton onClick={() => router.push('/onboarding')} className="px-4 py-2">
-                Join with invite link
+              <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
+                Join with code
               </TbButton>
             </div>
           </div>
@@ -579,12 +714,12 @@ export default function DashboardPage() {
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border border border-border">
                 {filteredBands.map((band, i) => (
                   <BandCard
-                    key={band.id}
+                    key={band.isPending ? `pending-${band.joinRequestId}` : band.id}
                     band={band}
                     index={i}
-                    onNavigate={() => router.push(`/band/${band.id}`)}
-                    onDelete={() => setDeletingBand(band)}
-                    onLeave={() => setLeavingBand(band)}
+                    onNavigate={() => { if (!band.isPending) router.push(`/band/${band.id}`) }}
+                    onDelete={() => { if (!band.isPending) setDeletingBand(band) }}
+                    onLeave={() => { if (!band.isPending) setLeavingBand(band) }}
                   />
                 ))}
 
@@ -596,7 +731,7 @@ export default function DashboardPage() {
                   >
                     <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-ember">+</div>
                     <div className="font-display text-sm uppercase tracking-widest">Create new band</div>
-                    <div className="text-[10px] text-muted-foreground">or paste an invite code</div>
+                    <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
                   </button>
                 )}
               </div>
@@ -613,6 +748,16 @@ export default function DashboardPage() {
         }
       />
 
+      {showJoinBand && (
+        <JoinBandModal
+          onClose={() => setShowJoinBand(false)}
+          onSubmitted={bandName => {
+            setShowJoinBand(false)
+            reloadDashboard()
+            showToastMsg(`Request sent to ${bandName}`)
+          }}
+        />
+      )}
       {showNewBand && (
         <NewBandModal
           onClose={() => setShowNewBand(false)}

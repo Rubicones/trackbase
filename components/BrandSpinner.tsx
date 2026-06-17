@@ -1,22 +1,37 @@
 'use client'
 
-import { Spinner } from '@/components/ui/Spinner'
+import { usePathname } from 'next/navigation'
+import { MixLoader } from '@/components/MixLoader'
+import { SpinnerBars } from '@/components/ui/Spinner'
+import { getLoadingLabel } from '@/lib/loadingLabels'
 
 export function BrandSpinner({
   fullscreen = true,
-  label = 'Loading',
+  label,
 }: {
   fullscreen?: boolean
   label?: string
 }) {
+  const pathname = usePathname()
+  const resolvedLabel = label ?? getLoadingLabel(pathname)
+
+  if (fullscreen) {
+    return <MixLoader label={resolvedLabel} fullscreen />
+  }
+
   return (
     <div
-      className={fullscreen ? 'page-loading-overlay' : 'page-loading-inline'}
+      className="page-loading-inline"
       role="status"
       aria-live="polite"
-      aria-label={label}
+      aria-label={resolvedLabel}
     >
-      <Spinner size={40} label={fullscreen ? undefined : label} />
+      <div className="flex items-center gap-3">
+        <SpinnerBars />
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          {resolvedLabel}
+        </span>
+      </div>
     </div>
   )
 }

@@ -10,8 +10,8 @@ import { streamR2ObjectToFile, uploadToR2, deleteFromR2, r2Key } from '@/lib/r2'
 import { audioToFlacFromFile } from '@/lib/ffmpeg'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
-import { DEFAULT_TRACK_ICON_COLOR } from '@/lib/trackIcon'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
+import { randomTrackIconColor } from '@/lib/trackIcon'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -196,11 +196,11 @@ export async function POST(
           file_size_bytes: fileSize ?? midiBuffer.byteLength,
           duration_ms: durationMs,
           position,
-          icon_color: DEFAULT_TRACK_ICON_COLOR,
           file_type: 'midi',
           midi_data: midiData,
           midi_start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
           start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
+          icon_color: randomTrackIconColor(),
         })
         .select()
         .single()
@@ -280,9 +280,9 @@ export async function POST(
           file_size_bytes: fileSizeBytes,
           duration_ms: audioDurationMs || null,
           position,
-          icon_color: DEFAULT_TRACK_ICON_COLOR,
           file_type: 'audio',
           start_bar: audioStartBar,
+          icon_color: randomTrackIconColor(),
         })
         .select()
         .single()

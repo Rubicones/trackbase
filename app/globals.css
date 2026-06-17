@@ -1689,6 +1689,16 @@ html.dark[data-palette="green"] .theme-avatar {
   padding: 24px;
 }
 
+.page-navigation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
 .brand-spinner {
   position: relative;
   display: flex;

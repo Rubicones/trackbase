@@ -1,27 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
 
-// PATCH /api/tracks/[id]/icon — update icon_emoji and icon_color (cosmetic only)
+// PATCH /api/tracks/[id]/icon — update icon_color (track badge / waveform accent)
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const { id } = await params
+    const { icon_color } = await req.json()
 
-  const { id: trackId } = await params
-  const { icon_emoji, icon_color } = await req.json()
+    if (typeof icon_color !== 'string' || !icon_color.trim()) {
+      return NextResponse.json({ error: 'icon_color is required' }, { status: 400 })
+    }
 
-  const { error } = await supabase
-    .from('tracks')
-    .update({
-      ...(icon_emoji !== undefined ? { icon_emoji } : {}),
-      ...(icon_color !== undefined ? { icon_color } : {}),
-    })
-    .eq('id', trackId)
+    const { data: track, error } = await supabase
+      .from('tracks')
+      .update({ icon_color: icon_color.trim() })
+      .eq('id', id)
+      .select()
+      .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+    if (error) throw error
+    return NextResponse.json({ track })
+  } catch (err) {
+    console.error(err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }

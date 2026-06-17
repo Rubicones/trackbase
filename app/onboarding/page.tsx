@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -21,40 +21,101 @@ import {
   AuthSteps,
   AuthModeCard,
 } from '@/components/auth/AuthPrimitives'
+import { ThemePicker } from '@/components/design/ThemePicker'
+
+type OnboardingStep = 1 | 2 | 3
 
 type BandMode = 'create' | 'join'
-type InviteStatus = 'idle' | 'checking' | 'valid' | 'invalid'
+type CodeStatus = 'idle' | 'checking' | 'valid' | 'invalid'
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
 
-export default function OnboardingPage() {
-  const router = useRouter()
-  const { user, loading: authLoading, refreshProfile } = useAuth()
-  const [step, setStep] = useState<1 | 2>(1)
+async function persistUsername(userId: string, username: string) {
+  const supabase = getSupabaseClient()
+  const clean = username.trim().toLowerCase()
 
+  const { error: profileErr } = await supabase
+    .from('profiles')
+    .update({ username: clean })
+    .eq('id', userId)
+  if (profileErr) throw profileErr
+
+  const { error: metaErr } = await supabase.auth.updateUser({ data: { username: clean } })
+  if (metaErr) throw metaErr
+
+  const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
+  if (refreshErr) throw refreshErr
+  if (newSession) {
+    document.cookie = `sb-at=${newSession.access_token}; path=/; SameSite=Lax; max-age=${newSession.expires_in ?? 3600}`
+  }
+}
+
+async function markOnboardingComplete() {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.auth.updateUser({ data: { onboarding_complete: true } })
+  if (error) throw error
+  const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
+  if (refreshErr) throw refreshErr
+  if (newSession) {
+    document.cookie = `sb-at=${newSession.access_token}; path=/; SameSite=Lax; max-age=${newSession.expires_in ?? 3600}`
+  }
+}
+
+function OnboardingContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { user, loading: authLoading, refreshProfile } = useAuth()
+  const [step, setStep] = useState<OnboardingStep>(1)
   const [username, setUsername] = useState('')
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle')
   const usernameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [bandMode, setBandMode] = useState<BandMode>('create')
   const [bandName, setBandName] = useState('')
-  const [inviteInput, setInviteInput] = useState('')
-  const [inviteStatus, setInviteStatus] = useState<InviteStatus>('idle')
-  const [inviteInfo, setInviteInfo] = useState<{
+  const [inviteCode, setInviteCode] = useState('')
+  const [codeStatus, setCodeStatus] = useState<CodeStatus>('idle')
+  const [codeInfo, setCodeInfo] = useState<{
     band_id: string
     band_name: string
     member_count: number
+    pending_request?: boolean
   } | null>(null)
-  const [inviteError, setInviteError] = useState('')
-  const inviteDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [codeError, setCodeError] = useState('')
+  const codeDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [submitting, setSubmitting] = useState(false)
+  const [savingUsername, setSavingUsername] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!authLoading && user?.user_metadata?.username) {
+    if (authLoading || !user) return
+
+    if (user.user_metadata?.onboarding_complete) {
       router.replace('/dashboard')
+      return
     }
-  }, [authLoading, user, router])
+
+    fetch('/api/me/setup-status')
+      .then(r => r.json())
+      .then(async status => {
+        if (status.band_count > 0) {
+          await markOnboardingComplete()
+          await refreshProfile()
+          router.replace('/dashboard')
+          return
+        }
+        const stepParam = searchParams.get('step')
+        if (user.user_metadata?.username) {
+          setStep(3)
+        } else if (stepParam === '2') {
+          setStep(2)
+        } else if (stepParam === '3') {
+          setStep(1)
+        }
+      })
+      .catch(() => {
+        if (user.user_metadata?.username) setStep(3)
+      })
+  }, [authLoading, user, router, searchParams, refreshProfile])
 
   useEffect(() => {
     if (usernameDebounce.current) clearTimeout(usernameDebounce.current)
@@ -83,55 +144,68 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (bandMode !== 'join') return
-    if (inviteDebounce.current) clearTimeout(inviteDebounce.current)
-    const raw = inviteInput.trim()
+    if (codeDebounce.current) clearTimeout(codeDebounce.current)
+    const raw = inviteCode.trim()
     if (!raw) {
-      setInviteStatus('idle')
-      setInviteInfo(null)
-      setInviteError('')
+      setCodeStatus('idle')
+      setCodeInfo(null)
+      setCodeError('')
       return
     }
 
-    const token = raw.includes('/invite/') ? raw.split('/invite/')[1].trim() : raw
-
-    setInviteStatus('checking')
-    inviteDebounce.current = setTimeout(async () => {
-      const res = await fetch(`/api/invites/${encodeURIComponent(token)}/info`)
+    setCodeStatus('checking')
+    codeDebounce.current = setTimeout(async () => {
+      const res = await fetch(`/api/bands/join/check?code=${encodeURIComponent(raw)}`)
       const data = await res.json()
       if (data.valid) {
-        setInviteStatus('valid')
-        setInviteInfo({
+        setCodeStatus('valid')
+        setCodeInfo({
           band_id: data.band_id,
           band_name: data.band_name,
           member_count: data.member_count,
+          pending_request: data.pending_request,
         })
-        setInviteError('')
+        setCodeError('')
       } else {
-        setInviteStatus('invalid')
-        setInviteInfo(null)
-        setInviteError(data.error ?? 'Invalid or expired invite code')
+        setCodeStatus('invalid')
+        setCodeInfo(null)
+        setCodeError(data.error ?? 'Invalid invite code')
       }
     }, 500)
 
     return () => {
-      if (inviteDebounce.current) clearTimeout(inviteDebounce.current)
+      if (codeDebounce.current) clearTimeout(codeDebounce.current)
     }
-  }, [inviteInput, bandMode])
+  }, [inviteCode, bandMode])
+
+  async function handleUsernameContinue() {
+    if (usernameStatus !== 'available' || !user || savingUsername) return
+    setSavingUsername(true)
+    setError('')
+    try {
+      await persistUsername(user.id, username)
+      await refreshProfile()
+      setStep(3)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save username')
+    } finally {
+      setSavingUsername(false)
+    }
+  }
 
   async function handleFinish() {
     const canSubmit =
       bandMode === 'create'
         ? bandName.trim().length > 0
-        : inviteStatus === 'valid' && inviteInfo !== null
-    if (!canSubmit || submitting) return
+        : codeStatus === 'valid' && codeInfo !== null
+    if (!canSubmit || submitting || !user) return
 
     setSubmitting(true)
     setError('')
     try {
-      const supabase = getSupabaseClient()
-      const clean = username.trim().toLowerCase()
-
-      let targetBandId: string
+      if (!user.user_metadata?.username) {
+        await persistUsername(user.id, username)
+      }
 
       if (bandMode === 'create') {
         const bandRes = await fetch('/api/bands', {
@@ -141,35 +215,21 @@ export default function OnboardingPage() {
         })
         if (!bandRes.ok) throw new Error((await bandRes.json()).error ?? 'Band creation failed')
         const { band } = await bandRes.json()
-        targetBandId = band.id
-      } else {
-        const rawToken = inviteInput.trim()
-        const token = rawToken.includes('/invite/') ? rawToken.split('/invite/')[1].trim() : rawToken
-        const joinRes = await fetch(`/api/invites/${encodeURIComponent(token)}/accept`, {
-          method: 'POST',
-        })
-        if (!joinRes.ok) throw new Error((await joinRes.json()).error ?? 'Failed to join band')
-        const joinData = await joinRes.json()
-        targetBandId = joinData.band_id
+        await markOnboardingComplete()
+        await refreshProfile()
+        router.replace(`/band/${band.id}`)
+        return
       }
 
-      const { error: profileErr } = await supabase
-        .from('profiles')
-        .update({ username: clean })
-        .eq('id', user!.id)
-      if (profileErr) throw profileErr
-
-      const { error: metaErr } = await supabase.auth.updateUser({ data: { username: clean } })
-      if (metaErr) throw metaErr
-
-      const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
-      if (refreshErr) throw refreshErr
-      if (newSession) {
-        document.cookie = `sb-at=${newSession.access_token}; path=/; SameSite=Lax; max-age=${newSession.expires_in ?? 3600}`
-      }
-
+      const joinRes = await fetch('/api/bands/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: inviteCode.trim() }),
+      })
+      if (!joinRes.ok) throw new Error((await joinRes.json()).error ?? 'Failed to submit join request')
+      await markOnboardingComplete()
       await refreshProfile()
-      router.replace(`/band/${targetBandId}`)
+      router.replace('/dashboard')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -180,7 +240,7 @@ export default function OnboardingPage() {
   if (authLoading) return <AuthLoadingScreen />
 
   const canProceed =
-    bandMode === 'create' ? bandName.trim().length > 0 : inviteStatus === 'valid'
+    bandMode === 'create' ? bandName.trim().length > 0 : codeStatus === 'valid'
 
   const usernameFieldStatus =
     usernameStatus === 'checking'
@@ -191,14 +251,24 @@ export default function OnboardingPage() {
           ? 'invalid'
           : undefined
 
-  const inviteFieldStatus =
-    inviteStatus === 'checking'
+  const codeFieldStatus =
+    codeStatus === 'checking'
       ? 'checking'
-      : inviteStatus === 'valid'
+      : codeStatus === 'valid'
         ? 'valid'
-        : inviteStatus === 'invalid'
+        : codeStatus === 'invalid'
           ? 'invalid'
           : undefined
+
+  const stepTitle =
+    step === 1 ? 'Choose your theme' : step === 2 ? 'Pick a username' : 'Create or join a band'
+
+  const stepSubtitle =
+    step === 1
+      ? 'Pick a look for Trackbase — you can change this anytime in settings.'
+      : step === 2
+        ? 'This is how your bandmates will see you across Trackbase.'
+        : 'Start your own collective or request to join one with an invite code.'
 
   return (
     <AuthShell>
@@ -207,19 +277,32 @@ export default function OnboardingPage() {
 
         <AuthCardHeader
           tag="02 // Onboarding"
-          title={step === 1 ? 'Pick a username' : 'Join or create a band'}
-          subtitle={
-            step === 1
-              ? 'This is how your bandmates will see you across Trackbase.'
-              : 'Start fresh or jump into an existing project. You can always do both later.'
-          }
+          title={stepTitle}
+          subtitle={stepSubtitle}
         />
 
         <AuthCardBody>
-          <AuthSteps current={step} />
+          <AuthSteps current={step} total={3} />
 
           {step === 1 ? (
             <div className="space-y-4">
+              <div className="border border-border max-h-72 overflow-y-auto">
+                <ThemePicker />
+              </div>
+              <AuthButton onClick={() => setStep(2)}>
+                Continue →
+              </AuthButton>
+            </div>
+          ) : step === 2 ? (
+            <div className="space-y-4">
+              <AuthButton
+                variant="link"
+                className="w-auto py-0! -mt-1"
+                onClick={() => setStep(1)}
+              >
+                ← Back
+              </AuthButton>
+
               <div className="space-y-1.5">
                 <AuthFieldLabel htmlFor="username">Username</AuthFieldLabel>
                 <div className="relative">
@@ -232,14 +315,12 @@ export default function OnboardingPage() {
                     status={usernameFieldStatus}
                     className="pr-9"
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && usernameStatus === 'available') setStep(2)
+                      if (e.key === 'Enter' && usernameStatus === 'available') handleUsernameContinue()
                     }}
                   />
                   {usernameFieldStatus && <AuthInputStatus status={usernameFieldStatus} />}
                 </div>
-                <AuthHint
-                  error={usernameStatus === 'invalid' || usernameStatus === 'taken'}
-                >
+                <AuthHint error={usernameStatus === 'invalid' || usernameStatus === 'taken'}>
                   {usernameStatus === 'invalid'
                     ? '3–20 chars — letters, numbers, underscores only'
                     : usernameStatus === 'taken'
@@ -250,22 +331,26 @@ export default function OnboardingPage() {
                 </AuthHint>
               </div>
 
+              {error && <AuthHint error>{error}</AuthHint>}
+
               <AuthButton
-                disabled={usernameStatus !== 'available'}
-                onClick={() => setStep(2)}
+                disabled={usernameStatus !== 'available' || savingUsername}
+                onClick={handleUsernameContinue}
               >
-                Continue →
+                {savingUsername ? 'Saving…' : 'Continue →'}
               </AuthButton>
             </div>
           ) : (
             <div className="space-y-4">
-              <AuthButton
-                variant="link"
-                className="w-auto py-0! -mt-1"
-                onClick={() => setStep(1)}
-              >
-                ← Back
-              </AuthButton>
+              {!user?.user_metadata?.username && (
+                <AuthButton
+                  variant="link"
+                  className="w-auto py-0! -mt-1"
+                  onClick={() => setStep(2)}
+                >
+                  ← Back
+                </AuthButton>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-3">
                 <AuthModeCard
@@ -273,14 +358,14 @@ export default function OnboardingPage() {
                   onClick={() => setBandMode('create')}
                   icon={<PlusIcon />}
                   title="Create a band"
-                  description="Start fresh and invite your bandmates"
+                  description="Start fresh and share your invite code"
                 />
                 <AuthModeCard
                   selected={bandMode === 'join'}
                   onClick={() => setBandMode('join')}
                   icon={<DoorIcon />}
                   title="Join a band"
-                  description="Paste an invite link or code"
+                  description="Enter an invite code from the owner"
                   accent="online"
                 />
               </div>
@@ -305,25 +390,26 @@ export default function OnboardingPage() {
                   <div className="relative">
                     <AuthInput
                       id="invite-code"
-                      value={inviteInput}
-                      onChange={e => setInviteInput(e.target.value)}
-                      placeholder="Paste invite link or code"
+                      value={inviteCode}
+                      onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                      placeholder="e.g. BLUE-JAM-42"
                       autoFocus
-                      status={inviteFieldStatus}
-                      className="pr-9"
+                      status={codeFieldStatus}
+                      className="pr-9 font-mono tracking-wider"
                       onKeyDown={e => {
                         if (e.key === 'Enter') handleFinish()
                       }}
                     />
-                    {inviteFieldStatus && <AuthInputStatus status={inviteFieldStatus} />}
+                    {codeFieldStatus && <AuthInputStatus status={codeFieldStatus} />}
                   </div>
-                  {inviteStatus === 'valid' && inviteInfo && (
+                  {codeStatus === 'valid' && codeInfo && (
                     <AuthHint>
-                      You&apos;ll join: {inviteInfo.band_name} ({inviteInfo.member_count} member
-                      {inviteInfo.member_count !== 1 ? 's' : ''})
+                      {codeInfo.pending_request
+                        ? `Request already pending for ${codeInfo.band_name} — the owner will review it soon.`
+                        : `Request to join ${codeInfo.band_name} (${codeInfo.member_count} member${codeInfo.member_count !== 1 ? 's' : ''}). The owner must approve.`}
                     </AuthHint>
                   )}
-                  {inviteStatus === 'invalid' && <AuthHint error>{inviteError}</AuthHint>}
+                  {codeStatus === 'invalid' && <AuthHint error>{codeError}</AuthHint>}
                 </div>
               )}
 
@@ -334,13 +420,23 @@ export default function OnboardingPage() {
                   ? 'Setting up…'
                   : bandMode === 'create'
                     ? 'Create band & continue →'
-                    : 'Join band & continue →'}
+                    : codeInfo?.pending_request
+                      ? 'Continue to dashboard →'
+                      : 'Send join request →'}
               </AuthButton>
             </div>
           )}
         </AuthCardBody>
       </AuthCard>
     </AuthShell>
+  )
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={<AuthLoadingScreen />}>
+      <OnboardingContent />
+    </Suspense>
   )
 }
 

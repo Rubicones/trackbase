@@ -6,7 +6,10 @@ import type { NextRequest } from 'next/server'
 interface JwtPayload {
   sub: string
   exp: number
-  user_metadata?: { username?: string }
+  user_metadata?: {
+    username?: string
+    onboarding_complete?: boolean
+  }
 }
 
 function decodeJwt(token: string): JwtPayload | null {
@@ -25,11 +28,9 @@ function decodeJwt(token: string): JwtPayload | null {
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
-// Public routes that never require auth
-const PUBLIC_PREFIXES = ['/auth', '/invite', '/api/auth']
+const PUBLIC_PREFIXES = ['/auth', '/api/auth']
 
-// Routes that even authenticated users without a profile can access
-const PROFILE_EXEMPT = ['/onboarding', '/auth', '/invite', '/api/']
+const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
 
 function isPublic(pathname: string) {
   return PUBLIC_PREFIXES.some(p => pathname.startsWith(p))
@@ -44,7 +45,6 @@ function isProfileExempt(pathname: string) {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Static assets / Next internals — skip
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon') ||
@@ -53,32 +53,40 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Legacy invite links — send to join flow
+  if (pathname.startsWith('/invite/')) {
+    return NextResponse.redirect(new URL('/onboarding?step=3', request.url))
+  }
+
   const token = request.cookies.get('sb-at')?.value ?? null
   const payload = token ? decodeJwt(token) : null
   const isAuthed = payload !== null
   const hasUsername = !!payload?.user_metadata?.username
+  const onboardingComplete = !!payload?.user_metadata?.onboarding_complete
 
-  // ── Authenticated user on /auth → send to dashboard ──────────────────────
   if (isAuthed && pathname.startsWith('/auth')) {
-    if (hasUsername) {
+    if (hasUsername && onboardingComplete) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
     return NextResponse.redirect(new URL('/onboarding', request.url))
   }
 
-  // ── Public routes — allow through ─────────────────────────────────────────
   if (isPublic(pathname)) return NextResponse.next()
 
-  // ── Unauthenticated → /auth ───────────────────────────────────────────────
   if (!isAuthed) {
     const url = new URL('/auth', request.url)
     url.searchParams.set('next', pathname)
     return NextResponse.redirect(url)
   }
 
-  // ── Authenticated but no username → /onboarding ───────────────────────────
   if (!hasUsername && !isProfileExempt(pathname)) {
     return NextResponse.redirect(new URL('/onboarding', request.url))
+  }
+
+  if (hasUsername && !onboardingComplete && !isProfileExempt(pathname)) {
+    const url = new URL('/onboarding', request.url)
+    url.searchParams.set('step', '3')
+    return NextResponse.redirect(url)
   }
 
   return NextResponse.next()
@@ -86,10 +94,6 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except static files.
-     * We filter /_next inside the middleware body for clarity.
-     */
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 }

@@ -2,7 +2,6 @@
 
 import type { PaletteId } from '@/lib/palettes'
 import { getActivePalette, usesMonoTracks } from '@/lib/palettes'
-import { TRACK_ICON_COLORS } from '@/lib/trackIcon'
 
 export type TrackColor = { bg: string; bgLight: string; fg: string }
 
@@ -46,36 +45,6 @@ const GREEN_TRACK: TrackColor = {
   bgLight: '#E4F0E6',
 }
 
-/** Visible icon-picker swatches — always colorful / distinct (not washed-out track bg). */
-const COLORFUL_ICON_SWATCHES = TRACK_ICON_COLORS
-
-const BLUE_ICON_SWATCHES = [
-  'rgba(107,157,201,0.35)',
-  'rgba(147,184,217,0.35)',
-  'rgba(74,122,155,0.35)',
-  'rgba(140,180,217,0.35)',
-  'rgba(90,137,181,0.35)',
-  'rgba(168,204,232,0.35)',
-]
-
-const SEPIA_ICON_SWATCHES = [
-  'rgba(196,149,106,0.35)',
-  'rgba(212,184,150,0.35)',
-  'rgba(168,133,106,0.35)',
-  'rgba(184,149,112,0.35)',
-  'rgba(201,168,130,0.35)',
-  'rgba(224,196,168,0.35)',
-]
-
-const GREEN_ICON_SWATCHES = [
-  'rgba(125,175,136,0.35)',
-  'rgba(165,201,173,0.35)',
-  'rgba(90,138,104,0.35)',
-  'rgba(143,185,150,0.35)',
-  'rgba(106,154,117,0.35)',
-  'rgba(181,212,188,0.35)',
-]
-
 function usesUnifiedTrackColor(id: PaletteId): boolean {
   return usesMonoTracks(id) || id === 'blue' || id === 'sepia' || id === 'green'
 }
@@ -104,22 +73,4 @@ export function trackColorAt(_index: number, paletteId?: PaletteId, isDark = fal
     return unifiedTrackColor(id, isDark)
   }
   return DEFAULT_TRACK_PALETTE[_index % DEFAULT_TRACK_PALETTE.length]
-}
-
-/** Icon picker swatches — vivid colors for the popover (waveforms may still be mono). */
-export function getTrackIconSwatches(paletteId?: PaletteId, _isDark = false): string[] {
-  const id = paletteId ?? getActivePalette()
-  switch (id) {
-    case 'blue':
-      return BLUE_ICON_SWATCHES
-    case 'sepia':
-      return SEPIA_ICON_SWATCHES
-    case 'green':
-      return GREEN_ICON_SWATCHES
-    case 'mono':
-    case 'default-mono-tracks':
-    case 'default':
-    default:
-      return COLORFUL_ICON_SWATCHES
-  }
 }

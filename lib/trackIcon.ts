@@ -1,38 +1,52 @@
-/** Default track icon background — light purple from the icon picker palette. */
-export const DEFAULT_TRACK_ICON_COLOR = 'rgba(167,139,250,0.15)'
+/** Vivid swatches for track badge + waveform accent. */
+export const TRACK_ICON_SWATCHES = [
+  '#a78bfa',
+  '#34d399',
+  '#fbbf24',
+  '#f87171',
+  '#60a5fa',
+  '#e879f9',
+  '#f472b6',
+  '#2dd4bf',
+  '#fb923c',
+  '#a3e635',
+] as const
 
-/** Legacy DB default before light purple was introduced. */
-export const LEGACY_TRACK_ICON_COLOR = '#0d0d1f'
+const LEGACY_TRACK_ICON_COLOR = '#0d0d1f'
+/** Washed-out default from an older migration — not a vivid swatch. */
+const LEGACY_SOFT_ICON_COLOR = 'rgba(167,139,250,0.15)'
 
-/** Stored icon picker swatches (light-mode canonical values). */
-export const TRACK_ICON_COLORS = [
-  'rgba(52,211,153,0.15)',
-  'rgba(251,191,36,0.15)',
-  DEFAULT_TRACK_ICON_COLOR,
-  'rgba(232,121,249,0.15)',
-  'rgba(96,165,250,0.15)',
-  'rgba(248,113,113,0.15)',
-  'rgba(255,255,255,0.10)',
-  'rgba(52,211,153,0.25)',
-]
-
-function boostRgbaForDark(color: string): string {
-  const match = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/)
-  if (!match) return color
-
-  const alpha = match[4] !== undefined ? parseFloat(match[4]) : 1
-  const boosted = Math.min(0.55, Math.max(0.32, alpha * 2.4))
-
-  return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${boosted})`
+export function randomTrackIconColor(): string {
+  return TRACK_ICON_SWATCHES[Math.floor(Math.random() * TRACK_ICON_SWATCHES.length)]
 }
 
-/** Resolve stored icon color; optionally boost opacity for dark backgrounds. */
-export function resolveTrackIconColor(
-  color: string | null | undefined,
-  isDark = false
-): string {
-  const resolved =
-    !color || color === LEGACY_TRACK_ICON_COLOR ? DEFAULT_TRACK_ICON_COLOR : color
+export function defaultTrackIconColorForIndex(index: number): string {
+  return TRACK_ICON_SWATCHES[index % TRACK_ICON_SWATCHES.length]
+}
 
-  return isDark ? boostRgbaForDark(resolved) : resolved
+/** True when the track should be assigned a new palette color. */
+export function needsTrackIconColor(color: string | null | undefined): boolean {
+  if (!color) return true
+  if (color === LEGACY_TRACK_ICON_COLOR || color === LEGACY_SOFT_ICON_COLOR) return true
+  return !(TRACK_ICON_SWATCHES as readonly string[]).includes(color)
+}
+
+export function resolveTrackIconColor(color: string | null | undefined): string {
+  if (needsTrackIconColor(color)) {
+    return TRACK_ICON_SWATCHES[0]
+  }
+  return color!
+}
+
+/** Badge / waveform accent — stored color or stable palette fallback by index. */
+export function trackAccentColor(
+  iconColor: string | null | undefined,
+  fallbackIndex: number,
+): string {
+  if (!needsTrackIconColor(iconColor)) return iconColor!
+  return defaultTrackIconColorForIndex(fallbackIndex)
+}
+
+export function getTrackIconSwatches(): readonly string[] {
+  return TRACK_ICON_SWATCHES
 }

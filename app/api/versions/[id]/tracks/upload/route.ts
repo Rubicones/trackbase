@@ -5,8 +5,8 @@ import { uploadToR2, r2Key } from '@/lib/r2'
 import { audioToFlac } from '@/lib/ffmpeg'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
-import { DEFAULT_TRACK_ICON_COLOR } from '@/lib/trackIcon'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
+import { randomTrackIconColor } from '@/lib/trackIcon'
 
 const ALLOWED_AUDIO_MIMETYPES: Record<string, 'wav' | 'mp3'> = {
   'audio/wav':   'wav',
@@ -168,8 +168,8 @@ async function handleAudioUpload({
       file_size_bytes: fileSizeBytes,
       duration_ms: audioDurationMs || null,
       position,
-      icon_color: DEFAULT_TRACK_ICON_COLOR,
       file_type: 'audio',
+      icon_color: randomTrackIconColor(),
     })
     .select()
     .single()
@@ -270,11 +270,11 @@ async function handleMidiUpload({
       file_size_bytes: midiBuffer.byteLength,
       duration_ms: durationMs,
       position,
-      icon_color: DEFAULT_TRACK_ICON_COLOR,
       file_type: 'midi',
       midi_data: midiData,
       midi_start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
       start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
+      icon_color: randomTrackIconColor(),
     })
     .select()
     .single()

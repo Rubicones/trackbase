@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -22,11 +22,9 @@ import { FloatingPopover } from '@/components/design/FloatingPopover'
 import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
-import { waveformBarsCache, fetchTrackAudioBuffer } from '@/lib/waveformCache'
+import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { ReadingMode } from '@/components/ReadingMode'
-import { resolveTrackIconColor } from '@/lib/trackIcon'
-import { trackColorAt, getTrackIconSwatches } from '@/lib/trackPalette'
-import { usePalette } from '@/contexts/PaletteContext'
+import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
@@ -723,7 +721,7 @@ function Waveform({
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
   onCloseInput: () => void
-  onReady?: () => void
+  onReady?: (decodedDurationMs?: number) => void
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
@@ -783,7 +781,7 @@ function Waveform({
           waveformBarsCache.set(trackId, bars)
           barsRef.current = bars
           setReady(true)
-          onReadyRef.current?.()
+          onReadyRef.current?.(Math.round(decoded.duration * 1000))
         }
         actx.close()
       } catch { /* silent */ }
@@ -1034,6 +1032,10 @@ function Waveform({
 
 /** Short gain ramp to avoid audible clicks at every source start/stop boundary. */
 const RAMP_SECS = 0.008
+/** Hard ceiling for the project timeline (bars) — live recording auto-extends up to this. */
+const MAX_PROJECT_BARS = 1000
+const RECORDING_EXTEND_CHUNK_BARS = 16
+const RECORDING_EXTEND_LEAD_BARS = 4
 
 function usePlayer(
   tracks: Track[],
@@ -1044,6 +1046,7 @@ function usePlayer(
 ) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
+  const metronomeSrcRef = useRef<AudioBufferSourceNode | null>(null)
   const gainsRef = useRef<Map<string, GainNode>>(new Map())
   const masterGainRef = useRef<GainNode | null>(null)
   const bufsRef = useRef<Map<string, AudioBuffer>>(new Map())
@@ -1112,6 +1115,10 @@ function usePlayer(
 
   // Only load audio tracks (MIDI tracks are handled separately via soundfont)
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+  const audioTrackIdsKey = useMemo(
+    () => audioTracks.map(t => t.id).sort().join('|'),
+    [audioTracks],
+  )
   const midiTracks = tracks.filter(t => t.file_type === 'midi')
   // Keep a ref so scheduleMidiNotes always has the latest list without extra deps
   const midiTracksRef = useRef(midiTracks)
@@ -1122,44 +1129,107 @@ function usePlayer(
   const projectRef = useRef(project)
   projectRef.current = project
 
+  const recomputeTransportDuration = useCallback(() => {
+    const proj = projectRef.current
+    if (!proj || !tracksRef.current.length) return
+    let maxDur = 0
+    for (const t of tracksRef.current) {
+      const buf = bufsRef.current.get(t.id)
+      maxDur = Math.max(maxDur, trackTimelineEndSec(
+        t,
+        proj.bpm ?? 120,
+        proj.time_signature ?? '4/4',
+        buf?.duration,
+      ))
+    }
+    if (maxDur > 0) setDuration(maxDur)
+  }, [])
+
+  const noteTrackDuration = useCallback((trackId: string, ms: number) => {
+    if (ms <= 0) return
+    setTrackDurations(prev => {
+      if (prev.get(trackId) === ms) return prev
+      const next = new Map(prev)
+      next.set(trackId, ms)
+      return next
+    })
+    recomputeTransportDuration()
+  }, [recomputeTransportDuration])
+
+  // Full reset when switching versions.
+  const prevVersionIdRef = useRef(versionId)
   useEffect(() => {
-    if (!tracks.length) return
-    let cancelled = false
-    const ctx = getSharedAudioContext()
-    actxRef.current = ctx
+    if (prevVersionIdRef.current === versionId) return
+    prevVersionIdRef.current = versionId
+    sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
+    sourcesRef.current = []
+    cancelAnimationFrame(rafRef.current)
+    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
+    midiScheduledRef.current = []
+    bufsRef.current.clear()
+    metronomeParamsRef.current = null
+    setLoaded(0)
+    setTrackDurations(new Map())
+    setDuration(0)
+    setPlaying(false)
     if (masterGainRef.current) {
       try { masterGainRef.current.disconnect() } catch { /* ok */ }
+      masterGainRef.current = null
     }
-    const masterGain = ctx.createGain()
-    masterGain.gain.value = volume
-    masterGain.connect(getMasterOutput())
-    masterGainRef.current = masterGain
-    bufsRef.current = new Map()
-    bufsRef.current.delete(METRONOME_TRACK_ID)
-    metronomeParamsRef.current = null
     mutedTracksRef.current.add(METRONOME_TRACK_ID)
     setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
     setMetronomeOn(false)
-    setLoaded(0)
-    let maxDur = 0
+  }, [versionId])
 
-    // MIDI tracks intentionally excluded from maxDur — the project timeline
-    // is governed by audio-only duration. MIDI notes scheduled via soundfont
-    // already play at the correct offset; they don't stretch the timeline.
+  // Load audio buffers — re-runs when tracks are added/removed within a version.
+  useEffect(() => {
+    if (!tracks.length) {
+      setLoaded(0)
+      return
+    }
 
-    Promise.all(audioTracks.map(async t => {
+    let cancelled = false
+    const ctx = getSharedAudioContext()
+    actxRef.current = ctx
+
+    if (!masterGainRef.current) {
+      const masterGain = ctx.createGain()
+      masterGain.gain.value = volume
+      masterGain.connect(getMasterOutput())
+      masterGainRef.current = masterGain
+      mutedTracksRef.current.add(METRONOME_TRACK_ID)
+      setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
+      setMetronomeOn(false)
+    }
+
+    for (const id of [...bufsRef.current.keys()]) {
+      if (id === METRONOME_TRACK_ID) continue
+      if (!audioTracks.some(t => t.id === id)) {
+        bufsRef.current.delete(id)
+        setTrackDurations(prev => {
+          if (!prev.has(id)) return prev
+          const next = new Map(prev)
+          next.delete(id)
+          return next
+        })
+      }
+    }
+
+    const pending = audioTracks.filter(t => !bufsRef.current.has(t.id))
+    setLoaded(audioTracks.length - pending.length)
+
+    if (pending.length === 0) {
+      recomputeTransportDuration()
+      return () => { cancelled = true }
+    }
+
+    Promise.all(pending.map(async t => {
       try {
         const ab = await fetchTrackAudioBuffer(t.id)
         if (!ab || cancelled) return
         const decoded = await ctx.decodeAudioData(ab)
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
-          const proj = projectRef.current
-          const projBpmL = proj?.bpm ?? 120
-          const projBeatsL = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
-          const barDurSecL = (60 / projBpmL) * projBeatsL
-          const trackOffL = (t.start_bar ?? 0) * barDurSecL
-          maxDur = Math.max(maxDur, trackOffL + decoded.duration)
           const decodedMs = Math.round(decoded.duration * 1000)
           setTrackDurations(prev => {
             const next = new Map(prev)
@@ -1170,51 +1240,16 @@ function usePlayer(
         }
       } catch { /* skip */ }
     })).then(() => {
-      if (!cancelled) {
-        // Include MIDI + offsets so player duration matches the structure timeline
-        for (const t of tracks) {
-          const buf = bufsRef.current.get(t.id)
-          maxDur = Math.max(maxDur, trackTimelineEndSec(
-            t,
-            projectRef.current?.bpm ?? 120,
-            projectRef.current?.time_signature ?? '4/4',
-            buf?.duration,
-          ))
-        }
-        setDuration(maxDur)
-      }
+      if (!cancelled) recomputeTransportDuration()
     })
-    return () => {
-      cancelled = true
-      sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
-      sourcesRef.current = []
-      cancelAnimationFrame(rafRef.current)
-      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-      midiScheduledRef.current = []
-      if (masterGainRef.current) {
-        try { masterGainRef.current.disconnect() } catch { /* ok */ }
-        masterGainRef.current = null
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [versionId])
+
+    return () => { cancelled = true }
+  }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume])
 
   // Recompute timeline when track offsets/metadata change (without reloading audio)
   useEffect(() => {
-    const proj = projectRef.current
-    if (!proj || !tracks.length) return
-    let maxDur = 0
-    for (const t of tracks) {
-      const buf = bufsRef.current.get(t.id)
-      maxDur = Math.max(maxDur, trackTimelineEndSec(
-        t,
-        proj.bpm ?? 120,
-        proj.time_signature ?? '4/4',
-        buf?.duration,
-      ))
-    }
-    if (maxDur > 0) setDuration(maxDur)
-  }, [tracks])
+    recomputeTransportDuration()
+  }, [tracks, recomputeTransportDuration])
 
   // Hidden metronome track — generated once audio is loaded and timeline length is known.
   const ensureMetronomeBuffer = useCallback((ctx: AudioContext) => {
@@ -1251,6 +1286,37 @@ function usePlayer(
     ensureMetronomeBuffer(ctx)
   }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer])
 
+  // When the timeline grows during playback (live recording), regenerate the
+  // metronome buffer and reschedule its source from the current playhead.
+  const prevTimelineDurRef = useRef(timelineDurationSec)
+  useEffect(() => {
+    const ctx = actxRef.current
+    const grew = timelineDurationSec > prevTimelineDurRef.current + 0.05
+    prevTimelineDurRef.current = timelineDurationSec
+    if (!grew || !playingRef.current || !ctx) return
+
+    ensureMetronomeBuffer(ctx)
+    const buf = bufsRef.current.get(METRONOME_TRACK_ID)
+    const g = gainsRef.current.get(METRONOME_TRACK_ID)
+    if (!buf || !g || !metronomeOnRef.current) return
+
+    const elapsed = ctx.currentTime - startRef.current
+    if (elapsed < 0 || elapsed >= buf.duration) return
+
+    if (metronomeSrcRef.current) {
+      try { metronomeSrcRef.current.stop() } catch { /* ok */ }
+      sourcesRef.current = sourcesRef.current.filter(s => s !== metronomeSrcRef.current)
+      metronomeSrcRef.current = null
+    }
+
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(g)
+    src.start(ctx.currentTime, elapsed)
+    sourcesRef.current.push(src)
+    metronomeSrcRef.current = src
+  }, [timelineDurationSec, ensureMetronomeBuffer])
+
   const stopSources = useCallback(() => {
     const ctx = actxRef.current
     if (ctx) {
@@ -1272,6 +1338,7 @@ function usePlayer(
       sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
     }
     sourcesRef.current = []
+    metronomeSrcRef.current = null
     cancelAnimationFrame(rafRef.current)
     // Stop scheduled MIDI notes
     midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
@@ -1390,6 +1457,7 @@ function usePlayer(
         src.start(audioCtxPlayTime, offset - trackOffsetSec)
       }
       sourcesRef.current.push(src)
+      if (isMetronome) metronomeSrcRef.current = src
     })
     gainsRef.current = newGains
     startRef.current = audioCtxPlayTime - offset
@@ -1401,11 +1469,11 @@ function usePlayer(
     }
     scheduleMidiNotes(offset, audioCtxPlayTime).catch(console.warn)
     setPlaying(true)
-    const dur = getTransportDuration() || 1
     // Track last tick bucket for 5 Hz state throttle (avoids 60fps React re-renders)
     let lastStateTick = -1
     const tick = () => {
       const elapsed = (actxRef.current?.currentTime ?? 0) - startRef.current
+      const dur = getTransportDuration() || 1
       // Always update the ref — consumed by DOM-direct visual updates (waveform overlays,
       // progress bar fill) without triggering any React re-render.
       currentTimeRef.current = elapsed
@@ -1609,6 +1677,7 @@ function usePlayer(
     audioContext: actxRef, trackDurations,
     /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
     currentTimeRef,
+    noteTrackDuration,
   }
 }
 
@@ -1723,25 +1792,18 @@ function TrashIcon() {
   )
 }
 
-// ─── Icon picker popover ──────────────────────────────────────────────────────
+// ─── Track color picker ───────────────────────────────────────────────────────
 
-const ICON_EMOJIS = ['🥁','🎸','🎹','🎤','🎵','🎷','🎺','🎻','🪗','🎙','🔊','✨']
-
-function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
+function TrackColorPicker({ trackId, initialColor, onApply, onClose }: {
   trackId: string
-  initialEmoji: string | null
-  initialColor: string | null
-  onApply: (emoji: string, color: string) => void
+  initialColor: string
+  onApply: (color: string) => void
   onClose: () => void
 }) {
-  const { resolvedTheme } = useTheme()
-  const { palette: colorPalette } = usePalette()
-  const isDark = resolvedTheme !== 'light'
-  const iconColors = getTrackIconSwatches(colorPalette)
-  const [emoji, setEmoji] = useState(initialEmoji ?? '🎵')
-  const [color, setColor] = useState(() => resolveTrackIconColor(initialColor))
+  const [color, setColor] = useState(initialColor)
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const swatches = getTrackIconSwatches()
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -1757,9 +1819,9 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
       await fetch(`/api/tracks/${trackId}/icon`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ icon_emoji: emoji, icon_color: color }),
+        body: JSON.stringify({ icon_color: color }),
       })
-      onApply(emoji, color)
+      onApply(color)
     } finally {
       setSaving(false)
     }
@@ -1768,66 +1830,47 @@ function IconPicker({ trackId, initialEmoji, initialColor, onApply, onClose }: {
   return (
     <div
       ref={ref}
-      style={{
-        position: 'absolute', top: '100%', left: 0, zIndex: 50,
-        background: 'var(--bg-surface)', border: '0.5px solid var(--border)',
-        borderRadius: 10, padding: 14, width: 240,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
-        marginTop: 4,
-      }}
+      className="absolute top-full left-0 z-50 mt-1 w-52 border border-border bg-surface p-3 shadow-2xl"
       onClick={e => e.stopPropagation()}
     >
-      {/* Emoji grid */}
-      <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', margin: '0 0 8px' }}>Instrument</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginBottom: 12 }}>
-        {ICON_EMOJIS.map(e => (
-          <button key={e} onClick={() => setEmoji(e)} style={{
-            width: 36, height: 36, borderRadius: 7, fontSize: 18,
-            background: emoji === e ? `color-mix(in srgb, var(--accent) 10%, transparent)` : 'transparent',
-            border: `0.5px solid ${emoji === e ? 'var(--accent)' : 'transparent'}`,
-            cursor: 'pointer', transition: 'all 0.12s',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-            onMouseEnter={e2 => { if (emoji !== e) e2.currentTarget.style.background = 'var(--bg-card)' }}
-            onMouseLeave={e2 => { if (emoji !== e) e2.currentTarget.style.background = 'transparent' }}
-          >{e}</button>
-        ))}
-      </div>
-
-      {/* Color row */}
-      <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)', margin: '0 0 8px' }}>Color</p>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {iconColors.map(c => (
-          <button key={c} onClick={() => setColor(c)} style={{
-            width: 22, height: 22, borderRadius: '50%', background: resolveTrackIconColor(c, isDark),
-            border: `2px solid ${color === c ? 'var(--accent)' : 'transparent'}`,
-            cursor: 'pointer', flexShrink: 0,
-            transform: color === c ? 'scale(1.1)' : 'scale(1)',
-            transition: 'transform 0.12s, border-color 0.12s',
-          }}
-            onMouseEnter={e2 => { if (color !== c) e2.currentTarget.style.transform = 'scale(1.15)' }}
-            onMouseLeave={e2 => { if (color !== c) e2.currentTarget.style.transform = 'scale(1)' }}
+      <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2 m-0">Track color</p>
+      <div className="grid grid-cols-5 gap-1.5 mb-3">
+        {swatches.map(c => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setColor(c)}
+            className={`size-6 rounded-sm transition-transform ${color === c ? 'ring-2 ring-ember ring-offset-1 ring-offset-background scale-110' : 'hover:scale-105'}`}
+            style={{ background: c }}
+            aria-label={`Color ${c}`}
           />
         ))}
       </div>
-
-      {/* Preview */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: resolveTrackIconColor(color, isDark), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15 }}>{emoji}</div>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Preview</span>
+      <div className="flex items-center gap-2 mb-3">
+        <div
+          className="size-7 grid place-items-center text-[10px] font-bold text-white uppercase"
+          style={{ background: color }}
+        >
+          A
+        </div>
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Preview</span>
       </div>
-
-      {/* Buttons */}
-      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button onClick={onClose} style={{
-          background: 'transparent', border: '0.5px solid var(--border)',
-          borderRadius: 6, padding: '4px 12px', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer',
-        }}>Cancel</button>
-        <button onClick={handleApply} disabled={saving} style={{
-          background: 'var(--accent)', border: 'none',
-          borderRadius: 6, padding: '4px 12px', color: 'var(--on-accent)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
-          opacity: saving ? 0.6 : 1,
-        }}>{saving ? '…' : 'Apply'}</button>
+      <div className="flex gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[10px] uppercase tracking-widest border border-border px-2 py-1 text-muted-foreground hover:border-ember hover:text-ember"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleApply}
+          disabled={saving}
+          className="text-[10px] uppercase tracking-widest bg-ember text-white px-2 py-1 font-bold disabled:opacity-60"
+        >
+          {saving ? '…' : 'Apply'}
+        </button>
       </div>
     </div>
   )
@@ -1840,11 +1883,11 @@ const TrackRow = React.memo(function TrackRow({
   commentMode, activeInput, audioReady,
   onToggleMute, onToggleSolo, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
-  onDeleteTrack, onRenameTrack, onIconUpdate, onMidiDataUpdate, onStartBarUpdate,
+  onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
-  timelineDurationMs,
+  timelineDurationMs, onTrackDuration,
   compact = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
@@ -1858,7 +1901,7 @@ const TrackRow = React.memo(function TrackRow({
   onCloseInput: () => void
   onDeleteTrack: (trackId: string) => Promise<void>
   onRenameTrack: (trackId: string, newName: string) => void
-  onIconUpdate: (trackId: string, emoji: string, color: string) => void
+  onColorUpdate: (trackId: string, color: string) => void
   onMidiDataUpdate: (trackId: string, updates: Partial<Track>) => void
   onStartBarUpdate: (trackId: string, startBar: number) => Promise<void>
   onDragStartOffset: () => void
@@ -1875,23 +1918,21 @@ const TrackRow = React.memo(function TrackRow({
   runtimeDurationMs: number
   /** Total project duration in ms — passed to TactGrid for time-based positioning that matches the ruler. */
   timelineDurationMs?: number
+  onTrackDuration?: (trackId: string, durationMs: number) => void
   compact?: boolean
 }) {
-  const { resolvedTheme } = useTheme()
-  const { palette: colorPalette } = usePalette()
-  const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
-  const col = trackColorAt(index, colorPalette, isDark)
+  const accentColor = trackAccentColor(track.icon_color, index)
   const isMidi = track.file_type === 'midi'
 
   // All state/refs must come before computed values that read state
   const [waveformReady, setWaveformReady] = useState(false)
   useEffect(() => { setWaveformReady(false) }, [track.id])
+  const [showColorPicker, setShowColorPicker] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
   const [rowHovered, setRowHovered] = useState(false)
-  const [showIconPicker, setShowIconPicker] = useState(false)
   const [pianoRollOpen, setPianoRollOpen] = useState(false)
   // Drag-to-offset state
   const [isOffsetDragging, setIsOffsetDragging] = useState(false)
@@ -1960,10 +2001,7 @@ const TrackRow = React.memo(function TrackRow({
   const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
   const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
   // Scale bar count so each bar stays ~12px wide regardless of clip length.
-  // e.g. a 2-bar clip in a 32-bar timeline → 6 bars instead of 96, so they're visible.
-  const displayBarCount = totalBars > 0
-    ? Math.max(4, Math.round(96 * trackDurationBars / totalBars))
-    : 96
+  const displayBarCount = 96
   const isAudioLoading = !isMidi && !waveformReady
   // Only expand to fill the remaining timeline while loading if we don't yet know the
   // clip's duration — prevents a flash-to-full-width when duration_ms is already stored.
@@ -2187,22 +2225,19 @@ const TrackRow = React.memo(function TrackRow({
           <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setShowIconPicker(p => !p)}
+              onClick={() => setShowColorPicker(p => !p)}
               title="Change track color"
-              className={`grid place-items-center font-bold text-background transition-opacity hover:opacity-80 ${compact ? 'size-5 text-[9px]' : 'size-6 text-[10px]'}`}
-              style={{ background: col.fg }}
+              className={`grid place-items-center font-bold text-white uppercase transition-opacity hover:opacity-85 ${compact ? 'size-5 text-[9px]' : 'size-6 text-[10px]'}`}
+              style={{ background: accentColor }}
             >
-              {!isMidi && !waveformReady ? (
-                <span className="animate-pulse opacity-60">·</span>
-              ) : trackLetter}
+              {trackLetter}
             </button>
-            {showIconPicker && (
-              <IconPicker
+            {showColorPicker && (
+              <TrackColorPicker
                 trackId={track.id}
-                initialEmoji={track.icon_emoji}
-                initialColor={track.icon_color}
-                onApply={(e, c) => { onIconUpdate(track.id, e, c); setShowIconPicker(false) }}
-                onClose={() => setShowIconPicker(false)}
+                initialColor={accentColor}
+                onApply={(c) => { onColorUpdate(track.id, c); setShowColorPicker(false) }}
+                onClose={() => setShowColorPicker(false)}
               />
             )}
           </div>
@@ -2356,7 +2391,7 @@ const TrackRow = React.memo(function TrackRow({
               <div className="w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
                 <MiniPianoRoll
                   midiData={track.midi_data}
-                  color={col.fg}
+                  color={accentColor}
                   projectBpm={project.bpm ?? undefined}
                   totalProjectMs={trackOwnDurationMs}
                   height={rowH}
@@ -2370,7 +2405,7 @@ const TrackRow = React.memo(function TrackRow({
             )
           ) : (
             <Waveform
-                trackId={track.id} muted={muted} color={col.fg}
+                trackId={track.id} muted={muted} color={accentColor}
                 durationMs={trackOwnDurationMs} commentMode={commentMode}
                 barCount={displayBarCount}
                 comments={(track.comments ?? []).map(c => ({
@@ -2389,7 +2424,10 @@ const TrackRow = React.memo(function TrackRow({
                   onCommentCreate(tid, trackOffsetMs + sMs, trackOffsetMs + eMs, content)
                 }
                 onCloseInput={onCloseInput}
-                onReady={() => setWaveformReady(true)}
+                onReady={(decodedMs) => {
+                  setWaveformReady(true)
+                  if (decodedMs) onTrackDuration?.(track.id, decodedMs)
+                }}
                 currentUserId={currentUserId} isOwner={isOwner} onReplyCreate={onReplyCreate}
                 currentUser={currentUser}
                 onCommentInteractionChange={handleCommentInteractionChange}
@@ -3037,7 +3075,7 @@ export default function ProjectPage() {
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null)
   const [recordingPreviewEnds, setRecordingPreviewEnds] = useState<Record<string, number>>({})
   // Extra bars added during a live recording so the ruler doesn't stop at the
-  // default 16-bar ceiling.  Reset when the recording session ends.
+  // default 16-bar ceiling. Reset when the recording session ends.
   const [recordingExtraBars, setRecordingExtraBars] = useState(0)
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false)
@@ -3045,6 +3083,7 @@ export default function ProjectPage() {
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const uploadsRef = useRef<UploadItem[]>([])
   // Track being dragged (for dimming others)
+  const [decodedDurationMs, setDecodedDurationMs] = useState<Map<string, number>>(() => new Map())
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null)
 
   // ── Project rename ─────────────────────────────────────────────────────────
@@ -3080,9 +3119,9 @@ export default function ProjectPage() {
     } catch { /* ignore */ }
   }
 
-  async function loadProject(keepActiveVersion = true) {
+  async function loadProject(keepActiveVersion = true, force = false) {
     // Cache hit: if the active version is already cached, skip the full re-fetch
-    if (keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
+    if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
       console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
       return
     }
@@ -3161,6 +3200,59 @@ export default function ProjectPage() {
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
   const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
+  // Assign vivid palette colors to legacy tracks (null / old rgba / emoji-era defaults).
+  const backfillingColorsRef = useRef(false)
+  const trackColorKey = activeTracks.map(t => `${t.id}:${t.icon_color ?? ''}`).join('|')
+  useEffect(() => {
+    if (!activeVersionId || !activeTracks.length || backfillingColorsRef.current) return
+
+    const assignments = activeTracks
+      .map((t, i) => ({ id: t.id, color: defaultTrackIconColorForIndex(i) }))
+      .filter(({ id }) => {
+        const track = activeTracks.find(t => t.id === id)
+        return track && needsTrackIconColor(track.icon_color)
+      })
+
+    if (!assignments.length) return
+
+    backfillingColorsRef.current = true
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const results = await Promise.allSettled(assignments.map(({ id, color }) =>
+          fetch(`/api/tracks/${id}/icon`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ icon_color: color }),
+          }).then(res => {
+            if (!res.ok) throw new Error(`icon ${res.status}`)
+          }),
+        ))
+        if (cancelled) return
+        const byId = new Map<string, string>()
+        assignments.forEach((a, i) => {
+          if (results[i].status === 'fulfilled') byId.set(a.id, a.color)
+        })
+        if (byId.size === 0) return
+        setVersions(prev => prev.map(v =>
+          v.id !== activeVersionId ? v : {
+            ...v,
+            tracks: v.tracks.map(t => (
+              byId.has(t.id) ? { ...t, icon_color: byId.get(t.id)! } : t
+            )),
+          },
+        ))
+      } catch {
+        /* display fallbacks until next load */
+      } finally {
+        backfillingColorsRef.current = false
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [activeVersionId, trackColorKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Measure waveform column bounds for structure overlay alignment.
   // Uses [data-waveform-col] from an actual track row.
   useEffect(() => {
@@ -3207,13 +3299,37 @@ export default function ProjectPage() {
   const isChanged = (t: Track) => !!mainVersion && activeVersionId !== mainVersion.id && !mainHashes.has(t.file_hash)
 
   const recordingPreviewEndSec = Math.max(0, ...Object.values(recordingPreviewEnds))
-  const baselineTimelineSec = Math.max(
-    16 * ((60000 / (project?.bpm ?? 120)) * (parseInt((project?.time_signature ?? '4/4').split('/')[0]) || 4)) / 1000,
+
+  const projBpm = project?.bpm ?? 120
+  const projTimeSig = project?.time_signature ?? '4/4'
+  const projBeatsPerBar = parseInt(projTimeSig.split('/')[0]) || 4
+  const projBarDurationMs = (60000 / projBpm) * projBeatsPerBar
+  const minTimelineBars = 16
+
+  const baseProjectBars = (() => {
+    if (activeTracks.length === 0) return minTimelineBars
+    const barDurMs = projBarDurationMs || 2000
+    const endBars = activeTracks.map(t => {
+      const dMs = trackContentDurationMs(t, projBpm, decodedDurationMs.get(t.id))
+      const bars = Math.ceil((dMs || 0) / barDurMs)
+      return (t.start_bar ?? 0) + bars
+    })
+    return Math.max(...endBars, minTimelineBars)
+  })()
+
+  const totalProjectBars = Math.min(
+    baseProjectBars + (activeRecordingId !== null ? recordingExtraBars : 0),
+    MAX_PROJECT_BARS,
+  )
+
+  const timelineDurationSec = Math.max(
+    (totalProjectBars * projBarDurationMs) / 1000,
     recordingPreviewEndSec,
+    (minTimelineBars * projBarDurationMs) / 1000,
     1,
   )
 
-  const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, baselineTimelineSec)
+  const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, timelineDurationSec)
   const playerRef = useRef(player)
   playerRef.current = player
   const activeRecordingIdRef = useRef(activeRecordingId)
@@ -3323,57 +3439,76 @@ export default function ProjectPage() {
   }, [])
 
   const durationMs = player.duration * 1000
-  const projBpm = project?.bpm ?? 120
-  const projTimeSig = project?.time_signature ?? '4/4'
-  const projBeatsPerBar = parseInt(projTimeSig.split('/')[0]) || 4
-  const projBarDurationMs = (60000 / projBpm) * projBeatsPerBar
   // Total bars: max(start_bar + durationBars) across ALL tracks.
   // Duration uses project BPM for all track types (including MIDI).
   function effectiveTrackDurationMs(t: Track): number {
     return trackContentDurationMs(
       t,
       projBpm,
-      player.trackDurations.get(t.id),
+      decodedDurationMs.get(t.id) ?? player.trackDurations.get(t.id),
     )
   }
-  const totalProjectBars = (() => {
-    const base = activeTracks.length > 0 ? (() => {
-      const barDurMs = projBarDurationMs || 2000
-      const endBars = activeTracks.map(t => {
-        const dMs = effectiveTrackDurationMs(t)
-        const bars = Math.ceil((dMs || 0) / barDurMs)
-        return (t.start_bar ?? 0) + bars
-      })
-      return Math.max(...endBars, 16)
-    })() : 16
-    // During an active recording session, extend the ruler by the extra bars
-    // accumulated via the auto-extend effect below so the playhead and ruler
-    // never hit the ceiling mid-session.
-    return base + (activeRecordingId !== null ? recordingExtraBars : 0)
-  })()
   const totalProjectDurationMs = Math.max(totalProjectBars * projBarDurationMs, durationMs, 1)
+
+  function handleTrackDuration(trackId: string, ms: number) {
+    playerRef.current.noteTrackDuration(trackId, ms)
+    setDecodedDurationMs(prev => {
+      if (prev.get(trackId) === ms) return prev
+      const next = new Map(prev)
+      next.set(trackId, ms)
+      return next
+    })
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => {
+        if (t.id !== trackId) return t
+        if (t.duration_ms != null && t.duration_ms >= ms) return t
+        return { ...t, duration_ms: ms }
+      }),
+    })))
+  }
 
   // ── Auto-extend ruler during live recording ────────────────────────────────
   // When an empty project is being recorded into, totalProjectBars starts at 16.
-  // As the playhead approaches the end, we add 16 bars at a time so the ruler
-  // and the player both keep going without hitting the ceiling.
-  // Uses player.currentTime (5 Hz) — coarse enough to be cheap but fine enough
-  // to add bars several seconds before the player reaches the old end.
+  // As the playhead approaches the end, we add 16 bars at a time so the ruler,
+  // transport, and metronome all keep going until recording stops (max 1000 bars).
   useEffect(() => {
     if (activeRecordingId === null) {
-      // Reset when recording session ends so the next session starts fresh.
       setRecordingExtraBars(0)
       return
     }
     if (projBarDurationMs <= 0) return
-    const currentBar = player.currentTime / (projBarDurationMs / 1000)
-    // Extend when within 4 bars of the current ceiling — plenty of headroom
-    // to update React state and re-render before the player hits the old end.
-    if (currentBar >= totalProjectBars - 4) {
-      setRecordingExtraBars(n => n + 16)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.currentTime, activeRecordingId])
+
+    const barDurSec = projBarDurationMs / 1000
+    const currentBar = playerRef.current.currentTimeRef.current / barDurSec
+    const maxExtraBars = Math.max(0, MAX_PROJECT_BARS - baseProjectBars)
+
+    setRecordingExtraBars(extra => {
+      const currentTotal = Math.min(baseProjectBars + extra, MAX_PROJECT_BARS)
+      if (currentBar < currentTotal - RECORDING_EXTEND_LEAD_BARS) return extra
+      if (extra >= maxExtraBars) return extra
+      return Math.min(extra + RECORDING_EXTEND_CHUNK_BARS, maxExtraBars)
+    })
+  }, [player.currentTime, activeRecordingId, baseProjectBars, projBarDurationMs])
+
+  useEffect(() => {
+    setDecodedDurationMs(new Map())
+  }, [activeVersionId])
+
+  useEffect(() => {
+    if (player.trackDurations.size === 0) return
+    setDecodedDurationMs(prev => {
+      let changed = false
+      const next = new Map(prev)
+      for (const [id, ms] of player.trackDurations) {
+        if (prev.get(id) !== ms) {
+          next.set(id, ms)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [player.trackDurations])
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
@@ -3436,19 +3571,19 @@ export default function ProjectPage() {
     cache.invalidate(activeVersionId)
   }
 
+  function handleColorUpdate(trackId: string, color: string) {
+    setVersions(prev => prev.map(v => ({
+      ...v,
+      tracks: v.tracks.map(t => t.id === trackId ? { ...t, icon_color: color } : t),
+    })))
+  }
+
   function handleRenameTrack(trackId: string, newName: string) {
     setVersions(prev => prev.map(v => ({
       ...v,
       tracks: v.tracks.map(t => t.id === trackId ? { ...t, display_name: newName } : t),
     })))
     cache.invalidate(activeVersionId)
-  }
-
-  function handleIconUpdate(trackId: string, emoji: string, color: string) {
-    setVersions(prev => prev.map(v => ({
-      ...v,
-      tracks: v.tracks.map(t => t.id === trackId ? { ...t, icon_emoji: emoji, icon_color: color } : t),
-    })))
   }
 
   function handleMidiDataUpdate(trackId: string, updates: Partial<Track>) {
@@ -3551,9 +3686,18 @@ export default function ProjectPage() {
         throw new Error(msg)
       }
 
+      const { track: newTrack } = await processRes.json()
+      if (newTrack) {
+        setVersions(prev => prev.map(v =>
+          v.id === activeVersionId
+            ? { ...v, tracks: [...v.tracks.filter(t => t.id !== newTrack.id), newTrack] }
+            : v,
+        ))
+      }
+
       updateUpload(upload.id, { status: 'done' })
       cache.invalidate(activeVersionId)
-      await loadProject()
+      await loadProject(true, true)
       setTimeout(() => removeUpload(upload.id), 1500)
 
     } catch (err) {
@@ -3597,9 +3741,17 @@ export default function ProjectPage() {
         const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
         throw new Error(msg)
       }
+      const { track: newTrack } = await processRes.json()
+      if (newTrack) {
+        setVersions(prev => prev.map(v =>
+          v.id === activeVersionId
+            ? { ...v, tracks: [...v.tracks.filter(t => t.id !== newTrack.id), newTrack] }
+            : v,
+        ))
+      }
       updateUpload(upload.id, { status: 'done' })
       cache.invalidate(activeVersionId)
-      await loadProject()
+      await loadProject(true, true)
       setTimeout(() => removeUpload(upload.id), 1500)
     } catch (err) {
       updateUpload(upload.id, {
@@ -3721,8 +3873,10 @@ export default function ProjectPage() {
       const res = await fetch(`/api/versions/${activeVersionId}/tracks/upload`, { method: 'POST', body: fd })
       if (!res.ok) throw new Error((await res.json()).error)
       await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
+      waveformBarsCache.delete(track.id)
+      audioArrayBufferCache.delete(track.id)
       cache.invalidate(activeVersionId)
-      await loadProject()
+      await loadProject(true, true)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Replace failed')
     } finally {
@@ -4133,7 +4287,7 @@ export default function ProjectPage() {
                   {project.key && <span className="text-ember">{project.key}</span>}
                   <span>{project.time_signature ?? '4/4'}</span>
                   <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
-                  {player.duration > 0 && <span>{fmtTime(player.duration)}</span>}
+                  {totalProjectDurationMs > 0 && <span>{fmtTime(totalProjectDurationMs / 1000)}</span>}
                 </div>
               </div>
 
@@ -4240,7 +4394,7 @@ export default function ProjectPage() {
               })()}
 
               {versionLoading ? (
-                <BrandSpinner fullscreen={false} />
+                <BrandSpinner fullscreen={false} label="Loading tracks" />
               ) : activeTracks.length === 0 ? (
                 <div className="px-4 sm:px-6 py-12 text-center text-[10px] uppercase tracking-widest text-muted-foreground">
                   No tracks yet — add one below
@@ -4261,7 +4415,7 @@ export default function ProjectPage() {
                   onCloseInput={() => setActiveCommentInput(null)}
                   onDeleteTrack={handleDeleteTrack}
                   onRenameTrack={handleRenameTrack}
-                  onIconUpdate={handleIconUpdate}
+                  onColorUpdate={handleColorUpdate}
                   onMidiDataUpdate={handleMidiDataUpdate}
                   onStartBarUpdate={handleStartBarUpdate}
                   onDragStartOffset={() => setDraggingTrackId(t.id)}
@@ -4277,6 +4431,7 @@ export default function ProjectPage() {
                   totalBars={totalProjectBars}
                   runtimeDurationMs={effectiveTrackDurationMs(t)}
                   timelineDurationMs={totalProjectDurationMs}
+                  onTrackDuration={handleTrackDuration}
                   compact={isMobileLandscape}
                 />
               ))}
@@ -4424,7 +4579,7 @@ export default function ProjectPage() {
         playing={player.playing}
         currentTime={player.currentTime}
         currentTimeRef={player.currentTimeRef}
-        duration={player.duration}
+        duration={Math.max(player.duration, totalProjectDurationMs / 1000)}
         loaded={player.loaded}
         total={player.total}
         volume={player.volume}

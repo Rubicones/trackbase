@@ -7,7 +7,6 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
-import { resolveTrackIconColor } from '@/lib/trackIcon'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import { BrandSpinner } from '@/components/BrandSpinner'
@@ -90,76 +89,6 @@ function computeOverlapOffsets(comments: TrackComment[]): Map<string, number> {
     offsets.set(c.id, offset)
   }
   return offsets
-}
-
-type InstrumentType = 'drums' | 'bass' | 'guitar' | 'keys' | 'vocals' | 'generic'
-
-function detectInstrument(name: string): InstrumentType {
-  const n = name.toLowerCase()
-  if (/drum|kick|snare|hat|perc|beat/.test(n)) return 'drums'
-  if (/bass/.test(n)) return 'bass'
-  if (/guitar|gtr/.test(n)) return 'guitar'
-  if (/key|piano|synth|organ|pad/.test(n)) return 'keys'
-  if (/vocal|vox|voice|lead/.test(n)) return 'vocals'
-  return 'generic'
-}
-
-// ─── Instrument SVG icons ─────────────────────────────────────────────────────
-
-function InstrumentSVG({ type, color }: { type: InstrumentType; color: string }) {
-  const c = color
-  switch (type) {
-    case 'drums':
-      return (
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-          <ellipse cx="7.5" cy="10" rx="5" ry="2.5" stroke={c} strokeWidth="0.9" />
-          <ellipse cx="7.5" cy="7" rx="5" ry="2.5" stroke={c} strokeWidth="0.9" />
-          <line x1="2.5" y1="7" x2="2.5" y2="10" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-          <line x1="12.5" y1="7" x2="12.5" y2="10" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-          <path d="M5 4L7 6M10 4L8 6" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-        </svg>
-      )
-    case 'bass':
-    case 'guitar':
-      return (
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-          <path d="M5 2h5l.5.5v2H4.5V2.5L5 2z" stroke={c} strokeWidth="0.9" strokeLinejoin="round" />
-          <rect x="4.5" y="4" width="6" height="1" fill={c} />
-          <path d="M5.5 5v3.5a2 2 0 0 0 4 0V5" stroke={c} strokeWidth="0.9" />
-          <circle cx="7.5" cy="9" r="2" stroke={c} strokeWidth="0.8" />
-        </svg>
-      )
-    case 'keys':
-      return (
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-          <rect x="1.5" y="5" width="12" height="7" rx="1" stroke={c} strokeWidth="0.9" />
-          <line x1="4.5" y1="5" x2="4.5" y2="10" stroke={c} strokeWidth="0.8" />
-          <line x1="7.5" y1="5" x2="7.5" y2="10" stroke={c} strokeWidth="0.8" />
-          <line x1="10.5" y1="5" x2="10.5" y2="10" stroke={c} strokeWidth="0.8" />
-          <rect x="3" y="5" width="2" height="3.5" rx="0.3" fill={c} opacity="0.6" />
-          <rect x="6" y="5" width="2" height="3.5" rx="0.3" fill={c} opacity="0.6" />
-          <rect x="9" y="5" width="2" height="3.5" rx="0.3" fill={c} opacity="0.6" />
-        </svg>
-      )
-    case 'vocals':
-      return (
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-          <rect x="5.5" y="2" width="4" height="6" rx="2" stroke={c} strokeWidth="0.9" />
-          <path d="M3 8.5a4.5 4.5 0 0 0 9 0" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-          <line x1="7.5" y1="13" x2="7.5" y2="12" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-          <line x1="6" y1="13" x2="9" y2="13" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-        </svg>
-      )
-    default:
-      return (
-        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-          <path d="M6 12V5.5l6-1.5v6" stroke={c} strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="4.5" cy="12" r="1.5" stroke={c} strokeWidth="0.9" />
-          <circle cx="10.5" cy="10.5" r="1.5" stroke={c} strokeWidth="0.9" />
-          <path d="M9 7V5" stroke={c} strokeWidth="0.9" strokeLinecap="round" />
-        </svg>
-      )
-  }
 }
 
 // ─── Theme toggle ─────────────────────────────────────────────────────────────
@@ -909,12 +838,8 @@ function TrackRow({
   onCloseInput: () => void
   onDeleteTrack: (trackId: string) => Promise<void>
 }) {
-  const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme !== 'light'
   const fileRef = useRef<HTMLInputElement>(null)
   const col = palette(index)
-  const iconBg = isDark ? resolveTrackIconColor(col.bg, true) : col.bgLight
-  const instrument = detectInstrument(track.name)
 
   const [waveformReady, setWaveformReady] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -956,15 +881,10 @@ function TrackRow({
     >
       <span className="text-center text-[11px] text-dim tabular-nums">{index + 1}</span>
 
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: iconBg }}>
-        {waveformReady ? (
-          <InstrumentSVG type={instrument} color={col.fg} />
-        ) : (
-          <svg className="animate-spin" width="13" height="13" viewBox="0 0 13 13" fill="none">
-            <circle cx="6.5" cy="6.5" r="5" stroke={col.fg} strokeWidth="1.5" strokeOpacity="0.2" />
-            <path d="M6.5 1.5A5 5 0 0 1 11.5 6.5" stroke={col.fg} strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        )}
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center border border-border bg-surface-2">
+        <span className="text-[11px] font-bold uppercase text-foreground">
+          {(track.display_name ?? track.name).trim()[0]?.toUpperCase() ?? '?'}
+        </span>
       </div>
 
       <div className="min-w-0">
@@ -1681,7 +1601,7 @@ export default function ProjectPage() {
             </div>
 
             {versionLoading ? (
-              <BrandSpinner fullscreen={false} />
+              <BrandSpinner fullscreen={false} label="Loading tracks" />
             ) : activeTracks.length === 0 ? (
               <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
             ) : activeTracks.map((t, i) => (

@@ -26,14 +26,59 @@ export async function GET(req: NextRequest) {
     .select('band_id, role, role_label, bands(id, name, created_at)')
     .eq('user_id', userId)
 
-  if (mErr || !memberships?.length) {
+  if (mErr) {
+    return NextResponse.json({ error: mErr.message }, { status: 500 })
+  }
+
+  const memberRows = memberships ?? []
+  const bandIds = memberRows.map((m: { band_id: string }) => m.band_id)
+
+  // Pending join requests — shown in the list but not accessible yet
+  const { data: pendingRequests } = await adminSupabase
+    .from('band_join_requests')
+    .select('id, band_id, created_at, bands(id, name, created_at)')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+
+  const pendingBands = (pendingRequests ?? [])
+    .filter((r: { band_id: string }) => !bandIds.includes(r.band_id))
+    .map((r: {
+      id: string
+      band_id: string
+      created_at: string
+      bands: { id: string; name: string; created_at: string } | { id: string; name: string; created_at: string }[] | null
+    }) => {
+      const band = Array.isArray(r.bands) ? r.bands[0] : r.bands
+      if (!band) return null
+      return {
+        id: band.id,
+        name: band.name,
+        created_at: band.created_at,
+        userRole: 'pending',
+        userRoleLabel: null,
+        projectCount: 0,
+        memberCount: 0,
+        lastUpdated: r.created_at,
+        latestActivity: null,
+        storageBytes: 0,
+        storageLimitBytes: STORAGE_LIMIT_BYTES,
+        isPending: true,
+        joinRequestId: r.id,
+        joinRequestedAt: r.created_at,
+      }
+    })
+    .filter(Boolean)
+
+  if (!memberRows.length) {
     return NextResponse.json({
-      bands: [], totalBands: 0, totalProjects: 0, totalCollaborators: 0,
+      bands: pendingBands,
+      totalBands: 0,
+      totalProjects: 0,
+      totalCollaborators: 0,
       storageLimitBytes: STORAGE_LIMIT_BYTES,
     })
   }
-
-  const bandIds = memberships.map((m: { band_id: string }) => m.band_id)
 
   // ── Phase 2: parallel fetches ─────────────────────────────────────────────
   const [projectsRes, allMembersRes] = await Promise.all([
@@ -112,7 +157,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Aggregate per band ────────────────────────────────────────────────────
-  const bands = (memberships as unknown as {
+  const bands = (memberRows as unknown as {
     band_id: string; role: string; role_label: string | null
     bands: { id: string; name: string; created_at: string }
   }[]).map(m => {
@@ -161,8 +206,11 @@ export async function GET(req: NextRequest) {
       } : null,
       storageBytes,
       storageLimitBytes: STORAGE_LIMIT_BYTES,
+      isPending: false,
     }
   })
+
+  const allBands = [...bands, ...pendingBands]
 
   // ── Top-level stats ───────────────────────────────────────────────────────
   const totalProjects = bands.reduce((s, b) => s + b.projectCount, 0)
@@ -171,7 +219,7 @@ export async function GET(req: NextRequest) {
   )
 
   return NextResponse.json({
-    bands,
+    bands: allBands,
     totalBands: bands.length,
     totalProjects,
     totalCollaborators: allCollaboratorIds.size,

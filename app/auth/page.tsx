@@ -43,10 +43,31 @@ function AuthPageContent() {
 
   useEffect(() => {
     const supabase = getSupabaseClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
-        const username = session.user.user_metadata?.username
-        router.replace(username ? next : '/onboarding')
+        const meta = session.user.user_metadata
+        if (!meta?.username) {
+          router.replace('/onboarding')
+        } else if (!meta?.onboarding_complete) {
+          try {
+            const statusRes = await fetch('/api/me/setup-status')
+            const status = statusRes.ok ? await statusRes.json() : null
+            if (status?.can_use_app) {
+              await supabase.auth.updateUser({ data: { onboarding_complete: true } })
+              const { data: { session: refreshed } } = await supabase.auth.refreshSession()
+              if (refreshed) {
+                document.cookie = `sb-at=${refreshed.access_token}; path=/; max-age=${refreshed.expires_in ?? 3600}; SameSite=Lax`
+              }
+              router.replace(next)
+            } else {
+              router.replace('/onboarding?step=3')
+            }
+          } catch {
+            router.replace('/onboarding?step=3')
+          }
+        } else {
+          router.replace(next)
+        }
       } else {
         setChecking(false)
       }

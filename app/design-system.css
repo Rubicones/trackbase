@@ -332,6 +332,16 @@
     font-family: var(--tb-font-display);
     letter-spacing: -0.02em;
   }
+
+  html[data-theme] ::selection {
+    background-color: var(--ember);
+    color: oklch(0.98 0 0);
+  }
+
+  html[data-theme] ::-moz-selection {
+    background-color: var(--ember);
+    color: oklch(0.98 0 0);
+  }
 }
 
 /* Grid backgrounds (mixer timeline) */

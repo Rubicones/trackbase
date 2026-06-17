@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
+import { ensureBandInviteCode } from '@/lib/inviteCode'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -67,6 +67,8 @@ export async function POST(req: NextRequest) {
       .from('band_members')
       .insert({ band_id: band.id, user_id: userId, role: 'owner' })
     if (memberErr) throw memberErr
+
+    await ensureBandInviteCode(band.id)
 
     return NextResponse.json({ band }, { status: 201 })
   } catch (err) {

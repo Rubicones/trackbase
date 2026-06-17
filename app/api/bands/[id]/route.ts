@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
+import { ensureBandInviteCode } from '@/lib/inviteCode'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
@@ -218,6 +219,52 @@ export async function GET(
     profiles: profileMap.get(m.user_id) ?? null,
   }))
 
+  let inviteCode: string | null = null
+  let pendingJoinRequests: Array<{
+    id: string
+    user_id: string
+    created_at: string
+    profile: { username: string; display_name: string | null; avatar_color: string | null } | null
+  }> = []
+
+  if (membership.role === 'owner') {
+    try {
+      inviteCode = await ensureBandInviteCode(bandId)
+    } catch {
+      inviteCode = bandRes.data.invite_code ?? null
+    }
+
+    const { data: requests } = await adminSupabase
+      .from('band_join_requests')
+      .select('id, user_id, created_at')
+      .eq('band_id', bandId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+
+    const requestUserIds = (requests ?? []).map(r => r.user_id)
+    let requestProfiles = new Map<string, { username: string; display_name: string | null; avatar_color: string | null }>()
+    if (requestUserIds.length > 0) {
+      const { data: reqProfiles } = await adminSupabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_color')
+        .in('id', requestUserIds)
+      for (const p of reqProfiles ?? []) {
+        requestProfiles.set(p.id, {
+          username: p.username,
+          display_name: p.display_name,
+          avatar_color: p.avatar_color,
+        })
+      }
+    }
+
+    pendingJoinRequests = (requests ?? []).map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      created_at: r.created_at,
+      profile: requestProfiles.get(r.user_id) ?? null,
+    }))
+  }
+
   return NextResponse.json({
     band: bandRes.data,
     projects: enhancedProjects,
@@ -227,7 +274,58 @@ export async function GET(
     recentActivity,
     totalActivity,
     storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+    inviteCode,
+    pendingJoinRequests,
   })
+}
+
+// PATCH /api/bands/[id] — owner updates band name
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const userId = getUserId(req)
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id: bandId } = await params
+
+  const { data: membership } = await supabase
+    .from('band_members')
+    .select('role')
+    .eq('band_id', bandId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (membership.role !== 'owner') {
+    return NextResponse.json({ error: 'Only owners can rename a band' }, { status: 403 })
+  }
+
+  let body: { name?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  const name = body.name
+  if (typeof name !== 'string' || !name.trim()) {
+    return NextResponse.json({ error: 'name must be a non-empty string' }, { status: 400 })
+  }
+  if (name.trim().length > 50) {
+    return NextResponse.json({ error: 'name must be 50 characters or fewer' }, { status: 400 })
+  }
+
+  const { data: band, error } = await supabase
+    .from('bands')
+    .update({ name: name.trim() })
+    .eq('id', bandId)
+    .select('id, name, created_at, invite_code')
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return NextResponse.json({ band })
 }
 
 // DELETE /api/bands/[id] — owner deletes band (cascades via FK)
