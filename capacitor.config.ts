@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
     appName: "trackbase",
     webDir: "public",
     server: {
-        url: "https://trackbase-sigma.vercel.app",
+        url: "https://trackbase-git-capacitor-rubicons-projects.vercel.app",
         cleartext: false,
     },
 };
