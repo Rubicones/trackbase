@@ -1,9 +1,25 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
+
+/** Force-include ffmpeg-static binary in serverless traces (dynamic path breaks default tracing). */
+const ffmpegTracing = [
+  './node_modules/ffmpeg-static/ffmpeg',
+  './node_modules/ffmpeg-static/package.json',
+]
+
+const ffmpegRoutes = [
+  '/api/versions/[id]/tracks/process',
+  '/api/versions/[id]/tracks/upload',
+  '/api/versions/[id]/export',
+  '/api/tracks/[id]/download',
+  '/api/projects/[id]/mix',
+] as const
 
 const nextConfig: NextConfig = {
-  outputFileTracingIncludes: {
-    '/api/versions/[id]/tracks/process': ['./node_modules/ffmpeg-static/**'],
-  },
-};
+  // Keep native/binary packages out of the webpack bundle so __dirname paths stay valid.
+  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg'],
+  outputFileTracingIncludes: Object.fromEntries(
+    ffmpegRoutes.map(route => [route, ffmpegTracing]),
+  ),
+}
 
-export default nextConfig;
+export default nextConfig
