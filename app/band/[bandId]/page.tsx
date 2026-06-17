@@ -12,6 +12,8 @@ import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
+import { TbInput } from '@/components/design/TbInput'
+import { TbModal } from '@/components/design/TbModal'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
@@ -111,31 +113,6 @@ function formatLimit(bytes: number): string {
 
 function formatFoundedHero(iso: string): string {
   return new Date(iso).toLocaleDateString('en', { month: 'short', year: 'numeric' }).toUpperCase()
-}
-
-function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={`w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 ${props.className ?? ''}`}
-    />
-  )
-}
-
-function TbModal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md border border-border bg-popover p-6 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
-  )
 }
 
 function IconPlay({ size = 14 }: { size?: number }) {

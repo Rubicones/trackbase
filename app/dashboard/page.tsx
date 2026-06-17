@@ -10,6 +10,8 @@ import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
+import { TbInput } from '@/components/design/TbInput'
+import { TbModal } from '@/components/design/TbModal'
 import { Toast } from '@/components/design/Toast'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -106,33 +108,6 @@ function timeGreeting(): string {
 function displayName(username?: string | null): string {
   if (!username) return 'there.'
   return `${username.charAt(0).toUpperCase()}${username.slice(1)}.`
-}
-
-// ─── Shared uikit primitives ──────────────────────────────────────────────────
-
-function TbInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={`w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 ${props.className ?? ''}`}
-    />
-  )
-}
-
-function TbModal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md border border-border bg-popover p-6 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
-  )
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────

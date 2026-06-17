@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
-export type TbButtonVariant = 'ghost' | 'primary' | 'danger' | 'solid' | 'menuDanger'
+export type TbButtonVariant = 'ghost' | 'primary' | 'danger' | 'solid' | 'menuDanger' | 'link'
 
 const variantClass: Record<TbButtonVariant, string> = {
   ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
@@ -8,6 +8,7 @@ const variantClass: Record<TbButtonVariant, string> = {
   solid: 'bg-foreground text-background px-3 py-1.5 font-bold uppercase hover:bg-ember transition-colors border border-transparent',
   danger: 'bg-destructive text-destructive-foreground px-3 py-1.5 font-bold border border-transparent',
   menuDanger: 'border border-destructive/30 text-destructive hover:border-destructive hover:bg-destructive/10 px-3 py-1.5',
+  link: 'border-0 text-muted-foreground hover:text-ember px-2 py-1 bg-transparent',
 }
 
 export function TbButton({

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { TbButton } from '@/components/design/TbButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,29 +80,6 @@ const ALL_STEPS: TourStep[] = [
 const CARD_W = 340
 const CARD_PADDING = 8   // breathing room around the spotlight element
 const CARD_GAP = 14      // gap between spotlight and card
-
-// ─── UI primitives (uikit / auth patterns) ────────────────────────────────────
-
-function TourBtn({
-  children,
-  variant = 'ghost',
-  className = '',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'ghost' | 'primary' | 'link'
-}) {
-  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center justify-center'
-  const styles = {
-    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
-    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110 active:scale-[0.99]',
-    link: 'text-muted-foreground hover:text-ember bg-transparent border-0 px-2 py-1',
-  }
-  return (
-    <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
-      {children}
-    </button>
-  )
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -337,7 +315,7 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
 
           {/* Header */}
           <div className="flex items-center justify-between gap-3 mb-4">
-            <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
               Step {displayStep} of {totalSteps}
             </span>
             <button
@@ -376,16 +354,16 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
           {/* Actions */}
           <div className="flex items-center gap-2 justify-end">
             {showSkip && (
-              <TourBtn variant="link" className="mr-auto" onClick={handleSkip}>
+              <TbButton variant="link" className="mr-auto" onClick={handleSkip}>
                 Skip tour
-              </TourBtn>
+              </TbButton>
             )}
             {!isFirst && (
-              <TourBtn onClick={handleBack}>Back</TourBtn>
+              <TbButton onClick={handleBack}>Back</TbButton>
             )}
-            <TourBtn variant="primary" onClick={handleNext}>
+            <TbButton variant="primary" onClick={handleNext}>
               {isFirst ? 'Start' : isLast ? 'Finish' : 'Next'}
-            </TourBtn>
+            </TbButton>
           </div>
         </div>
       )}
