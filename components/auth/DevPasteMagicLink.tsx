@@ -7,19 +7,12 @@ import { useRouter } from 'next/navigation'
 import { completeAuthFromMagicLinkUrl } from '@/lib/auth/deep-link'
 import { AuthInput, AuthButton, AuthHint } from '@/components/auth/AuthPrimitives'
 
-/** Local dev, or set NEXT_PUBLIC_DEV_PASTE_MAGIC_LINK=true on a Vercel preview deploy. */
-const SHOW_DEV_PASTE_MAGIC_LINK =
-  process.env.NODE_ENV !== 'production' ||
-  process.env.NEXT_PUBLIC_DEV_PASTE_MAGIC_LINK === 'true'
-
-/** DEV-ONLY stopgap: paste a magic link URL to sign in without deep links. */
+/** Temporary stopgap: paste a magic link URL to sign in without deep links. */
 export function DevPasteMagicLink() {
   const router = useRouter()
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
-  if (!SHOW_DEV_PASTE_MAGIC_LINK) return null
 
   async function handleSignIn() {
     setLoading(true)
@@ -43,7 +36,7 @@ export function DevPasteMagicLink() {
     >
       <div>
         <p className="m-0 text-[10px] font-bold uppercase tracking-widest text-amber-500">
-          DEV: Paste magic link
+          Paste magic link
         </p>
         <p className="m-0 mt-1 text-[10px] text-muted-foreground">
           Temporary — remove once OTP login ships.
