@@ -453,7 +453,7 @@ const ProjectRow = memo(function ProjectRow({
 })
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-
+ 
 export default function BandPage() {
   const { bandId } = useParams<{ bandId: string }>()
   const router = useRouter()
