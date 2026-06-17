@@ -145,15 +145,18 @@ export async function GET(
       if (claimed) {
         // Fire background recompute after this response is sent.
         after(async () => {
-          await recomputePreviewMix(projectId).catch(async (err) => {
+          try {
+            await recomputePreviewMix(projectId)
+          } catch (err) {
             console.error('[preview-mix] background recompute failed:', err)
             // Reset to stale so the next request can retry.
-            await supabase
-              .from('projects')
-              .update({ preview_mix_status: 'stale', preview_mix_computing_started_at: null })
-              .eq('id', projectId)
-              .catch(() => {})
-          })
+            try {
+              await supabase
+                .from('projects')
+                .update({ preview_mix_status: 'stale', preview_mix_computing_started_at: null })
+                .eq('id', projectId)
+            } catch { /* ignore reset errors */ }
+          }
         })
       }
     }
