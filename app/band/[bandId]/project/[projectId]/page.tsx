@@ -34,6 +34,7 @@ import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
+import { getMidiInstrument } from '@/lib/midiSoundfont'
 import {
   METRONOME_TRACK_ID,
   PREVIEW_MIX_TRACK_ID,
@@ -1617,11 +1618,12 @@ function usePlayer(
       const data = midiTrack.midi_data
       if (!data || !data.notes.length) continue
       try {
-        const { default: Soundfont } = await import('soundfont-player')
-        const instrName = gmInstrumentName(data.instrument)
-        const instrument = await Soundfont.instrument(ctx, instrName, { soundfont: 'MusyngKite' })
+        // getMidiInstrument returns from cache (preloaded before anchor time was captured)
+        // so this await resolves synchronously and no time elapses before scheduling.
+        const instrument = await getMidiInstrument(ctx, data.instrument)
         // Bar offset in seconds (project bars × bar duration at project BPM)
         const startOffsetSec = (midiTrack.start_bar ?? midiTrack.midi_start_bar ?? 0) * projBarDurationSec
+        const scheduledArr = midiScheduledRef.current
         for (const note of data.notes) {
           // Absolute project-timeline position of this note (in seconds)
           const noteAbsoluteSec = startOffsetSec + note.startSixteenth * sixthSec
@@ -1636,7 +1638,13 @@ function usePlayer(
             duration: noteDurSec,
             gain: note.velocity / 127,
           })
-          midiScheduledRef.current.push(scheduled)
+          scheduledArr.push(scheduled)
+          // Remove from tracking array once the note finishes naturally so the
+          // array doesn't grow unboundedly on long/dense MIDI tracks.
+          scheduled.onended = () => {
+            const idx = scheduledArr.indexOf(scheduled)
+            if (idx >= 0) scheduledArr.splice(idx, 1)
+          }
         }
       } catch { /* no soundfont — skip */ }
     }
@@ -1679,8 +1687,23 @@ function usePlayer(
     const projBarDurSecP = (60 / projBpmP) * projBeatsP
     const metaTracks = (tracksOverride ?? tracksRef.current).filter(t => t.file_type !== 'midi')
     const trackMetaMap = new Map(metaTracks.map(t => [t.id, t]))
-    // Capture AudioContext time ONCE before starting any sources — used as
-    // absolute reference for both audio scheduling and MIDI note scheduling.
+
+    // Preload soundfont instruments for all MIDI tracks BEFORE capturing the
+    // AudioContext anchor time.  Without this, the dynamic import + SF.instrument()
+    // call inside scheduleMidiNotes can take 1-2 seconds, by which point the anchor
+    // is in the past and early notes get silently skipped by the "missed" guard.
+    // getMidiInstrument caches by (ctx, program), so subsequent plays resolve instantly.
+    const midiTracksForPlay = (tracksOverride ?? tracksRef.current).filter(t => t.file_type === 'midi')
+    if (midiTracksForPlay.length > 0) {
+      await Promise.all(
+        midiTracksForPlay
+          .filter(t => t.midi_data?.notes?.length)
+          .map(t => getMidiInstrument(ctx, t.midi_data!.instrument).catch(() => {}))
+      )
+    }
+
+    // Capture AudioContext time ONCE — now that instruments are warm, this is the
+    // true start reference for both audio scheduling and MIDI note scheduling.
     const audioCtxPlayTime = scheduledStartTime != null
       ? Math.max(scheduledStartTime, ctx.currentTime)
       : ctx.currentTime
@@ -2766,11 +2789,13 @@ const TrackRow = React.memo(function TrackRow({
       />
     </div>
 
-    {/* Piano roll editor — inline expandable panel */}
+    {/* Piano roll editor — inline expandable panel, above tact grid overlay */}
     <div style={{
       maxHeight: pianoRollOpen ? 500 : 0,
       overflow: 'hidden',
       transition: 'max-height 0.3s ease',
+      position: pianoRollOpen ? 'relative' : undefined,
+      zIndex: pianoRollOpen ? 2 : undefined,
     }}>
       {pianoRollOpen && (
         <PianoRollEditor

@@ -33,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body style={{ height: '100%' }}>
         <Providers>{children}</Providers>
+        <Analytics />
       </body>
     </html>
   )

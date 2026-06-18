@@ -566,7 +566,7 @@ function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
   const pLeft = typeof window !== 'undefined'
     ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
     : 8
-  const pTop = rect.top - 8
+  const pTop = rect.bottom + 8
 
   return createPortal(
     <div
@@ -575,7 +575,6 @@ function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
         top: pTop,
         left: pLeft,
         width: W,
-        transform: 'translateY(-100%)',
       }}
     >
       <div className="text-[9px] font-bold uppercase tracking-widest text-ember mb-1">

@@ -581,15 +581,15 @@ export function ReadingMode({
                   key={section.id}
                   type="button"
                   onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
+                  className="w-full flex items-start gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
                 >
-                  <div className="text-[9px] font-bold uppercase tracking-widest text-ember w-16 shrink-0 truncate">
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-ember w-16 shrink-0 pt-0.5">
                     {sectionLabel(section)}
                   </div>
-                  <div className="text-xs flex-1 truncate text-foreground">
+                  <div className="text-xs flex-1 min-w-0 text-left text-foreground whitespace-normal break-words leading-relaxed">
                     {formatChords(section.chords)}
                   </div>
-                  <div className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0">
+                  <div className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 pt-0.5">
                     {sectionStartTime(section.start_bar)}
                   </div>
                 </button>
