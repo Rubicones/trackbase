@@ -7,7 +7,8 @@ import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { Spinner } from '@/components/ui/Spinner'
-import { buildCompositeWaveform } from '@/lib/waveform-decode'
+import { buildCompositeWaveform, decodeWaveformFromArrayBuffer } from '@/lib/waveform-decode'
+import { fetchPreviewMixBuffer } from '@/lib/previewMixClient'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -18,6 +19,8 @@ export type ReadingModePlayer = {
   duration: number
   loaded: number
   total: number
+  /** True when preview mix or all FLAC tracks are ready to play. */
+  playbackReady: boolean
   play: () => void
   pause: () => void
   seek: (t: number) => void
@@ -55,12 +58,14 @@ function formatChords(chords: string | null | undefined): string {
 // ─── Master waveform (uikit bar style) ────────────────────────────────────────
 
 function MasterWaveform({
-  bars, playedRatio, onSeek, ready,
+  bars, playedRatio, onSeek, ready, animKey = 0,
 }: {
   bars: number[]
   playedRatio: number
   onSeek: (ratio: number) => void
   ready: boolean
+  /** Bumped when waveform data first becomes ready — retriggers draw animation. */
+  animKey?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
@@ -105,12 +110,14 @@ function MasterWaveform({
           const played = (i + 0.5) / bars.length <= playedRatio
           return (
             <div
-              key={i}
-              className="flex-1 min-w-0"
+              key={`${animKey}-${i}`}
+              className={`flex-1 min-w-0${ready ? ' animate-draw-wave' : ''}`}
               style={{
                 height: `${Math.max(6, h * 100)}%`,
                 background: 'var(--ember)',
                 opacity: ready ? (played ? 0.95 : 0.35) : 0.2,
+                animationDelay: ready ? `${i * 4}ms` : undefined,
+                transformOrigin: 'bottom',
               }}
             />
           )
@@ -216,6 +223,7 @@ export function ReadingMode({
   bandId,
   activeTracks,
   barDurationMs,
+  isMainVersion,
   visible,
   sectionLoopOn,
   sectionLoopEnabled,
@@ -236,6 +244,7 @@ export function ReadingMode({
   bandId: string
   activeTracks: Track[]
   barDurationMs: number
+  isMainVersion: boolean
   visible: boolean
   sectionLoopOn: boolean
   sectionLoopEnabled: boolean
@@ -250,13 +259,32 @@ export function ReadingMode({
   const [composite, setComposite] = useState<number[]>(() => new Array(REHEARSAL_BAR_COUNT).fill(0.12))
   const [waveformReady, setWaveformReady] = useState(false)
   const [waveformLoading, setWaveformLoading] = useState(false)
+  const [waveAnimKey, setWaveAnimKey] = useState(0)
+  const prevWaveformReadyRef = useRef(false)
   const [lyrics, setLyrics] = useState<ProjectResource | null>(null)
   const [showResources, setShowResources] = useState(false)
+  const waveformSourceRef = useRef<'preview' | 'full' | null>(null)
+  const pendingWaveformUpgradeRef = useRef(false)
+  const prevPlayingRef = useRef(false)
 
   const audioTrackIds = activeTracks
     .filter(t => t.file_type !== 'midi')
     .map(t => t.id)
     .join(',')
+
+  useEffect(() => {
+    waveformSourceRef.current = null
+    pendingWaveformUpgradeRef.current = false
+    prevPlayingRef.current = false
+    prevWaveformReadyRef.current = false
+  }, [audioTrackIds, projectId, isMainVersion])
+
+  useEffect(() => {
+    if (waveformReady && !prevWaveformReadyRef.current) {
+      setWaveAnimKey(k => k + 1)
+    }
+    prevWaveformReadyRef.current = waveformReady
+  }, [waveformReady])
 
   useEffect(() => {
     if (!visible) return
@@ -265,27 +293,108 @@ export function ReadingMode({
       setComposite(new Array(REHEARSAL_BAR_COUNT).fill(0.12))
       setWaveformReady(false)
       setWaveformLoading(false)
+      waveformSourceRef.current = null
       return
     }
 
-    if (player.total > 0 && player.loaded < player.total) {
+    let cancelled = false
+    const fullLoaded = player.total > 0 && player.loaded >= player.total
+
+    async function applyPreviewWaveform(): Promise<boolean> {
+      if (!isMainVersion) return false
+      const ab = await fetchPreviewMixBuffer(projectId)
+      if (!ab || cancelled) return false
+      const bars = await decodeWaveformFromArrayBuffer(ab, DECODE_BAR_COUNT)
+      if (!bars || cancelled) return false
+      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
+      setWaveformReady(true)
+      setWaveformLoading(false)
+      waveformSourceRef.current = 'preview'
+      return true
+    }
+
+    async function applyFullWaveform() {
+      setWaveformLoading(true)
+      const bars = await buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT)
+      if (cancelled) return
+      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
+      setWaveformReady(true)
+      setWaveformLoading(false)
+      waveformSourceRef.current = 'full'
+      pendingWaveformUpgradeRef.current = false
+    }
+
+    if (isMainVersion) {
+      if (fullLoaded && !player.playing) {
+        void applyFullWaveform()
+        return () => { cancelled = true }
+      }
+      setWaveformLoading(true)
+      void applyPreviewWaveform().then(ok => {
+        if (cancelled) return
+        if (!ok && fullLoaded) void applyFullWaveform()
+        else if (!ok) {
+          setWaveformReady(false)
+          setWaveformLoading(!fullLoaded)
+        }
+      })
+      return () => { cancelled = true }
+    }
+
+    if (!fullLoaded) {
       setWaveformLoading(true)
       setWaveformReady(false)
       return
     }
 
+    void applyFullWaveform()
+    return () => { cancelled = true }
+  }, [visible, audioTrackIds, projectId, isMainVersion, activeTracks])
+
+  // Upgrade preview → full waveform when FLAC tracks finish loading.
+  useEffect(() => {
+    if (!visible || !isMainVersion) return
+    const fullLoaded = player.total > 0 && player.loaded >= player.total
+    if (!fullLoaded || waveformSourceRef.current !== 'preview') return
+
+    if (player.playing) {
+      pendingWaveformUpgradeRef.current = true
+      return
+    }
+
     let cancelled = false
     setWaveformLoading(true)
-
-    buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
+    void buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
       if (cancelled) return
       setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
       setWaveformReady(true)
       setWaveformLoading(false)
+      waveformSourceRef.current = 'full'
+      pendingWaveformUpgradeRef.current = false
     })
-
     return () => { cancelled = true }
-  }, [visible, audioTrackIds, player.loaded, player.total])
+  }, [visible, isMainVersion, player.loaded, player.total, activeTracks])
+
+  // After playback stops, upgrade if tracks finished loading during play.
+  useEffect(() => {
+    const wasPlaying = prevPlayingRef.current
+    prevPlayingRef.current = player.playing
+    if (!visible || !isMainVersion) return
+    if (!wasPlaying || player.playing) return
+    if (!pendingWaveformUpgradeRef.current || waveformSourceRef.current !== 'preview') return
+
+    let cancelled = false
+    pendingWaveformUpgradeRef.current = false
+    setWaveformLoading(true)
+    void buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
+      if (cancelled) return
+      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
+      setWaveformReady(true)
+      setWaveformLoading(false)
+      waveformSourceRef.current = 'full'
+    })
+    return () => { cancelled = true }
+  }, [player.playing, visible, isMainVersion, activeTracks])
 
   useEffect(() => {
     if (!visible) return
@@ -320,8 +429,9 @@ export function ReadingMode({
     return fmt((startBar * barDurationMs) / 1000)
   }
 
-  const isLoading = player.total > 0 && player.loaded < player.total
-  const isReady = player.total === 0 || player.loaded === player.total
+  const isLoadingTracks = player.total > 0 && player.loaded < player.total
+  const isReady = player.total === 0 || player.playbackReady
+  const awaitingPlayback = player.total > 0 && !player.playbackReady
 
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
@@ -408,9 +518,9 @@ export function ReadingMode({
           <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             Full mix
           </div>
-          {(isLoading || waveformLoading) && (
+          {(isLoadingTracks || waveformLoading) && (
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
-              {isLoading ? `Loading audio… ${player.loaded}/${player.total}` : 'Building waveform…'}
+              {isLoadingTracks ? `Loading audio… ${player.loaded}/${player.total}` : 'Building waveform…'}
             </p>
           )}
           {player.total === 0 ? (
@@ -422,7 +532,8 @@ export function ReadingMode({
               bars={composite}
               playedRatio={playedRatio}
               onSeek={handleSeek}
-              ready={waveformReady && isReady}
+              ready={waveformReady}
+              animKey={waveAnimKey}
             />
           )}
           <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-muted-foreground mt-1">
@@ -517,9 +628,9 @@ export function ReadingMode({
           onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}
           disabled={!isReady || player.total === 0}
           className="row-span-2 size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed self-center"
-          aria-label={(player.playing || isCounting) ? 'Pause' : isLoading ? 'Loading' : 'Play'}
+          aria-label={(player.playing || isCounting) ? 'Pause' : awaitingPlayback ? 'Loading' : 'Play'}
         >
-          {isLoading ? (
+          {awaitingPlayback ? (
             <Spinner size={16} tone="white" />
           ) : (
             <span className="text-base translate-x-px">{(player.playing || isCounting) ? '❚❚' : '▶'}</span>

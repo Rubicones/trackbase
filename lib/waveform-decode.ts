@@ -50,6 +50,31 @@ export function buildCompositeFromBars(trackBarSets: number[][], barCount: numbe
   return sum.map(v => v / max)
 }
 
+/** Peak bars from a raw audio buffer (e.g. cached preview MP3). */
+export async function decodeWaveformFromArrayBuffer(
+  ab: ArrayBuffer,
+  barCount = 96,
+): Promise<number[] | null> {
+  try {
+    const actx = new AudioContext()
+    const decoded = await actx.decodeAudioData(ab.slice(0))
+    actx.close()
+
+    const raw = decoded.getChannelData(0)
+    const block = Math.max(1, Math.floor(raw.length / barCount))
+    const amps: number[] = []
+    for (let i = 0; i < barCount; i++) {
+      let s = 0
+      for (let j = 0; j < block; j++) s += Math.abs(raw[i * block + j])
+      amps.push(s / block)
+    }
+    const max = Math.max(...amps, 0.001)
+    return amps.map(a => a / max)
+  } catch {
+    return null
+  }
+}
+
 /** Average audio track waveforms into one composite peak array. */
 export async function buildCompositeWaveform(
   tracks: Track[],

@@ -1,6 +1,9 @@
 /** Virtual track id for the hidden metronome buffer in the mixer player. */
 export const METRONOME_TRACK_ID = '__metronome__'
 
+/** Virtual track id for the cached server preview mix (mobile rehearsal). */
+export const PREVIEW_MIX_TRACK_ID = '__preview_mix__'
+
 export function beatsPerBarFromTimeSig(timeSignature: string): number {
   return parseInt(timeSignature.split('/')[0], 10) || 4
 }

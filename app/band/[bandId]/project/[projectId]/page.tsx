@@ -36,6 +36,7 @@ import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
 import {
   METRONOME_TRACK_ID,
+  PREVIEW_MIX_TRACK_ID,
   generateMetronomeBuffer,
   snapToPreviousBarSec,
   startCountdown,
@@ -43,6 +44,12 @@ import {
 import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { registerPlaybackStop } from '@/lib/playbackSession'
+import {
+  fetchPreviewMixBuffer,
+  prefetchPreviewMixPlayback,
+  previewMixPlaybackUrl,
+  takePreloadedPreviewAudio,
+} from '@/lib/previewMixClient'
 import { RecordingTrackRow } from '@/components/RecordingTrackRow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1044,12 +1051,19 @@ const MAX_PROJECT_BARS = 1000
 const RECORDING_EXTEND_CHUNK_BARS = 16
 const RECORDING_EXTEND_LEAD_BARS = 4
 
+type RehearsalPlaybackOptions = {
+  enabled: boolean
+  projectId: string
+  isMainVersion: boolean
+}
+
 function usePlayer(
   tracks: Track[],
   versionId: string,
   project: Project | null,
   minPlaybackDuration = 0,
   timelineDurationSec = 0,
+  rehearsal: RehearsalPlaybackOptions = { enabled: false, projectId: '', isMainVersion: false },
 ) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
@@ -1079,6 +1093,14 @@ function usePlayer(
   // and restarts the AudioBufferSourceNode from the correct position.
   const [seekEpoch, setSeekEpoch] = useState(0)
   const [loaded, setLoaded] = useState(0)
+  const [previewMixReady, setPreviewMixReady] = useState(false)
+  const usingPreviewMixRef = useRef(false)
+  const pendingFullMixSwitchRef = useRef(false)
+  const previewFetchGenRef = useRef(0)
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null)
+  const previewDecodeInflightRef = useRef<Promise<AudioBuffer | null> | null>(null)
+  const rehearsalRef = useRef(rehearsal)
+  rehearsalRef.current = rehearsal
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
   const mutedTracksRef = useRef<Set<string>>(new Set())
   const [soloedTracks, setSoloedTracks] = useState<Set<string>>(new Set())
@@ -1110,6 +1132,10 @@ function usePlayer(
   ) => {
     if (trackId === METRONOME_TRACK_ID) {
       return metronomeOnRef.current ? 1 : 0
+    }
+    if (trackId === PREVIEW_MIX_TRACK_ID) {
+      const hasSolos = soloSet.size > 0
+      return hasSolos && soloSet.has(PREVIEW_MIX_TRACK_ID) ? 1 : 0
     }
     const hasSolos = soloSet.size > 0
     return (hasSolos ? !soloSet.has(trackId) : mutedSet.has(trackId)) ? 0 : 1
@@ -1143,8 +1169,16 @@ function usePlayer(
 
   const recomputeTransportDuration = useCallback(() => {
     const proj = projectRef.current
-    if (!proj || !tracksRef.current.length) return
+    if (!proj) return
     let maxDur = 0
+    if (usingPreviewMixRef.current) {
+      const previewAudio = previewAudioRef.current
+      if (previewAudio && Number.isFinite(previewAudio.duration) && previewAudio.duration > 0) {
+        maxDur = Math.max(maxDur, previewAudio.duration)
+      }
+      const previewBuf = bufsRef.current.get(PREVIEW_MIX_TRACK_ID)
+      if (previewBuf) maxDur = Math.max(maxDur, previewBuf.duration)
+    }
     for (const t of tracksRef.current) {
       const buf = bufsRef.current.get(t.id)
       maxDur = Math.max(maxDur, trackTimelineEndSec(
@@ -1156,6 +1190,89 @@ function usePlayer(
     }
     if (maxDur > 0) setDuration(maxDur)
   }, [])
+
+  const clearPreviewMixPlayback = useCallback(() => {
+    bufsRef.current.delete(PREVIEW_MIX_TRACK_ID)
+    usingPreviewMixRef.current = false
+    pendingFullMixSwitchRef.current = false
+    setPreviewMixReady(false)
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+      previewAudioRef.current.src = ''
+    }
+    previewAudioRef.current = null
+    previewDecodeInflightRef.current = null
+    if (soloedTracksRef.current.has(PREVIEW_MIX_TRACK_ID)) {
+      soloedTracksRef.current = new Set()
+      setSoloedTracks(new Set())
+    }
+  }, [])
+
+  const switchToFullMix = useCallback(() => {
+    if (!usingPreviewMixRef.current) return
+    bufsRef.current.delete(PREVIEW_MIX_TRACK_ID)
+    usingPreviewMixRef.current = false
+    pendingFullMixSwitchRef.current = false
+    setPreviewMixReady(false)
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+      previewAudioRef.current.src = ''
+    }
+    previewAudioRef.current = null
+    previewDecodeInflightRef.current = null
+    if (soloedTracksRef.current.has(PREVIEW_MIX_TRACK_ID)) {
+      soloedTracksRef.current = new Set()
+      setSoloedTracks(new Set())
+    }
+    recomputeTransportDuration()
+  }, [recomputeTransportDuration])
+
+  const ensurePreviewMixBuffer = useCallback(async (ctx: AudioContext): Promise<AudioBuffer | null> => {
+    const existing = bufsRef.current.get(PREVIEW_MIX_TRACK_ID)
+    if (existing) return existing
+
+    if (previewDecodeInflightRef.current) {
+      return previewDecodeInflightRef.current
+    }
+
+    const projectId = rehearsalRef.current.projectId
+    if (!projectId) return null
+
+    const inflight = (async () => {
+      const ab = await fetchPreviewMixBuffer(projectId)
+      if (!ab?.byteLength) return null
+      const decoded = await ctx.decodeAudioData(ab.slice(0))
+      bufsRef.current.set(PREVIEW_MIX_TRACK_ID, decoded)
+      recomputeTransportDuration()
+      return decoded
+    })().finally(() => {
+      previewDecodeInflightRef.current = null
+    })
+
+    previewDecodeInflightRef.current = inflight
+    return inflight
+  }, [recomputeTransportDuration])
+
+  const trySwitchToFullMix = useCallback(() => {
+    if (!pendingFullMixSwitchRef.current || !usingPreviewMixRef.current) return
+    if (playingRef.current) return
+    switchToFullMix()
+  }, [switchToFullMix])
+
+  const markPendingFullMixSwitchIfReady = useCallback(() => {
+    const r = rehearsalRef.current
+    if (!r.enabled || !r.isMainVersion || !usingPreviewMixRef.current) return
+    const audioIds = tracksRef.current.filter(t => t.file_type !== 'midi')
+    if (audioIds.length === 0) return
+    if (!audioIds.every(t => bufsRef.current.has(t.id))) return
+    pendingFullMixSwitchRef.current = true
+    trySwitchToFullMix()
+  }, [trySwitchToFullMix])
+
+  const canPlayBeforeTracksLoaded = useCallback(() => {
+    const r = rehearsalRef.current
+    return r.enabled && r.isMainVersion && previewMixReady && usingPreviewMixRef.current
+  }, [previewMixReady])
 
   const noteTrackDuration = useCallback((trackId: string, ms: number) => {
     if (ms <= 0) return
@@ -1193,7 +1310,8 @@ function usePlayer(
     setMetronomeOn(false)
     sectionLoopRef.current = null
     setSectionLoopOn(false)
-  }, [versionId])
+    clearPreviewMixPlayback()
+  }, [versionId, clearPreviewMixPlayback])
 
   // Load audio buffers — re-runs when tracks are added/removed within a version.
   useEffect(() => {
@@ -1217,7 +1335,7 @@ function usePlayer(
     }
 
     for (const id of [...bufsRef.current.keys()]) {
-      if (id === METRONOME_TRACK_ID) continue
+      if (id === METRONOME_TRACK_ID || id === PREVIEW_MIX_TRACK_ID) continue
       if (!audioTracks.some(t => t.id === id)) {
         bufsRef.current.delete(id)
         setTrackDurations(prev => {
@@ -1234,6 +1352,7 @@ function usePlayer(
 
     if (pending.length === 0) {
       recomputeTransportDuration()
+      markPendingFullMixSwitchIfReady()
       return () => { cancelled = true }
     }
 
@@ -1254,11 +1373,91 @@ function usePlayer(
         }
       } catch { /* skip */ }
     })).then(() => {
-      if (!cancelled) recomputeTransportDuration()
+      if (!cancelled) {
+        recomputeTransportDuration()
+        markPendingFullMixSwitchIfReady()
+      }
     })
 
     return () => { cancelled = true }
-  }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume])
+  }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume, markPendingFullMixSwitchIfReady, audioTracks.length])
+
+  // Rehearsal (main only): stream preview MP3 via Audio element (fast canplay),
+  // then cache full bytes in the background for the waveform.
+  useEffect(() => {
+    const r = rehearsalRef.current
+    if (!r.enabled || !r.isMainVersion || !r.projectId) {
+      clearPreviewMixPlayback()
+      return
+    }
+
+    let cancelled = false
+    const gen = ++previewFetchGenRef.current
+    const projectId = r.projectId
+
+    prefetchPreviewMixPlayback(projectId)
+
+    let audio = takePreloadedPreviewAudio(projectId)
+    if (!audio) {
+      audio = new Audio()
+      audio.preload = 'auto'
+    }
+    previewAudioRef.current = audio
+
+    const markReady = () => {
+      if (cancelled || gen !== previewFetchGenRef.current) return
+      usingPreviewMixRef.current = true
+      soloedTracksRef.current = new Set([PREVIEW_MIX_TRACK_ID])
+      setSoloedTracks(new Set([PREVIEW_MIX_TRACK_ID]))
+      setPreviewMixReady(true)
+      recomputeTransportDuration()
+      markPendingFullMixSwitchIfReady()
+    }
+
+    const onCanPlay = () => {
+      audio!.removeEventListener('canplay', onCanPlay)
+      audio!.removeEventListener('error', onError)
+      markReady()
+    }
+    const onError = () => {
+      audio!.removeEventListener('canplay', onCanPlay)
+      audio!.removeEventListener('error', onError)
+      if (!cancelled && gen === previewFetchGenRef.current) clearPreviewMixPlayback()
+    }
+
+    audio.addEventListener('canplay', onCanPlay)
+    audio.addEventListener('error', onError)
+
+    const url = previewMixPlaybackUrl(projectId)
+    const resolvedUrl = typeof window !== 'undefined' ? new URL(url, window.location.origin).href : url
+    if (audio.src !== resolvedUrl) {
+      audio.src = url
+    } else if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      markReady()
+    }
+
+    const onMeta = () => recomputeTransportDuration()
+    audio.addEventListener('loadedmetadata', onMeta)
+
+    const ctx = getSharedAudioContext()
+    void ensurePreviewMixBuffer(ctx)
+
+    return () => {
+      cancelled = true
+      audio?.removeEventListener('canplay', onCanPlay)
+      audio?.removeEventListener('error', onError)
+      audio?.removeEventListener('loadedmetadata', onMeta)
+    }
+  }, [
+    versionId,
+    rehearsal.enabled,
+    rehearsal.isMainVersion,
+    rehearsal.projectId,
+    clearPreviewMixPlayback,
+    recomputeTransportDuration,
+    ensurePreviewMixBuffer,
+    markPendingFullMixSwitchIfReady,
+  ])
 
   // Recompute timeline when track offsets/metadata change (without reloading audio)
   useEffect(() => {
@@ -1295,10 +1494,12 @@ function usePlayer(
   useEffect(() => {
     const ctx = actxRef.current ?? getSharedAudioContext()
     actxRef.current = ctx
-    const tracksReady = audioTracks.length === 0 || loaded >= audioTracks.length
+    const tracksReady = audioTracks.length === 0
+      || loaded >= audioTracks.length
+      || canPlayBeforeTracksLoaded()
     if (!tracksReady) return
     ensureMetronomeBuffer(ctx)
-  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer])
+  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer, canPlayBeforeTracksLoaded])
 
   // When the timeline grows during playback (live recording), regenerate the
   // metronome buffer and reschedule its source from the current playhead.
@@ -1339,6 +1540,7 @@ function usePlayer(
     sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
     sourcesRef.current = []
     metronomeSrcRef.current = null
+    previewAudioRef.current?.pause()
     cancelAnimationFrame(rafRef.current)
     midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
     midiScheduledRef.current = []
@@ -1369,6 +1571,7 @@ function usePlayer(
       cancelAnimationFrame(rafRef.current)
       midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
       midiScheduledRef.current = []
+      previewAudioRef.current?.pause()
       setTimeout(() => {
         toStop.forEach(s => { try { s.stop() } catch { /* ok */ } })
       }, RAMP_SECS * 1000 + 4)
@@ -1460,10 +1663,15 @@ function usePlayer(
     tracksOverride?: Track[],
     scheduledStartTime?: number,
   ) => {
+    stopSources()
     const ctx = ensurePlaybackGraph()
     ensureMetronomeBuffer(ctx)
-    stopSources()
     if (ctx.state === 'suspended') await ctx.resume()
+
+    if (usingPreviewMixRef.current) {
+      await ensurePreviewMixBuffer(ctx)
+    }
+
     const newGains = new Map<string, GainNode>()
     const proj = projectRef.current
     const projBpmP = proj?.bpm ?? 120
@@ -1476,11 +1684,13 @@ function usePlayer(
     const audioCtxPlayTime = scheduledStartTime != null
       ? Math.max(scheduledStartTime, ctx.currentTime)
       : ctx.currentTime
+
     bufsRef.current.forEach((buf, id) => {
       const isMetronome = id === METRONOME_TRACK_ID
-      const trackMeta = isMetronome ? null : trackMetaMap.get(id)
-      if (!isMetronome && !trackMeta) return
-      const trackOffsetSec = isMetronome ? 0 : (trackMeta!.start_bar ?? 0) * projBarDurSecP
+      const isPreviewMix = id === PREVIEW_MIX_TRACK_ID
+      const trackMeta = isMetronome || isPreviewMix ? null : trackMetaMap.get(id)
+      if (!isMetronome && !isPreviewMix && !trackMeta) return
+      const trackOffsetSec = (isMetronome || isPreviewMix) ? 0 : (trackMeta!.start_bar ?? 0) * projBarDurSecP
       const trackEndSec = trackOffsetSec + buf.duration
       // Skip tracks that end before the playback position
       if (trackEndSec <= offset) return
@@ -1544,7 +1754,7 @@ function usePlayer(
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack])
+  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack, ensurePreviewMixBuffer])
 
   playFnRef.current = play
 
@@ -1579,8 +1789,11 @@ function usePlayer(
     }
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
     currentTimeRef.current = offsetRef.current
-    stopSources(); setPlaying(false)
-  }, [stopSources])
+    playingRef.current = false
+    stopSources()
+    setPlaying(false)
+    trySwitchToFullMix()
+  }, [stopSources, trySwitchToFullMix])
 
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
@@ -1715,7 +1928,8 @@ function usePlayer(
   }, [])
 
   const playWithCountIn = useCallback(async (offset = offsetRef.current, tracksOverride?: Track[]) => {
-    if (audioTracks.length > 0 && loaded < audioTracks.length) return
+    const waitingForTracks = audioTracks.length > 0 && loaded < audioTracks.length
+    if (waitingForTracks && !canPlayBeforeTracksLoaded()) return
     if (isCountingRef.current) return
 
     const snapped = snapPlayheadToBar(offset)
@@ -1740,16 +1954,22 @@ function usePlayer(
       setIsCounting(false)
     }
     await play(snapped, tracksOverride)
-  }, [play, ensurePlaybackGraph, loaded, audioTracks.length, snapPlayheadToBar])
+  }, [play, ensurePlaybackGraph, loaded, audioTracks.length, snapPlayheadToBar, canPlayBeforeTracksLoaded])
+
+  const playbackReady = audioTracks.length === 0
+    || loaded >= audioTracks.length
+    || canPlayBeforeTracksLoaded()
 
   return {
     playing, currentTime,
     duration: getTransportDuration(),
     loaded, total: audioTracks.length,
+    playbackReady,
     mutedTracks, soloedTracks, volume, setVolume,
     play: () => playWithCountIn(),
     playTransport: (scheduledStartTime?: number) => {
-      if (audioTracks.length > 0 && loaded < audioTracks.length) return
+      const waitingForTracks = audioTracks.length > 0 && loaded < audioTracks.length
+      if (waitingForTracks && !canPlayBeforeTracksLoaded()) return
       const snapped = snapPlayheadToBar(offsetRef.current)
       return play(snapped, undefined, scheduledStartTime)
     },
@@ -3169,6 +3389,12 @@ export default function ProjectPage() {
     if (isMobileLandscape && editStructure) setEditStructure(false)
   }, [isMobileLandscape, editStructure])
 
+  // Start streaming the cached preview mix as early as possible in rehearsal.
+  useEffect(() => {
+    if (!isMobilePortrait || !projectId) return
+    prefetchPreviewMixPlayback(projectId)
+  }, [isMobilePortrait, projectId])
+
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
@@ -3521,7 +3747,18 @@ export default function ProjectPage() {
     1,
   )
 
-  const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, timelineDurationSec)
+  const player = usePlayer(
+    activeTracks,
+    activeVersionId,
+    project,
+    recordingPreviewEndSec,
+    timelineDurationSec,
+    {
+      enabled: isMobilePortrait,
+      projectId,
+      isMainVersion: activeVersion?.type === 'main',
+    },
+  )
   const playerRef = useRef(player)
   playerRef.current = player
 
@@ -4338,6 +4575,7 @@ export default function ProjectPage() {
           duration: player.duration,
           loaded: player.loaded,
           total: player.total,
+          playbackReady: player.playbackReady,
           play: player.play,
           pause: player.pause,
           seek: player.seek,
@@ -4350,6 +4588,7 @@ export default function ProjectPage() {
         bandId={bandId}
         activeTracks={activeTracks}
         barDurationMs={projBarDurationMs}
+        isMainVersion={activeVersion?.type === 'main'}
         visible={isMobilePortrait}
         sectionLoopOn={player.sectionLoopOn}
         sectionLoopEnabled={sectionLoopButtonEnabled}
