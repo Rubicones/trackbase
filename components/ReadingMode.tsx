@@ -268,6 +268,7 @@ export function ReadingMode({
   const waveformSourceRef = useRef<'preview' | 'full' | null>(null)
   const playbackMixRef = useRef(player.playbackMix)
   playbackMixRef.current = player.playbackMix
+  const isPlaybackFull = useCallback(() => playbackMixRef.current === 'full', [])
 
   const setWaveformSource = useCallback((source: 'preview' | 'full' | null) => {
     waveformSourceRef.current = source
@@ -317,9 +318,9 @@ export function ReadingMode({
     async function applyPreviewWaveform(): Promise<boolean> {
       if (!isMainVersion) return false
       const ab = await fetchPreviewMixBuffer(projectId)
-      if (!ab || cancelled || playbackMixRef.current === 'full') return false
+      if (!ab || cancelled || isPlaybackFull()) return false
       const bars = await decodeWaveformFromArrayBuffer(ab, DECODE_BAR_COUNT)
-      if (!bars || cancelled || playbackMixRef.current === 'full') return false
+      if (!bars || cancelled || isPlaybackFull()) return false
       setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
       setWaveformReady(true)
       setWaveformLoading(false)
