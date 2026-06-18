@@ -1159,6 +1159,12 @@ function usePlayer(
     [audioTracks],
   )
   const midiTracks = tracks.filter(t => t.file_type === 'midi')
+  const midiTrackIdsKey = useMemo(
+    () => midiTracks.map(t => t.id).sort().join('|'),
+    [midiTracks],
+  )
+  /** MIDI track ids we've already applied default-mute for (preserves user unmute). */
+  const defaultMutedMidiRef = useRef<Set<string>>(new Set())
   // Keep a ref so scheduleMidiNotes always has the latest list without extra deps
   const midiTracksRef = useRef(midiTracks)
   midiTracksRef.current = midiTracks
@@ -1306,6 +1312,7 @@ function usePlayer(
       try { masterGainRef.current.disconnect() } catch { /* ok */ }
       masterGainRef.current = null
     }
+    defaultMutedMidiRef.current = new Set()
     mutedTracksRef.current.add(METRONOME_TRACK_ID)
     setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
     setMetronomeOn(false)
@@ -1313,6 +1320,18 @@ function usePlayer(
     setSectionLoopOn(false)
     clearPreviewMixPlayback()
   }, [versionId, clearPreviewMixPlayback])
+
+  // New MIDI tracks start muted; user unmute is preserved across track list refreshes.
+  useEffect(() => {
+    if (!midiTrackIdsKey) return
+    const newlySeen = midiTrackIdsKey.split('|').filter(id => !defaultMutedMidiRef.current.has(id))
+    if (newlySeen.length === 0) return
+    for (const id of newlySeen) defaultMutedMidiRef.current.add(id)
+    const next = new Set(mutedTracksRef.current)
+    for (const id of newlySeen) next.add(id)
+    mutedTracksRef.current = next
+    setMutedTracks(next)
+  }, [midiTrackIdsKey])
 
   // Load audio buffers — re-runs when tracks are added/removed within a version.
   useEffect(() => {
@@ -1983,11 +2002,18 @@ function usePlayer(
     || loaded >= audioTracks.length
     || canPlayBeforeTracksLoaded()
 
+  const playbackMix: 'preview' | 'full' | 'none' = previewMixReady
+    ? 'preview'
+    : audioTracks.length > 0
+      ? 'full'
+      : 'none'
+
   return {
     playing, currentTime,
     duration: getTransportDuration(),
     loaded, total: audioTracks.length,
     playbackReady,
+    playbackMix,
     mutedTracks, soloedTracks, volume, setVolume,
     play: () => playWithCountIn(),
     playTransport: (scheduledStartTime?: number) => {
@@ -4601,6 +4627,7 @@ export default function ProjectPage() {
           loaded: player.loaded,
           total: player.total,
           playbackReady: player.playbackReady,
+          playbackMix: player.playbackMix,
           play: player.play,
           pause: player.pause,
           seek: player.seek,

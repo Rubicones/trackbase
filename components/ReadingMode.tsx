@@ -21,6 +21,8 @@ export type ReadingModePlayer = {
   total: number
   /** True when preview mix or all FLAC tracks are ready to play. */
   playbackReady: boolean
+  /** Cached preview MP3 vs per-track FLAC mix currently driving playback. */
+  playbackMix: 'preview' | 'full' | 'none'
   play: () => void
   pause: () => void
   seek: (t: number) => void
@@ -264,8 +266,22 @@ export function ReadingMode({
   const [lyrics, setLyrics] = useState<ProjectResource | null>(null)
   const [showResources, setShowResources] = useState(false)
   const waveformSourceRef = useRef<'preview' | 'full' | null>(null)
-  const pendingWaveformUpgradeRef = useRef(false)
-  const prevPlayingRef = useRef(false)
+  const playbackMixRef = useRef(player.playbackMix)
+  playbackMixRef.current = player.playbackMix
+
+  const setWaveformSource = useCallback((source: 'preview' | 'full' | null) => {
+    waveformSourceRef.current = source
+  }, [])
+
+  const applyFullWaveform = useCallback(async (isCancelled?: () => boolean) => {
+    setWaveformLoading(true)
+    const bars = await buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT)
+    if (isCancelled?.()) return
+    setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
+    setWaveformReady(true)
+    setWaveformLoading(false)
+    setWaveformSource('full')
+  }, [activeTracks, setWaveformSource])
 
   const audioTrackIds = activeTracks
     .filter(t => t.file_type !== 'midi')
@@ -273,11 +289,9 @@ export function ReadingMode({
     .join(',')
 
   useEffect(() => {
-    waveformSourceRef.current = null
-    pendingWaveformUpgradeRef.current = false
-    prevPlayingRef.current = false
+    setWaveformSource(null)
     prevWaveformReadyRef.current = false
-  }, [audioTrackIds, projectId, isMainVersion])
+  }, [audioTrackIds, projectId, isMainVersion, setWaveformSource])
 
   useEffect(() => {
     if (waveformReady && !prevWaveformReadyRef.current) {
@@ -293,7 +307,7 @@ export function ReadingMode({
       setComposite(new Array(REHEARSAL_BAR_COUNT).fill(0.12))
       setWaveformReady(false)
       setWaveformLoading(false)
-      waveformSourceRef.current = null
+      setWaveformSource(null)
       return
     }
 
@@ -303,36 +317,25 @@ export function ReadingMode({
     async function applyPreviewWaveform(): Promise<boolean> {
       if (!isMainVersion) return false
       const ab = await fetchPreviewMixBuffer(projectId)
-      if (!ab || cancelled) return false
+      if (!ab || cancelled || playbackMixRef.current === 'full') return false
       const bars = await decodeWaveformFromArrayBuffer(ab, DECODE_BAR_COUNT)
-      if (!bars || cancelled) return false
+      if (!bars || cancelled || playbackMixRef.current === 'full') return false
       setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
       setWaveformReady(true)
       setWaveformLoading(false)
-      waveformSourceRef.current = 'preview'
+      setWaveformSource('preview')
       return true
-    }
-
-    async function applyFullWaveform() {
-      setWaveformLoading(true)
-      const bars = await buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT)
-      if (cancelled) return
-      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
-      setWaveformReady(true)
-      setWaveformLoading(false)
-      waveformSourceRef.current = 'full'
-      pendingWaveformUpgradeRef.current = false
     }
 
     if (isMainVersion) {
       if (fullLoaded && !player.playing) {
-        void applyFullWaveform()
+        void applyFullWaveform(() => cancelled)
         return () => { cancelled = true }
       }
       setWaveformLoading(true)
       void applyPreviewWaveform().then(ok => {
         if (cancelled) return
-        if (!ok && fullLoaded) void applyFullWaveform()
+        if (!ok && fullLoaded) void applyFullWaveform(() => cancelled)
         else if (!ok) {
           setWaveformReady(false)
           setWaveformLoading(!fullLoaded)
@@ -347,54 +350,19 @@ export function ReadingMode({
       return
     }
 
-    void applyFullWaveform()
+    void applyFullWaveform(() => cancelled)
     return () => { cancelled = true }
-  }, [visible, audioTrackIds, projectId, isMainVersion, activeTracks])
+  }, [visible, audioTrackIds, projectId, isMainVersion, activeTracks, setWaveformSource, applyFullWaveform, player.playing, player.loaded, player.total])
 
-  // Upgrade preview → full waveform when FLAC tracks finish loading.
+  // Rebuild waveform the moment playback switches from preview → full mix.
   useEffect(() => {
     if (!visible || !isMainVersion) return
-    const fullLoaded = player.total > 0 && player.loaded >= player.total
-    if (!fullLoaded || waveformSourceRef.current !== 'preview') return
-
-    if (player.playing) {
-      pendingWaveformUpgradeRef.current = true
-      return
-    }
+    if (player.playbackMix !== 'full' || waveformSourceRef.current === 'full') return
 
     let cancelled = false
-    setWaveformLoading(true)
-    void buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
-      if (cancelled) return
-      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
-      setWaveformReady(true)
-      setWaveformLoading(false)
-      waveformSourceRef.current = 'full'
-      pendingWaveformUpgradeRef.current = false
-    })
+    void applyFullWaveform(() => cancelled)
     return () => { cancelled = true }
-  }, [visible, isMainVersion, player.loaded, player.total, activeTracks])
-
-  // After playback stops, upgrade if tracks finished loading during play.
-  useEffect(() => {
-    const wasPlaying = prevPlayingRef.current
-    prevPlayingRef.current = player.playing
-    if (!visible || !isMainVersion) return
-    if (!wasPlaying || player.playing) return
-    if (!pendingWaveformUpgradeRef.current || waveformSourceRef.current !== 'preview') return
-
-    let cancelled = false
-    pendingWaveformUpgradeRef.current = false
-    setWaveformLoading(true)
-    void buildCompositeWaveform(activeTracks, DECODE_BAR_COUNT).then(bars => {
-      if (cancelled) return
-      setComposite(downsampleBars(bars, REHEARSAL_BAR_COUNT))
-      setWaveformReady(true)
-      setWaveformLoading(false)
-      waveformSourceRef.current = 'full'
-    })
-    return () => { cancelled = true }
-  }, [player.playing, visible, isMainVersion, activeTracks])
+  }, [visible, isMainVersion, player.playbackMix, applyFullWaveform])
 
   useEffect(() => {
     if (!visible) return
