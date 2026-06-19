@@ -135,7 +135,8 @@ interface Props {
   timeSignatureNumerator?: number
   timeSignatureDenominator?: number
   onClose: () => void
-  onSaved: (updatedTrack: Partial<Track>) => void
+  onSaved: (updatedTrack: Partial<Track>) => void | Promise<void>
+  isRenderingMidi?: boolean
   playing?: boolean
   currentTimeSec?: number
   audioContext?: AudioContext | null
@@ -155,6 +156,7 @@ export default function PianoRollEditor({
   timeSignatureDenominator = 4,
   onClose,
   onSaved,
+  isRenderingMidi = false,
   playing = false,
   currentTimeSec = 0,
   audioContext = null,
@@ -890,8 +892,7 @@ export default function PianoRollEditor({
       })
       if (!patchRes.ok) throw new Error((await patchRes.json()).error ?? 'Save failed')
 
-      onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
-      onClose()
+      await onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -1033,9 +1034,9 @@ export default function PianoRollEditor({
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        <MidiBtn onClick={onClose}>Cancel</MidiBtn>
-        <MidiBtnPrimary onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+        <MidiBtn onClick={onClose} disabled={saving}>Cancel</MidiBtn>
+        <MidiBtnPrimary onClick={handleSave} disabled={saving || isRenderingMidi}>
+          {saving ? (isRenderingMidi ? 'Rendering…' : 'Saving…') : 'Done'}
         </MidiBtnPrimary>
         {saveError && (
           <span className="text-[10px] text-destructive max-w-[140px] truncate">

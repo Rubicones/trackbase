@@ -13,9 +13,9 @@ let soundfontImport: Promise<typeof import('soundfont-player')> | null = null
 // Keyed by the AudioContext instance so instruments created for one context are never
 // reused with a different context (e.g. the PianoRollEditor's preview context vs the
 // shared playback context — same sample rate, different instances).
-const instrumentCacheByCtx = new WeakMap<AudioContext, Map<number, Promise<MidiSoundfontPlayer>>>()
+const instrumentCacheByCtx = new WeakMap<BaseAudioContext, Map<number, Promise<MidiSoundfontPlayer>>>()
 
-function getCtxCache(ctx: AudioContext): Map<number, Promise<MidiSoundfontPlayer>> {
+function getCtxCache(ctx: BaseAudioContext): Map<number, Promise<MidiSoundfontPlayer>> {
   let map = instrumentCacheByCtx.get(ctx)
   if (!map) {
     map = new Map()
@@ -37,7 +37,7 @@ export function warmMidiSoundfontModule(): void {
 }
 
 /** Load (or return cached) instrument for a GM program number, bound to `ctx`. */
-export function getMidiInstrument(ctx: AudioContext, program: number): Promise<MidiSoundfontPlayer> {
+export function getMidiInstrument(ctx: BaseAudioContext, program: number): Promise<MidiSoundfontPlayer> {
   const ctxCache = getCtxCache(ctx)
   let pending = ctxCache.get(program)
   if (!pending) {
@@ -46,7 +46,7 @@ export function getMidiInstrument(ctx: AudioContext, program: number): Promise<M
       const name = gmInstrumentName(program)
       // adsr: [attack, decay, sustain, release] — 50 ms release prevents the abrupt
       // gain-to-zero click that occurs at note-off (both scheduled and forced via stop()).
-      return SF.instrument(ctx, name, { soundfont: 'MusyngKite', adsr: [0, 0, 1, 0.05] })
+      return SF.instrument(ctx as AudioContext, name, { soundfont: 'MusyngKite', adsr: [0, 0, 1, 0.05] })
     })()
     ctxCache.set(program, pending)
   }
@@ -54,7 +54,7 @@ export function getMidiInstrument(ctx: AudioContext, program: number): Promise<M
 }
 
 /** Fire-and-forget preload for a set of GM program numbers. */
-export function preloadMidiInstruments(ctx: AudioContext, programs: number[]): void {
+export function preloadMidiInstruments(ctx: BaseAudioContext, programs: number[]): void {
   const unique = [...new Set(programs)]
   for (const program of unique) {
     getMidiInstrument(ctx, program).catch(() => {})
