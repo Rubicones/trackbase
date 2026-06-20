@@ -5,6 +5,7 @@ import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
 import { TactGrid } from '@/components/design/TactGrid'
+import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
 
@@ -71,6 +72,32 @@ function downsampleBars(bars: number[], target = BAR_COUNT): number[] {
   return out.map(v => v / max)
 }
 
+/** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
+function applyNudgeToBuffer(buffer: AudioBuffer, nudgeMs: number): AudioBuffer {
+  if (nudgeMs === 0) return buffer
+
+  const sr = buffer.sampleRate
+  const numCh = buffer.numberOfChannels
+  const sampleDelta = Math.round((nudgeMs / 1000) * sr)
+
+  if (sampleDelta < 0) {
+    const skip = Math.min(Math.abs(sampleDelta), buffer.length - 1)
+    if (skip <= 0) return buffer
+    const out = new AudioBuffer({ length: buffer.length - skip, numberOfChannels: numCh, sampleRate: sr })
+    for (let c = 0; c < numCh; c++) {
+      out.getChannelData(c).set(buffer.getChannelData(c).subarray(skip))
+    }
+    return out
+  }
+
+  if (sampleDelta === 0) return buffer
+  const out = new AudioBuffer({ length: buffer.length + sampleDelta, numberOfChannels: numCh, sampleRate: sr })
+  for (let c = 0; c < numCh; c++) {
+    out.getChannelData(c).set(buffer.getChannelData(c), sampleDelta)
+  }
+  return out
+}
+
 function BarWaveform({
   bars, leftPct, widthPct, opacity = 0.95, minBarPct = 8, bottom = false,
   animate = false, barCount = BAR_COUNT,
@@ -110,15 +137,22 @@ function BarWaveform({
 
 /** Horizontal input-level meter — grows wider (left→right) with loudness. */
 function LiveVolumeBar({
-  level, pulsing = false,
+  level, pulsing = false, leftPct, widthPct,
 }: {
   level: number
   pulsing?: boolean
+  leftPct?: string
+  widthPct?: string
 }) {
+  const positioned = leftPct != null && widthPct != null
   return (
     <div
-      className="absolute left-0 right-0 z-[2]"
-      style={{ bottom: 12, height: 5 }}
+      className={positioned ? 'absolute z-[2]' : 'absolute left-0 right-0 z-[2]'}
+      style={{
+        bottom: 12,
+        height: 5,
+        ...(positioned ? { left: leftPct, width: widthPct } : {}),
+      }}
     >
       <div
         style={{
@@ -135,7 +169,45 @@ function LiveVolumeBar({
   )
 }
 
-type RecordState = 'idle' | 'permitting' | 'armed' | 'countdown' | 'recording' | 'preview' | 'saving'
+function NudgeArrowIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden className="block">
+      <polygon points={direction === 'left' ? '6,1 2,4 6,7' : '2,1 6,4 2,7'} />
+    </svg>
+  )
+}
+
+export type RecordState = 'idle' | 'permitting' | 'armed' | 'countdown' | 'recording' | 'preview' | 'saving'
+
+export type RecordingTrackControl = {
+  arm: (prefetchedStream?: MediaStream) => Promise<void>
+  startRecord: () => Promise<void>
+  stopRecord: () => void
+  getState: () => RecordState
+}
+
+const MOBILE_TIMELINE_MIN_WIDTH_PCT = 180
+const MOBILE_TIMELINE_PCT_PER_BAR = 6
+const TIMELINE_SCROLL_RIGHT_PAD_PX = 32
+const TIMELINE_SCROLL_LEFT_PAD_PX = 16
+const BARS_PER_TACT = 4
+
+/** Same tact grid as MobileMixerPortrait track lanes — equal-width columns per 4 bars. */
+function MobileTimelineGrid({ totalBars }: { totalBars: number }) {
+  const tactCount = Math.max(1, Math.ceil(totalBars / BARS_PER_TACT))
+  return (
+    <div className="absolute inset-0 flex pointer-events-none">
+      {Array.from({ length: tactCount }, (_, i) => (
+        <div
+          key={i}
+          className={`flex-1 ${
+            (i + 1) % 4 === 0 ? 'border-r border-border/40' : 'border-r border-border/15'
+          } last:border-r-0`}
+        />
+      ))}
+    </div>
+  )
+}
 
 export interface RecordingTrackRowProps {
   id: string
@@ -168,6 +240,10 @@ export interface RecordingTrackRowProps {
     promise: Promise<void>
     takeStartTime: number
   }>
+  registerControl?: (id: string, control: RecordingTrackControl | null) => void
+  onStateChange?: (id: string, state: RecordState) => void
+  /** Mobile mixer: wide scrollable timeline so mid-song record points are reachable. */
+  mobileScrollableTimeline?: boolean
 }
 
 export const RecordingTrackRow = memo(function RecordingTrackRow({
@@ -181,6 +257,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   recordingStopRef,
   onPreparePlayback,
   playCountdown,
+  registerControl,
+  onStateChange,
+  mobileScrollableTimeline = false,
 }: RecordingTrackRowProps) {
   const [state, setState]           = useState<RecordState>('idle')
   const [devices, setDevices]       = useState<MediaDeviceInfo[]>([])
@@ -198,6 +277,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [inputLevel, setInputLevel] = useState(0)
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
+  const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
 
   const streamRef       = useRef<MediaStream | null>(null)
   const recorderRef     = useRef<MediaRecorder | null>(null)
@@ -219,6 +299,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const meterRafRef     = useRef(0)
   const meterDataRef    = useRef<Float32Array<ArrayBuffer> | null>(null)
   const lastMeterRenderRef = useRef(0)
+  const waveformScrollRef = useRef<HTMLDivElement>(null)
+  const scrollSync = useMobileTimelineScroll()
+  useRegisterTimelineScroll(waveformScrollRef)
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(meterRafRef.current)
@@ -315,30 +398,33 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     return stream
   }, [stopStream])
 
-  async function handleArm() {
+  async function handleArm(prefetchedStream?: MediaStream) {
     if (armInFlightRef.current) return
     if (stateRef.current !== 'idle') return
     if (isActiveRecording) return
 
     armInFlightRef.current = true
     const gen = ++armGenRef.current
-    setState('permitting')
+    if (!prefetchedStream) setState('permitting')
     setError('')
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const stream = prefetchedStream
+        ?? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       if (gen !== armGenRef.current) {
         stream.getTracks().forEach(t => t.stop())
         return
       }
 
       // Yield — do not touch Web Audio or <audio> in the permission callback tick.
-      await new Promise<void>(resolve => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      })
-      if (gen !== armGenRef.current) {
-        stream.getTracks().forEach(t => t.stop())
-        return
+      if (!prefetchedStream) {
+        await new Promise<void>(resolve => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        })
+        if (gen !== armGenRef.current) {
+          stream.getTracks().forEach(t => t.stop())
+          return
+        }
       }
 
       streamRef.current = stream
@@ -495,6 +581,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+    setNudgeOffsetMs(0)
 
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     recorder.onstop = () => { void processBlob(mimeType) }
@@ -525,6 +612,26 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const handleStopRecordRef = useRef(handleStopRecord)
   handleStopRecordRef.current = handleStopRecord
 
+  const handleArmRef = useRef(handleArm)
+  handleArmRef.current = handleArm
+  const handleStartRecordRef = useRef(handleStartRecord)
+  handleStartRecordRef.current = handleStartRecord
+
+  useEffect(() => {
+    onStateChange?.(id, state)
+  }, [id, state, onStateChange])
+
+  useEffect(() => {
+    if (!registerControl) return
+    registerControl(id, {
+      arm: (stream?: MediaStream) => handleArmRef.current(stream),
+      startRecord: () => handleStartRecordRef.current(),
+      stopRecord: () => handleStopRecordRef.current(),
+      getState: () => stateRef.current,
+    })
+    return () => registerControl(id, null)
+  }, [id, registerControl])
+
   useEffect(() => {
     if (!recordingStopRef || state !== 'recording') return
     recordingStopRef.current = () => { handleStopRecordRef.current() }
@@ -534,9 +641,12 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const previewMutedRef = useRef(previewMuted)
   previewMutedRef.current = previewMuted
 
+  const onPreviewTimelineChangeRef = useRef(onPreviewTimelineChange)
+  onPreviewTimelineChangeRef.current = onPreviewTimelineChange
+
   const notifyPreviewTimeline = useCallback((endSec: number | null) => {
-    onPreviewTimelineChange?.(id, endSec)
-  }, [id, onPreviewTimelineChange])
+    onPreviewTimelineChangeRef.current?.(id, endSec)
+  }, [id])
 
   async function processBlob(mimeType: string) {
     const blob   = new Blob(chunksRef.current, { type: mimeType })
@@ -576,7 +686,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       const beatsPerBar       = parseInt(timeSig.split('/')[0]) || 4
       const barDurSec         = (60 / bpm) * beatsPerBar
-      const recordingStartSec = startBarRef.current * barDurSec
+      const nudgeSec          = nudgeOffsetMs / 1000
+      const recordingStartSec = startBarRef.current * barDurSec + nudgeSec
       const buf               = audioBufferRef.current
       if (!buf) return
       const recordingEndSec   = recordingStartSec + buf.duration
@@ -609,7 +720,15 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       previewSrcRef.current?.stop()
       previewSrcRef.current = null
     }
-  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, bpm, timeSig, getPlaybackMs])
+  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, nudgeOffsetMs, bpm, timeSig, getPlaybackMs])
+
+  useEffect(() => {
+    if (state !== 'preview' || !audioBufferRef.current || recordedDurationSec <= 0) return
+    const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
+    const barDurSec = (60 / bpm) * beatsPerBar
+    const effectiveStartSec = startBarRef.current * barDurSec + nudgeOffsetMs / 1000
+    onPreviewTimelineChangeRef.current?.(id, effectiveStartSec + audioBufferRef.current.duration)
+  }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, id])
 
   async function handleReRecord() {
     previewSrcRef.current?.stop()
@@ -622,6 +741,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+    setNudgeOffsetMs(0)
     setState('armed')
     const gen = armGenRef.current
     try {
@@ -642,7 +762,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     previewSrcRef.current = null
     notifyPreviewTimeline(null)
     try {
-      const wavBlob  = encodeWAV(decoded, 0)
+      const adjusted = applyNudgeToBuffer(decoded, nudgeOffsetMs)
+      const wavBlob  = encodeWAV(adjusted, 0)
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
       const filename = `${safeName.replace(/\s+/g, '_')}_${Date.now()}.wav`
 
@@ -677,7 +798,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           fileSize: wavBlob.size,
           mimetype: 'audio/wav',
           startBar: startBarRef.current,
-          durationMs: Math.round(recordedDurationSec * 1000),
+          durationMs: Math.round(adjusted.duration * 1000),
         }),
       })
       if (!processRes.ok) throw new Error(`Process ${processRes.status}`)
@@ -685,7 +806,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       // Seed the waveform cache so the regular TrackRow renders the bars immediately
       // (without waiting for the audio stream to re-download and decode).
-      if (staticBars.length > 0) waveformBarsCache.set(track.id, staticBars)
+      waveformBarsCache.set(track.id, barsFromBuffer(adjusted))
       onRelease(id)
       onSaved(id, track)
     } catch (err) {
@@ -723,13 +844,18 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const recordedBars = recordedDurationSec > 0 ? recordedDurationSec / barDurSec : 0
   const liveRecordedBars = recordingSec > 0 ? recordingSec / barDurSec : 0
   const timelineStartBar = isRecording || isPreview || isSaving ? recordStartBar : armedAtBar
-  const waveformLeft = totalBars > 0
-    ? `${(timelineStartBar / totalBars) * 100}%`
+  const nudgeBarOffset = (isPreview || isSaving) ? nudgeOffsetMs / 1000 / barDurSec : 0
+  const visualStartBar = timelineStartBar + nudgeBarOffset
+  const playheadBar = barDurSec > 0 ? Math.ceil(getPlaybackMs() / 1000 / barDurSec) : 0
+  const contentEndBar = visualStartBar + (isRecording ? liveRecordedBars : recordedBars) + 4
+  const timelineBars = Math.max(totalBars, playheadBar + 4, Math.ceil(contentEndBar))
+  const waveformLeft = timelineBars > 0
+    ? `${(visualStartBar / timelineBars) * 100}%`
     : '0'
-  const waveformWidth = totalBars > 0
-    ? `${Math.min(100, Math.max((1 / totalBars) * 100, ((isRecording ? liveRecordedBars : recordedBars) / totalBars) * 100))}%`
+  const waveformWidth = timelineBars > 0
+    ? `${Math.min(100, Math.max((1 / timelineBars) * 100, ((isRecording ? liveRecordedBars : recordedBars) / timelineBars) * 100))}%`
     : '100%'
-  const oneBarWidthPct = totalBars > 0 ? `${Math.max((1 / totalBars) * 100, 1.5)}%` : '4%'
+  const oneBarWidthPct = timelineBars > 0 ? `${Math.max((1 / timelineBars) * 100, 1.5)}%` : '4%'
   const liveMeterWidth = isRecording ? waveformWidth : oneBarWidthPct
   const liveSpectrumBars = isRecording
     ? recordingBars
@@ -739,165 +865,344 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const showLiveVolumeBar = showLiveMeter && !showLiveSpectrum
   // Match the visual bar density of other tracks (96 bars across the full row).
   // Recording spans recordedBars/totalBars of the row → scale proportionally.
-  const previewBarCount = Math.max(4, Math.round(BAR_COUNT * (recordedBars / Math.max(1, totalBars))))
-  // Same density for the live waveform — grows as recording progresses.
-  const liveBarCount = Math.max(4, Math.round(BAR_COUNT * (liveRecordedBars / Math.max(1, totalBars))))
+  const previewBarCount = Math.max(4, Math.round(BAR_COUNT * (recordedBars / Math.max(1, timelineBars))))
+  const liveBarCount = Math.max(4, Math.round(BAR_COUNT * (liveRecordedBars / Math.max(1, timelineBars))))
 
   const showDeviceSelect = devices.length > 0 && (isArmed || isCounting || isRecording)
+
+  const mobileTimelineWidthPct = Math.max(
+    MOBILE_TIMELINE_MIN_WIDTH_PCT,
+    timelineBars * MOBILE_TIMELINE_PCT_PER_BAR,
+  )
+
+  const scrollTimelineToBar = useCallback((bar: number) => {
+    const scrollEl = waveformScrollRef.current
+    if (!scrollEl || timelineBars <= 0) return
+    const inner = scrollEl.firstElementChild as HTMLElement | null
+    if (!inner) return
+    const focusPx = (bar / timelineBars) * inner.offsetWidth
+    const viewLeft = scrollEl.scrollLeft
+    const viewRight = viewLeft + scrollEl.clientWidth
+    let nextScroll = scrollEl.scrollLeft
+    if (focusPx > viewRight - TIMELINE_SCROLL_RIGHT_PAD_PX) {
+      nextScroll = Math.min(
+        focusPx - scrollEl.clientWidth + TIMELINE_SCROLL_RIGHT_PAD_PX,
+        scrollEl.scrollWidth - scrollEl.clientWidth,
+      )
+    } else if (focusPx < viewLeft + TIMELINE_SCROLL_LEFT_PAD_PX) {
+      nextScroll = Math.max(0, focusPx - TIMELINE_SCROLL_LEFT_PAD_PX)
+    }
+    if (nextScroll !== scrollEl.scrollLeft) {
+      scrollEl.scrollLeft = nextScroll
+      scrollSync?.syncTo(nextScroll, scrollEl)
+    }
+  }, [timelineBars, scrollSync])
+
+  // Keep armed / recording / preview clip visible on the mobile scrollable timeline.
+  useEffect(() => {
+    if (!mobileScrollableTimeline) return
+    const focusBar = isPreview || isSaving
+      ? timelineStartBar
+      : (isRecording || isCounting ? recordStartBar : timelineStartBar)
+    scrollTimelineToBar(focusBar)
+  }, [
+    mobileScrollableTimeline,
+    scrollTimelineToBar,
+    timelineBars,
+    timelineStartBar,
+    recordStartBar,
+    isRecording,
+    isCounting,
+    isPreview,
+    isSaving,
+    armedAtBar,
+    staticBars.length,
+    recordingBars.length,
+  ])
+
+  const waveformCol = (
+    <>
+      {mobileScrollableTimeline ? (
+        <MobileTimelineGrid totalBars={timelineBars} />
+      ) : (
+        <TactGrid totalBars={timelineBars} />
+      )}
+
+      {showLiveVolumeBar && (
+        <LiveVolumeBar
+          level={inputLevel}
+          pulsing={isRecording || isCounting}
+          leftPct={waveformLeft}
+          widthPct={liveMeterWidth}
+        />
+      )}
+
+      {showLiveSpectrum && (
+        <BarWaveform
+          bars={liveSpectrumBars}
+          leftPct={waveformLeft}
+          widthPct={liveMeterWidth}
+          opacity={0.9}
+          minBarPct={8}
+          barCount={liveBarCount}
+        />
+      )}
+
+      {showRecordedWaveform && (
+        <BarWaveform
+          bars={staticBars}
+          leftPct={waveformLeft}
+          widthPct={waveformWidth}
+          opacity={isSaving ? 0.45 : 0.95}
+          barCount={previewBarCount}
+          animate={isPreview}
+        />
+      )}
+
+      {isPreview && !showRecordedWaveform && recordingBars.length > 0 && (
+        <BarWaveform
+          bars={recordingBars}
+          leftPct={waveformLeft}
+          widthPct={waveformWidth}
+          barCount={previewBarCount}
+          animate
+        />
+      )}
+
+      {isSaving && (
+        <div className="absolute inset-0 flex items-center justify-center z-[3]">
+          <span className="text-[9px] uppercase tracking-widest text-ember">
+            {uploadProgress > 0 ? `${uploadProgress}%` : 'Saving…'}
+          </span>
+        </div>
+      )}
+    </>
+  )
+
+  const rowBg = isRecording
+    ? 'color-mix(in srgb, var(--ember) 5%, var(--surface))'
+    : 'var(--surface)'
+
+  const nameRow = (
+    <div className="flex items-center gap-1.5 min-w-0">
+      {(isRecording || isCounting) && (
+        <span
+          className="inline-block w-2 h-2 rounded-full shrink-0"
+          style={{ background: '#ef4444', animation: 'recPulse 1s ease-in-out infinite' }}
+        />
+      )}
+      <input
+        type="text"
+        value={editName}
+        onChange={e => { setEditName(e.target.value); onNameChange(id, e.target.value) }}
+        disabled={isRecording || isCounting || isSaving}
+        className="min-w-0 flex-1 bg-transparent text-xs font-bold uppercase tracking-tight text-foreground outline-none border-b border-transparent focus:border-ember truncate"
+        placeholder="New recording"
+      />
+      <button
+        type="button"
+        onClick={handleDelete}
+        className="shrink-0 text-muted-foreground hover:text-destructive text-xs transition"
+        aria-label="Close recording"
+      >
+        ✕
+      </button>
+    </div>
+  )
+
+  const controlsBlock = (
+    <>
+      {isIdle && (
+        <button
+          type="button"
+          onClick={() => void handleArm()}
+          disabled={isActiveRecording}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember disabled:opacity-30 transition w-fit"
+        >
+          <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
+          Arm
+        </button>
+      )}
+      {isPermitting && (
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Requesting mic…</span>
+      )}
+      {showDeviceSelect && (
+        <select
+          value={selectedDevice}
+          onChange={e => handleDeviceChange(e.target.value)}
+          disabled={isRecording || isCounting}
+          className={`text-[9px] bg-surface border border-border text-foreground px-1 py-0.5 truncate ${mobileScrollableTimeline ? 'max-w-[10rem]' : 'w-full'}`}
+        >
+          {devices.map(d => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || `Mic ${d.deviceId.slice(0, 4)}`}
+            </option>
+          ))}
+        </select>
+      )}
+      {isArmed && (
+        <button
+          type="button"
+          onClick={() => void handleStartRecord()}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-semibold w-fit"
+          style={{ color: '#ef4444' }}
+        >
+          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: '#ef4444' }} />
+          Rec
+        </button>
+      )}
+      {isCounting && (
+        <span className="text-[9px] uppercase tracking-widest text-amber">Count-in…</span>
+      )}
+      {isRecording && (
+        <button
+          type="button"
+          onClick={handleStopRecord}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-semibold w-fit"
+          style={{ color: '#ef4444' }}
+        >
+          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: '#ef4444' }} />
+          Stop
+        </button>
+      )}
+      {isPreview && (
+        <>
+          <button
+            type="button"
+            onClick={() => setPreviewMuted(m => !m)}
+            className="text-[9px] uppercase tracking-widest"
+            style={{ color: previewMuted ? 'var(--ember)' : 'var(--muted-foreground)' }}
+          >
+            {previewMuted ? 'Muted' : 'Mute'}
+          </button>
+          <button type="button" onClick={() => void handleSave()}
+            className="text-[9px] uppercase tracking-widest font-semibold text-ember">
+            Save
+          </button>
+          <button type="button" onClick={handleDiscard}
+            className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
+            Discard
+          </button>
+          <button
+            type="button"
+            title="-10ms"
+            onClick={() => setNudgeOffsetMs(ms => ms - 10)}
+            className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+            aria-label="Nudge 10ms earlier"
+          >
+            <NudgeArrowIcon direction="left" />
+          </button>
+          <button
+            type="button"
+            title="+10ms"
+            onClick={() => setNudgeOffsetMs(ms => ms + 10)}
+            className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+            aria-label="Nudge 10ms later"
+          >
+            <NudgeArrowIcon direction="right" />
+          </button>
+          {nudgeOffsetMs !== 0 && (
+            <span className="text-[9px] tabular-nums text-muted-foreground">
+              {nudgeOffsetMs > 0 ? `+${nudgeOffsetMs}` : nudgeOffsetMs}ms
+            </span>
+          )}
+        </>
+      )}
+      {isSaving && (
+        <span className="text-[9px] uppercase tracking-widest text-ember">
+          {uploadProgress > 0 ? `Saving ${uploadProgress}%…` : 'Saving…'}
+        </span>
+      )}
+      {showControls && !mobileScrollableTimeline && (
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground shrink-0">Mon</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={monitorVol}
+            onChange={e => handleMonitorChange(parseFloat(e.target.value))}
+            disabled={isRecording}
+            className="flex-1 min-w-0 accent-ember"
+          />
+        </div>
+      )}
+      {showControls && !mobileScrollableTimeline && (
+        <p className="text-[8px] leading-tight text-muted-foreground opacity-60 m-0">
+          {isArmed ? 'Mic ready' : isRecording ? 'Recording…' : 'Demo quality · mono'}
+        </p>
+      )}
+      {error && (
+        <span className="text-[9px] truncate text-destructive">{error}</span>
+      )}
+    </>
+  )
+
+  const pulseStyle = (
+    <style>{`
+      @keyframes recPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }
+    `}</style>
+  )
+
+  if (mobileScrollableTimeline) {
+    return (
+      <div
+        data-track-row
+        data-recording-id={id}
+        className="relative border-b border-border"
+        style={{ background: rowBg }}
+      >
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-destructive/80" />
+        <div className="pl-3 pr-2 py-2.5">
+          {nameRow}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {controlsBlock}
+          </div>
+          {timelineStartBar > 0 && (
+            <div className="mt-1 text-[9px] font-mono text-muted-foreground">
+              Bar {timelineStartBar + 1}
+              {nudgeOffsetMs !== 0 && (
+                <span className="ml-1 tabular-nums">
+                  ({nudgeOffsetMs > 0 ? '+' : ''}{nudgeOffsetMs}ms)
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div
+          ref={waveformScrollRef}
+          data-waveform-col
+          className="px-3 pb-2.5 overflow-x-auto scrollbar-none touch-pan-x"
+        >
+          <div
+            className="relative h-14 bg-surface/40 border border-border"
+            style={{ width: `${mobileTimelineWidthPct}%`, minHeight: 56 }}
+          >
+            {waveformCol}
+          </div>
+        </div>
+        {pulseStyle}
+      </div>
+    )
+  }
 
   return (
     <div
       data-track-row
+      data-recording-id={id}
       className="flex border-t border-border"
-      style={{
-        minHeight: 80,
-        background: isRecording
-          ? 'color-mix(in srgb, var(--ember) 5%, var(--surface))'
-          : 'var(--surface)',
-      }}
+      style={{ minHeight: 80, background: rowBg }}
     >
       <div
         className="shrink-0 border-r border-border flex flex-col justify-between py-2 px-3"
         style={{ width: TRACK_LABEL_W }}
       >
-        <div className="flex items-center gap-1.5 mb-1 min-w-0">
-          {(isRecording || isCounting) && (
-            <span
-              className="inline-block w-2 h-2 rounded-full shrink-0"
-              style={{ background: '#ef4444', animation: 'recPulse 1s ease-in-out infinite' }}
-            />
-          )}
-          <input
-            type="text"
-            value={editName}
-            onChange={e => { setEditName(e.target.value); onNameChange(id, e.target.value) }}
-            disabled={isRecording || isCounting || isSaving}
-            className="min-w-0 flex-1 bg-transparent text-xs font-bold uppercase tracking-tight text-foreground outline-none border-b border-transparent focus:border-ember truncate"
-            placeholder="New recording"
-          />
-          <button
-            type="button"
-            onClick={handleDelete}
-            className="shrink-0 text-muted-foreground hover:text-destructive text-xs transition"
-            aria-label="Close recording"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-1.5 min-w-0">
-          {isIdle && (
-            <button
-              type="button"
-              onClick={() => void handleArm()}
-              disabled={isActiveRecording}
-              className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember disabled:opacity-30 transition w-fit"
-            >
-              <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
-              Arm
-            </button>
-          )}
-
-          {isPermitting && (
-            <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Requesting mic…</span>
-          )}
-
-          {showDeviceSelect && (
-            <select
-              value={selectedDevice}
-              onChange={e => handleDeviceChange(e.target.value)}
-              disabled={isRecording || isCounting}
-              className="w-full text-[9px] bg-surface border border-border text-foreground px-1 py-0.5 truncate"
-            >
-              {devices.map(d => (
-                <option key={d.deviceId} value={d.deviceId}>
-                  {d.label || `Mic ${d.deviceId.slice(0, 4)}`}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {isArmed && (
-            <button
-              type="button"
-              onClick={() => void handleStartRecord()}
-              className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-semibold w-fit"
-              style={{ color: '#ef4444' }}
-            >
-              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: '#ef4444' }} />
-              Rec
-            </button>
-          )}
-
-          {isCounting && (
-            <span className="text-[9px] uppercase tracking-widest text-amber">Count-in…</span>
-          )}
-
-          {isRecording && (
-            <button
-              type="button"
-              onClick={handleStopRecord}
-              className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-semibold w-fit"
-              style={{ color: '#ef4444' }}
-            >
-              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: '#ef4444' }} />
-              Stop
-            </button>
-          )}
-
-          {isPreview && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => setPreviewMuted(m => !m)}
-                className="text-[9px] uppercase tracking-widest"
-                style={{ color: previewMuted ? 'var(--muted-foreground)' : 'var(--ember)' }}
-              >
-                {previewMuted ? 'Muted' : 'Mix'}
-              </button>
-              <button type="button" onClick={() => void handleSave()}
-                className="text-[9px] uppercase tracking-widest font-semibold text-ember">
-                Save
-              </button>
-              <button type="button" onClick={handleDiscard}
-                className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
-                Discard
-              </button>
-            </div>
-          )}
-
-          {isSaving && (
-            <span className="text-[9px] uppercase tracking-widest text-ember">
-              {uploadProgress > 0 ? `Saving ${uploadProgress}%…` : 'Saving…'}
-            </span>
-          )}
-
-          {showControls && (
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[9px] uppercase tracking-widest text-muted-foreground shrink-0">Mon</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={monitorVol}
-                onChange={e => handleMonitorChange(parseFloat(e.target.value))}
-                disabled={isRecording}
-                className="flex-1 min-w-0 accent-ember"
-              />
-            </div>
-          )}
-
-          {showControls && (
-            <p className="text-[8px] leading-tight text-muted-foreground opacity-60 m-0">
-              {isArmed ? 'Mic ready' : isRecording ? 'Recording…' : 'Demo quality · mono'}
-            </p>
-          )}
-
-          {error && (
-            <span className="text-[9px] truncate text-destructive">{error}</span>
-          )}
-        </div>
+        <div className="mb-1 min-w-0">{nameRow}</div>
+        <div className="flex flex-col gap-1.5 min-w-0">{controlsBlock}</div>
       </div>
 
       <div
@@ -905,62 +1210,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         className="flex-1 min-w-0 relative overflow-hidden border-l border-border/0"
         style={{ minHeight: 80 }}
       >
-        <TactGrid totalBars={totalBars} />
-
-        {showLiveVolumeBar && (
-          <LiveVolumeBar
-            level={inputLevel}
-            pulsing={isRecording || isCounting}
-          />
-        )}
-
-        {showLiveSpectrum && (
-          <BarWaveform
-            bars={liveSpectrumBars}
-            leftPct={waveformLeft}
-            widthPct={liveMeterWidth}
-            opacity={0.9}
-            minBarPct={8}
-            barCount={liveBarCount}
-          />
-        )}
-
-        {showRecordedWaveform && (
-          <BarWaveform
-            bars={staticBars}
-            leftPct={waveformLeft}
-            widthPct={waveformWidth}
-            opacity={isSaving ? 0.45 : 0.95}
-            barCount={previewBarCount}
-            animate={isPreview}
-          />
-        )}
-
-        {isPreview && !showRecordedWaveform && recordingBars.length > 0 && (
-          <BarWaveform
-            bars={recordingBars}
-            leftPct={waveformLeft}
-            widthPct={waveformWidth}
-            barCount={previewBarCount}
-            animate
-          />
-        )}
-
-        {isSaving && (
-          <div className="absolute inset-0 flex items-center justify-center z-[3]">
-            <span className="text-[9px] uppercase tracking-widest text-ember">
-              {uploadProgress > 0 ? `${uploadProgress}%` : 'Saving…'}
-            </span>
-          </div>
-        )}
+        {waveformCol}
       </div>
 
-      <style>{`
-        @keyframes recPulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.35; }
-        }
-      `}</style>
+      {pulseStyle}
     </div>
   )
 })

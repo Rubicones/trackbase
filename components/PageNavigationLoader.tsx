@@ -10,6 +10,8 @@ function isSameOriginNav(href: string): string | null {
   try {
     const url = new URL(href, window.location.href)
     if (url.origin !== window.location.origin) return null
+    // API routes (downloads, exports, etc.) are not page navigations.
+    if (url.pathname.startsWith('/api/')) return null
     if (url.pathname + url.search === window.location.pathname + window.location.search) return null
     return url.pathname
   } catch {
@@ -46,12 +48,26 @@ export function PageNavigationLoader() {
     return () => window.removeEventListener('pageshow', onPageShow)
   }, [])
 
+  // Safety net: never leave the navigation overlay stuck if routing aborts.
+  useEffect(() => {
+    if (!visible) return
+    const onPopState = () => setVisible(false)
+    window.addEventListener('popstate', onPopState)
+    const timeout = window.setTimeout(() => setVisible(false), 12_000)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+      window.clearTimeout(timeout)
+    }
+  }, [visible])
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0) return
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
       const el = (e.target as Element).closest('a')
       if (!el || el.getAttribute('target') === '_blank') return
+      // File downloads don't navigate — never show the page loader for them.
+      if (el.hasAttribute('download')) return
       const path = isSameOriginNav(el.getAttribute('href') ?? '')
       if (!path) return
       setTargetPath(path)

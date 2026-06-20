@@ -28,21 +28,31 @@ import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
-import { ReadingMode } from '@/components/ReadingMode'
+import { MobileExperience } from '@/components/MobileExperience'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
+import { midiRenderSourceKey, renderMidiTrackToBuffer } from '@/lib/midiRender'
+import { warmMidiSoundfontModule } from '@/lib/midiSoundfont'
 import {
   METRONOME_TRACK_ID,
+  PREVIEW_MIX_TRACK_ID,
   generateMetronomeBuffer,
   snapToPreviousBarSec,
   startCountdown,
 } from '@/lib/metronomeAudio'
+import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { registerPlaybackStop } from '@/lib/playbackSession'
-import { RecordingTrackRow } from '@/components/RecordingTrackRow'
+import {
+  fetchPreviewMixBuffer,
+  prefetchPreviewMixPlayback,
+  previewMixPlaybackUrl,
+  takePreloadedPreviewAudio,
+} from '@/lib/previewMixClient'
+import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -397,10 +407,10 @@ function CommentTooltip({
             <button
               type="button"
               onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
-              className="ml-auto text-muted-foreground hover:text-destructive transition-colors text-xs leading-none px-0.5"
+              className="ml-auto text-muted-foreground hover:text-destructive transition-colors grid place-items-center size-6 shrink-0"
               aria-label="Delete comment"
             >
-              ✕
+              <TrashIcon />
             </button>
           )}
         </div>
@@ -1043,12 +1053,19 @@ const MAX_PROJECT_BARS = 1000
 const RECORDING_EXTEND_CHUNK_BARS = 16
 const RECORDING_EXTEND_LEAD_BARS = 4
 
+type RehearsalPlaybackOptions = {
+  enabled: boolean
+  projectId: string
+  isMainVersion: boolean
+}
+
 function usePlayer(
   tracks: Track[],
   versionId: string,
   project: Project | null,
   minPlaybackDuration = 0,
   timelineDurationSec = 0,
+  rehearsal: RehearsalPlaybackOptions = { enabled: false, projectId: '', isMainVersion: false },
 ) {
   const actxRef = useRef<AudioContext | null>(null)
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
@@ -1063,8 +1080,12 @@ function usePlayer(
   const startRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
-  // MIDI playback refs — soundfont notes scheduled via AudioContext
-  const midiScheduledRef = useRef<{ stop: () => void }[]>([])
+  const [midiRenderingTracks, setMidiRenderingTracks] = useState<Set<string>>(() => new Set())
+  const [midiPlaybackReadyIds, setMidiPlaybackReadyIds] = useState<Set<string>>(() => new Set())
+  const midiRenderingTracksRef = useRef<Set<string>>(new Set())
+  const midiRenderedKeysRef = useRef<Map<string, string>>(new Map())
+  const midiRenderGenRef = useRef<Map<string, number>>(new Map())
+  const midiRenderWaitersRef = useRef<Map<string, Array<() => void>>>(new Map())
   const [volume, setVolumeState] = useState<number>(() => {
     if (typeof window === 'undefined') return 1
     const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
@@ -1078,6 +1099,14 @@ function usePlayer(
   // and restarts the AudioBufferSourceNode from the correct position.
   const [seekEpoch, setSeekEpoch] = useState(0)
   const [loaded, setLoaded] = useState(0)
+  const [previewMixReady, setPreviewMixReady] = useState(false)
+  const usingPreviewMixRef = useRef(false)
+  const pendingFullMixSwitchRef = useRef(false)
+  const previewFetchGenRef = useRef(0)
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null)
+  const previewDecodeInflightRef = useRef<Promise<AudioBuffer | null> | null>(null)
+  const rehearsalRef = useRef(rehearsal)
+  rehearsalRef.current = rehearsal
   const [mutedTracks, setMutedTracks] = useState<Set<string>>(new Set())
   const mutedTracksRef = useRef<Set<string>>(new Set())
   const [soloedTracks, setSoloedTracks] = useState<Set<string>>(new Set())
@@ -1096,6 +1125,11 @@ function usePlayer(
   isCountingRef.current = isCounting
   const countdownCancelRef = useRef<(() => void) | null>(null)
 
+  type SectionLoopRange = { id: string; startBar: number; endBar: number }
+  const sectionLoopRef = useRef<SectionLoopRange | null>(null)
+  const [sectionLoopOn, setSectionLoopOn] = useState(false)
+  const playFnRef = useRef<(offset?: number) => Promise<void>>(async () => {})
+
   /** Metronome ignores solo/mute sets — only the Metro toggle controls it. */
   const gainForTrack = useCallback((
     trackId: string,
@@ -1104,6 +1138,13 @@ function usePlayer(
   ) => {
     if (trackId === METRONOME_TRACK_ID) {
       return metronomeOnRef.current ? 1 : 0
+    }
+    if (trackId === PREVIEW_MIX_TRACK_ID) {
+      const hasSolos = soloSet.size > 0
+      return hasSolos && soloSet.has(PREVIEW_MIX_TRACK_ID) ? 1 : 0
+    }
+    if (midiRenderingTracksRef.current.has(trackId)) {
+      return 0
     }
     const hasSolos = soloSet.size > 0
     return (hasSolos ? !soloSet.has(trackId) : mutedSet.has(trackId)) ? 0 : 1
@@ -1119,26 +1160,43 @@ function usePlayer(
     timelineDurationSecRef.current,
   ), [duration])
 
-  // Only load audio tracks (MIDI tracks are handled separately via soundfont)
+  // Only load audio tracks from the server; MIDI is offline-rendered client-side.
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
   const audioTrackIdsKey = useMemo(
     () => audioTracks.map(t => t.id).sort().join('|'),
     [audioTracks],
   )
-  const midiTracks = tracks.filter(t => t.file_type === 'midi')
-  // Keep a ref so scheduleMidiNotes always has the latest list without extra deps
-  const midiTracksRef = useRef(midiTracks)
-  midiTracksRef.current = midiTracks
+  const projectBpm = project?.bpm ?? 120
+  const projectTimeSig = project?.time_signature ?? '4/4'
+  const midiRenderDepsKey = useMemo(() => {
+    const meta = tracks
+      .filter(t => t.file_type === 'midi')
+      .map(t => `${t.id}:${t.file_hash ?? ''}:${t.midi_data?.instrument ?? -1}:${t.midi_data?.notes?.length ?? 0}`)
+      .sort()
+      .join('|')
+    return `${meta}|${projectBpm}|${projectTimeSig}`
+  }, [
+    tracks.map(t => `${t.id}:${t.file_hash ?? ''}:${t.midi_data?.instrument ?? -1}:${t.midi_data?.notes?.length ?? 0}:${t.file_type}`).join('|'),
+    projectBpm,
+    projectTimeSig,
+  ])
   const tracksRef = useRef(tracks)
   tracksRef.current = tracks
-  // Keep project ref stable so scheduleMidiNotes (useCallback with [] deps) can read it
   const projectRef = useRef(project)
   projectRef.current = project
 
   const recomputeTransportDuration = useCallback(() => {
     const proj = projectRef.current
-    if (!proj || !tracksRef.current.length) return
+    if (!proj) return
     let maxDur = 0
+    if (usingPreviewMixRef.current) {
+      const previewAudio = previewAudioRef.current
+      if (previewAudio && Number.isFinite(previewAudio.duration) && previewAudio.duration > 0) {
+        maxDur = Math.max(maxDur, previewAudio.duration)
+      }
+      const previewBuf = bufsRef.current.get(PREVIEW_MIX_TRACK_ID)
+      if (previewBuf) maxDur = Math.max(maxDur, previewBuf.duration)
+    }
     for (const t of tracksRef.current) {
       const buf = bufsRef.current.get(t.id)
       maxDur = Math.max(maxDur, trackTimelineEndSec(
@@ -1150,6 +1208,89 @@ function usePlayer(
     }
     if (maxDur > 0) setDuration(maxDur)
   }, [])
+
+  const clearPreviewMixPlayback = useCallback(() => {
+    bufsRef.current.delete(PREVIEW_MIX_TRACK_ID)
+    usingPreviewMixRef.current = false
+    pendingFullMixSwitchRef.current = false
+    setPreviewMixReady(false)
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+      previewAudioRef.current.src = ''
+    }
+    previewAudioRef.current = null
+    previewDecodeInflightRef.current = null
+    if (soloedTracksRef.current.has(PREVIEW_MIX_TRACK_ID)) {
+      soloedTracksRef.current = new Set()
+      setSoloedTracks(new Set())
+    }
+  }, [])
+
+  const switchToFullMix = useCallback(() => {
+    if (!usingPreviewMixRef.current) return
+    bufsRef.current.delete(PREVIEW_MIX_TRACK_ID)
+    usingPreviewMixRef.current = false
+    pendingFullMixSwitchRef.current = false
+    setPreviewMixReady(false)
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+      previewAudioRef.current.src = ''
+    }
+    previewAudioRef.current = null
+    previewDecodeInflightRef.current = null
+    if (soloedTracksRef.current.has(PREVIEW_MIX_TRACK_ID)) {
+      soloedTracksRef.current = new Set()
+      setSoloedTracks(new Set())
+    }
+    recomputeTransportDuration()
+  }, [recomputeTransportDuration])
+
+  const ensurePreviewMixBuffer = useCallback(async (ctx: AudioContext): Promise<AudioBuffer | null> => {
+    const existing = bufsRef.current.get(PREVIEW_MIX_TRACK_ID)
+    if (existing) return existing
+
+    if (previewDecodeInflightRef.current) {
+      return previewDecodeInflightRef.current
+    }
+
+    const projectId = rehearsalRef.current.projectId
+    if (!projectId) return null
+
+    const inflight = (async () => {
+      const ab = await fetchPreviewMixBuffer(projectId)
+      if (!ab?.byteLength) return null
+      const decoded = await ctx.decodeAudioData(ab.slice(0))
+      bufsRef.current.set(PREVIEW_MIX_TRACK_ID, decoded)
+      recomputeTransportDuration()
+      return decoded
+    })().finally(() => {
+      previewDecodeInflightRef.current = null
+    })
+
+    previewDecodeInflightRef.current = inflight
+    return inflight
+  }, [recomputeTransportDuration])
+
+  const trySwitchToFullMix = useCallback(() => {
+    if (!pendingFullMixSwitchRef.current || !usingPreviewMixRef.current) return
+    if (playingRef.current) return
+    switchToFullMix()
+  }, [switchToFullMix])
+
+  const markPendingFullMixSwitchIfReady = useCallback(() => {
+    const r = rehearsalRef.current
+    if (!r.enabled || !r.isMainVersion || !usingPreviewMixRef.current) return
+    const audioIds = tracksRef.current.filter(t => t.file_type !== 'midi')
+    if (audioIds.length === 0) return
+    if (!audioIds.every(t => bufsRef.current.has(t.id))) return
+    pendingFullMixSwitchRef.current = true
+    trySwitchToFullMix()
+  }, [trySwitchToFullMix])
+
+  const canPlayBeforeTracksLoaded = useCallback(() => {
+    const r = rehearsalRef.current
+    return r.enabled && r.isMainVersion && previewMixReady && usingPreviewMixRef.current
+  }, [previewMixReady])
 
   const noteTrackDuration = useCallback((trackId: string, ms: number) => {
     if (ms <= 0) return
@@ -1170,9 +1311,12 @@ function usePlayer(
     sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
     sourcesRef.current = []
     cancelAnimationFrame(rafRef.current)
-    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-    midiScheduledRef.current = []
     bufsRef.current.clear()
+    midiRenderedKeysRef.current.clear()
+    midiRenderGenRef.current.clear()
+    midiRenderingTracksRef.current = new Set()
+    setMidiRenderingTracks(new Set())
+    setMidiPlaybackReadyIds(new Set())
     metronomeParamsRef.current = null
     setLoaded(0)
     setTrackDurations(new Map())
@@ -1185,7 +1329,196 @@ function usePlayer(
     mutedTracksRef.current.add(METRONOME_TRACK_ID)
     setMutedTracks(prev => new Set([...prev, METRONOME_TRACK_ID]))
     setMetronomeOn(false)
-  }, [versionId])
+    sectionLoopRef.current = null
+    setSectionLoopOn(false)
+    clearPreviewMixPlayback()
+  }, [versionId, clearPreviewMixPlayback])
+
+  const resolveMidiRenderWaiters = useCallback((trackId: string) => {
+    const waiters = midiRenderWaitersRef.current.get(trackId)
+    if (!waiters?.length) return
+    midiRenderWaitersRef.current.delete(trackId)
+    for (const resolve of waiters) resolve()
+  }, [])
+
+  const finishMidiRender = useCallback((
+    trackId: string,
+    buffer: AudioBuffer,
+    renderKey: string,
+  ) => {
+    bufsRef.current.set(trackId, buffer)
+    midiRenderedKeysRef.current.set(trackId, renderKey)
+    setMidiPlaybackReadyIds(prev => new Set(prev).add(trackId))
+
+    midiRenderingTracksRef.current.delete(trackId)
+    setMidiRenderingTracks(prev => {
+      if (!prev.has(trackId)) return prev
+      const next = new Set(prev)
+      next.delete(trackId)
+      return next
+    })
+
+    const decodedMs = Math.round(buffer.duration * 1000)
+    setTrackDurations(prev => {
+      const next = new Map(prev)
+      next.set(trackId, decodedMs)
+      return next
+    })
+
+    const nextMuted = new Set(mutedTracksRef.current)
+    nextMuted.delete(trackId)
+    mutedTracksRef.current = nextMuted
+    setMutedTracks(nextMuted)
+
+    recomputeTransportDuration()
+    noteTrackDuration(trackId, decodedMs)
+    resolveMidiRenderWaiters(trackId)
+
+    const g = gainsRef.current.get(trackId)
+    if (g) {
+      const ctx = actxRef.current
+      const targetVal = gainForTrack(trackId, soloedTracksRef.current, nextMuted)
+      if (ctx) {
+        const now = ctx.currentTime
+        g.gain.cancelScheduledValues(now)
+        g.gain.setValueAtTime(g.gain.value, now)
+        g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
+      } else {
+        g.gain.value = targetVal
+      }
+    }
+
+    if (playingRef.current) {
+      void playFnRef.current(offsetRef.current)
+    }
+  }, [recomputeTransportDuration, resolveMidiRenderWaiters, gainForTrack, noteTrackDuration])
+
+  const finishMidiRenderRef = useRef(finishMidiRender)
+  finishMidiRenderRef.current = finishMidiRender
+
+  // Offline-render MIDI tracks to AudioBuffers for artifact-free transport playback.
+  useEffect(() => {
+    const midiTracksToRender = tracksRef.current.filter(t => t.file_type === 'midi')
+    if (!midiTracksToRender.length) return
+    warmMidiSoundfontModule()
+
+    const ctx = getSharedAudioContext()
+    actxRef.current = ctx
+    const bpm = projectRef.current?.bpm ?? 120
+    const timeSig = projectRef.current?.time_signature ?? '4/4'
+    let cancelled = false
+
+    for (const track of midiTracksToRender) {
+      if (!track.midi_data?.notes?.length) continue
+      const renderKey = midiRenderSourceKey(track, bpm, timeSig)
+      if (midiRenderedKeysRef.current.get(track.id) === renderKey && bufsRef.current.has(track.id)) {
+        continue
+      }
+      if (midiRenderingTracksRef.current.has(track.id)) {
+        continue
+      }
+
+      const gen = (midiRenderGenRef.current.get(track.id) ?? 0) + 1
+      midiRenderGenRef.current.set(track.id, gen)
+
+      const nextMuted = new Set(mutedTracksRef.current)
+      nextMuted.add(track.id)
+      mutedTracksRef.current = nextMuted
+      setMutedTracks(nextMuted)
+
+      midiRenderingTracksRef.current.add(track.id)
+      setMidiRenderingTracks(prev => new Set(prev).add(track.id))
+
+      if (playingRef.current) {
+        const g = gainsRef.current.get(track.id)
+        const ctxNow = actxRef.current
+        if (g && ctxNow) {
+          const now = ctxNow.currentTime
+          g.gain.cancelScheduledValues(now)
+          g.gain.setValueAtTime(0, now)
+        }
+      }
+
+      const trackId = track.id
+      void (async () => {
+        try {
+          const latestForRender = tracksRef.current.find(t => t.id === trackId)
+          if (!latestForRender?.midi_data?.notes?.length) {
+            midiRenderingTracksRef.current.delete(trackId)
+            setMidiRenderingTracks(prev => {
+              if (!prev.has(trackId)) return prev
+              const next = new Set(prev)
+              next.delete(trackId)
+              return next
+            })
+            const nextMuted = new Set(mutedTracksRef.current)
+            nextMuted.delete(trackId)
+            mutedTracksRef.current = nextMuted
+            setMutedTracks(nextMuted)
+            resolveMidiRenderWaiters(trackId)
+            return
+          }
+          const buffer = await renderMidiTrackToBuffer(ctx.sampleRate, latestForRender, bpm)
+          if (cancelled || !buffer) {
+            midiRenderingTracksRef.current.delete(trackId)
+            setMidiRenderingTracks(prev => {
+              if (!prev.has(trackId)) return prev
+              const next = new Set(prev)
+              next.delete(trackId)
+              return next
+            })
+            const nextMuted = new Set(mutedTracksRef.current)
+            nextMuted.delete(trackId)
+            mutedTracksRef.current = nextMuted
+            setMutedTracks(nextMuted)
+            resolveMidiRenderWaiters(trackId)
+            return
+          }
+          if (midiRenderGenRef.current.get(trackId) !== gen) return
+          const latest = tracksRef.current.find(t => t.id === trackId)
+          if (!latest?.midi_data?.notes?.length) {
+            midiRenderingTracksRef.current.delete(trackId)
+            setMidiRenderingTracks(prev => {
+              if (!prev.has(trackId)) return prev
+              const next = new Set(prev)
+              next.delete(trackId)
+              return next
+            })
+            resolveMidiRenderWaiters(trackId)
+            return
+          }
+          const latestKey = midiRenderSourceKey(latest, bpm, timeSig)
+          if (latestKey !== renderKey) {
+            midiRenderingTracksRef.current.delete(trackId)
+            setMidiRenderingTracks(prev => {
+              if (!prev.has(trackId)) return prev
+              const next = new Set(prev)
+              next.delete(trackId)
+              return next
+            })
+            resolveMidiRenderWaiters(trackId)
+            return
+          }
+          finishMidiRenderRef.current(trackId, buffer, latestKey)
+        } catch {
+          midiRenderingTracksRef.current.delete(trackId)
+          setMidiRenderingTracks(prev => {
+            if (!prev.has(trackId)) return prev
+            const next = new Set(prev)
+            next.delete(trackId)
+            return next
+          })
+          const nextMuted = new Set(mutedTracksRef.current)
+          nextMuted.delete(trackId)
+          mutedTracksRef.current = nextMuted
+          setMutedTracks(nextMuted)
+          resolveMidiRenderWaiters(trackId)
+        }
+      })()
+    }
+
+    return () => { cancelled = true }
+  }, [midiRenderDepsKey, resolveMidiRenderWaiters])
 
   // Load audio buffers — re-runs when tracks are added/removed within a version.
   useEffect(() => {
@@ -1209,9 +1542,16 @@ function usePlayer(
     }
 
     for (const id of [...bufsRef.current.keys()]) {
-      if (id === METRONOME_TRACK_ID) continue
-      if (!audioTracks.some(t => t.id === id)) {
+      if (id === METRONOME_TRACK_ID || id === PREVIEW_MIX_TRACK_ID) continue
+      if (!tracksRef.current.some(t => t.id === id)) {
         bufsRef.current.delete(id)
+        midiRenderedKeysRef.current.delete(id)
+        setMidiPlaybackReadyIds(prev => {
+          if (!prev.has(id)) return prev
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
         setTrackDurations(prev => {
           if (!prev.has(id)) return prev
           const next = new Map(prev)
@@ -1226,13 +1566,17 @@ function usePlayer(
 
     if (pending.length === 0) {
       recomputeTransportDuration()
+      markPendingFullMixSwitchIfReady()
       return () => { cancelled = true }
     }
 
     Promise.all(pending.map(async t => {
       try {
         const ab = await fetchTrackAudioBuffer(t.id)
-        if (!ab || cancelled) return
+        if (!ab || cancelled) {
+          if (!cancelled) setLoaded(c => c + 1)
+          return
+        }
         const decoded = await ctx.decodeAudioData(ab)
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
@@ -1244,13 +1588,95 @@ function usePlayer(
           })
           setLoaded(c => c + 1)
         }
-      } catch { /* skip */ }
+      } catch {
+        if (!cancelled) setLoaded(c => c + 1)
+      }
     })).then(() => {
-      if (!cancelled) recomputeTransportDuration()
+      if (!cancelled) {
+        recomputeTransportDuration()
+        markPendingFullMixSwitchIfReady()
+      }
     })
 
     return () => { cancelled = true }
-  }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume])
+  }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume, markPendingFullMixSwitchIfReady, audioTracks.length])
+
+  // Rehearsal (main only): stream preview MP3 via Audio element (fast canplay),
+  // then cache full bytes in the background for the waveform.
+  useEffect(() => {
+    const r = rehearsalRef.current
+    if (!r.enabled || !r.isMainVersion || !r.projectId) {
+      clearPreviewMixPlayback()
+      return
+    }
+
+    let cancelled = false
+    const gen = ++previewFetchGenRef.current
+    const projectId = r.projectId
+
+    prefetchPreviewMixPlayback(projectId)
+
+    let audio = takePreloadedPreviewAudio(projectId)
+    if (!audio) {
+      audio = new Audio()
+      audio.preload = 'auto'
+    }
+    previewAudioRef.current = audio
+
+    const markReady = () => {
+      if (cancelled || gen !== previewFetchGenRef.current) return
+      usingPreviewMixRef.current = true
+      soloedTracksRef.current = new Set([PREVIEW_MIX_TRACK_ID])
+      setSoloedTracks(new Set([PREVIEW_MIX_TRACK_ID]))
+      setPreviewMixReady(true)
+      recomputeTransportDuration()
+      markPendingFullMixSwitchIfReady()
+    }
+
+    const onCanPlay = () => {
+      audio!.removeEventListener('canplay', onCanPlay)
+      audio!.removeEventListener('error', onError)
+      markReady()
+    }
+    const onError = () => {
+      audio!.removeEventListener('canplay', onCanPlay)
+      audio!.removeEventListener('error', onError)
+      if (!cancelled && gen === previewFetchGenRef.current) clearPreviewMixPlayback()
+    }
+
+    audio.addEventListener('canplay', onCanPlay)
+    audio.addEventListener('error', onError)
+
+    const url = previewMixPlaybackUrl(projectId)
+    const resolvedUrl = typeof window !== 'undefined' ? new URL(url, window.location.origin).href : url
+    if (audio.src !== resolvedUrl) {
+      audio.src = url
+    } else if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      markReady()
+    }
+
+    const onMeta = () => recomputeTransportDuration()
+    audio.addEventListener('loadedmetadata', onMeta)
+
+    const ctx = getSharedAudioContext()
+    void ensurePreviewMixBuffer(ctx)
+
+    return () => {
+      cancelled = true
+      audio?.removeEventListener('canplay', onCanPlay)
+      audio?.removeEventListener('error', onError)
+      audio?.removeEventListener('loadedmetadata', onMeta)
+    }
+  }, [
+    versionId,
+    rehearsal.enabled,
+    rehearsal.isMainVersion,
+    rehearsal.projectId,
+    clearPreviewMixPlayback,
+    recomputeTransportDuration,
+    ensurePreviewMixBuffer,
+    markPendingFullMixSwitchIfReady,
+  ])
 
   // Recompute timeline when track offsets/metadata change (without reloading audio)
   useEffect(() => {
@@ -1287,10 +1713,12 @@ function usePlayer(
   useEffect(() => {
     const ctx = actxRef.current ?? getSharedAudioContext()
     actxRef.current = ctx
-    const tracksReady = audioTracks.length === 0 || loaded >= audioTracks.length
+    const tracksReady = audioTracks.length === 0
+      || loaded >= audioTracks.length
+      || canPlayBeforeTracksLoaded()
     if (!tracksReady) return
     ensureMetronomeBuffer(ctx)
-  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer])
+  }, [duration, loaded, audioTracks.length, project?.bpm, project?.time_signature, minPlaybackDuration, timelineDurationSec, ensureMetronomeBuffer, canPlayBeforeTracksLoaded])
 
   // When the timeline grows during playback (live recording), regenerate the
   // metronome buffer and reschedule its source from the current playhead.
@@ -1331,9 +1759,8 @@ function usePlayer(
     sourcesRef.current.forEach(s => { try { s.stop() } catch { /* ok */ } })
     sourcesRef.current = []
     metronomeSrcRef.current = null
+    previewAudioRef.current?.pause()
     cancelAnimationFrame(rafRef.current)
-    midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-    midiScheduledRef.current = []
     gainsRef.current.forEach(g => {
       try { g.disconnect() } catch { /* ok */ }
     })
@@ -1359,8 +1786,7 @@ function usePlayer(
       sourcesRef.current = []
       metronomeSrcRef.current = null
       cancelAnimationFrame(rafRef.current)
-      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-      midiScheduledRef.current = []
+      previewAudioRef.current?.pause()
       setTimeout(() => {
         toStop.forEach(s => { try { s.stop() } catch { /* ok */ } })
       }, RAMP_SECS * 1000 + 4)
@@ -1382,56 +1808,6 @@ function usePlayer(
     }
   }, [stopSourcesImmediate])
 
-  // audioCtxPlayTime: ctx.currentTime captured at the moment playback started,
-  // BEFORE any async work. This ensures notes are scheduled relative to the
-  // true audio start, not some later time after soundfont loading.
-  const scheduleMidiNotes = useCallback(async (offset: number, audioCtxPlayTime: number) => {
-    const ctx = actxRef.current
-    if (!ctx) return
-    const proj = projectRef.current
-    // Always use PROJECT BPM for scheduling — never the MIDI file's internal tempo.
-    // MIDI file BPM is only used during parsing (tick→sixteenth conversion) which
-    // is already done; midiData.notes are stored in sixteenths independent of tempo.
-    const projBpm = proj?.bpm ?? 120
-    const projTimeSig = proj?.time_signature ?? '4/4'
-    const [projN, projD] = projTimeSig.split('/').map(Number)
-    const projSpb = sixteenthsPerBar(projN || 4, projD || 4)
-    // sixteenthDuration uses project BPM: (60 / bpm) / 4
-    const sixthSec = sixteenthDuration(projBpm)
-    const projBarDurationSec = projSpb * sixthSec
-
-    for (const midiTrack of midiTracksRef.current) {
-      const hasSolosMidi = soloedTracksRef.current.size > 0
-      if (hasSolosMidi ? !soloedTracksRef.current.has(midiTrack.id) : mutedTracksRef.current.has(midiTrack.id)) continue
-      const data = midiTrack.midi_data
-      if (!data || !data.notes.length) continue
-      try {
-        const { default: Soundfont } = await import('soundfont-player')
-        const instrName = gmInstrumentName(data.instrument)
-        const instrument = await Soundfont.instrument(ctx, instrName, { soundfont: 'MusyngKite' })
-        // Bar offset in seconds (project bars × bar duration at project BPM)
-        const startOffsetSec = (midiTrack.start_bar ?? midiTrack.midi_start_bar ?? 0) * projBarDurationSec
-        for (const note of data.notes) {
-          // Absolute project-timeline position of this note (in seconds)
-          const noteAbsoluteSec = startOffsetSec + note.startSixteenth * sixthSec
-          const noteDurSec = note.durationSixteenths * sixthSec
-          // Skip notes entirely before the playback start position
-          if (noteAbsoluteSec + noteDurSec < offset) continue
-          // AudioContext time when this note should sound:
-          // = time playback started + (note position − playback offset)
-          const schedTime = audioCtxPlayTime + (noteAbsoluteSec - offset)
-          if (schedTime < ctx.currentTime - 0.01) continue // missed — skip
-          const scheduled = instrument.play(note.pitch.toString(), schedTime, {
-            duration: noteDurSec,
-            gain: note.velocity / 127,
-          })
-          midiScheduledRef.current.push(scheduled)
-        }
-      } catch { /* no soundfont — skip */ }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const ensurePlaybackGraph = useCallback(() => {
     const ctx = getSharedAudioContext()
     actxRef.current = ctx
@@ -1452,27 +1828,35 @@ function usePlayer(
     tracksOverride?: Track[],
     scheduledStartTime?: number,
   ) => {
+    stopSources()
     const ctx = ensurePlaybackGraph()
     ensureMetronomeBuffer(ctx)
-    stopSources()
     if (ctx.state === 'suspended') await ctx.resume()
+
+    if (usingPreviewMixRef.current) {
+      await ensurePreviewMixBuffer(ctx)
+    }
+
     const newGains = new Map<string, GainNode>()
     const proj = projectRef.current
     const projBpmP = proj?.bpm ?? 120
     const projBeatsP = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
     const projBarDurSecP = (60 / projBpmP) * projBeatsP
-    const metaTracks = (tracksOverride ?? tracksRef.current).filter(t => t.file_type !== 'midi')
-    const trackMetaMap = new Map(metaTracks.map(t => [t.id, t]))
-    // Capture AudioContext time ONCE before starting any sources — used as
-    // absolute reference for both audio scheduling and MIDI note scheduling.
+    const allTracks = tracksOverride ?? tracksRef.current
+    const trackMetaMap = new Map(allTracks.map(t => [t.id, t]))
+
     const audioCtxPlayTime = scheduledStartTime != null
       ? Math.max(scheduledStartTime, ctx.currentTime)
       : ctx.currentTime
+
     bufsRef.current.forEach((buf, id) => {
       const isMetronome = id === METRONOME_TRACK_ID
-      const trackMeta = isMetronome ? null : trackMetaMap.get(id)
-      if (!isMetronome && !trackMeta) return
-      const trackOffsetSec = isMetronome ? 0 : (trackMeta!.start_bar ?? 0) * projBarDurSecP
+      const isPreviewMix = id === PREVIEW_MIX_TRACK_ID
+      const trackMeta = isMetronome || isPreviewMix ? null : trackMetaMap.get(id)
+      if (!isMetronome && !isPreviewMix && !trackMeta) return
+      const trackOffsetSec = (isMetronome || isPreviewMix)
+        ? 0
+        : (trackMeta!.start_bar ?? trackMeta!.midi_start_bar ?? 0) * projBarDurSecP
       const trackEndSec = trackOffsetSec + buf.duration
       // Skip tracks that end before the playback position
       if (trackEndSec <= offset) return
@@ -1499,21 +1883,27 @@ function usePlayer(
     gainsRef.current = newGains
     startRef.current = audioCtxPlayTime - offset
     offsetRef.current = offset
-    if (tracksOverride) {
-      midiTracksRef.current = tracksOverride.filter(t => t.file_type === 'midi')
-    } else {
-      midiTracksRef.current = tracksRef.current.filter(t => t.file_type === 'midi')
-    }
-    scheduleMidiNotes(offset, audioCtxPlayTime).catch(console.warn)
     setPlaying(true)
     // Track last tick bucket for 5 Hz state throttle (avoids 60fps React re-renders)
     let lastStateTick = -1
     const tick = () => {
       const elapsed = (actxRef.current?.currentTime ?? 0) - startRef.current
       const dur = getTransportDuration() || 1
-      // Always update the ref — consumed by DOM-direct visual updates (waveform overlays,
-      // progress bar fill) without triggering any React re-render.
       currentTimeRef.current = elapsed
+
+      const loop = sectionLoopRef.current
+      if (loop) {
+        const proj = projectRef.current
+        const loopBpm = proj?.bpm ?? 120
+        const loopBeats = parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4
+        const loopBarDur = (60 / loopBpm) * loopBeats
+        const loopEnd = loop.endBar * loopBarDur
+        if (elapsed >= loopEnd - 0.002) {
+          void playFnRef.current(loop.startBar * loopBarDur)
+          return
+        }
+      }
+
       if (elapsed >= dur) { currentTimeRef.current = 0; setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
       // Throttle React state to ~5 Hz so text display updates smoothly but cheaply.
       const bucket = Math.floor(elapsed * 5)
@@ -1524,7 +1914,30 @@ function usePlayer(
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [getTransportDuration, stopSources, scheduleMidiNotes, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack])
+  }, [getTransportDuration, stopSources, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack, ensurePreviewMixBuffer])
+
+  playFnRef.current = play
+
+  const clearSectionLoop = useCallback(() => {
+    sectionLoopRef.current = null
+    setSectionLoopOn(false)
+  }, [])
+
+  const setSectionLoop = useCallback((range: SectionLoopRange | null) => {
+    sectionLoopRef.current = range
+    setSectionLoopOn(range !== null)
+  }, [])
+
+  const toggleSectionLoop = useCallback((range: SectionLoopRange | null) => {
+    if (sectionLoopRef.current) {
+      clearSectionLoop()
+      return false
+    }
+    if (!range) return false
+    sectionLoopRef.current = range
+    setSectionLoopOn(true)
+    return true
+  }, [clearSectionLoop])
 
   const pause = useCallback(() => {
     if (isCountingRef.current) {
@@ -1536,22 +1949,29 @@ function usePlayer(
     }
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
     currentTimeRef.current = offsetRef.current
-    stopSources(); setPlaying(false)
-  }, [stopSources])
+    playingRef.current = false
+    stopSources()
+    setPlaying(false)
+    trySwitchToFullMix()
+  }, [stopSources, trySwitchToFullMix])
 
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
     offsetRef.current = t
     currentTimeRef.current = t
-    // Bump epoch so RecordingTrackRow preview effect re-runs and restarts its
-    // AudioBufferSourceNode from the new position (isPlaying doesn't change
-    // on seek-while-playing, so without this the preview keeps playing from
-    // the old position).
+    const loop = sectionLoopRef.current
+    if (loop) {
+      const proj = projectRef.current
+      const barDur = ((60 / (proj?.bpm ?? 120)) * (parseInt(proj?.time_signature?.split('/')[0] ?? '4') || 4))
+      const bar = Math.floor(t / barDur)
+      if (bar < loop.startBar || bar >= loop.endBar) clearSectionLoop()
+    }
     setSeekEpoch(e => e + 1)
     if (playing) play(t, tracksOverride)
     else setCurrentTime(t)
-  }, [playing, play])
+  }, [playing, play, clearSectionLoop])
 
   const toggleMute = useCallback((id: string) => {
+    if (midiRenderingTracksRef.current.has(id)) return
     const next = new Set(mutedTracksRef.current)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -1561,7 +1981,7 @@ function usePlayer(
     const g = gainsRef.current.get(id)
     if (g) {
       const ctx = actxRef.current
-      const targetVal = next.has(id) ? 0 : 1
+      const targetVal = gainForTrack(id, soloedTracksRef.current, next)
       if (ctx) {
         const now = ctx.currentTime
         g.gain.cancelScheduledValues(now)
@@ -1571,18 +1991,7 @@ function usePlayer(
         g.gain.value = targetVal
       }
     }
-
-    // Reschedule MIDI notes when muting/unmuting during playback
-    if (playingRef.current) {
-      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-      midiScheduledRef.current = []
-      const ctx = actxRef.current
-      if (ctx) {
-        const elapsed = ctx.currentTime - startRef.current
-        scheduleMidiNotes(elapsed, ctx.currentTime).catch(console.warn)
-      }
-    }
-  }, [scheduleMidiNotes])
+  }, [gainForTrack])
 
   const toggleSolo = useCallback((id: string) => {
     const next = new Set(soloedTracksRef.current)
@@ -1604,18 +2013,7 @@ function usePlayer(
         g.gain.value = targetVal
       }
     })
-
-    // Reschedule MIDI notes while playing so solo state takes effect immediately.
-    if (playingRef.current) {
-      midiScheduledRef.current.forEach(n => { try { n.stop() } catch { /* ok */ } })
-      midiScheduledRef.current = []
-      const ctx = actxRef.current
-      if (ctx) {
-        const elapsed = ctx.currentTime - startRef.current
-        scheduleMidiNotes(elapsed, ctx.currentTime).catch(console.warn)
-      }
-    }
-  }, [scheduleMidiNotes, gainForTrack])
+  }, [gainForTrack])
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
@@ -1669,7 +2067,8 @@ function usePlayer(
   }, [])
 
   const playWithCountIn = useCallback(async (offset = offsetRef.current, tracksOverride?: Track[]) => {
-    if (audioTracks.length > 0 && loaded < audioTracks.length) return
+    const waitingForTracks = audioTracks.length > 0 && loaded < audioTracks.length
+    if (waitingForTracks && !canPlayBeforeTracksLoaded()) return
     if (isCountingRef.current) return
 
     const snapped = snapPlayheadToBar(offset)
@@ -1694,16 +2093,48 @@ function usePlayer(
       setIsCounting(false)
     }
     await play(snapped, tracksOverride)
-  }, [play, ensurePlaybackGraph, loaded, audioTracks.length, snapPlayheadToBar])
+  }, [play, ensurePlaybackGraph, loaded, audioTracks.length, snapPlayheadToBar, canPlayBeforeTracksLoaded])
+
+  const playbackReady = audioTracks.length === 0
+    || loaded >= audioTracks.length
+    || canPlayBeforeTracksLoaded()
+
+  const playbackMix: 'preview' | 'full' | 'none' = previewMixReady
+    ? 'preview'
+    : audioTracks.length > 0
+      ? 'full'
+      : 'none'
+
+  const waitForMidiRender = useCallback((trackId: string) => {
+    const proj = projectRef.current
+    const track = tracksRef.current.find(t => t.id === trackId)
+    if (!track?.midi_data?.notes?.length) return Promise.resolve()
+    const renderKey = midiRenderSourceKey(track, proj?.bpm ?? 120, proj?.time_signature ?? '4/4')
+    const ready = midiRenderedKeysRef.current.get(trackId) === renderKey
+      && bufsRef.current.has(trackId)
+      && !midiRenderingTracksRef.current.has(trackId)
+    if (ready) return Promise.resolve()
+    return new Promise<void>(resolve => {
+      const list = midiRenderWaitersRef.current.get(trackId) ?? []
+      list.push(resolve)
+      midiRenderWaitersRef.current.set(trackId, list)
+    })
+  }, [])
 
   return {
     playing, currentTime,
     duration: getTransportDuration(),
     loaded, total: audioTracks.length,
+    playbackReady,
+    playbackMix,
+    midiRenderingTracks,
+    midiPlaybackReadyIds,
+    waitForMidiRender,
     mutedTracks, soloedTracks, volume, setVolume,
     play: () => playWithCountIn(),
     playTransport: (scheduledStartTime?: number) => {
-      if (audioTracks.length > 0 && loaded < audioTracks.length) return
+      const waitingForTracks = audioTracks.length > 0 && loaded < audioTracks.length
+      if (waitingForTracks && !canPlayBeforeTracksLoaded()) return
       const snapped = snapPlayheadToBar(offsetRef.current)
       return play(snapped, undefined, scheduledStartTime)
     },
@@ -1711,6 +2142,7 @@ function usePlayer(
     playWithCountIn,
     pause, seek, seekEpoch, toggleMute, toggleSolo,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
+    sectionLoopOn, toggleSectionLoop, clearSectionLoop, setSectionLoop,
     audioContext: actxRef, trackDurations,
     /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
     currentTimeRef,
@@ -1721,20 +2153,22 @@ function usePlayer(
 // ─── Track letter buttons ─────────────────────────────────────────────────────
 
 function TrackLetterBtn({
-  letter, tooltip, active, onClick, activeClass,
+  letter, tooltip, active, onClick, activeClass, disabled = false,
 }: {
   letter: string
   tooltip: string
   active?: boolean
   onClick?: () => void
   activeClass?: string
+  disabled?: boolean
 }) {
   return (
     <HoverTooltip label={tooltip}>
       <button
         type="button"
         onClick={onClick}
-        className={`size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
+        disabled={disabled}
+        className={`size-5 border text-[9px] font-medium grid place-items-center transition uppercase disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
           active && activeClass ? activeClass : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
         }`}
       >
@@ -1917,20 +2351,21 @@ function TrackColorPicker({ trackId, initialColor, onApply, onClose }: {
 
 const TrackRow = React.memo(function TrackRow({
   track, index, muted, soloed, changed, currentTimeRef,
-  commentMode, activeInput, audioReady,
+  commentMode, activeInput, audioReady, midiRendering,
   onToggleMute, onToggleSolo, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
-  timelineDurationMs, onTrackDuration,
+  timelineDurationMs, onTrackDuration, waitForMidiRender,
   compact = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   /** Ref updated every rAF frame — read directly by DOM updates, never triggers re-render. */
   currentTimeRef: React.RefObject<number>; commentMode: boolean
   activeInput: ActiveCommentInput | null; audioReady: boolean
+  midiRendering?: boolean
   onToggleMute: () => void; onToggleSolo: () => void; onReplace: (f: File) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
@@ -1956,6 +2391,7 @@ const TrackRow = React.memo(function TrackRow({
   /** Total project duration in ms — passed to TactGrid for time-based positioning that matches the ruler. */
   timelineDurationMs?: number
   onTrackDuration?: (trackId: string, durationMs: number) => void
+  waitForMidiRender: (trackId: string) => Promise<void>
   compact?: boolean
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -2038,7 +2474,7 @@ const TrackRow = React.memo(function TrackRow({
   const startPercent = totalBars > 0 ? (effectiveStartBar / totalBars) * 100 : 0
   const widthPercent = totalBars > 0 ? Math.max(1, (trackDurationBars / totalBars) * 100) : 100
   // Scale bar count so each bar stays ~12px wide regardless of clip length.
-  const displayBarCount = 96
+  const displayBarCount = Math.max(4, Math.round(96 * (trackDurationBars / Math.max(1, totalBars))))
   const isAudioLoading = !isMidi && !waveformReady
   // Only expand to fill the remaining timeline while loading if we don't yet know the
   // clip's duration — prevents a flash-to-full-width when duration_ms is already stored.
@@ -2313,9 +2749,13 @@ const TrackRow = React.memo(function TrackRow({
                 <span className="text-[9px] uppercase tracking-widest text-amber">Modified</span>
               ) : isMidi && track.midi_data ? (
                 <span className="text-[9px] text-muted-foreground truncate block font-mono">
-                  {track.midi_data.notes.length} notes · {trackDurationBars} bars
-                  {(track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
+                  {midiRendering
+                    ? 'Rendering audio…'
+                    : `${track.midi_data.notes.length} notes · ${trackDurationBars} bars`}
+                  {!midiRendering && (track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
                 </span>
+              ) : isMidi ? (
+                <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Loading…</span>
               ) : (
                 <span className="text-[9px] text-muted-foreground truncate block font-mono">
                   {track.original_filename ?? '—'}
@@ -2330,10 +2770,11 @@ const TrackRow = React.memo(function TrackRow({
         <div className={`flex items-center gap-1 ${compact ? 'mt-1' : 'mt-2'}`}>
           <TrackLetterBtn
             letter="M"
-            tooltip="Mute"
+            tooltip={midiRendering ? 'Rendering audio…' : 'Mute'}
             active={muted}
             activeClass="bg-ember text-white border-ember"
             onClick={onToggleMute}
+            disabled={midiRendering}
           />
           <TrackLetterBtn
             letter="S"
@@ -2425,7 +2866,7 @@ const TrackRow = React.memo(function TrackRow({
         >
           {isMidi ? (
             track.midi_data ? (
-              <div className="w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
+              <div className="relative w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
                 <MiniPianoRoll
                   midiData={track.midi_data}
                   color={accentColor}
@@ -2434,6 +2875,11 @@ const TrackRow = React.memo(function TrackRow({
                   height={rowH}
                   midiStartBar={0}
                 />
+                {midiRendering && (
+                  <div className="absolute inset-0 grid place-items-center bg-background/50 pointer-events-none">
+                    <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Rendering audio…</span>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="w-full h-full grid place-items-center bg-surface-2">
@@ -2499,11 +2945,13 @@ const TrackRow = React.memo(function TrackRow({
       />
     </div>
 
-    {/* Piano roll editor — inline expandable panel */}
+    {/* Piano roll editor — inline expandable panel, above tact grid overlay */}
     <div style={{
       maxHeight: pianoRollOpen ? 500 : 0,
       overflow: 'hidden',
       transition: 'max-height 0.3s ease',
+      position: pianoRollOpen ? 'relative' : undefined,
+      zIndex: pianoRollOpen ? 2 : undefined,
     }}>
       {pianoRollOpen && (
         <PianoRollEditor
@@ -2518,9 +2966,11 @@ const TrackRow = React.memo(function TrackRow({
             project.time_signature ? parseInt(project.time_signature.split('/')[1]) : 4
           }
           midiStartBar={track.start_bar ?? track.midi_start_bar ?? 0}
+          isRenderingMidi={!!midiRendering}
           onClose={() => setPianoRollOpen(false)}
-          onSaved={(updates) => {
+          onSaved={async (updates) => {
             onMidiDataUpdate(track.id, updates)
+            await waitForMidiRender(track.id)
             setPianoRollOpen(false)
           }}
         />
@@ -2628,21 +3078,24 @@ function UploadRow({ upload, onRetry, onDismiss }: {
 // ─── Master player (bottom bar) ───────────────────────────────────────────────
 
 const TransportToggle = memo(function TransportToggle({
-  label, active, onClick, title,
-}: { label: string; active: boolean; onClick: () => void; title: string }) {
+  label, active, onClick, tooltip, disabled = false,
+}: { label: string; active: boolean; onClick: () => void; tooltip: string; disabled?: boolean }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest ${
-        active
-          ? 'border-ember bg-ember text-white'
-          : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-      }`}
-    >
-      {label}
-    </button>
+    <HoverTooltip label={tooltip} className="shrink-0">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={tooltip}
+        className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
+          active
+            ? 'border-ember bg-ember text-white'
+            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+        }`}
+      >
+        {label}
+      </button>
+    </HoverTooltip>
   )
 })
 
@@ -2651,6 +3104,7 @@ function MasterPlayerBar({
   onPlay, onPause, onSeek, onVolume,
   metronomeOn, countdownOn, isCounting,
   onToggleMetronome, onToggleCountdown,
+  sectionLoopOn, sectionLoopEnabled, onToggleSectionLoop,
   compact = false,
 }: {
   playing: boolean; currentTime: number
@@ -2660,6 +3114,7 @@ function MasterPlayerBar({
   onPlay: () => void; onPause: () => void; onSeek: (t: number) => void; onVolume: (v: number) => void
   metronomeOn: boolean; countdownOn: boolean; isCounting: boolean
   onToggleMetronome: () => void; onToggleCountdown: () => void
+  sectionLoopOn: boolean; sectionLoopEnabled: boolean; onToggleSectionLoop: () => void
   compact?: boolean
 }) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -2721,13 +3176,20 @@ function MasterPlayerBar({
         label="Metro"
         active={metronomeOn}
         onClick={onToggleMetronome}
-        title="Metronome click track"
+        tooltip="Metronome click track"
       />
       <TransportToggle
-        label="CD"
+        label="Count-in"
         active={countdownOn}
         onClick={onToggleCountdown}
-        title="One-bar count-in before play"
+        tooltip="One-bar count-in before play"
+      />
+      <TransportToggle
+        label="Loop"
+        active={sectionLoopOn}
+        onClick={onToggleSectionLoop}
+        tooltip={sectionLoopOn ? 'Stop looping this section' : 'Loops structure sections only'}
+        disabled={!sectionLoopEnabled}
       />
       {isCounting && (
         <span className="text-[9px] uppercase tracking-widest text-amber shrink-0">Count-in…</span>
@@ -3066,6 +3528,8 @@ export default function ProjectPage() {
   const [showBranchModal, setShowBranchModal] = useState(false)
   const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const mobileReplaceInputRef = useRef<HTMLInputElement>(null)
+  const replaceTrackRef = useRef<Track | null>(null)
   const [commentMode, setCommentMode] = useState(false)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
   const [versionLoading, setVersionLoading] = useState(false)
@@ -3109,6 +3573,12 @@ export default function ProjectPage() {
   useEffect(() => {
     if (isMobileLandscape && editStructure) setEditStructure(false)
   }, [isMobileLandscape, editStructure])
+
+  // Start streaming the cached preview mix as early as possible in rehearsal.
+  useEffect(() => {
+    if (!isMobilePortrait || !projectId) return
+    prefetchPreviewMixPlayback(projectId)
+  }, [isMobilePortrait, projectId])
 
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -3216,13 +3686,13 @@ export default function ProjectPage() {
   }
 
   async function loadProject(keepActiveVersion = true, force = false) {
-    // Cache hit: if the active version is already cached, skip the full re-fetch
-    if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
-      console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
-      return
-    }
-
     try {
+      // Cache hit: if the active version is already cached, skip the full re-fetch
+      if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
+        console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
+        return
+      }
+
       const res = await fetch(`/api/projects/${projectId}`)
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -3330,6 +3800,28 @@ export default function ProjectPage() {
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+  const midiTracksNeedingDataKey = useMemo(
+    () => activeTracks
+      .filter(t => t.file_type === 'midi' && !t.midi_data)
+      .map(t => t.id)
+      .sort()
+      .join('|'),
+    [activeTracks],
+  )
+  useEffect(() => {
+    if (!midiTracksNeedingDataKey) return
+    let cancelled = false
+    for (const id of midiTracksNeedingDataKey.split('|')) {
+      fetch(`/api/tracks/${id}/midi`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (cancelled || !data?.midi_data) return
+          handleMidiDataUpdate(id, { midi_data: data.midi_data })
+        })
+        .catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [midiTracksNeedingDataKey])
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
   const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
@@ -3462,12 +3954,77 @@ export default function ProjectPage() {
     1,
   )
 
-  const player = usePlayer(activeTracks, activeVersionId, project, recordingPreviewEndSec, timelineDurationSec)
+  const player = usePlayer(
+    activeTracks,
+    activeVersionId,
+    project,
+    recordingPreviewEndSec,
+    timelineDurationSec,
+    {
+      enabled: isMobilePortrait,
+      projectId,
+      isMainVersion: activeVersion?.type === 'main',
+    },
+  )
   const playerRef = useRef(player)
   playerRef.current = player
+
+  const [activeLoopSectionId, setActiveLoopSectionId] = useState<string | null>(null)
+  const sectionRanges = useMemo(() => buildSectionRanges(sections), [sections])
+  const projBarDurationSec = projBarDurationMs / 1000
+  const playheadSec = player.currentTimeRef.current ?? player.currentTime
+  const canLoopSection = findSectionRangeAtTime(sectionRanges, playheadSec, projBarDurationSec) != null
+  const sectionLoopButtonEnabled = player.sectionLoopOn || canLoopSection
+
+  const handleToggleSectionLoop = useCallback(() => {
+    const p = playerRef.current
+    if (p.sectionLoopOn) {
+      p.clearSectionLoop()
+      setActiveLoopSectionId(null)
+      return
+    }
+    const range = findSectionRangeAtTime(
+      sectionRanges,
+      p.currentTimeRef.current,
+      projBarDurationSec,
+    )
+    if (!range) return
+    p.setSectionLoop({ id: range.id, startBar: range.start_bar, endBar: range.end_bar })
+    setActiveLoopSectionId(range.id)
+  }, [sectionRanges, projBarDurationSec])
+
+  useEffect(() => {
+    if (!activeLoopSectionId) return
+    const sec = sections.find(s => s.id === activeLoopSectionId)
+    if (!sec) {
+      playerRef.current.clearSectionLoop()
+      setActiveLoopSectionId(null)
+      return
+    }
+    playerRef.current.setSectionLoop({
+      id: sec.id,
+      startBar: sec.start_bar,
+      endBar: sec.end_bar,
+    })
+  }, [sections, activeLoopSectionId])
+
+  useEffect(() => {
+    setActiveLoopSectionId(null)
+    playerRef.current.clearSectionLoop()
+  }, [activeVersionId])
+
+  useEffect(() => {
+    if (!player.sectionLoopOn) setActiveLoopSectionId(null)
+  }, [player.sectionLoopOn])
+
   const activeRecordingIdRef = useRef(activeRecordingId)
   activeRecordingIdRef.current = activeRecordingId
   const recordingStopRef = useRef<(() => void) | null>(null)
+  const recordingControlsRef = useRef<Map<string, RecordingTrackControl>>(new Map())
+  const pendingMobileArmRef = useRef<string | null>(null)
+  const pendingMicStreamsRef = useRef<Map<string, MediaStream>>(new Map())
+  const [recordingRowStates, setRecordingRowStates] = useState<Record<string, RecordState>>({})
+  const [scrollToRecordingId, setScrollToRecordingId] = useState<string | null>(null)
 
   const beginRecordingCountdown = useCallback(async (bpm: number, timeSig: string) => {
     const ctx = getSharedAudioContext()
@@ -3497,6 +4054,70 @@ export default function ProjectPage() {
     if (!activeVersionId) return
     setRecordingSessions(prev => [...prev, { id: crypto.randomUUID(), name: 'New recording' }])
   }
+
+  const registerRecordingControl = useCallback((id: string, control: RecordingTrackControl | null) => {
+    if (control) {
+      recordingControlsRef.current.set(id, control)
+      if (pendingMobileArmRef.current === id) {
+        pendingMobileArmRef.current = null
+        const stream = pendingMicStreamsRef.current.get(id)
+        if (stream) pendingMicStreamsRef.current.delete(id)
+        void control.arm(stream)
+      }
+    } else {
+      recordingControlsRef.current.delete(id)
+    }
+  }, [])
+
+  const handleRecordingStateChange = useCallback((id: string, state: RecordState) => {
+    setRecordingRowStates(prev => {
+      if (prev[id] === state) return prev
+      return { ...prev, [id]: state }
+    })
+  }, [])
+
+  const handleMobileRecordTransport = useCallback(async () => {
+    if (recordingStopRef.current) {
+      recordingStopRef.current()
+      return
+    }
+
+    const targetId = activeRecordingId ?? recordingSessions[recordingSessions.length - 1]?.id
+
+    if (!targetId) {
+      const id = crypto.randomUUID()
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        pendingMicStreamsRef.current.set(id, stream)
+        pendingMobileArmRef.current = id
+        setScrollToRecordingId(id)
+        setRecordingSessions(prev => [...prev, { id, name: 'New recording' }])
+      } catch {
+        // Mic denied — no session created
+      }
+      return
+    }
+
+    setScrollToRecordingId(targetId)
+
+    const control = recordingControlsRef.current.get(targetId)
+    if (!control) {
+      pendingMobileArmRef.current = targetId
+      return
+    }
+
+    const state = control.getState()
+    if (state === 'idle') {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        await control.arm(stream)
+      } catch {
+        // Mic denied
+      }
+    } else if (state === 'armed') {
+      void control.startRecord()
+    }
+  }, [activeRecordingId, recordingSessions])
 
   function handleRecordingArm(id: string) {
     setActiveRecordingId(id)
@@ -3528,9 +4149,13 @@ export default function ProjectPage() {
 
   function handleRecordingPreviewTimeline(id: string, endSec: number | null) {
     setRecordingPreviewEnds(prev => {
+      if (endSec != null && endSec > 0) {
+        if (prev[id] === endSec) return prev
+        return { ...prev, [id]: endSec }
+      }
+      if (!(id in prev)) return prev
       const next = { ...prev }
-      if (endSec != null && endSec > 0) next[id] = endSec
-      else delete next[id]
+      delete next[id]
       return next
     })
   }
@@ -4031,6 +4656,19 @@ export default function ProjectPage() {
     }
   }
 
+  function promptReplaceTrack(track: Track) {
+    replaceTrackRef.current = track
+    mobileReplaceInputRef.current?.click()
+  }
+
+  function handleMobileReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const track = replaceTrackRef.current
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    replaceTrackRef.current = null
+    if (track && file) void handleReplaceTrack(track, file)
+  }
+
   async function handleNewBranch(name: string) {
     setShowBranchModal(false)
     try {
@@ -4180,7 +4818,7 @@ export default function ProjectPage() {
     </>
   )
 
-  if (loading) return <BrandSpinner />
+  if (loading && !project) return <BrandSpinner label="Loading project" />
 
   if (error || !project) {
     const isAccessDenied = error === 'access_denied'
@@ -4217,28 +4855,149 @@ export default function ProjectPage() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
 
-      {/* Reading mode — full portrait mobile experience */}
-      <ReadingMode
-        project={project}
-        player={{
-          playing: player.playing,
-          currentTime: player.currentTime,
-          duration: player.duration,
-          loaded: player.loaded,
-          total: player.total,
-          play: player.play,
-          pause: player.pause,
-          seek: player.seek,
-        }}
-        sections={sections}
-        versions={versions}
-        activeVersionId={activeVersionId}
-        onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
-        projectId={projectId}
-        bandId={bandId}
-        activeTracks={activeTracks}
-        barDurationMs={projBarDurationMs}
-        visible={isMobilePortrait}
+      {/* Portrait mobile — Rehearsal ⇄ Mixer tabs */}
+      {isMobilePortrait && project && (
+        <MobileExperience
+          project={project}
+          bandId={bandId}
+          versions={versions}
+          activeVersionId={activeVersionId}
+          onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          player={{
+            playing: player.playing,
+            currentTime: player.currentTime,
+            duration: player.duration,
+            loaded: player.loaded,
+            total: player.total,
+            playbackReady: player.playbackReady,
+            playbackMix: player.playbackMix,
+            play: player.play,
+            pause: player.pause,
+            seek: player.seek,
+          }}
+          sections={sections}
+          projectId={projectId}
+          activeTracks={activeTracks}
+          barDurationMs={projBarDurationMs}
+          isMainVersion={activeVersion?.type === 'main'}
+          sectionLoopOn={player.sectionLoopOn}
+          sectionLoopEnabled={sectionLoopButtonEnabled}
+          onToggleSectionLoop={handleToggleSectionLoop}
+          metronomeOn={player.metronomeOn}
+          countdownOn={player.countdownOn}
+          isCounting={player.isCounting}
+          onToggleMetronome={player.toggleMetronome}
+          onToggleCountdown={player.toggleCountdown}
+          mixer={{
+            project,
+            versionId: activeVersionId,
+            versions,
+            activeVersionId,
+            onVersionChange: id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) },
+            onNewBranch: () => setShowBranchModal(true),
+            sections,
+            onSectionsChange: setSections,
+            sectionRanges,
+            activeTracks,
+            totalProjectBars,
+            totalDurationMs: totalProjectDurationMs,
+            barDurationMs: projBarDurationMs,
+            player: {
+              playing: player.playing,
+              isCounting: player.isCounting,
+              currentTime: player.currentTime,
+              duration: player.duration,
+              playbackReady: player.playbackReady,
+              play: player.play,
+              pause: player.pause,
+              seek: player.seek,
+              sectionLoopOn: player.sectionLoopOn,
+              sectionLoopEnabled: sectionLoopButtonEnabled,
+              onToggleSectionLoop: handleToggleSectionLoop,
+              metronomeOn: player.metronomeOn,
+              countdownOn: player.countdownOn,
+              onToggleMetronome: player.toggleMetronome,
+              onToggleCountdown: player.toggleCountdown,
+            },
+            mutedTracks: player.mutedTracks,
+            soloedTracks: player.soloedTracks,
+            midiRenderingTracks: player.midiRenderingTracks,
+            onToggleMute: player.toggleMute,
+            onToggleSolo: player.toggleSolo,
+            onAddTrack: () => fileInputRef.current?.click(),
+            onAddRecording: handleAddRecordingTrack,
+            onReplaceTrack: promptReplaceTrack,
+            onDeleteTrack: handleDeleteTrack,
+            onColorUpdate: handleColorUpdate,
+            onRecordTransport: () => { void handleMobileRecordTransport() },
+            recordingTransportState: (() => {
+              const id = activeRecordingId ?? recordingSessions[recordingSessions.length - 1]?.id
+              return id ? (recordingRowStates[id] ?? 'idle') : 'idle'
+            })(),
+            scrollToRecordingId,
+            onRecordingScrollDone: () => setScrollToRecordingId(null),
+            commentMode,
+            onToggleCommentMode: () => { setCommentMode(m => !m); setActiveCommentInput(null) },
+            commentCount: totalComments,
+            activeCommentInput,
+            onCommentPlace: setActiveCommentInput,
+            onCommentDelete: handleCommentDelete,
+            onCommentCreate: handleCommentCreate,
+            onCloseCommentInput: () => setActiveCommentInput(null),
+            onReplyCreate: handleReplyCreate,
+            currentUserId: user?.id,
+            isOwner,
+            currentUser,
+            recordingSlot: recordingSessions.map(session => (
+              <RecordingTrackRow
+                key={session.id}
+                id={session.id}
+                name={session.name}
+                onNameChange={handleRecordingNameChange}
+                versionId={activeVersionId}
+                bpm={projBpm}
+                timeSig={projTimeSig}
+                totalBars={totalProjectBars}
+                countdownEnabled={player.countdownOn}
+                getPlaybackMs={getRecordingPlaybackMs}
+                isPlaying={player.playing}
+                seekEpoch={player.seekEpoch}
+                isActiveRecording={activeRecordingId !== null && activeRecordingId !== session.id}
+                onArm={handleRecordingArm}
+                onRelease={handleRecordingRelease}
+                onSaved={handleRecordingSaved}
+                onDelete={handleRecordingDelete}
+                onPlaybackStart={player.playTransport}
+                onPlaybackStop={player.pause}
+                onSeekTo={player.seek}
+                onPreparePlayback={player.prepareTransport}
+                onPreviewTimelineChange={handleRecordingPreviewTimeline}
+                recordingStopRef={recordingStopRef}
+                playCountdown={beginRecordingCountdown}
+                registerControl={registerRecordingControl}
+                onStateChange={handleRecordingStateChange}
+                mobileScrollableTimeline
+              />
+            )),
+          }}
+        />
+      )}
+
+      <input
+        ref={mobileReplaceInputRef}
+        type="file"
+        accept="audio/*,.mid,.midi"
+        className="hidden"
+        onChange={handleMobileReplaceFile}
+      />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
+        multiple
+        className="hidden"
+        onChange={handleAddTrack}
       />
 
       {!isMobilePortrait && (
@@ -4617,19 +5376,24 @@ export default function ProjectPage() {
                 )
               })()}
 
-              {versionLoading ? (
-                <BrandSpinner fullscreen={false} label="Loading tracks" />
-              ) : activeTracks.length === 0 ? (
+              {activeTracks.length === 0 ? (
                 <div className="px-4 sm:px-6 py-12 text-center text-[10px] uppercase tracking-widest text-muted-foreground">
-                  No tracks yet — add one below
+                  {versionLoading ? 'Loading tracks…' : 'No tracks yet — add one below'}
                 </div>
               ) : activeTracks.map((t, i) => (
                 <TrackRow
                   key={t.id} track={t} index={i}
-                  muted={player.mutedTracks.has(t.id)} soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
+                  muted={player.mutedTracks.has(t.id) || player.midiRenderingTracks.has(t.id)}
+                  soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
                   currentTimeRef={player.currentTimeRef}
                   commentMode={commentMode} activeInput={activeCommentInput}
-                  audioReady={player.loaded >= player.total && player.total > 0}
+                  audioReady={
+                    t.file_type === 'midi'
+                      ? player.midiPlaybackReadyIds.has(t.id)
+                      : player.loaded >= player.total && player.total > 0
+                  }
+                  midiRendering={player.midiRenderingTracks.has(t.id)}
+                  waitForMidiRender={player.waitForMidiRender}
                   onToggleMute={() => player.toggleMute(t.id)}
                   onToggleSolo={() => player.toggleSolo(t.id)}
                   onReplace={f => handleReplaceTrack(t, f)}
@@ -4762,10 +5526,6 @@ export default function ProjectPage() {
                   }
                 </p>
               )}
-              <input ref={fileInputRef} type="file"
-                accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
-                multiple className="hidden" onChange={handleAddTrack}
-              />
             </div>
           </div>
 
@@ -4816,6 +5576,9 @@ export default function ProjectPage() {
         isCounting={player.isCounting}
         onToggleMetronome={player.toggleMetronome}
         onToggleCountdown={player.toggleCountdown}
+        sectionLoopOn={player.sectionLoopOn}
+        sectionLoopEnabled={sectionLoopButtonEnabled}
+        onToggleSectionLoop={handleToggleSectionLoop}
         compact={isMobileLandscape}
       />
 

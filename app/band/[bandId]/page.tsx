@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { BrandSpinner } from '@/components/BrandSpinner'
-import { activityColorClass, activityDotClass, activityVerb } from '@/lib/activityFormat'
+import { activityCategoryLabel, activityColorClass, activityDescriptionParts, activityDotClass } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
@@ -25,7 +25,7 @@ interface Band { id: string; name: string; created_at: string }
 
 interface EnhancedProject {
   id: string; name: string; bpm: number | null; key: string | null; created_at: string
-  track_count: number; total_duration_ms: number; version_count: number
+  track_count: number; audio_track_count: number; total_duration_ms: number; version_count: number
   comment_count: number; last_updated_at: string; first_track_id: string | null
   roadmap_configured: boolean
   roadmap_steps: { name: string }[]
@@ -64,6 +64,13 @@ interface JoinRequest {
 function formatDuration(ms: number): string {
   if (!ms) return '0:00'
   const s = Math.round(ms / 1000)
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return `${m}:${sec.toString().padStart(2, '0')}`
+}
+
+function formatSecs(secs: number): string {
+  const s = Math.floor(Math.max(0, secs))
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${m}:${sec.toString().padStart(2, '0')}`
@@ -302,16 +309,87 @@ function RenameProjectModal({ projectId, initialName, onClose, onRenamed }: {
   )
 }
 
+// ─── Preview mix timeline ─────────────────────────────────────────────────────
+
+const PreviewMixTimeline = memo(function PreviewMixTimeline({
+  currentTime, duration, onSeek,
+}: {
+  currentTime: number
+  duration: number
+  onSeek: (ratio: number) => void
+}) {
+  const barRef = useRef<HTMLDivElement>(null)
+  const draggingRef = useRef(false)
+  const ratio = duration > 0 ? Math.min(1, currentTime / duration) : 0
+
+  const seekAt = useCallback((clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect()
+    if (!rect || !duration) return
+    onSeek(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)))
+  }, [duration, onSeek])
+
+  return (
+    <div className="col-span-full flex items-center gap-2 pt-1">
+      <span className="text-[10px] font-mono tabular-nums text-muted-foreground w-9 shrink-0 text-right">
+        {formatSecs(currentTime)}
+      </span>
+      <div
+        ref={barRef}
+        role="slider"
+        aria-valuemin={0}
+        aria-valuemax={duration}
+        aria-valuenow={currentTime}
+        aria-label="Preview mix timeline"
+        className="relative flex-1 h-1.5 bg-surface-2 border border-border cursor-pointer touch-none select-none"
+        onPointerDown={e => {
+          e.stopPropagation()
+          draggingRef.current = true
+          e.currentTarget.setPointerCapture(e.pointerId)
+          seekAt(e.clientX)
+        }}
+        onPointerMove={e => {
+          e.stopPropagation()
+          if (!draggingRef.current) return
+          seekAt(e.clientX)
+        }}
+        onPointerUp={e => {
+          e.stopPropagation()
+          draggingRef.current = false
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }}
+        onPointerCancel={e => {
+          e.stopPropagation()
+          draggingRef.current = false
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }}
+      >
+        <div
+          className="absolute inset-y-0 left-0 bg-ember pointer-events-none"
+          style={{ width: `${ratio * 100}%` }}
+        />
+      </div>
+      <span className="text-[10px] font-mono tabular-nums text-muted-foreground w-9 shrink-0">
+        {formatSecs(duration)}
+      </span>
+    </div>
+  )
+})
+
 // ─── Project row ──────────────────────────────────────────────────────────────
 
 const ProjectRow = memo(function ProjectRow({
-  project, index, playing, loading, error, onPlay, onOpen, onQuick, onRename, onDelete, onMetaUpdated, isOwner,
+  project, index, playing, loading, error, showTimeline, playbackTime, playbackDuration, onSeek,
+  onPlay, onOpen, onQuick, onRename, onDelete, onMetaUpdated, isOwner,
 }: {
   project: EnhancedProject
   index: number
   playing: boolean
   loading: boolean
   error: boolean
+  showTimeline: boolean
+  playbackTime: number
+  playbackDuration: number
+  onSeek: (ratio: number) => void
   onPlay: (e: React.MouseEvent, projectId: string) => void
   onOpen: (projectId: string) => void
   onQuick: (e: React.MouseEvent, projectId: string) => void
@@ -351,7 +429,7 @@ const ProjectRow = memo(function ProjectRow({
             playActive
               ? 'bg-ember border-ember text-white'
               : 'border-border bg-surface-2 hover:bg-ember hover:border-ember hover:text-white'
-          } ${!project.first_track_id ? 'opacity-40 cursor-not-allowed' : ''}`}
+          } ${project.audio_track_count === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
         >
           {error
             ? <IconPlayError />
@@ -448,6 +526,14 @@ const ProjectRow = memo(function ProjectRow({
           )}
         </div>
       </div>
+
+      {showTimeline && (
+        <PreviewMixTimeline
+          currentTime={playbackTime}
+          duration={playbackDuration}
+          onSeek={onSeek}
+        />
+      )}
     </div>
   )
 })
@@ -477,10 +563,14 @@ export default function BandPage() {
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([])
   const [activityLoading, setActivityLoading] = useState(false)
   const [playingProjectId, setPlayingProjectId] = useState<string | null>(null)
+  const [previewProjectId, setPreviewProjectId] = useState<string | null>(null)
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null)
   const [errorProjectId, setErrorProjectId] = useState<string | null>(null)
+  const [playbackTime, setPlaybackTime] = useState(0)
+  const [playbackDuration, setPlaybackDuration] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackGenRef = useRef(0)
+  const pausedRef = useRef(false)
   const [showNewProject, setShowNewProject] = useState(false)
   const [inviteCopied, setInviteCopied] = useState(false)
   const [inviteCopying, setInviteCopying] = useState(false)
@@ -509,6 +599,12 @@ export default function BandPage() {
   const projectsRef = useRef(projects)
   projectsRef.current = projects
 
+  function pausePlayback() {
+    pausedRef.current = true
+    audioRef.current?.pause()
+    setPlayingProjectId(null)
+  }
+
   function stopPlayback() {
     const audio = audioRef.current
     if (audio) {
@@ -517,19 +613,25 @@ export default function BandPage() {
       audio.onended = null
       audio.onerror = null
       audio.onstalled = null
+      audio.onloadedmetadata = null
+      audio.ontimeupdate = null
       audio.pause()
       audio.removeAttribute('src')
       audio.load()
       audioRef.current = null
     }
     playbackGenRef.current += 1
+    pausedRef.current = false
+    setPlayingProjectId(null)
+    setPreviewProjectId(null)
+    setPlaybackTime(0)
+    setPlaybackDuration(0)
   }
 
   // ── Cleanup audio on unmount / navigation ───────────────────────────────────
   useEffect(() => {
     const cleanup = () => {
       stopPlayback()
-      setPlayingProjectId(null)
       setLoadingProjectId(null)
     }
     const unregister = registerPlaybackStop(cleanup)
@@ -723,19 +825,37 @@ export default function BandPage() {
     const project = projectsRef.current.find(p => p.id === projectId)
     if (!project) return
 
-    // No tracks → nothing to play
-    if (!project.first_track_id) return
+    // No audio tracks → nothing to preview (play button should already be
+    // disabled, but guard here too).
+    if (project.audio_track_count === 0) return
 
-    // Pause / stop if clicking currently playing or loading project
-    if (playingProjectId === project.id || loadingProjectId === project.id) {
+    // Pause if currently playing this project
+    if (playingProjectId === project.id) {
+      pausePlayback()
+      return
+    }
+
+    // Cancel load if clicked while still loading
+    if (loadingProjectId === project.id) {
       stopPlayback()
-      setPlayingProjectId(null)
       setLoadingProjectId(null)
       return
     }
 
+    // Resume if paused on this project
+    if (previewProjectId === project.id && audioRef.current) {
+      pausedRef.current = false
+      audioRef.current.play().catch(err => {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setErrorProjectId(project.id)
+        setTimeout(() => setErrorProjectId(prev => prev === project.id ? null : prev), 2000)
+      })
+      setPlayingProjectId(project.id)
+      return
+    }
+
     stopPlayback()
-    setPlayingProjectId(null)
+    pausedRef.current = false
     setLoadingProjectId(project.id)
     setErrorProjectId(null)
 
@@ -747,8 +867,8 @@ export default function BandPage() {
 
     function showError() {
       if (isStale()) return
+      stopPlayback()
       setLoadingProjectId(null)
-      setPlayingProjectId(null)
       setErrorProjectId(pid)
       setTimeout(() => setErrorProjectId(prev => prev === pid ? null : prev), 2000)
     }
@@ -761,14 +881,29 @@ export default function BandPage() {
         showError()
       })
     }
+    audio.onloadedmetadata = () => {
+      if (isStale()) return
+      if (Number.isFinite(audio.duration)) setPlaybackDuration(audio.duration)
+    }
+    audio.ontimeupdate = () => {
+      if (isStale()) return
+      setPlaybackTime(audio.currentTime)
+    }
     audio.onplaying = () => {
       if (isStale()) return
+      if (pausedRef.current) {
+        audio.pause()
+        return
+      }
       setLoadingProjectId(null)
+      setPreviewProjectId(pid)
       setPlayingProjectId(pid)
+      if (Number.isFinite(audio.duration)) setPlaybackDuration(audio.duration)
     }
     audio.onended = () => {
       if (isStale()) return
       setPlayingProjectId(null)
+      if (Number.isFinite(audio.duration)) setPlaybackTime(audio.duration)
     }
     audio.onerror = () => {
       if (isStale()) return
@@ -777,8 +912,27 @@ export default function BandPage() {
       showError()
     }
 
-    audio.src = `/api/projects/${pid}/mix`
-  }, [playingProjectId, loadingProjectId])
+    // Use the server-cached preview mix instead of client-side mixing individual
+    // FLAC tracks. For 'none' status this endpoint blocks until the mix is
+    // generated (the spinner on the play button handles the wait). For cached
+    // states ('fresh' / 'stale' / 'computing') it redirects immediately to a
+    // presigned R2 URL and the audio starts playing at once.
+    audio.src = `/api/projects/${pid}/preview-mix`
+  }, [playingProjectId, previewProjectId, loadingProjectId])
+
+  const handlePlaybackSeek = useCallback((ratio: number) => {
+    const audio = audioRef.current
+    if (!audio || !Number.isFinite(audio.duration)) return
+    const keepPaused = pausedRef.current || audio.paused
+    const t = ratio * audio.duration
+    audio.currentTime = t
+    setPlaybackTime(t)
+    if (keepPaused) {
+      pausedRef.current = true
+      audio.pause()
+      setPlayingProjectId(null)
+    }
+  }, [])
 
   const openProject = useCallback((projectId: string) => {
     router.push(`/band/${bandId}/project/${projectId}`)
@@ -1103,6 +1257,10 @@ export default function BandPage() {
                       playing={playingProjectId === p.id}
                       loading={loadingProjectId === p.id}
                       error={errorProjectId === p.id}
+                      showTimeline={previewProjectId === p.id && playbackDuration > 0}
+                      playbackTime={previewProjectId === p.id ? playbackTime : 0}
+                      playbackDuration={previewProjectId === p.id ? playbackDuration : 0}
+                      onSeek={handlePlaybackSeek}
                       onPlay={handlePlay}
                       onOpen={openProject}
                       onQuick={openQuickPeek}
@@ -1150,16 +1308,22 @@ export default function BandPage() {
                           className="grid grid-cols-1 sm:grid-cols-[80px_1fr_auto] sm:items-center gap-2 sm:gap-4 px-4 py-3 text-xs hover:bg-background transition-colors"
                         >
                           <span className={`text-[9px] font-bold tracking-widest uppercase ${activityColorClass(item.action)}`}>
-                            {item.action.replace(/_/g, ' ')}
+                            {activityCategoryLabel(item.action)}
                           </span>
                           <div className="min-w-0">
                             <span className="text-foreground font-bold">@{item.username}</span>{' '}
-                            <span className="text-muted-foreground">{activityVerb(item.action)}</span>{' '}
-                            <span className="text-foreground">{item.subject}</span>
-                            {item.detail && <span className="text-muted-foreground"> · {item.detail}</span>}
-                            {item.action !== 'comment' && item.project_name && (
-                              <span className="text-muted-foreground/70"> · {item.project_name}</span>
-                            )}
+                            <span className="text-muted-foreground">
+                              {activityDescriptionParts(
+                                item.action,
+                                item.subject,
+                                item.detail,
+                                item.project_name,
+                              ).map((part, i) => (
+                                <span key={i} className={part.emphasis ? 'text-foreground' : undefined}>
+                                  {part.text}
+                                </span>
+                              ))}
+                            </span>
                           </div>
                           <span className="text-muted-foreground tabular-nums sm:text-right">{formatRelative(item.created_at)}</span>
                         </div>
@@ -1367,12 +1531,17 @@ export default function BandPage() {
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground m-0 leading-relaxed">
                           <span className="font-bold text-foreground">{item.username}</span>
-                          {' '}{activityVerb(item.action)}{' '}
-                          <span>{item.subject}</span>
-                          {item.detail && <span> · {item.detail}</span>}
-                          {item.action !== 'comment' && item.project_name && (
-                            <span className="text-muted-foreground/70"> · {item.project_name}</span>
-                          )}
+                          {' '}
+                          {activityDescriptionParts(
+                            item.action,
+                            item.subject,
+                            item.detail,
+                            item.project_name,
+                          ).map((part, i) => (
+                            <span key={i} className={part.emphasis ? 'text-foreground font-normal' : undefined}>
+                              {part.text}
+                            </span>
+                          ))}
                         </p>
                         <p className="text-[10px] text-muted-foreground/60 mt-0.5 m-0 tabular-nums">
                           {formatRelative(item.created_at)}

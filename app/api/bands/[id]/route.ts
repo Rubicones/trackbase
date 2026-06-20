@@ -195,9 +195,14 @@ export async function GET(
       roadmapStepIndex = null
     }
 
+    const audioTrackCount = mainTracks.filter(
+      (t: { file_type?: string | null }) => t.file_type !== 'midi'
+    ).length
+
     return {
       ...p,
       track_count: mainTracks.length,
+      audio_track_count: audioTrackCount,
       total_duration_ms: projectTimelineDurationMs(mainTracks, p.bpm, p.time_signature),
       version_count: projectVersions.length,
       comment_count: commentsByProject.get(p.id) ?? 0,

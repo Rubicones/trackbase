@@ -30,6 +30,8 @@ export interface Props {
   projectId: string
   onUploadComplete: (resource: ProjectResource) => void
   variant?: 'default' | 'drawer'
+  /** Hide the drag-and-drop field (file picker via ref still works). */
+  hideDropZone?: boolean
 }
 
 export type ResourcesUploadZoneHandle = {
@@ -68,7 +70,7 @@ function xhrPut(url: string, file: File, onProgress: (pct: number) => void): Pro
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(function ResourcesUploadZone(
-  { projectId, onUploadComplete },
+  { projectId, onUploadComplete, hideDropZone = false },
   ref,
 ) {
   const [dragging, setDragging] = useState(false)
@@ -148,7 +150,7 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
 
   return (
     <div>
-      {/* Drop zone */}
+      {!hideDropZone && (
       <div
         onClick={() => fileInputRef.current?.click()}
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
@@ -164,6 +166,7 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
           <span className="text-ember">browse</span>
         </p>
       </div>
+      )}
 
       <input
         ref={fileInputRef}

@@ -75,6 +75,8 @@ interface Props {
   variant?: 'default' | 'drawer'
   /** Hide lyrics block (e.g. when shown elsewhere in reading mode) */
   hideLyrics?: boolean
+  /** Hide drag-and-drop upload field (mobile rehearsal — use Add files instead). */
+  hideUploadZone?: boolean
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -90,7 +92,7 @@ function fmtRelative(iso: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function ResourcesCard({ projectId, projectName, bare = false, variant = 'default', hideLyrics = false }: Props) {
+export function ResourcesCard({ projectId, projectName, bare = false, variant = 'default', hideLyrics = false, hideUploadZone = false }: Props) {
   const isDrawer = variant === 'drawer'
   const [resources, setResources] = useState<ProjectResource[]>([])
   const [loading, setLoading] = useState(true)
@@ -382,10 +384,11 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
           )}
 
           {/* Upload zone — always mounted so Add files / file picker ref works */}
-          <div className={`mt-4 ${!isEmpty || showLinkForm ? 'pt-4 border-t border-border' : ''}`}>
+          <div className={hideUploadZone ? 'hidden' : `mt-4 ${!isEmpty || showLinkForm ? 'pt-4 border-t border-border' : ''}`}>
             <ResourcesUploadZone
               ref={uploadRef}
               projectId={projectId}
+              hideDropZone={hideUploadZone}
               onUploadComplete={r => { upsertResource(r) }}
             />
           </div>

@@ -599,15 +599,15 @@ export function StructurePreviewPanel({
                     return (
                       <div
                         key={section.id}
-                        className="grid grid-cols-1 sm:grid-cols-[minmax(72px,88px)_1fr_auto] gap-1 sm:gap-3 items-start sm:items-center px-3 py-2.5 text-xs"
+                        className="grid grid-cols-[minmax(72px,88px)_1fr_auto] gap-x-3 items-start px-3 py-2.5 text-xs"
                       >
-                        <span className="text-ember font-bold tracking-widest uppercase shrink-0">
+                        <span className="text-ember font-bold tracking-widest uppercase shrink-0 pt-0.5">
                           {sectionLabel(section).toUpperCase()}
                         </span>
-                        <span className="text-muted-foreground font-mono truncate">
+                        <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed min-w-0">
                           {formatChords(section.chords)}
                         </span>
-                        <span className="text-muted-foreground tabular-nums font-mono whitespace-nowrap sm:text-right">
+                        <span className="text-muted-foreground tabular-nums font-mono whitespace-nowrap shrink-0 pt-0.5 text-right">
                           {startBar}–{endBar} · {startTime}
                         </span>
                       </div>

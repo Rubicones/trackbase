@@ -12,6 +12,7 @@ import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { randomTrackIconColor } from '@/lib/trackIcon'
+import { markPreviewMixStale } from '@/lib/previewMix'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -210,6 +211,7 @@ export async function POST(
           })
         })
 
+      // MIDI tracks don't affect the audio preview mix — no stale marking needed.
       return NextResponse.json({ track }, { status: 201 })
 
     } else if (isAudioFile(filename, mimetype)) {
@@ -290,6 +292,19 @@ export async function POST(
             subject: filename, detail: fmtFileSize(fileSizeBytes),
             projectId: proj.id,
           })
+        })
+
+      // Adding an audio track to the main version changes the rendered mix.
+      // Check asynchronously to avoid blocking the response.
+      supabase
+        .from('versions')
+        .select('type')
+        .eq('id', versionId)
+        .single()
+        .then(({ data: ver }) => {
+          if (ver?.type === 'main') {
+            void markPreviewMixStale(version.project_id)
+          }
         })
 
       return NextResponse.json({ track }, { status: 201 })

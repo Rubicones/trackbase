@@ -15,8 +15,9 @@ export async function logActivity({
   bandId: string
   userId: string | null
   action:
-    | 'merge' | 'branch' | 'comment' | 'upload' | 'export'
-    | 'structure' | 'resource' | 'resource_update' | 'resource_remove' | 'meta'
+    | 'merge' | 'branch' | 'comment' | 'comment_remove' | 'upload' | 'track_remove' | 'export'
+    | 'structure' | 'structure_remove' | 'resource' | 'resource_update' | 'resource_remove'
+    | 'project_remove' | 'meta'
   subject: string
   detail?: string | null
   projectId?: string | null
@@ -33,6 +34,21 @@ export async function logActivity({
   } catch {
     // Non-fatal — table may not exist yet or RLS may block
   }
+}
+
+export function trackActivityLabel(t: {
+  display_name?: string | null
+  name?: string | null
+  original_filename?: string | null
+}): string {
+  return t.display_name ?? t.name ?? t.original_filename ?? 'Track'
+}
+
+export function sectionActivityLabel(s: {
+  type: string
+  custom_name?: string | null
+}): string {
+  return s.custom_name ?? (s.type.charAt(0).toUpperCase() + s.type.slice(1))
 }
 
 /** Human-readable label for a project resource row. */

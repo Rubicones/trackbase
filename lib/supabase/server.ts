@@ -18,38 +18,15 @@
 
 import type { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import {
+  ACCESS_COOKIE,
+  REFRESH_COOKIE,
+  decodeJwt,
+  refreshAccessToken,
+  type JwtPayload,
+} from '@/lib/auth/session'
 
-export interface JwtPayload {
-  sub: string          // user UUID
-  email?: string
-  exp: number          // unix seconds
-  iat: number
-  user_metadata?: {
-    username?: string
-    [k: string]: unknown
-  }
-  app_metadata?: { [k: string]: unknown }
-}
-
-/**
- * Decode a Supabase JWT without verifying the signature.
- * Returns null if the token is missing, malformed, or expired.
- */
-export function decodeJwt(token: string): JwtPayload | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    // Base64url → base64 → JSON
-    const payload = JSON.parse(
-      Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()
-    ) as JwtPayload
-    // Reject expired tokens
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null
-    return payload
-  } catch {
-    return null
-  }
-}
+export type { JwtPayload }
 
 /**
  * Extract the user ID from a JWT cookie value.
@@ -74,11 +51,22 @@ export function getUsernameFromToken(token: string): string | null {
 
 /**
  * Extract the authenticated user ID from the request cookie.
- * Returns null if the user is not logged in or the token is expired.
+ * Refreshes the access token when only the refresh token cookie is still valid.
  */
-export function getRequestUserId(req: NextRequest): string | null {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
+export async function getRequestUserId(req: NextRequest): Promise<string | null> {
+  const token = req.cookies.get(ACCESS_COOKIE)?.value
+  if (token) {
+    const userId = getUserIdFromToken(token)
+    if (userId) return userId
+  }
+
+  const refreshToken = req.cookies.get(REFRESH_COOKIE)?.value
+  if (!refreshToken) return null
+
+  const refreshed = await refreshAccessToken(refreshToken)
+  if (!refreshed) return null
+
+  return decodeJwt(refreshed.access_token)?.sub ?? null
 }
 
 export interface MembershipResult {
@@ -100,7 +88,7 @@ export async function requireBandMember(
   req: NextRequest,
   projectId: string,
 ): Promise<MembershipResult | { error: string; status: number }> {
-  const userId = getRequestUserId(req)
+  const userId = await getRequestUserId(req)
   if (!userId) return { error: 'Unauthorized', status: 401 }
 
   const { data: project } = await supabase

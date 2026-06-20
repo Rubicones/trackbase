@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { setAuthCookies } from '@/lib/auth/cookies'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   AuthShell,
@@ -45,7 +46,7 @@ async function persistUsername(userId: string, username: string) {
   const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
   if (refreshErr) throw refreshErr
   if (newSession) {
-    document.cookie = `sb-at=${newSession.access_token}; path=/; SameSite=Lax; max-age=${newSession.expires_in ?? 3600}`
+    setAuthCookies(newSession)
   }
 }
 
@@ -56,7 +57,7 @@ async function markOnboardingComplete() {
   const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
   if (refreshErr) throw refreshErr
   if (newSession) {
-    document.cookie = `sb-at=${newSession.access_token}; path=/; SameSite=Lax; max-age=${newSession.expires_in ?? 3600}`
+    setAuthCookies(newSession)
   }
 }
 

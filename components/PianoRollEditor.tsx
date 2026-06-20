@@ -36,7 +36,7 @@ async function loadInstrument(programNumber: number): Promise<Player> {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const NOTE_HEIGHT = 10
+const NOTE_HEIGHT = 30
 const MIN_PITCH = 21  // A0
 const MAX_PITCH = 108 // C8
 const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1  // 88
@@ -50,9 +50,9 @@ const SNAP_DIVISIONS: Record<string, number> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function snapToGrid(sixteenth: number, snapDiv: number): number {
+function snapSixthFloor(rawSixteenth: number, snapDiv: number): number {
   const unit = 16 / snapDiv
-  return Math.round(sixteenth / unit) * unit
+  return Math.max(0, Math.floor(rawSixteenth / unit) * unit)
 }
 
 function snapDur(dur: number, snapDiv: number): number {
@@ -79,114 +79,7 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-// ─── Piano keyboard canvas ────────────────────────────────────────────────────
-
 const BLACK_SEMITONES_SET = new Set([1, 3, 6, 8, 10])
-
-function PianoKeyboard({
-  height,
-  onKeyPress,
-}: {
-  height: number
-  onKeyPress: (pitch: number) => void
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  // Reactively track dark mode — repaint whenever the theme class changes.
-  const [isDark, setIsDark] = useState(
-    typeof document !== 'undefined'
-      ? document.documentElement.classList.contains('dark')
-      : true
-  )
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'))
-    })
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
-    const W = 40
-    canvas.width = W * dpr
-    canvas.height = height * dpr
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, W, height)
-
-    // Absolute color rules: white keys are ALWAYS light, black keys ALWAYS dark.
-    const whiteKeyBg  = isDark ? '#2e2e2e' : '#ffffff'
-    const blackKeyBg  = isDark ? '#0a0a0a' : '#1a1a1a'
-    const borderColor = isDark ? '#3a3a3a' : '#d0d0d0'
-    const labelColor  = isDark ? '#555555' : '#999999'
-
-    // ── Pass 1: white keys (full width, each covers its row) ───────────────
-    for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch++) {
-      if (BLACK_SEMITONES_SET.has(pitch % 12)) continue
-      const y = (MAX_PITCH - pitch) * NOTE_HEIGHT
-      ctx.fillStyle = whiteKeyBg
-      ctx.fillRect(0, y, W, NOTE_HEIGHT)
-      // row separator
-      ctx.strokeStyle = borderColor
-      ctx.lineWidth = 0.5
-      ctx.beginPath()
-      ctx.moveTo(0, y + NOTE_HEIGHT)
-      ctx.lineTo(W, y + NOTE_HEIGHT)
-      ctx.stroke()
-      // C label
-      if (pitch % 12 === 0) {
-        const octave = Math.floor(pitch / 12) - 1
-        ctx.fillStyle = labelColor
-        ctx.font = `9px system-ui, sans-serif`
-        ctx.textAlign = 'right'
-        ctx.fillText(`C${octave}`, W - 3, y + NOTE_HEIGHT - 2)
-      }
-    }
-
-    // ── Pass 2: black keys on top (60% height, 60% width, centered) ────────
-    const bkH = NOTE_HEIGHT * 0.6
-    const bkW = W * 0.6
-    const bkOffsetY = (NOTE_HEIGHT - bkH) / 2
-
-    for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch++) {
-      if (!BLACK_SEMITONES_SET.has(pitch % 12)) continue
-      const rowY = (MAX_PITCH - pitch) * NOTE_HEIGHT
-      ctx.fillStyle = blackKeyBg
-      ctx.fillRect(0, rowY + bkOffsetY, bkW, bkH)
-    }
-
-    // ── Right border ────────────────────────────────────────────────────────
-    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.14)'
-    ctx.lineWidth = 0.5
-    ctx.beginPath()
-    ctx.moveTo(W, 0)
-    ctx.lineTo(W, height)
-    ctx.stroke()
-  }, [height, isDark])
-
-  function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    // getBoundingClientRect already reflects current scroll position of the
-    // canvas element, so no manual scrollTop adjustment is needed.
-    const rect = e.currentTarget.getBoundingClientRect()
-    const y = e.clientY - rect.top
-    const pitch = MAX_PITCH - Math.floor(y / NOTE_HEIGHT)
-    if (pitch >= MIN_PITCH && pitch <= MAX_PITCH) {
-      onKeyPress(pitch)
-    }
-  }
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: 40, height, display: 'block', flexShrink: 0, cursor: 'pointer' }}
-      onClick={handleClick}
-    />
-  )
-}
 
 // ─── UI kit controls ──────────────────────────────────────────────────────────
 
@@ -242,7 +135,8 @@ interface Props {
   timeSignatureNumerator?: number
   timeSignatureDenominator?: number
   onClose: () => void
-  onSaved: (updatedTrack: Partial<Track>) => void
+  onSaved: (updatedTrack: Partial<Track>) => void | Promise<void>
+  isRenderingMidi?: boolean
   playing?: boolean
   currentTimeSec?: number
   audioContext?: AudioContext | null
@@ -262,6 +156,7 @@ export default function PianoRollEditor({
   timeSignatureDenominator = 4,
   onClose,
   onSaved,
+  isRenderingMidi = false,
   playing = false,
   currentTimeSec = 0,
   audioContext = null,
@@ -282,9 +177,67 @@ export default function PianoRollEditor({
   const [timeSigD] = useState(track.midi_data?.timeSignatureDenominator ?? timeSignatureDenominator)
 
   const [mode, setMode] = useState<'draw' | 'select'>('draw')
-  const [snap, setSnap] = useState<string>('1/16')
+  const [snap, setSnap] = useState<string>('1/4')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [zoom, setZoom] = useState(1) // multiplier on default sixteenthWidth
+  const [zoom, setZoom] = useState(1)
+  const [historyVersion, setHistoryVersion] = useState(0)
+  const [selectionCount, setSelectionCount] = useState(0)
+  const [canvasW, setCanvasW] = useState(800)
+  const [canvasH] = useState(PITCH_RANGE * NOTE_HEIGHT)
+  const [scrollLeft, setScrollLeft] = useState(0)
+
+  const sixteenthW = Math.max(8, Math.min(32, (canvasW / totalSixteenths) * zoom))
+  const totalCanvasW = totalSixteenths * sixteenthW
+
+  // Live refs — drag path avoids React state per frame
+  const notesRef = useRef<MidiNote[]>(notes)
+  const selectedIdsRef = useRef<Set<string>>(selectedIds)
+  const snapRef = useRef(snap)
+  const sixteenthWRef = useRef(sixteenthW)
+  const modeRef = useRef(mode)
+  const scrollLeftRef = useRef(0)
+  const barRulerInnerRef = useRef<HTMLDivElement>(null)
+  const marqueeDivRef = useRef<HTMLDivElement>(null)
+  const dragStartContainerRectRef = useRef<DOMRect | null>(null)
+  const rafDrawRef = useRef(0)
+  const accentColorRef = useRef('rgb(232, 93, 58)')
+  const isDraggingRef = useRef(false)
+  // pendingMarqueeRef removed — marquee is now a DOM div, not a canvas overlay
+  const needsNotesRedrawRef = useRef(true)
+  const fastDrawRef = useRef(false)
+  // Pending drag coords — updated on every mousemove, consumed once per RAF
+  const pendingDragXRef = useRef(0)
+  const pendingDragYRef = useRef(0)
+  const hasPendingDragMoveRef = useRef(false)
+  const canvasWRef = useRef(canvasW)
+  const canvasHRef = useRef(canvasH)
+  const totalSixteenthsRef = useRef(totalSixteenths)
+
+  // Only sync refs from React state when not mid-drag (otherwise we wipe in-flight edits)
+  if (!isDraggingRef.current) {
+    notesRef.current = notes
+    selectedIdsRef.current = selectedIds
+  }
+  snapRef.current = snap
+  sixteenthWRef.current = sixteenthW
+  modeRef.current = mode
+  canvasWRef.current = canvasW
+  canvasHRef.current = canvasH
+  totalSixteenthsRef.current = totalSixteenths
+
+  // Dark mode — repaint grid when theme class changes
+  const [isDark, setIsDark] = useState(
+    typeof document !== 'undefined'
+      ? document.documentElement.classList.contains('dark')
+      : true
+  )
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'))
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [])
 
   // Undo/redo
   const undoStack = useRef<MidiNote[][]>([])
@@ -294,10 +247,6 @@ export default function PianoRollEditor({
   const gridCanvasRef = useRef<HTMLCanvasElement>(null)
   const notesCanvasRef = useRef<HTMLCanvasElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const [scrollLeft, setScrollLeft] = useState(0)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [canvasW, setCanvasW] = useState(800)
-  const [canvasH] = useState(PITCH_RANGE * NOTE_HEIGHT) // total scroll height
 
   // Drag state
   const dragRef = useRef<{
@@ -312,6 +261,7 @@ export default function PianoRollEditor({
     notesBefore?: MidiNote[]
     creating?: MidiNote
     selectRect?: { x1: number; y1: number; x2: number; y2: number }
+    movingIds?: Set<string>
   } | null>(null)
 
   // Playback cursor
@@ -328,10 +278,6 @@ export default function PianoRollEditor({
   // Show instrument dropdown
   const [showInstrumentMenu, setShowInstrumentMenu] = useState(false)
   const instrumentMenuRef = useRef<HTMLDivElement>(null)
-
-  // ── Sizing ─────────────────────────────────────────────────────────────────
-  const sixteenthW = Math.max(8, Math.min(32, (canvasW / totalSixteenths) * zoom))
-  const totalCanvasW = totalSixteenths * sixteenthW
 
   // ── Load MIDI data if not cached ───────────────────────────────────────────
   useEffect(() => {
@@ -367,9 +313,9 @@ export default function PianoRollEditor({
   useLayoutEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    const obs = new ResizeObserver(() => setCanvasW(el.clientWidth - 40))
+    const obs = new ResizeObserver(() => setCanvasW(el.clientWidth))
     obs.observe(el)
-    setCanvasW(el.clientWidth - 40)
+    setCanvasW(el.clientWidth)
     return () => obs.disconnect()
   }, [])
 
@@ -390,20 +336,29 @@ export default function PianoRollEditor({
     undoStack.current.push(JSON.parse(JSON.stringify(before)))
     redoStack.current = []
     if (undoStack.current.length > 50) undoStack.current.shift()
+    if (!isDraggingRef.current) setHistoryVersion(v => v + 1)
   }
 
   function undo() {
     if (!undoStack.current.length) return
     redoStack.current.push(JSON.parse(JSON.stringify(notes)))
-    setNotes(notesFromSnapshot(undoStack.current.pop()!))
+    const restored = notesFromSnapshot(undoStack.current.pop()!)
+    notesRef.current = restored
+    setNotes(restored)
+    selectedIdsRef.current = new Set()
     setSelectedIds(new Set())
+    setHistoryVersion(v => v + 1)
   }
 
   function redo() {
     if (!redoStack.current.length) return
     undoStack.current.push(JSON.parse(JSON.stringify(notes)))
-    setNotes(notesFromSnapshot(redoStack.current.pop()!))
+    const restored = notesFromSnapshot(redoStack.current.pop()!)
+    notesRef.current = restored
+    setNotes(restored)
+    selectedIdsRef.current = new Set()
     setSelectedIds(new Set())
+    setHistoryVersion(v => v + 1)
   }
 
   // ── Grid drawing ───────────────────────────────────────────────────────────
@@ -422,17 +377,20 @@ export default function PianoRollEditor({
     ctx.scale(dpr, dpr)
     ctx.clearRect(0, 0, w, h)
 
-    // Horizontal: black key row backgrounds
+    const whiteKeyBg = isDark ? '#383838' : '#ffffff'
+    const blackKeyBg = isDark ? '#141414' : 'rgba(0,0,0,0.06)'
+    const rowBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)'
+    const barLine = isDark ? 'rgba(255,255,255,0.22)' : 'rgba(128,128,128,0.55)'
+    const beatLine = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(128,128,128,0.3)'
+    const subBeatLine = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(128,128,128,0.1)'
+
+    // Horizontal: pitch row backgrounds
     for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch++) {
       const semitone = pitch % 12
-      if (BLACK_SEMITONES_SET.has(semitone)) {
-        const y = (MAX_PITCH - pitch) * NOTE_HEIGHT
-        ctx.fillStyle = 'rgba(0,0,0,0.07)'
-        ctx.fillRect(0, y, w, NOTE_HEIGHT)
-      }
-      // Row separator line
       const y = (MAX_PITCH - pitch) * NOTE_HEIGHT
-      ctx.strokeStyle = 'rgba(128,128,128,0.15)'
+      ctx.fillStyle = BLACK_SEMITONES_SET.has(semitone) ? blackKeyBg : whiteKeyBg
+      ctx.fillRect(0, y, w, NOTE_HEIGHT)
+      ctx.strokeStyle = rowBorder
       ctx.lineWidth = 0.5
       ctx.beginPath()
       ctx.moveTo(0, y)
@@ -447,130 +405,190 @@ export default function PianoRollEditor({
       const isBar = s % spb === 0
       const isBeat = s % 4 === 0
 
-      ctx.strokeStyle = isBar
-        ? 'rgba(128,128,128,0.55)'
-        : isBeat
-        ? 'rgba(128,128,128,0.3)'
-        : 'rgba(128,128,128,0.1)'
+      ctx.strokeStyle = isBar ? barLine : isBeat ? beatLine : subBeatLine
       ctx.lineWidth = isBar ? 1 : 0.5
       ctx.beginPath()
       ctx.moveTo(x, 0)
       ctx.lineTo(x, h)
       ctx.stroke()
     }
-  }, [totalCanvasW, canvasW, canvasH, sixteenthW, totalSixteenths, timeSigN, timeSigD])
+  }, [totalCanvasW, canvasW, canvasH, sixteenthW, totalSixteenths, timeSigN, timeSigD, isDark])
 
-  // ── Notes drawing ──────────────────────────────────────────────────────────
+  // Resolve --ember to rgb() for canvas — redraw after theme change
   useEffect(() => {
+    const probe = document.createElement('span')
+    probe.style.display = 'none'
+    probe.style.color = 'var(--ember)'
+    document.documentElement.appendChild(probe)
+    accentColorRef.current = getComputedStyle(probe).color || 'rgb(232, 93, 58)'
+    document.documentElement.removeChild(probe)
+  }, [isDark])
+
+  function noteRectAt(note: MidiNote, sw: number) {
+    return noteRect(note, sw)
+  }
+
+  function drawNotesCanvas(
+    noteList: MidiNote[],
+    selIds: Set<string>,
+    sw = sixteenthWRef.current,
+    fast = false,
+  ) {
     const canvas = notesCanvasRef.current
     if (!canvas) return
     const dpr = window.devicePixelRatio || 1
-    const w = Math.max(totalCanvasW, canvasW)
-    const h = canvasH
-    canvas.width = w * dpr
-    canvas.height = h * dpr
-    canvas.style.width = `${w}px`
-    canvas.style.height = `${h}px`
+    const cw = canvasWRef.current
+    const ch = canvasHRef.current
+    const total = totalSixteenthsRef.current
+    const w = Math.max(total * sw, cw)
+    const h = ch
+    if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+      canvas.width = w * dpr
+      canvas.height = h * dpr
+      canvas.style.width = `${w}px`
+      canvas.style.height = `${h}px`
+    }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.scale(dpr, dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
 
-    for (const note of notes) {
-      const { x, y, w: nw, h: nh } = noteRect(note, sixteenthW)
-      const isSelected = selectedIds.has(note.id)
-
-      // Main body
+    for (const note of noteList) {
+      const { x, y, w: nw, h: nh } = noteRectAt(note, sw)
+      const isSelected = selIds.has(note.id)
       ctx.fillStyle = isSelected ? 'rgba(255,255,255,0.9)' : 'rgba(167,139,250,0.85)'
-      ctx.beginPath()
-      if (ctx.roundRect) {
-        ctx.roundRect(x, y, nw, nh, 2)
+      if (fast) {
+        ctx.fillRect(x, y, nw, nh)
       } else {
-        ctx.rect(x, y, nw, nh)
+        ctx.beginPath()
+        if (ctx.roundRect) ctx.roundRect(x, y, nw, nh, 2)
+        else ctx.rect(x, y, nw, nh)
+        ctx.fill()
       }
-      ctx.fill()
-
       if (isSelected) {
-        ctx.strokeStyle = 'white'
-        ctx.lineWidth = 1
-        ctx.stroke()
+        ctx.strokeStyle = accentColorRef.current
+        ctx.lineWidth = 2
+        if (fast) ctx.strokeRect(x + 0.5, y + 0.5, nw - 1, nh - 1)
+        else { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, nw, nh, 2); else ctx.rect(x, y, nw, nh); ctx.stroke() }
       }
-
-      // Velocity indicator (darker bar at bottom)
-      const velH = nh * (1 - note.velocity / 127)
-      if (velH > 1) {
-        ctx.fillStyle = 'rgba(0,0,0,0.2)'
-        ctx.fillRect(x, y + nh - velH, nw, velH)
-      }
-
-      // Resize handle (last 4px)
+      // Resize thumb — always rendered so the user can always grab it
       if (nw > 6) {
         ctx.fillStyle = 'rgba(0,0,0,0.25)'
         ctx.fillRect(x + nw - 4, y, 4, nh)
       }
     }
-  }, [notes, selectedIds, sixteenthW, totalCanvasW, canvasW, canvasH])
+  }
+
+  function flushDraw(fast = false) {
+    // Apply at most one pending drag move per frame (RAF-throttles selection hit-test)
+    if (hasPendingDragMoveRef.current) {
+      hasPendingDragMoveRef.current = false
+      processDragMove(pendingDragXRef.current, pendingDragYRef.current)
+    }
+    if (needsNotesRedrawRef.current) {
+      drawNotesCanvas(notesRef.current, selectedIdsRef.current, sixteenthWRef.current, fast)
+      needsNotesRedrawRef.current = false
+    }
+    // Marquee visual is a DOM div updated directly in onWindowMouseMove — no canvas needed.
+  }
+
+  function requestNotesRedraw() {
+    needsNotesRedrawRef.current = true
+    scheduleFrame()
+  }
+
+  function scheduleFrame(fast = false) {
+    if (fast) fastDrawRef.current = true
+    if (rafDrawRef.current) return
+    rafDrawRef.current = requestAnimationFrame(() => {
+      rafDrawRef.current = 0
+      flushDraw(fastDrawRef.current)
+      fastDrawRef.current = false
+    })
+  }
+
+  // Redraw when notes/selection change outside of drag
+  useEffect(() => {
+    if (isDraggingRef.current) return
+    needsNotesRedrawRef.current = true
+    scheduleFrame()
+    setSelectionCount(selectedIds.size)
+  }, [notes, selectedIds, sixteenthW, totalCanvasW, canvasW, canvasH, isDark])
 
   // ── Bar number header ──────────────────────────────────────────────────────
   // Drawn as a fixed 20px strip above the scroll area, via CSS absolutely positioned div
   // We derive bar labels from sixteenthW
 
   // ── Mouse coordinate helpers ───────────────────────────────────────────────
-  //
-  // Use the scroll CONTAINER rect (viewport-stable) + explicit scroll offsets.
-  // DO NOT use getBoundingClientRect on the canvas itself — that rect already
-  // moves with scroll, so adding scrollLeft/scrollTop again double-counts.
-  //
-  const KEYBOARD_W = 40
-
-  function canvasCoords(e: React.MouseEvent): { sx: number; sy: number; sixth: number; pitch: number } {
+  function rawCanvasCoords(clientX: number, clientY: number) {
     const container = scrollContainerRef.current
-    if (!container) return { sx: 0, sy: 0, sixth: 0, pitch: 60 }
+    if (!container) return { sx: 0, sy: 0, rawSixth: 0, pitch: 60 }
     const rect = container.getBoundingClientRect()
-    // Position inside the scrollable CONTENT area, past the keyboard column.
-    const sx = e.clientX - rect.left + container.scrollLeft - KEYBOARD_W
-    const sy = e.clientY - rect.top  + container.scrollTop
-    const snapDiv = SNAP_DIVISIONS[snap] ?? 16
-    const rawSixth = sx / sixteenthW
-    const unit = 16 / snapDiv
-    const sixth = Math.max(0, Math.round(rawSixth / unit) * unit)
+    const sx = clientX - rect.left + container.scrollLeft
+    const sy = clientY - rect.top + container.scrollTop
+    const rawSixth = sx / sixteenthWRef.current
     const pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, MAX_PITCH - Math.floor(sy / NOTE_HEIGHT)))
-    return { sx, sy, sixth, pitch }
+    return { sx, sy, rawSixth, pitch }
   }
 
-  function findNoteAt(sx: number, sy: number): MidiNote | null {
-    // Iterate in reverse (top notes first)
-    for (let i = notes.length - 1; i >= 0; i--) {
-      const note = notes[i]
-      const { x, y, w, h } = noteRect(note, sixteenthW)
+  function snappedSixth(rawSixth: number, snapDiv: number) {
+    return snapSixthFloor(rawSixth, snapDiv)
+  }
+
+  function canvasCoords(e: React.MouseEvent) {
+    const raw = rawCanvasCoords(e.clientX, e.clientY)
+    const snapDiv = SNAP_DIVISIONS[snapRef.current] ?? 16
+    return {
+      ...raw,
+      sixth: snappedSixth(raw.rawSixth, snapDiv),
+    }
+  }
+
+  function findNoteAt(sx: number, sy: number, noteList = notesRef.current): MidiNote | null {
+    const sw = sixteenthWRef.current
+    for (let i = noteList.length - 1; i >= 0; i--) {
+      const note = noteList[i]
+      const { x, y, w, h } = noteRectAt(note, sw)
       if (sx >= x && sx <= x + w && sy >= y && sy <= y + h) return note
     }
     return null
   }
 
   function isResizeZone(note: MidiNote, sx: number): boolean {
-    const { x, w } = noteRect(note, sixteenthW)
+    const { x, w } = noteRectAt(note, sixteenthWRef.current)
     return sx >= x + w - 4 && sx <= x + w
   }
 
-  // ── Mouse handlers ─────────────────────────────────────────────────────────
+  function commitDrag() {
+    isDraggingRef.current = false
+    hasPendingDragMoveRef.current = false  // discard any coords queued after mouseup
+    setHistoryVersion(v => v + 1)
+    setNotes([...notesRef.current])
+    setSelectedIds(new Set(selectedIdsRef.current))
+    setSelectionCount(selectedIdsRef.current.size)
+    needsNotesRedrawRef.current = true
+    scheduleFrame()
+  }
+
   function handleMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return
-    const { sx, sy, sixth, pitch } = canvasCoords(e)
-    if (sx < 0) return  // click landed on the keyboard strip, not the grid
+    const { sx, sy, rawSixth, pitch, sixth } = canvasCoords(e)
     e.preventDefault()
-    const snapDiv = SNAP_DIVISIONS[snap] ?? 16
+    const snapDiv = SNAP_DIVISIONS[snapRef.current] ?? 16
     const unit = 16 / snapDiv
 
-    if (mode === 'draw') {
+    if (modeRef.current === 'draw') {
       const hit = findNoteAt(sx, sy)
       if (hit) {
-        // Delete the note
-        pushUndo(notes)
-        setNotes(prev => prev.filter(n => n.id !== hit.id))
-        setSelectedIds(prev => { const s = new Set(prev); s.delete(hit.id); return s })
+        pushUndo(notesRef.current)
+        notesRef.current = notesRef.current.filter(n => n.id !== hit.id)
+        setNotes([...notesRef.current])
+        const s = new Set(selectedIdsRef.current)
+        s.delete(hit.id)
+        selectedIdsRef.current = s
+        setSelectedIds(s)
+        requestNotesRedraw()
       } else {
-        // Create a new note
         const newNote: MidiNote = {
           id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           pitch,
@@ -578,96 +596,191 @@ export default function PianoRollEditor({
           durationSixteenths: unit,
           velocity: 100,
         }
-        pushUndo(notes)
-        setNotes(prev => [...prev, newNote])
+        pushUndo(notesRef.current)
+        notesRef.current = [...notesRef.current, newNote]
+        isDraggingRef.current = true
         dragRef.current = {
           type: 'create', startX: sx, startY: sy,
           startSixteenth: sixth, startPitch: pitch,
           creating: newNote, noteId: newNote.id,
         }
+        needsNotesRedrawRef.current = true
+        flushDraw(true)
+        startDragTracking()
       }
     } else {
-      // SELECT mode
       const hit = findNoteAt(sx, sy)
       if (!hit) {
-        // Start rubber-band selection
-        setSelectedIds(new Set())
+        selectedIdsRef.current = new Set()
+        isDraggingRef.current = true
+        // Cache container rect at drag start so mousemove never calls getBoundingClientRect
+        dragStartContainerRectRef.current = scrollContainerRef.current?.getBoundingClientRect() ?? null
         dragRef.current = {
           type: 'select', startX: sx, startY: sy,
           selectRect: { x1: sx, y1: sy, x2: sx, y2: sy },
         }
+        // Show the marquee div at zero size (grows as mouse moves)
+        const div = marqueeDivRef.current
+        if (div) {
+          div.style.left = `${sx}px`
+          div.style.top = `${sy}px`
+          div.style.width = '0px'
+          div.style.height = '0px'
+          div.style.display = 'block'
+        }
+        // Redraw notes to clear any stale selection highlight
+        needsNotesRedrawRef.current = true
+        scheduleFrame()
+        startDragTracking()
       } else if (isResizeZone(hit, sx)) {
-        if (!selectedIds.has(hit.id)) setSelectedIds(new Set([hit.id]))
+        if (!selectedIdsRef.current.has(hit.id)) {
+          selectedIdsRef.current = new Set([hit.id])
+        }
+        pushUndo(notesRef.current)
+        isDraggingRef.current = true
         dragRef.current = {
           type: 'resize', noteId: hit.id, startX: sx, startY: sy,
-          notesBefore: JSON.parse(JSON.stringify(notes)),
+          notesBefore: JSON.parse(JSON.stringify(notesRef.current)),
         }
-        pushUndo(notes)
+        requestNotesRedraw()
+        startDragTracking()
       } else {
-        if (!selectedIds.has(hit.id)) setSelectedIds(new Set([hit.id]))
+        const movingIds = selectedIdsRef.current.has(hit.id)
+          ? selectedIdsRef.current
+          : new Set([hit.id])
+        selectedIdsRef.current = movingIds
+        pushUndo(notesRef.current)
+        isDraggingRef.current = true
         dragRef.current = {
           type: 'move', noteId: hit.id, startX: sx, startY: sy,
-          startSixteenth: sx / sixteenthW,
-          startPitch: MAX_PITCH - Math.floor(sy / NOTE_HEIGHT),
-          notesBefore: JSON.parse(JSON.stringify(notes)),
+          startSixteenth: rawSixth,
+          startPitch: pitch,
+          notesBefore: JSON.parse(JSON.stringify(notesRef.current)),
+          movingIds,
         }
-        pushUndo(notes)
+        requestNotesRedraw()
+        startDragTracking()
       }
     }
   }
 
-  function handleMouseMove(e: React.MouseEvent) {
+  function processDragMove(clientX: number, clientY: number) {
     const dr = dragRef.current
     if (!dr || !dr.type) return
-    const { sx, sy, sixth, pitch } = canvasCoords(e)
-    const snapDiv = SNAP_DIVISIONS[snap] ?? 16
+    const { sx, sy, rawSixth, pitch } = rawCanvasCoords(clientX, clientY)
+    const snapDiv = SNAP_DIVISIONS[snapRef.current] ?? 16
     const unit = 16 / snapDiv
+    const sw = sixteenthWRef.current
 
     if (dr.type === 'create' && dr.creating && dr.noteId) {
-      const rawDur = (sx - (dr.startSixteenth! * sixteenthW)) / sixteenthW
+      const rawDur = rawSixth - dr.startSixteenth!
       const dur = snapDur(Math.max(unit, rawDur), snapDiv)
-      setNotes(prev => prev.map(n =>
-        n.id === dr.noteId ? { ...n, durationSixteenths: dur } : n
-      ))
-    } else if (dr.type === 'move') {
-      const deltaSixteenth = sx / sixteenthW - dr.startSixteenth!
-      const deltaPitch = (MAX_PITCH - Math.floor(sy / NOTE_HEIGHT)) - dr.startPitch!
-      const snappedDelta = snapToGrid(deltaSixteenth, snapDiv) - snapToGrid(0, snapDiv)
-
-      setNotes(prev => prev.map(n => {
-        if (!selectedIds.has(n.id)) return n
-        const newStart = Math.max(0, n.startSixteenth + snappedDelta)
+      const idx = notesRef.current.findIndex(n => n.id === dr.noteId)
+      if (idx >= 0) {
+        notesRef.current[idx] = { ...notesRef.current[idx], durationSixteenths: dur }
+      }
+      needsNotesRedrawRef.current = true
+    } else if (dr.type === 'move' && dr.notesBefore && dr.movingIds) {
+      const deltaSixth = rawSixth - dr.startSixteenth!
+      const deltaPitch = pitch - dr.startPitch!
+      notesRef.current = dr.notesBefore.map(n => {
+        if (!dr.movingIds!.has(n.id)) return n
+        const newStart = Math.max(0, snapSixthFloor(n.startSixteenth + deltaSixth, 16))
         const newPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, n.pitch + deltaPitch))
         return { ...n, startSixteenth: newStart, pitch: newPitch }
-      }))
+      })
+      needsNotesRedrawRef.current = true
     } else if (dr.type === 'resize' && dr.noteId) {
-      const targetNote = notes.find(n => n.id === dr.noteId)
+      const targetNote = notesRef.current.find(n => n.id === dr.noteId)
       if (!targetNote) return
-      const rawDur = (sx - targetNote.startSixteenth * sixteenthW) / sixteenthW
+      const rawDur = rawSixth - targetNote.startSixteenth
       const dur = snapDur(Math.max(unit, rawDur), snapDiv)
-      setNotes(prev => prev.map(n => n.id === dr.noteId ? { ...n, durationSixteenths: dur } : n))
+      const idx = notesRef.current.findIndex(n => n.id === dr.noteId)
+      if (idx >= 0) {
+        notesRef.current[idx] = { ...notesRef.current[idx], durationSixteenths: dur }
+      }
+      needsNotesRedrawRef.current = true
     } else if (dr.type === 'select' && dr.selectRect) {
       const rect = { ...dr.selectRect, x2: sx, y2: sy }
       dr.selectRect = rect
-      // Select all notes that intersect
       const x1 = Math.min(rect.x1, rect.x2)
       const x2 = Math.max(rect.x1, rect.x2)
       const y1 = Math.min(rect.y1, rect.y2)
       const y2 = Math.max(rect.y1, rect.y2)
+      const prevSelected = selectedIdsRef.current
       const newSelected = new Set<string>()
-      for (const n of notes) {
-        const { x, y, w, h } = noteRect(n, sixteenthW)
+      for (const n of notesRef.current) {
+        const { x, y, w, h } = noteRectAt(n, sw)
         if (x < x2 && x + w > x1 && y < y2 && y + h > y1) {
           newSelected.add(n.id)
         }
       }
-      setSelectedIds(newSelected)
+      const selectionChanged =
+        newSelected.size !== prevSelected.size ||
+        [...newSelected].some(id => !prevSelected.has(id))
+      selectedIdsRef.current = newSelected
+      // Marquee visual is handled by the div in onWindowMouseMove — nothing to update here.
+      if (selectionChanged) needsNotesRedrawRef.current = true
     }
   }
 
-  function handleMouseUp() {
+  const dragHandlersRef = useRef({
+    onMove: (_clientX: number, _clientY: number) => {},
+    onUp: () => {},
+  })
+
+  dragHandlersRef.current.onMove = processDragMove
+  dragHandlersRef.current.onUp = () => {
+    const hadDrag = dragRef.current !== null
     dragRef.current = null
+    const div = marqueeDivRef.current
+    if (div) div.style.display = 'none'
+    window.removeEventListener('mousemove', onWindowMouseMove)
+    window.removeEventListener('mouseup', onWindowMouseUp)
+    if (hadDrag) commitDrag()
   }
+
+  const onWindowMouseMove = useCallback((e: MouseEvent) => {
+    pendingDragXRef.current = e.clientX
+    pendingDragYRef.current = e.clientY
+    hasPendingDragMoveRef.current = true
+
+    // Instant visual: update marquee div directly on every mousemove event.
+    // No canvas ops, no RAF — just four style assignments.
+    // Note hit-testing (which is O(n)) stays deferred to the RAF in flushDraw.
+    const dr = dragRef.current
+    if (dr?.type === 'select') {
+      const container = scrollContainerRef.current
+      const cachedRect = dragStartContainerRectRef.current
+      const div = marqueeDivRef.current
+      if (container && cachedRect && div) {
+        const sx = e.clientX - cachedRect.left + container.scrollLeft
+        const sy = e.clientY - cachedRect.top + container.scrollTop
+        const x = Math.min(dr.startX, sx)
+        const y = Math.min(dr.startY, sy)
+        div.style.left = `${x}px`
+        div.style.top = `${y}px`
+        div.style.width = `${Math.max(1, Math.abs(sx - dr.startX))}px`
+        div.style.height = `${Math.max(1, Math.abs(sy - dr.startY))}px`
+      }
+    }
+
+    scheduleFrame(true)
+  }, [])
+
+  const onWindowMouseUp = useCallback(() => {
+    dragHandlersRef.current.onUp()
+  }, [])
+
+  function startDragTracking() {
+    window.addEventListener('mousemove', onWindowMouseMove, { passive: true })
+    window.addEventListener('mouseup', onWindowMouseUp)
+  }
+
+  useEffect(() => () => {
+    window.removeEventListener('mousemove', onWindowMouseMove)
+    window.removeEventListener('mouseup', onWindowMouseUp)
+  }, [onWindowMouseMove, onWindowMouseUp])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -676,16 +789,24 @@ export default function PianoRollEditor({
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedIds.size > 0) {
-          pushUndo(notes)
-          setNotes(prev => prev.filter(n => !selectedIds.has(n.id)))
+        if (selectedIdsRef.current.size > 0) {
+          pushUndo(notesRef.current)
+          notesRef.current = notesRef.current.filter(n => !selectedIdsRef.current.has(n.id))
+          selectedIdsRef.current = new Set()
+          setNotes([...notesRef.current])
           setSelectedIds(new Set())
+          setSelectionCount(0)
         }
       } else if (e.key === 'Escape') {
+        selectedIdsRef.current = new Set()
         setSelectedIds(new Set())
+        setSelectionCount(0)
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
         e.preventDefault()
-        setSelectedIds(new Set(notes.map(n => n.id)))
+        const all = new Set(notesRef.current.map(n => n.id))
+        selectedIdsRef.current = all
+        setSelectedIds(all)
+        setSelectionCount(all.size)
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
         e.preventDefault(); redo()
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
@@ -717,27 +838,13 @@ export default function PianoRollEditor({
     const cursorX = (editorTimeSec / sixteenthSec) * sixteenthW
     const container = scrollContainerRef.current
     if (container) {
-      const visibleLeft = container.scrollLeft + 40
-      const visibleRight = visibleLeft + container.clientWidth - 40
+      const visibleLeft = container.scrollLeft
+      const visibleRight = visibleLeft + container.clientWidth
       if (cursorX < visibleLeft || cursorX > visibleRight - 50) {
-        container.scrollLeft = cursorX - 40
+        container.scrollLeft = cursorX
       }
     }
   }, [playing, currentTimeSec, sixteenthW, trackBpm, midiStartBar, bpm, timeSigN, timeSigD])
-
-  // ── Key press preview ──────────────────────────────────────────────────────
-  async function handleKeyboardNote(pitch: number) {
-    try {
-      const inst = instrumentRef.current ?? await loadInstrument(instrument)
-      const actx = getAudioContext()
-      if (actx.state === 'suspended') await actx.resume()
-      inst.play(pitch.toString(), actx.currentTime, { duration: 0.5, gain: 0.8 })
-    } catch { /* ignore */ }
-  }
-
-  // ── MIDI scheduling for transport playback ─────────────────────────────────
-  // This is called from page.tsx via the audioContext prop when playing starts
-  // For now we expose a schedule function that page.tsx can call
 
   // ── Save flow ──────────────────────────────────────────────────────────────
   async function handleSave() {
@@ -785,8 +892,7 @@ export default function PianoRollEditor({
       })
       if (!patchRes.ok) throw new Error((await patchRes.json()).error ?? 'Save failed')
 
-      onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
-      onClose()
+      await onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -838,7 +944,7 @@ export default function PianoRollEditor({
   }
 
   return (
-    <div className="bg-surface border-y border-border h-[460px] flex flex-col select-none">
+    <div className="bg-surface border-y border-border h-[460px] flex flex-col select-none relative z-[2]">
       {/* ── Toolbar ── */}
       <div className="h-10 shrink-0 bg-card border-b border-border flex items-center px-3 gap-2.5">
         {/* Mode toggle */}
@@ -911,28 +1017,26 @@ export default function PianoRollEditor({
         <div className="flex-1" />
 
         {/* Undo / Redo */}
-        <MidiIconBtn
+        <MidiBtn
           onClick={undo}
-          disabled={!undoStack.current.length}
+          disabled={historyVersion < 0 || !undoStack.current.length}
           title="Undo (Ctrl+Z)"
-          aria-label="Undo"
         >
-          ↺
-        </MidiIconBtn>
-        <MidiIconBtn
+          Undo
+        </MidiBtn>
+        <MidiBtn
           onClick={redo}
-          disabled={!redoStack.current.length}
+          disabled={historyVersion < 0 || !redoStack.current.length}
           title="Redo (Ctrl+Shift+Z)"
-          aria-label="Redo"
         >
-          ↻
-        </MidiIconBtn>
+          Redo
+        </MidiBtn>
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        <MidiBtn onClick={onClose}>Cancel</MidiBtn>
-        <MidiBtnPrimary onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+        <MidiBtn onClick={onClose} disabled={saving}>Cancel</MidiBtn>
+        <MidiBtnPrimary onClick={handleSave} disabled={saving || isRenderingMidi}>
+          {saving ? (isRenderingMidi ? 'Rendering…' : 'Saving…') : 'Done'}
         </MidiBtnPrimary>
         {saveError && (
           <span className="text-[10px] text-destructive max-w-[140px] truncate">
@@ -945,11 +1049,11 @@ export default function PianoRollEditor({
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* Bar ruler header (fixed, scrolls horizontally with canvas) */}
         <div style={{ height: 20, background: 'var(--bg-card)', borderBottom: '0.5px solid var(--border)', display: 'flex', flexShrink: 0, overflow: 'hidden' }}>
-          {/* Keyboard placeholder */}
-          <div style={{ width: 40, flexShrink: 0, borderRight: '0.5px solid var(--border)' }} />
-          {/* Bar numbers — horizontally synced with scroll */}
           <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', left: -scrollLeft, top: 0, height: '100%', minWidth: Math.max(totalCanvasW, canvasW) }}>
+            <div
+              ref={barRulerInnerRef}
+              style={{ position: 'absolute', left: -scrollLeft, top: 0, height: '100%', minWidth: Math.max(totalCanvasW, canvasW) }}
+            >
               {barLabels.map(({ x, label }) => (
                 <div key={label} style={{ position: 'absolute', left: x, top: 0, height: '100%', paddingLeft: 3, display: 'flex', alignItems: 'center' }}>
                   <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{label}</span>
@@ -964,21 +1068,15 @@ export default function PianoRollEditor({
           ref={scrollContainerRef}
           style={{ flex: 1, overflow: 'scroll', display: 'flex', cursor: mode === 'draw' ? 'crosshair' : 'default' }}
           onScroll={e => {
-            setScrollLeft((e.target as HTMLDivElement).scrollLeft)
-            setScrollTop((e.target as HTMLDivElement).scrollTop)
+            const el = e.target as HTMLDivElement
+            scrollLeftRef.current = el.scrollLeft
+            if (barRulerInnerRef.current) {
+              barRulerInnerRef.current.style.left = `${-el.scrollLeft}px`
+            }
+            if (!isDraggingRef.current) setScrollLeft(el.scrollLeft)
           }}
           onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
         >
-          {/* Piano keyboard — sticky horizontally, scrolls vertically with the grid */}
-          <div style={{ position: 'sticky', left: 0, zIndex: 5, flexShrink: 0 }}>
-            <PianoKeyboard
-              height={canvasH}
-              onKeyPress={handleKeyboardNote}
-            />
-          </div>
-
           {/* Canvas area */}
           <div style={{ position: 'relative', flexShrink: 0, width: Math.max(totalCanvasW, canvasW), height: canvasH }}>
             {/* Grid canvas (static layer) */}
@@ -990,6 +1088,19 @@ export default function PianoRollEditor({
             <canvas
               ref={notesCanvasRef}
               style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+            />
+            {/* Marquee selection rectangle — DOM div updated directly in onWindowMouseMove */}
+            <div
+              ref={marqueeDivRef}
+              style={{
+                display: 'none',
+                position: 'absolute',
+                pointerEvents: 'none',
+                zIndex: 5,
+                background: 'rgba(232, 93, 58, 0.12)',
+                border: '2px solid var(--ember)',
+                boxSizing: 'border-box',
+              }}
             />
             {/* Playback cursor */}
             {showCursor && (
@@ -1008,8 +1119,8 @@ export default function PianoRollEditor({
       <div className="h-10 shrink-0 bg-card border-t border-border flex items-center px-3.5 gap-4 text-[10px] uppercase tracking-widest">
         {/* Note count */}
         <span className="text-muted-foreground">
-          {selectedIds.size > 0
-            ? `${selectedIds.size} note${selectedIds.size !== 1 ? 's' : ''} selected`
+          {selectionCount > 0
+            ? `${selectionCount} note${selectionCount !== 1 ? 's' : ''} selected`
             : `${notes.length} note${notes.length !== 1 ? 's' : ''} total`}
         </span>
 

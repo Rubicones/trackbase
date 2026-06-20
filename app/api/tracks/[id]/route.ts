@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
+import { logActivity, trackActivityLabel } from '@/lib/activity'
+import { markPreviewMixStale } from '@/lib/previewMix'
+
+/** Returns true if the given version_id belongs to the main version of its project. */
+async function isMainVersion(versionId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('versions')
+    .select('type')
+    .eq('id', versionId)
+    .single()
+  return data?.type === 'main'
+}
 
 // DELETE /api/tracks/[id]
 export async function DELETE(
@@ -12,9 +24,30 @@ export async function DELETE(
 
     const access = await requireBandMemberForTrack(req, id)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { userId, project, track } = access
+
+    const { data: trackRow } = await supabase
+      .from('tracks')
+      .select('name, display_name, original_filename, file_type')
+      .eq('id', id)
+      .single()
 
     const { error } = await supabase.from('tracks').delete().eq('id', id)
     if (error) throw error
+
+    // If the deleted track was on main and was an audio track, the rendered mix changed.
+    if (trackRow?.file_type !== 'midi' && await isMainVersion(track.version_id)) {
+      void markPreviewMixStale(project.id)
+    }
+
+    void logActivity({
+      bandId: project.band_id,
+      userId,
+      action: 'track_remove',
+      subject: trackActivityLabel(trackRow ?? {}),
+      projectId: project.id,
+    })
+
     return NextResponse.json({ deleted: true })
   } catch (err) {
     console.error(err)
@@ -33,6 +66,7 @@ export async function PATCH(
 
     const access = await requireBandMemberForTrack(req, id)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
+    const { project, track } = access
 
     const body = await req.json()
 
@@ -54,7 +88,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
     }
 
-    const { data: track, error } = await supabase
+    // Fetch track's file_type before updating, to skip stale marking for MIDI.
+    const { data: existingTrack } = await supabase
+      .from('tracks')
+      .select('file_type')
+      .eq('id', id)
+      .single()
+
+    const { data: updatedTrack, error } = await supabase
       .from('tracks')
       .update(updates)
       .eq('id', id)
@@ -62,7 +103,14 @@ export async function PATCH(
       .single()
     if (error) throw error
 
-    return NextResponse.json({ track })
+    // start_bar or file_hash changes on a main audio track affect the rendered mix.
+    const affectsAudio = existingTrack?.file_type !== 'midi'
+    const affectsRendering = 'start_bar' in updates || 'midi_start_bar' in updates || 'file_hash' in updates
+    if (affectsAudio && affectsRendering && await isMainVersion(track.version_id)) {
+      void markPreviewMixStale(project.id)
+    }
+
+    return NextResponse.json({ track: updatedTrack })
   } catch (err) {
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

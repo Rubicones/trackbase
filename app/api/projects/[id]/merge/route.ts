@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMember } from '@/lib/supabase/server'
 import { logActivity } from '@/lib/activity'
+import { markPreviewMixStale } from '@/lib/previewMix'
 import {
   buildBarMap,
   groupConsecutiveBars,
@@ -349,6 +350,9 @@ export async function POST(
       .select('*')
       .eq('version_id', main.id)
       .order('position', { ascending: true })
+
+    // Merging a branch into main changes the track set — mark preview stale.
+    void markPreviewMixStale(projectId)
 
     // Log activity (fire-and-forget)
     supabase
