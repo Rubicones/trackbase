@@ -28,7 +28,7 @@ import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
-import { ReadingMode } from '@/components/ReadingMode'
+import { MobileExperience } from '@/components/MobileExperience'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -52,7 +52,7 @@ import {
   previewMixPlaybackUrl,
   takePreloadedPreviewAudio,
 } from '@/lib/previewMixClient'
-import { RecordingTrackRow } from '@/components/RecordingTrackRow'
+import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -3523,6 +3523,8 @@ export default function ProjectPage() {
   const [showBranchModal, setShowBranchModal] = useState(false)
   const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const mobileReplaceInputRef = useRef<HTMLInputElement>(null)
+  const replaceTrackRef = useRef<Track | null>(null)
   const [commentMode, setCommentMode] = useState(false)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
   const [versionLoading, setVersionLoading] = useState(false)
@@ -4013,6 +4015,11 @@ export default function ProjectPage() {
   const activeRecordingIdRef = useRef(activeRecordingId)
   activeRecordingIdRef.current = activeRecordingId
   const recordingStopRef = useRef<(() => void) | null>(null)
+  const recordingControlsRef = useRef<Map<string, RecordingTrackControl>>(new Map())
+  const pendingMobileArmRef = useRef<string | null>(null)
+  const pendingMicStreamsRef = useRef<Map<string, MediaStream>>(new Map())
+  const [recordingRowStates, setRecordingRowStates] = useState<Record<string, RecordState>>({})
+  const [scrollToRecordingId, setScrollToRecordingId] = useState<string | null>(null)
 
   const beginRecordingCountdown = useCallback(async (bpm: number, timeSig: string) => {
     const ctx = getSharedAudioContext()
@@ -4042,6 +4049,70 @@ export default function ProjectPage() {
     if (!activeVersionId) return
     setRecordingSessions(prev => [...prev, { id: crypto.randomUUID(), name: 'New recording' }])
   }
+
+  const registerRecordingControl = useCallback((id: string, control: RecordingTrackControl | null) => {
+    if (control) {
+      recordingControlsRef.current.set(id, control)
+      if (pendingMobileArmRef.current === id) {
+        pendingMobileArmRef.current = null
+        const stream = pendingMicStreamsRef.current.get(id)
+        if (stream) pendingMicStreamsRef.current.delete(id)
+        void control.arm(stream)
+      }
+    } else {
+      recordingControlsRef.current.delete(id)
+    }
+  }, [])
+
+  const handleRecordingStateChange = useCallback((id: string, state: RecordState) => {
+    setRecordingRowStates(prev => {
+      if (prev[id] === state) return prev
+      return { ...prev, [id]: state }
+    })
+  }, [])
+
+  const handleMobileRecordTransport = useCallback(async () => {
+    if (recordingStopRef.current) {
+      recordingStopRef.current()
+      return
+    }
+
+    const targetId = activeRecordingId ?? recordingSessions[recordingSessions.length - 1]?.id
+
+    if (!targetId) {
+      const id = crypto.randomUUID()
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        pendingMicStreamsRef.current.set(id, stream)
+        pendingMobileArmRef.current = id
+        setScrollToRecordingId(id)
+        setRecordingSessions(prev => [...prev, { id, name: 'New recording' }])
+      } catch {
+        // Mic denied — no session created
+      }
+      return
+    }
+
+    setScrollToRecordingId(targetId)
+
+    const control = recordingControlsRef.current.get(targetId)
+    if (!control) {
+      pendingMobileArmRef.current = targetId
+      return
+    }
+
+    const state = control.getState()
+    if (state === 'idle') {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        await control.arm(stream)
+      } catch {
+        // Mic denied
+      }
+    } else if (state === 'armed') {
+      void control.startRecord()
+    }
+  }, [activeRecordingId, recordingSessions])
 
   function handleRecordingArm(id: string) {
     setActiveRecordingId(id)
@@ -4580,6 +4651,19 @@ export default function ProjectPage() {
     }
   }
 
+  function promptReplaceTrack(track: Track) {
+    replaceTrackRef.current = track
+    mobileReplaceInputRef.current?.click()
+  }
+
+  function handleMobileReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const track = replaceTrackRef.current
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    replaceTrackRef.current = null
+    if (track && file) void handleReplaceTrack(track, file)
+  }
+
   async function handleNewBranch(name: string) {
     setShowBranchModal(false)
     try {
@@ -4766,39 +4850,125 @@ export default function ProjectPage() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
 
-      {/* Reading mode — full portrait mobile experience */}
-      <ReadingMode
-        project={project}
-        player={{
-          playing: player.playing,
-          currentTime: player.currentTime,
-          duration: player.duration,
-          loaded: player.loaded,
-          total: player.total,
-          playbackReady: player.playbackReady,
-          playbackMix: player.playbackMix,
-          play: player.play,
-          pause: player.pause,
-          seek: player.seek,
-        }}
-        sections={sections}
-        versions={versions}
-        activeVersionId={activeVersionId}
-        onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
-        projectId={projectId}
-        bandId={bandId}
-        activeTracks={activeTracks}
-        barDurationMs={projBarDurationMs}
-        isMainVersion={activeVersion?.type === 'main'}
-        visible={isMobilePortrait}
-        sectionLoopOn={player.sectionLoopOn}
-        sectionLoopEnabled={sectionLoopButtonEnabled}
-        onToggleSectionLoop={handleToggleSectionLoop}
-        metronomeOn={player.metronomeOn}
-        countdownOn={player.countdownOn}
-        isCounting={player.isCounting}
-        onToggleMetronome={player.toggleMetronome}
-        onToggleCountdown={player.toggleCountdown}
+      {/* Portrait mobile — Rehearsal ⇄ Mixer tabs */}
+      {isMobilePortrait && project && (
+        <MobileExperience
+          project={project}
+          bandId={bandId}
+          versions={versions}
+          activeVersionId={activeVersionId}
+          onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          player={{
+            playing: player.playing,
+            currentTime: player.currentTime,
+            duration: player.duration,
+            loaded: player.loaded,
+            total: player.total,
+            playbackReady: player.playbackReady,
+            playbackMix: player.playbackMix,
+            play: player.play,
+            pause: player.pause,
+            seek: player.seek,
+          }}
+          sections={sections}
+          projectId={projectId}
+          activeTracks={activeTracks}
+          barDurationMs={projBarDurationMs}
+          isMainVersion={activeVersion?.type === 'main'}
+          sectionLoopOn={player.sectionLoopOn}
+          sectionLoopEnabled={sectionLoopButtonEnabled}
+          onToggleSectionLoop={handleToggleSectionLoop}
+          metronomeOn={player.metronomeOn}
+          countdownOn={player.countdownOn}
+          isCounting={player.isCounting}
+          onToggleMetronome={player.toggleMetronome}
+          onToggleCountdown={player.toggleCountdown}
+          mixer={{
+            project,
+            sections,
+            sectionRanges,
+            activeTracks,
+            totalProjectBars,
+            barDurationMs: projBarDurationMs,
+            player: {
+              playing: player.playing,
+              isCounting: player.isCounting,
+              currentTime: player.currentTime,
+              duration: player.duration,
+              playbackReady: player.playbackReady,
+              play: player.play,
+              pause: player.pause,
+              seek: player.seek,
+              sectionLoopOn: player.sectionLoopOn,
+              sectionLoopEnabled: sectionLoopButtonEnabled,
+              onToggleSectionLoop: handleToggleSectionLoop,
+            },
+            mutedTracks: player.mutedTracks,
+            soloedTracks: player.soloedTracks,
+            midiRenderingTracks: player.midiRenderingTracks,
+            onToggleMute: player.toggleMute,
+            onToggleSolo: player.toggleSolo,
+            onAddTrack: () => fileInputRef.current?.click(),
+            onAddRecording: handleAddRecordingTrack,
+            onReplaceTrack: promptReplaceTrack,
+            onDeleteTrack: handleDeleteTrack,
+            onRecordTransport: () => { void handleMobileRecordTransport() },
+            recordingTransportState: (() => {
+              const id = activeRecordingId ?? recordingSessions[recordingSessions.length - 1]?.id
+              return id ? (recordingRowStates[id] ?? 'idle') : 'idle'
+            })(),
+            scrollToRecordingId,
+            onRecordingScrollDone: () => setScrollToRecordingId(null),
+            recordingSlot: recordingSessions.map(session => (
+              <RecordingTrackRow
+                key={session.id}
+                id={session.id}
+                name={session.name}
+                onNameChange={handleRecordingNameChange}
+                versionId={activeVersionId}
+                bpm={projBpm}
+                timeSig={projTimeSig}
+                totalBars={totalProjectBars}
+                countdownEnabled={player.countdownOn}
+                getPlaybackMs={getRecordingPlaybackMs}
+                isPlaying={player.playing}
+                seekEpoch={player.seekEpoch}
+                isActiveRecording={activeRecordingId !== null && activeRecordingId !== session.id}
+                onArm={handleRecordingArm}
+                onRelease={handleRecordingRelease}
+                onSaved={handleRecordingSaved}
+                onDelete={handleRecordingDelete}
+                onPlaybackStart={player.playTransport}
+                onPlaybackStop={player.pause}
+                onSeekTo={player.seek}
+                onPreparePlayback={player.prepareTransport}
+                onPreviewTimelineChange={handleRecordingPreviewTimeline}
+                recordingStopRef={recordingStopRef}
+                playCountdown={beginRecordingCountdown}
+                registerControl={registerRecordingControl}
+                onStateChange={handleRecordingStateChange}
+                mobileScrollableTimeline
+              />
+            )),
+          }}
+        />
+      )}
+
+      <input
+        ref={mobileReplaceInputRef}
+        type="file"
+        accept="audio/*,.mid,.midi"
+        className="hidden"
+        onChange={handleMobileReplaceFile}
+      />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
+        multiple
+        className="hidden"
+        onChange={handleAddTrack}
       />
 
       {!isMobilePortrait && (
@@ -5329,10 +5499,6 @@ export default function ProjectPage() {
                   }
                 </p>
               )}
-              <input ref={fileInputRef} type="file"
-                accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
-                multiple className="hidden" onChange={handleAddTrack}
-              />
             </div>
           </div>
 

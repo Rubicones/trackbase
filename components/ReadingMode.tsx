@@ -227,6 +227,7 @@ export function ReadingMode({
   barDurationMs,
   isMainVersion,
   visible,
+  embedded = false,
   sectionLoopOn,
   sectionLoopEnabled,
   onToggleSectionLoop,
@@ -248,6 +249,8 @@ export function ReadingMode({
   barDurationMs: number
   isMainVersion: boolean
   visible: boolean
+  /** When true, renders inside MobileExperience (no outer shell or header). */
+  embedded?: boolean
   sectionLoopOn: boolean
   sectionLoopEnabled: boolean
   onToggleSectionLoop: () => void
@@ -402,63 +405,71 @@ export function ReadingMode({
   const isReady = player.total === 0 || player.playbackReady
   const awaitingPlayback = player.total > 0 && !player.playbackReady
 
+  const shellClass = embedded
+    ? 'flex flex-col flex-1 min-h-0 relative overflow-hidden'
+    : 'fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden'
+
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
-      {/* Slim top bar — versions drawer, logo, nav path, account */}
-      <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
-        <button
-          type="button"
-          onClick={() => setVersionDrawerOpen(true)}
-          aria-label="Versions"
-          className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
-        >
-          <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
-            <rect x="2" y="4" width="14" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="8.25" width="14" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="12.5" width="14" height="1.5" rx="0.75" fill="currentColor" />
-          </svg>
-        </button>
-
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <Link
-            href="/dashboard"
-            className="font-display text-sm font-bold tracking-tight text-ember shrink-0 no-underline"
-          >
-            TRACKBASE
-          </Link>
-          <nav
-            aria-label="Breadcrumb"
-            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
-          >
-            <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
-              Bands
-            </Link>
-            <span className="text-border shrink-0">/</span>
-            <Link
-              href={`/band/${bandId}`}
-              className="hover:text-foreground no-underline truncate min-w-0"
+    <div className={shellClass}>
+      {!embedded && (
+        <>
+          {/* Slim top bar — versions drawer, logo, nav path, account */}
+          <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
+            <button
+              type="button"
+              onClick={() => setVersionDrawerOpen(true)}
+              aria-label="Versions"
+              className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
             >
-              {project.band_name ?? 'Band'}
-            </Link>
-            <span className="text-border shrink-0">/</span>
-            <span className="text-foreground truncate min-w-0">{project.name}</span>
-          </nav>
-        </div>
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
+                <rect x="2" y="4" width="14" height="1.5" rx="0.75" fill="currentColor" />
+                <rect x="2" y="8.25" width="14" height="1.5" rx="0.75" fill="currentColor" />
+                <rect x="2" y="12.5" width="14" height="1.5" rx="0.75" fill="currentColor" />
+              </svg>
+            </button>
 
-        <AvatarDropdown />
-      </header>
+            <div className="flex-1 min-w-0 flex items-center gap-2">
+              <Link
+                href="/dashboard"
+                className="font-display text-sm font-bold tracking-tight text-ember shrink-0 no-underline"
+              >
+                TRACKBASE
+              </Link>
+              <nav
+                aria-label="Breadcrumb"
+                className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
+              >
+                <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
+                  Bands
+                </Link>
+                <span className="text-border shrink-0">/</span>
+                <Link
+                  href={`/band/${bandId}`}
+                  className="hover:text-foreground no-underline truncate min-w-0"
+                >
+                  {project.band_name ?? 'Band'}
+                </Link>
+                <span className="text-border shrink-0">/</span>
+                <span className="text-foreground truncate min-w-0">{project.name}</span>
+              </nav>
+            </div>
 
-      {versionDrawerOpen && (
-        <VersionDrawer
-          versions={versions}
-          activeVersionId={activeVersionId}
-          onSelect={onVersionChange}
-          onClose={() => setVersionDrawerOpen(false)}
-        />
+            <AvatarDropdown />
+          </header>
+
+          {versionDrawerOpen && (
+            <VersionDrawer
+              versions={versions}
+              activeVersionId={activeVersionId}
+              onSelect={onVersionChange}
+              onClose={() => setVersionDrawerOpen(false)}
+            />
+          )}
+        </>
       )}
 
-      {/* Scrollable body — room for player + rotate bar */}
-      <div className="flex-1 overflow-y-auto pb-[7.5rem]">
+      {/* Scrollable body — room for fixed player */}
+      <div className={`flex-1 overflow-y-auto ${embedded ? 'pb-28' : 'pb-[7.5rem]'}`}>
 
         {/* Project header */}
         <div className="px-5 py-4 border-b border-border">
@@ -581,17 +592,18 @@ export function ReadingMode({
 
         {/* Resources — deferred mount for mobile perf */}
         {showResources && (
-          <div className="px-5 pt-6 pb-6">
+          <div className="px-5 pt-6">
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
               Resources
             </div>
             <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} hideUploadZone />
           </div>
         )}
+
       </div>
 
-      {/* Fixed master player — above rotate bar */}
-      <div className="absolute bottom-[52px] left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 grid grid-cols-[auto_1fr] grid-rows-2 gap-x-3 gap-y-2 items-center z-10">
+      {/* Fixed master player */}
+      <div className={`absolute left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 grid grid-cols-[auto_1fr] grid-rows-2 gap-x-3 gap-y-2 items-center z-10 ${embedded ? 'bottom-0' : 'bottom-[52px]'}`}>
         <button
           type="button"
           onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}
@@ -648,18 +660,19 @@ export function ReadingMode({
         </div>
       </div>
 
-      {/* Fixed bottom rotate-prompt bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-[52px] bg-surface border-t border-border flex items-center justify-center gap-2.5 z-10">
-        <span className="rm-rotate-icon" aria-hidden>
-          <svg width="18" height="26" viewBox="0 0 18 26" fill="none">
-            <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--ember)" strokeWidth="1.5" />
-            <circle cx="9" cy="22" r="1.25" fill="var(--ember)" opacity="0.6" />
-          </svg>
-        </span>
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
-          Rotate to open the mixer
-        </span>
-      </div>
+      {!embedded && (
+        <div className="absolute bottom-0 left-0 right-0 h-[52px] bg-surface border-t border-border flex items-center justify-center gap-2.5 z-10">
+          <span className="rm-rotate-icon" aria-hidden>
+            <svg width="18" height="26" viewBox="0 0 18 26" fill="none">
+              <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--ember)" strokeWidth="1.5" />
+              <circle cx="9" cy="22" r="1.25" fill="var(--ember)" opacity="0.6" />
+            </svg>
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+            Rotate to open the mixer
+          </span>
+        </div>
+      )}
     </div>
   )
 }
