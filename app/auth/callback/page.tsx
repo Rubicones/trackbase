@@ -4,10 +4,9 @@ import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
+import { resolvePostLoginDestination } from '@/lib/auth/post-login'
 import { AuthShell } from '@/components/auth/AuthShell'
 import { Spinner } from '@/components/ui/Spinner'
-
-const NEXT_STORAGE_KEY = 'tb-auth-next'
 
 export default function AuthCallbackPage() {
   const router = useRouter()
@@ -75,14 +74,14 @@ export default function AuthCallbackPage() {
       (event, session) => {
         if (event !== 'SIGNED_IN' || !session) return
         subscription.unsubscribe()
-        resolveDestination(session)
-      }
+        void resolvePostLoginDestination(router, session)
+      },
     )
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) return
       subscription.unsubscribe()
-      resolveDestination(session)
+      void resolvePostLoginDestination(router, session)
     })
 
     return () => subscription.unsubscribe()

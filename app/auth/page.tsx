@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
 import { getSiteUrl } from '@/lib/site-url'
+import { AUTH_NEXT_STORAGE_KEY } from '@/lib/auth/post-login'
+import { getAuthRedirectUrl } from '@/lib/auth/redirect-url'
 import {
   AuthShell,
   AuthCard,
@@ -20,8 +22,7 @@ import {
   AuthHint,
   AuthDivider,
 } from '@/components/auth/AuthPrimitives'
-
-const NEXT_STORAGE_KEY = 'tb-auth-next'
+import { DevPasteMagicLink } from '@/components/auth/DevPasteMagicLink'
 
 export default function AuthPage() {
   return (
@@ -83,7 +84,7 @@ function AuthPageContent() {
     setError('')
     try {
       try {
-        sessionStorage.setItem(NEXT_STORAGE_KEY, next)
+        sessionStorage.setItem(AUTH_NEXT_STORAGE_KEY, next)
       } catch {
         /* noop */
       }
@@ -93,7 +94,7 @@ function AuthPageContent() {
         email,
         options: {
           shouldCreateUser: true,
-          emailRedirectTo: `${getSiteUrl()}/auth/callback`,
+          emailRedirectTo: getAuthRedirectUrl(),
         },
       })
       if (otpErr) throw otpErr
@@ -140,6 +141,8 @@ function AuthPageContent() {
               <AuthButton variant="link" onClick={() => setSent(false)} className="w-auto mx-auto">
                 Wrong email?
               </AuthButton>
+
+              <DevPasteMagicLink />
             </AuthCardBody>
           </>
         ) : (
@@ -176,6 +179,8 @@ function AuthPageContent() {
 
                 <AuthHint>Magic link only — we never ask for a password.</AuthHint>
               </form>
+
+              <DevPasteMagicLink />
             </AuthCardBody>
           </>
         )}
