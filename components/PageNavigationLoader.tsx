@@ -46,6 +46,18 @@ export function PageNavigationLoader() {
     return () => window.removeEventListener('pageshow', onPageShow)
   }, [])
 
+  // Safety net: never leave the navigation overlay stuck if routing aborts.
+  useEffect(() => {
+    if (!visible) return
+    const onPopState = () => setVisible(false)
+    window.addEventListener('popstate', onPopState)
+    const timeout = window.setTimeout(() => setVisible(false), 12_000)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+      window.clearTimeout(timeout)
+    }
+  }, [visible])
+
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0) return

@@ -9,7 +9,7 @@ import { useVersionCache } from '@/hooks/useVersionCache'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { TrackLoadProgressBar } from '@/components/TrackLoadProgressBar'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
@@ -725,7 +725,9 @@ function usePlayer(tracks: Track[], versionId: string) {
         }
         const decoded = await ctx.decodeAudioData(ab)
         if (!cancelled) { bufsRef.current.set(t.id, decoded); maxDur = Math.max(maxDur, decoded.duration); setLoaded(c => c + 1) }
-      } catch { /* skip */ }
+      } catch {
+        if (!cancelled) setLoaded(c => c + 1)
+      }
     })).then(() => { if (!cancelled) setDuration(maxDur) })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1523,7 +1525,13 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
-  if (loading) return <BrandSpinner />
+  if (loading && !project) {
+    return (
+      <div className="flex h-screen flex-col justify-end bg-background px-[22px] pb-8">
+        <TrackLoadProgressBar indeterminate label="Loading project" />
+      </div>
+    )
+  }
 
   if (error || !project) {
     const isAccessDenied = error === 'access_denied'
@@ -1705,10 +1713,10 @@ export default function ProjectPage() {
               ))}
             </div>
 
-            {versionLoading ? (
-              <BrandSpinner fullscreen={false} label="Loading tracks" />
-            ) : activeTracks.length === 0 ? (
-              <div className="px-[22px] py-12 text-center text-[13px] text-dim">No tracks yet — add one below</div>
+            {activeTracks.length === 0 ? (
+              <div className="px-[22px] py-12 text-center text-[13px] text-dim">
+                {versionLoading ? 'Loading tracks…' : 'No tracks yet — add one below'}
+              </div>
             ) : activeTracks.map((t, i) => (
               <TrackRow
                 key={t.id} track={t} index={i}

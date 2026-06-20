@@ -5,6 +5,7 @@ import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
 import { TactGrid } from '@/components/design/TactGrid'
+import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
 
@@ -299,6 +300,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const meterDataRef    = useRef<Float32Array<ArrayBuffer> | null>(null)
   const lastMeterRenderRef = useRef(0)
   const waveformScrollRef = useRef<HTMLDivElement>(null)
+  const scrollSync = useMobileTimelineScroll()
+  useRegisterTimelineScroll(waveformScrollRef)
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(meterRafRef.current)
@@ -880,15 +883,20 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     const focusPx = (bar / timelineBars) * inner.offsetWidth
     const viewLeft = scrollEl.scrollLeft
     const viewRight = viewLeft + scrollEl.clientWidth
+    let nextScroll = scrollEl.scrollLeft
     if (focusPx > viewRight - TIMELINE_SCROLL_RIGHT_PAD_PX) {
-      scrollEl.scrollLeft = Math.min(
+      nextScroll = Math.min(
         focusPx - scrollEl.clientWidth + TIMELINE_SCROLL_RIGHT_PAD_PX,
         scrollEl.scrollWidth - scrollEl.clientWidth,
       )
     } else if (focusPx < viewLeft + TIMELINE_SCROLL_LEFT_PAD_PX) {
-      scrollEl.scrollLeft = Math.max(0, focusPx - TIMELINE_SCROLL_LEFT_PAD_PX)
+      nextScroll = Math.max(0, focusPx - TIMELINE_SCROLL_LEFT_PAD_PX)
     }
-  }, [timelineBars])
+    if (nextScroll !== scrollEl.scrollLeft) {
+      scrollEl.scrollLeft = nextScroll
+      scrollSync?.syncTo(nextScroll, scrollEl)
+    }
+  }, [timelineBars, scrollSync])
 
   // Keep armed / recording / preview clip visible on the mobile scrollable timeline.
   useEffect(() => {

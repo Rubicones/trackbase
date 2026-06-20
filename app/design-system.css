@@ -424,3 +424,12 @@
   animation: tb-bars-pulse 0.9s ease-in-out infinite;
   height: 25%;
 }
+
+@keyframes tb-track-load-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+@utility animate-track-load-indeterminate {
+  animation: tb-track-load-indeterminate 1.2s ease-in-out infinite;
+}

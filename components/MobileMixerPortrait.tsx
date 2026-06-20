@@ -1,8 +1,20 @@
 'use client'
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { sectionLabel } from '@/components/StructureEditor'
+import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
+import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
+import { MobileTrackColorPicker } from '@/components/MobileTrackColorPicker'
+import {
+  MobileTimelineScrollProvider,
+  useMobileTimelineScroll,
+  useRegisterTimelineScroll,
+} from '@/components/MobileTimelineScrollSync'
+import {
+  MobileWaveformComments,
+  type MobileActiveCommentInput,
+} from '@/components/MobileWaveformComments'
+import { MetronomeIcon, CountInMark } from '@/components/design/TransportIcons'
 import { Spinner } from '@/components/ui/Spinner'
 import { decodeWaveformBars } from '@/lib/waveform-decode'
 import { waveformBarsCache } from '@/lib/waveformCache'
@@ -10,7 +22,7 @@ import { findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import type { SectionRange } from '@/lib/sectionPlayback'
 import { trackAccentColor } from '@/lib/trackIcon'
 import type { RecordState } from '@/components/RecordingTrackRow'
-import type { Project, Section, Track } from '@/lib/types'
+import type { Project, Section, Track, TrackComment, Version } from '@/lib/types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,6 +35,10 @@ function sectionStartTime(startBar: number, barDurationMs: number): string {
   return fmt((startBar * barDurationMs) / 1000)
 }
 
+function sectionTimeRange(startBar: number, endBar: number, barDurationMs: number): string {
+  return `${sectionStartTime(startBar, barDurationMs)}–${sectionStartTime(endBar, barDurationMs)}`
+}
+
 function transportBadge(state: RecordState | 'none'): string {
   if (state === 'recording' || state === 'countdown') return '● REC'
   if (state === 'armed') return 'ARMED'
@@ -32,10 +48,10 @@ function transportBadge(state: RecordState | 'none'): string {
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
-function ChevronLeftIcon() {
+function PlayIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 5.5v13l11-6.5-11-6.5z" />
     </svg>
   )
 }
@@ -46,14 +62,6 @@ function MoreIcon() {
       <circle cx="3.5" cy="8" r="1.25" fill="currentColor" />
       <circle cx="8" cy="8" r="1.25" fill="currentColor" />
       <circle cx="12.5" cy="8" r="1.25" fill="currentColor" />
-    </svg>
-  )
-}
-
-function PlayIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M8 5.5v13l11-6.5-11-6.5z" />
     </svg>
   )
 }
@@ -86,28 +94,10 @@ function RecordDotIcon() {
   )
 }
 
-function SkipBackIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-      <rect x="2.5" y="3.5" width="1.5" height="9" rx="0.3" />
-      <path d="M12.5 4.5L7.5 8L12.5 11.5V4.5Z" />
-    </svg>
-  )
-}
-
-function SkipForwardIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-      <rect x="12" y="3.5" width="1.5" height="9" rx="0.3" />
-      <path d="M3.5 4.5L8.5 8L3.5 11.5V4.5Z" />
-    </svg>
-  )
-}
-
 // ─── Transport button ─────────────────────────────────────────────────────────
 
 function TransportBtn({
-  label, children, onClick, active = false, disabled = false, size = 'sm',
+  label, children, onClick, active = false, disabled = false, size = 'sm', wide = false,
 }: {
   label: string
   children: ReactNode
@@ -115,6 +105,7 @@ function TransportBtn({
   active?: boolean
   disabled?: boolean
   size?: 'sm' | 'md'
+  wide?: boolean
 }) {
   const dim = size === 'md' ? 'size-10' : 'size-9'
   return (
@@ -123,7 +114,7 @@ function TransportBtn({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className={`${dim} mx-auto border grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`${wide ? 'h-9 min-w-[52px] px-2' : dim} mx-auto border grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed ${
         active
           ? 'border-ember bg-ember text-white'
           : 'border-border text-muted-foreground hover:text-ember hover:border-ember'
@@ -241,6 +232,9 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
 
 function TrackWaveformLane({
   track, color, muted, totalBars, progressPct, barDurationMs, projectBpm,
+  timelineDurationMs, commentMode, comments, activeCommentInput,
+  onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
+  onReplyCreate, currentUserId, isOwner, currentUser,
 }: {
   track: Track
   color: string
@@ -249,9 +243,24 @@ function TrackWaveformLane({
   progressPct: number
   barDurationMs: number
   projectBpm?: number
+  timelineDurationMs: number
+  commentMode: boolean
+  comments: TrackComment[]
+  activeCommentInput: MobileActiveCommentInput | null
+  onCommentPlace: (input: MobileActiveCommentInput) => void
+  onCommentDelete: (id: string) => void
+  onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
+  onCloseCommentInput: () => void
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUserId: string | undefined
+  isOwner: boolean
+  currentUser: { username: string } | null
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
+  const scrollSync = useMobileTimelineScroll()
+  useRegisterTimelineScroll(scrollRef)
   const timelineWidthPct = Math.max(TIMELINE_WIDTH_PCT, totalBars * TIMELINE_PCT_PER_BAR)
 
   useEffect(() => {
@@ -266,19 +275,26 @@ function TrackWaveformLane({
     const viewLeft = scrollEl.scrollLeft
     const viewRight = viewLeft + scrollEl.clientWidth
 
+    let nextScroll = scrollEl.scrollLeft
     if (playheadPx > viewRight - PLAYHEAD_RIGHT_INDENT_PX) {
-      scrollEl.scrollLeft = Math.min(
+      nextScroll = Math.min(
         playheadPx - scrollEl.clientWidth + PLAYHEAD_RIGHT_INDENT_PX,
         scrollEl.scrollWidth - scrollEl.clientWidth,
       )
     } else if (playheadPx < viewLeft + PLAYHEAD_LEFT_INDENT_PX) {
-      scrollEl.scrollLeft = Math.max(0, playheadPx - PLAYHEAD_LEFT_INDENT_PX)
+      nextScroll = Math.max(0, playheadPx - PLAYHEAD_LEFT_INDENT_PX)
     }
-  }, [progressPct])
+
+    if (nextScroll !== scrollEl.scrollLeft) {
+      scrollEl.scrollLeft = nextScroll
+      scrollSync?.syncTo(nextScroll, scrollEl)
+    }
+  }, [progressPct, scrollSync])
 
   return (
     <div ref={scrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1">
       <div
+        ref={timelineRef}
         className="relative h-14 bg-surface/40 border border-border"
         style={{ width: `${timelineWidthPct}%` }}
       >
@@ -289,6 +305,23 @@ function TrackWaveformLane({
           totalBars={totalBars}
           barDurationMs={barDurationMs}
           projectBpm={projectBpm}
+        />
+        <MobileWaveformComments
+          trackId={track.id}
+          durationMs={timelineDurationMs}
+          comments={comments}
+          commentMode={commentMode}
+          activeInput={activeCommentInput}
+          timelineRef={timelineRef}
+          scrollRef={scrollRef}
+          onCommentPlace={onCommentPlace}
+          onCommentDelete={onCommentDelete}
+          onCommentCreate={onCommentCreate}
+          onCloseInput={onCloseCommentInput}
+          onReplyCreate={onReplyCreate}
+          currentUserId={currentUserId}
+          isOwner={isOwner}
+          currentUser={currentUser}
         />
         <div
           ref={playheadRef}
@@ -304,6 +337,9 @@ function TrackWaveformLane({
 
 function TrackMiniWaveform({
   track, color, muted, totalBars, progressPct, barDurationMs, projectBpm,
+  timelineDurationMs, commentMode, comments, activeCommentInput,
+  onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
+  onReplyCreate, currentUserId, isOwner, currentUser,
 }: {
   track: Track
   color: string
@@ -312,6 +348,18 @@ function TrackMiniWaveform({
   progressPct: number
   barDurationMs: number
   projectBpm?: number
+  timelineDurationMs: number
+  commentMode: boolean
+  comments: TrackComment[]
+  activeCommentInput: MobileActiveCommentInput | null
+  onCommentPlace: (input: MobileActiveCommentInput) => void
+  onCommentDelete: (id: string) => void
+  onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
+  onCloseCommentInput: () => void
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUserId: string | undefined
+  isOwner: boolean
+  currentUser: { username: string } | null
 }) {
   return (
     <TrackWaveformLane
@@ -322,6 +370,18 @@ function TrackMiniWaveform({
       progressPct={progressPct}
       barDurationMs={barDurationMs}
       projectBpm={projectBpm}
+      timelineDurationMs={timelineDurationMs}
+      commentMode={commentMode}
+      comments={comments}
+      activeCommentInput={activeCommentInput}
+      onCommentPlace={onCommentPlace}
+      onCommentDelete={onCommentDelete}
+      onCommentCreate={onCommentCreate}
+      onCloseCommentInput={onCloseCommentInput}
+      onReplyCreate={onReplyCreate}
+      currentUserId={currentUserId}
+      isOwner={isOwner}
+      currentUser={currentUser}
     />
   )
 }
@@ -337,10 +397,26 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   progressPct,
   barDurationMs,
   projectBpm,
+  timelineDurationMs,
+  commentMode,
+  comments,
+  activeCommentInput,
+  onCommentPlace,
+  onCommentDelete,
+  onCommentCreate,
+  onCloseCommentInput,
+  onReplyCreate,
+  currentUserId,
+  isOwner,
+  currentUser,
   openMenu,
+  colorPickerOpen,
   onToggleMenu,
   onToggleMute,
   onToggleSolo,
+  onOpenColorPicker,
+  onColorApply,
+  onCloseColorPicker,
   onReplace,
   onDelete,
 }: {
@@ -352,10 +428,26 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   progressPct: number
   barDurationMs: number
   projectBpm?: number
+  timelineDurationMs: number
+  commentMode: boolean
+  comments: TrackComment[]
+  activeCommentInput: MobileActiveCommentInput | null
+  onCommentPlace: (input: MobileActiveCommentInput) => void
+  onCommentDelete: (id: string) => void
+  onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
+  onCloseCommentInput: () => void
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUserId: string | undefined
+  isOwner: boolean
+  currentUser: { username: string } | null
   openMenu: boolean
+  colorPickerOpen: boolean
   onToggleMenu: () => void
   onToggleMute: () => void
   onToggleSolo: () => void
+  onOpenColorPicker: () => void
+  onColorApply: (color: string) => void
+  onCloseColorPicker: () => void
   onReplace: () => void
   onDelete: () => void
 }) {
@@ -369,12 +461,15 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
 
       <div className="pl-3 pr-2 py-2.5">
         <div className="flex items-center gap-2">
-          <div
+          <button
+            type="button"
+            onClick={onOpenColorPicker}
             className="size-7 shrink-0 grid place-items-center text-[10px] font-bold text-background"
             style={{ background: color }}
+            aria-label="Change track color"
           >
             {badgeLetter}
-          </div>
+          </button>
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-bold uppercase tracking-tight truncate flex items-center gap-1.5">
               {track.name}
@@ -428,9 +523,31 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             progressPct={progressPct}
             barDurationMs={barDurationMs}
             projectBpm={projectBpm}
+            timelineDurationMs={timelineDurationMs}
+            commentMode={commentMode}
+            comments={comments}
+            activeCommentInput={activeCommentInput}
+            onCommentPlace={onCommentPlace}
+            onCommentDelete={onCommentDelete}
+            onCommentCreate={onCommentCreate}
+            onCloseCommentInput={onCloseCommentInput}
+            onReplyCreate={onReplyCreate}
+            currentUserId={currentUserId}
+            isOwner={isOwner}
+            currentUser={currentUser}
           />
         </div>
       </div>
+
+      {colorPickerOpen && (
+        <MobileTrackColorPicker
+          trackId={track.id}
+          initialColor={color}
+          badgeLetter={badgeLetter}
+          onApply={onColorApply}
+          onClose={onCloseColorPicker}
+        />
+      )}
 
       {openMenu && (
         <>
@@ -479,14 +596,25 @@ export type MobileMixerPlayer = {
   sectionLoopOn: boolean
   sectionLoopEnabled: boolean
   onToggleSectionLoop: () => void
+  metronomeOn: boolean
+  countdownOn: boolean
+  onToggleMetronome: () => void
+  onToggleCountdown: () => void
 }
 
 export type MobileMixerPortraitProps = {
   project: Project
+  versionId: string
+  versions: Version[]
+  activeVersionId: string
+  onVersionChange: (id: string) => void
+  onNewBranch: () => void
   sections: Section[]
+  onSectionsChange: Dispatch<SetStateAction<Section[]>>
   sectionRanges: SectionRange[]
   activeTracks: Track[]
   totalProjectBars: number
+  totalDurationMs: number
   barDurationMs: number
   player: MobileMixerPlayer
   mutedTracks: Set<string>
@@ -498,20 +626,47 @@ export type MobileMixerPortraitProps = {
   onAddRecording: () => void
   onReplaceTrack: (track: Track) => void
   onDeleteTrack: (id: string) => void
+  onColorUpdate: (trackId: string, color: string) => void
   onRecordTransport: () => void
   recordingTransportState: RecordState | 'none'
   scrollToRecordingId?: string | null
   onRecordingScrollDone?: () => void
   recordingSlot?: ReactNode
-  onExit: () => void
+  commentMode: boolean
+  onToggleCommentMode: () => void
+  commentCount: number
+  activeCommentInput: MobileActiveCommentInput | null
+  onCommentPlace: (input: MobileActiveCommentInput) => void
+  onCommentDelete: (id: string) => void
+  onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
+  onCloseCommentInput: () => void
+  onReplyCreate: (commentId: string, content: string) => Promise<void>
+  currentUserId: string | undefined
+  isOwner: boolean
+  currentUser: { username: string } | null
 }
 
-export function MobileMixerPortrait({
+export function MobileMixerPortrait(props: MobileMixerPortraitProps) {
+  return (
+    <MobileTimelineScrollProvider>
+      <MobileMixerPortraitInner {...props} />
+    </MobileTimelineScrollProvider>
+  )
+}
+
+function MobileMixerPortraitInner({
   project,
+  versionId,
+  versions,
+  activeVersionId,
+  onVersionChange,
+  onNewBranch,
   sections,
+  onSectionsChange,
   sectionRanges,
   activeTracks,
   totalProjectBars,
+  totalDurationMs,
   barDurationMs,
   player,
   mutedTracks,
@@ -523,17 +678,43 @@ export function MobileMixerPortrait({
   onAddRecording,
   onReplaceTrack,
   onDeleteTrack,
+  onColorUpdate,
   onRecordTransport,
   recordingTransportState,
   scrollToRecordingId,
   onRecordingScrollDone,
   recordingSlot,
-  onExit,
+  commentMode,
+  onToggleCommentMode,
+  commentCount,
+  activeCommentInput,
+  onCommentPlace,
+  onCommentDelete,
+  onCommentCreate,
+  onCloseCommentInput,
+  onReplyCreate,
+  currentUserId,
+  isOwner,
+  currentUser,
 }: MobileMixerPortraitProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [colorPickerTrackId, setColorPickerTrackId] = useState<string | null>(null)
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionsScrollRef = useRef<HTMLDivElement>(null)
   const sectionBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
+
+  const sectionActions = useSectionEditActions({
+    project,
+    versionId,
+    tracks: activeTracks,
+    sections,
+    onSectionsChange,
+    totalDurationMs,
+  })
+  const editingSection = editingSectionId
+    ? sections.find(s => s.id === editingSectionId)
+    : undefined
 
   const projBarDurationSec = barDurationMs / 1000
   const playheadBar = projBarDurationSec > 0
@@ -541,18 +722,19 @@ export function MobileMixerPortrait({
     : 0
   const mobileTimelineBars = Math.max(totalProjectBars, playheadBar + 4)
   const timelineDurationSec = mobileTimelineBars * projBarDurationSec
+  const timelineDurationMs = timelineDurationSec * 1000
   const progressPct = timelineDurationSec > 0
     ? Math.min(100, (player.currentTime / timelineDurationSec) * 100)
     : 0
 
   const activeSectionIdx = useMemo(() => {
     const range = findSectionRangeAtTime(sectionRanges, player.currentTime, projBarDurationSec)
-    if (!range) return 0
+    if (!range) return -1
     const idx = sections.findIndex(s => s.id === range.id)
-    return idx === -1 ? 0 : idx
+    return idx === -1 ? -1 : idx
   }, [sectionRanges, player.currentTime, projBarDurationSec, sections])
 
-  const activeSection = sections[activeSectionIdx]
+  const activeSection = activeSectionIdx >= 0 ? sections[activeSectionIdx] : undefined
   const isReady = player.duration > 0 && player.playbackReady
   const awaitingPlayback = player.duration > 0 && !player.playbackReady
   const isPlaying = player.playing || player.isCounting
@@ -562,6 +744,7 @@ export function MobileMixerPortrait({
   const badge = transportBadge(recordingTransportState)
 
   useEffect(() => {
+    if (activeSectionIdx < 0) return
     const section = sections[activeSectionIdx]
     if (!section) return
     const btn = sectionBtnRefs.current.get(section.id)
@@ -613,32 +796,51 @@ export function MobileMixerPortrait({
     player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)
   }
 
+  function handleSectionClick(section: Section, isActive: boolean) {
+    if (isActive) {
+      setEditingSectionId(section.id)
+    } else {
+      seekToSection(section)
+    }
+  }
+
   function handleSeekRatio(ratio: number) {
     player.seek(ratio * player.duration)
   }
 
+  const waveformCommentProps = {
+    timelineDurationMs,
+    commentMode,
+    activeCommentInput,
+    onCommentPlace,
+    onCommentDelete,
+    onCommentCreate,
+    onCloseCommentInput,
+    onReplyCreate,
+    currentUserId,
+    isOwner,
+    currentUser,
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Sub-header: exit, song meta, +track */}
-      <div className="px-3 py-2 border-b border-border bg-background flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={onExit}
-          aria-label="Back to rehearsal"
-          className="size-8 border border-border grid place-items-center hover:border-ember hover:text-ember"
-        >
-          <ChevronLeftIcon />
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-bold uppercase tracking-widest truncate">{project.name}</div>
-          <div className="text-[9px] font-mono tabular-nums text-muted-foreground flex gap-2">
-            {project.bpm != null && <span>{project.bpm} BPM</span>}
-            {project.key && <span className="text-ember">{project.key}</span>}
-            <span>{project.time_signature ?? '4/4'}</span>
-            <span>{activeTracks.length} TRK</span>
-          </div>
+      <MobileMixerVersionBar
+        versions={versions}
+        activeId={activeVersionId}
+        onSelect={onVersionChange}
+        onNewBranch={onNewBranch}
+        commentMode={commentMode}
+        commentCount={commentCount}
+        onToggleCommentMode={onToggleCommentMode}
+      />
+
+      {commentMode && (
+        <div className="px-3 py-1.5 border-b border-ember/30 bg-ember-soft shrink-0">
+          <span className="text-[9px] uppercase tracking-widest text-ember">
+            ● Comment mode — tap and drag on a waveform
+          </span>
         </div>
-      </div>
+      )}
 
       {/* Section pills strip */}
       <div className="border-b border-border bg-surface/30 px-3 py-2 shrink-0">
@@ -646,7 +848,7 @@ export function MobileMixerPortrait({
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {activeSection && (
             <span className="text-[9px] font-mono tabular-nums text-ember">
-              ● {sectionLabel(activeSection)} · {sectionStartTime(activeSection.start_bar, barDurationMs)}
+              ● {sectionLabel(activeSection)} · {sectionTimeRange(activeSection.start_bar, activeSection.end_bar, barDurationMs)}
             </span>
           )}
         </div>
@@ -661,17 +863,17 @@ export function MobileMixerPortrait({
                   else sectionBtnRefs.current.delete(s.id)
                 }}
                 type="button"
-                onClick={() => seekToSection(s)}
+                onClick={() => handleSectionClick(s, active)}
                 className={`shrink-0 px-2.5 py-1.5 border text-[10px] uppercase tracking-widest transition ${
                   active
                     ? 'bg-ember text-white border-ember'
                     : 'border-border bg-background text-muted-foreground hover:text-foreground'
                 }`}
-                title={`Bars ${s.start_bar}–${s.end_bar}`}
+                title={`Bars ${s.start_bar + 1}–${s.end_bar}`}
               >
                 <div className="font-bold">{sectionLabel(s)}</div>
                 <div className="text-[8px] font-mono tabular-nums opacity-80">
-                  {sectionStartTime(s.start_bar, barDurationMs)}
+                  {sectionTimeRange(s.start_bar, s.end_bar, barDurationMs)}
                 </div>
               </button>
             )
@@ -696,10 +898,16 @@ export function MobileMixerPortrait({
               progressPct={progressPct}
               barDurationMs={barDurationMs}
               projectBpm={project.bpm ?? undefined}
+              comments={t.comments ?? []}
+              {...waveformCommentProps}
               openMenu={openMenuId === t.id}
+              colorPickerOpen={colorPickerTrackId === t.id}
               onToggleMenu={() => setOpenMenuId(prev => (prev === t.id ? null : t.id))}
               onToggleMute={() => onToggleMute(t.id)}
               onToggleSolo={() => onToggleSolo(t.id)}
+              onOpenColorPicker={() => setColorPickerTrackId(prev => (prev === t.id ? null : t.id))}
+              onColorApply={c => onColorUpdate(t.id, c)}
+              onCloseColorPicker={() => setColorPickerTrackId(null)}
               onReplace={() => onReplaceTrack(t)}
               onDelete={() => onDeleteTrack(t.id)}
             />
@@ -727,13 +935,13 @@ export function MobileMixerPortrait({
           </button>
         </div>
 
-        <div className="h-36" />
+        <div className="h-40" />
       </div>
 
       {/* Bottom transport */}
-      <div className="border-t border-border bg-surface/95 backdrop-blur shrink-0">
-        <div className="px-4 pt-2.5">
-          <div className="flex items-center justify-between text-[9px] font-mono tabular-nums mb-1.5">
+      <div className="border-t border-border bg-surface/95 backdrop-blur shrink-0 pb-[env(safe-area-inset-bottom)]">
+        <div className="px-4 pt-3 pb-1">
+          <div className="flex items-center justify-between text-[10px] font-mono tabular-nums mb-2">
             <span className="text-foreground">{fmt(player.currentTime)}</span>
             <span
               className={`uppercase tracking-widest text-[8.5px] px-1.5 py-px border ${
@@ -749,41 +957,49 @@ export function MobileMixerPortrait({
             <span className="text-muted-foreground">{fmt(player.duration)}</span>
           </div>
           <div
-            className="h-1 bg-surface-2 relative cursor-pointer"
+            className="relative py-3 -my-1 touch-none"
             onClick={e => {
-              const rect = e.currentTarget.getBoundingClientRect()
+              const bar = e.currentTarget.querySelector('[data-scrub-bar]') as HTMLElement | null
+              if (!bar) return
+              const rect = bar.getBoundingClientRect()
               handleSeekRatio(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
             }}
             onTouchEnd={e => {
-              const rect = e.currentTarget.getBoundingClientRect()
+              const bar = e.currentTarget.querySelector('[data-scrub-bar]') as HTMLElement | null
+              if (!bar) return
+              const rect = bar.getBoundingClientRect()
               handleSeekRatio(Math.max(0, Math.min(1, (e.changedTouches[0].clientX - rect.left) / rect.width)))
             }}
           >
-            <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${progressPct}%` }} />
-            <div className="absolute -top-0.5 -bottom-0.5 w-0.5 bg-foreground" style={{ left: `${progressPct}%` }} />
+            <div
+              data-scrub-bar
+              className="h-2 bg-surface-2 relative cursor-pointer"
+            >
+              <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${progressPct}%` }} />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-foreground"
+                style={{ left: `${progressPct}%` }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="px-3 py-2.5 grid grid-cols-5 items-center gap-1.5">
-          <TransportBtn label="Rewind to start" onClick={() => player.seek(0)}>
-            <SkipBackIcon />
-          </TransportBtn>
-          <button
-            type="button"
-            onClick={onRecordTransport}
-            disabled={isPermitting}
-            className={`mx-auto size-10 rounded-full grid place-items-center border-2 transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
-              isRecording
-                ? 'bg-destructive border-destructive text-white animate-pulse'
-                : isArmed
-                  ? 'bg-background border-destructive text-destructive hover:bg-destructive hover:text-white'
-                  : 'bg-background border-destructive/70 text-destructive hover:bg-destructive hover:text-white hover:border-destructive'
-            }`}
-            aria-label={isRecording ? 'Stop recording' : isArmed ? 'Start recording' : 'Arm and record'}
-            title={isRecording ? 'Stop' : isArmed ? 'Record' : 'Arm microphone'}
+        <div className="px-3 pt-1 pb-2.5 grid grid-cols-5 items-center gap-1.5">
+          <TransportBtn
+            label="Metronome"
+            active={player.metronomeOn}
+            onClick={player.onToggleMetronome}
           >
-            <RecordDotIcon />
-          </button>
+            <MetronomeIcon size={16} />
+          </TransportBtn>
+          <TransportBtn
+            label="Count-in"
+            active={player.countdownOn}
+            onClick={player.onToggleCountdown}
+            wide
+          >
+            <CountInMark />
+          </TransportBtn>
           <button
             type="button"
             onClick={() => (isPlaying ? player.pause() : player.play())}
@@ -799,6 +1015,21 @@ export function MobileMixerPortrait({
               <PlayIcon />
             )}
           </button>
+          <button
+            type="button"
+            onClick={onRecordTransport}
+            disabled={isPermitting}
+            className={`mx-auto size-10 rounded-full grid place-items-center border-2 transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
+              isRecording
+                ? 'bg-destructive border-destructive text-white animate-pulse'
+                : isArmed
+                  ? 'bg-background border-destructive text-destructive hover:bg-destructive hover:text-white'
+                  : 'bg-background border-destructive/70 text-destructive hover:bg-destructive hover:text-white hover:border-destructive'
+            }`}
+            aria-label={isRecording ? 'Stop recording' : isArmed ? 'Start recording' : 'Arm and record'}
+          >
+            <RecordDotIcon />
+          </button>
           <TransportBtn
             label="Loop section"
             size="md"
@@ -808,11 +1039,26 @@ export function MobileMixerPortrait({
           >
             <LoopIcon />
           </TransportBtn>
-          <TransportBtn label="Skip to end" onClick={() => player.seek(player.duration)}>
-            <SkipForwardIcon />
-          </TransportBtn>
         </div>
       </div>
+
+      {editingSection && (
+        <SectionEditPopover
+          layout="sheet"
+          section={editingSection}
+          cellPos={{ left: 0, top: 0, width: 320, height: 0 }}
+          detectingChords={sectionActions.detectingChordsFor === editingSection.id}
+          audioTracks={sectionActions.audioTracks}
+          totalBars={sectionActions.totalBars}
+          onTypeChange={sectionActions.handleTypeChange}
+          onChordsLocalChange={sectionActions.handleChordsLocalChange}
+          onChordsAutoSave={sectionActions.handleChordsAutoSave}
+          onDetectChords={ids => sectionActions.handleDetectChords(editingSection.id, ids)}
+          onBarRangeChange={sectionActions.handleBarRangeChange}
+          onDelete={id => { sectionActions.handleDelete(id); setEditingSectionId(null) }}
+          onClose={() => setEditingSectionId(null)}
+        />
+      )}
     </div>
   )
 }

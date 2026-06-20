@@ -625,7 +625,7 @@ export function ReadingMode({
             tooltip="Metronome click track"
           />
           <RehearsalTransportToggle
-            label="CD"
+            label="Count-in"
             active={countdownOn}
             onClick={onToggleCountdown}
             tooltip="One-bar count-in before play"

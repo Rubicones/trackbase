@@ -275,9 +275,10 @@ function NamePickerPortal({
 
 type CellPos = { left: number; top: number; width: number; height: number }
 
-function SectionEditPopover({
+export function SectionEditPopover({
   section, cellPos, detectingChords, audioTracks, totalBars,
   onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onDelete, onClose,
+  layout = 'popover',
 }: {
   section: Section
   cellPos: CellPos
@@ -291,6 +292,7 @@ function SectionEditPopover({
   onBarRangeChange: (id: string, startBar: number, endBar: number) => void
   onDelete: (id: string) => void
   onClose: () => void
+  layout?: 'popover' | 'sheet'
 }) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
@@ -434,9 +436,15 @@ function SectionEditPopover({
 
   const barCount = section.end_bar - section.start_bar
 
-  return createPortal(
-    <div ref={popoverRef} className="fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in"
-      style={{ top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
+  const panel = (
+    <div
+      ref={popoverRef}
+      className={
+        layout === 'sheet'
+          ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto border-t border-border bg-popover shadow-2xl animate-slide-in'
+          : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in'
+      }
+      style={layout === 'sheet' ? undefined : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -553,9 +561,141 @@ function SectionEditPopover({
             </button>
           </div>
       </div>
-    </div>,
-    document.body
+    </div>
   )
+
+  if (layout === 'sheet') {
+    return createPortal(
+      <>
+        <div className="fixed inset-0 z-[219] bg-black/50" onClick={onClose} />
+        {panel}
+      </>,
+      document.body,
+    )
+  }
+
+  return createPortal(panel, document.body)
+}
+
+// ─── Section edit actions (shared with mobile mixer) ─────────────────────────
+
+export function useSectionEditActions({
+  project, versionId, tracks, sections, onSectionsChange, totalDurationMs,
+}: {
+  project: Project
+  versionId: string
+  tracks: Track[]
+  sections: Section[]
+  onSectionsChange: Dispatch<SetStateAction<Section[]>>
+  totalDurationMs: number
+}) {
+  const [detectingChordsFor, setDetectingChordsFor] = useState<string | null>(null)
+  const pendingChordSavesRef = useRef<Map<string, string>>(new Map())
+  const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+  const { totalBars } = getBarMath(project, totalDurationMs)
+
+  function handleTypeChange(id: string, type: SectionType, customName?: string) {
+    onSectionsChange(prev => prev.map(s =>
+      s.id === id ? { ...s, type, custom_name: customName ?? null, color: SECTION_STORED_COLOR } : s,
+    ))
+    fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, custom_name: customName ?? null, color: SECTION_STORED_COLOR }),
+    }).catch(console.error)
+  }
+
+  function handleChordsLocalChange(id: string, chords: string) {
+    onSectionsChange(prev =>
+      prev.map(s => (s.id === id ? { ...s, chords } : s)),
+    )
+    pendingChordSavesRef.current.set(id, chords)
+  }
+
+  async function handleChordsAutoSave(id: string, chords: string): Promise<void> {
+    await fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chords }),
+    })
+    pendingChordSavesRef.current.delete(id)
+  }
+
+  async function runChordDetection(section: Section, selectedTrackIds: string[]) {
+    if (selectedTrackIds.length === 0) return
+    setDetectingChordsFor(section.id)
+    try {
+      const bpm = project.bpm ?? 120
+      const timeSig = project.time_signature ?? '4/4'
+      const totalSec = totalDurationMs / 1000
+      const barDurSec = barDurationSec(bpm, timeSig)
+      const barCount = section.end_bar - section.start_bar
+      const buffer = await getMergedToneBuffer(tracks, bpm, timeSig, totalSec, selectedTrackIds)
+      if (!buffer) return
+      const { startTimeSec, endTimeSec } = sectionTimeRangeSec(section.start_bar, section.end_bar, bpm, timeSig)
+      const slice = sliceSectionFromToneBuffer(buffer, startTimeSec, endTimeSec)
+      if (slice.length === 0) return
+      const detected = await detectChordsInAudio(slice, {
+        sampleRate: buffer.sampleRate,
+        barDurationSec: barDurSec,
+        barCount,
+      })
+      if (!detected.trim()) return
+      handleChordsLocalChange(section.id, detected)
+      await handleChordsAutoSave(section.id, detected)
+    } catch (err) {
+      console.warn('[chordDetection]', err)
+    } finally {
+      setDetectingChordsFor(prev => (prev === section.id ? null : prev))
+    }
+  }
+
+  function handleDetectChords(sectionId: string, selectedTrackIds: string[]) {
+    const section = sections.find(s => s.id === sectionId)
+    if (!section) return
+    void runChordDetection(section, selectedTrackIds)
+  }
+
+  function handleDelete(id: string) {
+    onSectionsChange(prev => prev.filter(s => s.id !== id))
+    fetch(`/api/sections/${id}`, { method: 'DELETE' }).catch(console.error)
+  }
+
+  function handleBarRangeChange(id: string, startBar: number, endBar: number) {
+    const sorted = [...sections].sort((a, b) => a.start_bar - b.start_bar)
+    const idx = sorted.findIndex(s => s.id === id)
+    const section = sorted[idx]
+    if (!section) return
+    const prev = idx > 0 ? sorted[idx - 1] : null
+    const next = idx < sorted.length - 1 ? sorted[idx + 1] : null
+    const minStart = prev ? prev.end_bar : 0
+    const maxEnd = next ? next.start_bar : totalBars
+    const start = Math.max(minStart, Math.min(startBar, endBar - 1))
+    const end = Math.max(start + 1, Math.min(endBar, maxEnd))
+    if (start === section.start_bar && end === section.end_bar) return
+    onSectionsChange(prevSections =>
+      prevSections
+        .map(s => s.id === id ? { ...s, start_bar: start, end_bar: end } : s)
+        .sort((a, b) => a.start_bar - b.start_bar),
+    )
+    fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_bar: start, end_bar: end }),
+    }).catch(console.error)
+  }
+
+  return {
+    detectingChordsFor,
+    audioTracks,
+    totalBars,
+    handleTypeChange,
+    handleChordsLocalChange,
+    handleChordsAutoSave,
+    handleDetectChords,
+    handleBarRangeChange,
+    handleDelete,
+  }
 }
 
 // ─── Chords hover tooltip ─────────────────────────────────────────────────────

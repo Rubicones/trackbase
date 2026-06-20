@@ -76,7 +76,7 @@ export type MobileExperienceProps = {
   isCounting: boolean
   onToggleMetronome: () => void
   onToggleCountdown: () => void
-  mixer: Omit<MobileMixerPortraitProps, 'onExit'>
+  mixer: MobileMixerPortraitProps
 }
 
 export function MobileExperience({
@@ -206,7 +206,7 @@ export function MobileExperience({
             onToggleCountdown={onToggleCountdown}
           />
         ) : (
-          <MobileMixerPortrait {...mixer} onExit={() => setMode('rehearse')} />
+          <MobileMixerPortrait {...mixer} />
         )}
       </div>
     </div>

@@ -30,7 +30,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { MobileExperience } from '@/components/MobileExperience'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { TrackLoadProgressBar } from '@/components/TrackLoadProgressBar'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
@@ -407,10 +407,10 @@ function CommentTooltip({
             <button
               type="button"
               onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
-              className="ml-auto text-muted-foreground hover:text-destructive transition-colors text-xs leading-none px-0.5"
+              className="ml-auto text-muted-foreground hover:text-destructive transition-colors grid place-items-center size-6 shrink-0"
               aria-label="Delete comment"
             >
-              ✕
+              <TrashIcon />
             </button>
           )}
         </div>
@@ -1573,7 +1573,10 @@ function usePlayer(
     Promise.all(pending.map(async t => {
       try {
         const ab = await fetchTrackAudioBuffer(t.id)
-        if (!ab || cancelled) return
+        if (!ab || cancelled) {
+          if (!cancelled) setLoaded(c => c + 1)
+          return
+        }
         const decoded = await ctx.decodeAudioData(ab)
         if (!cancelled) {
           bufsRef.current.set(t.id, decoded)
@@ -1585,7 +1588,9 @@ function usePlayer(
           })
           setLoaded(c => c + 1)
         }
-      } catch { /* skip */ }
+      } catch {
+        if (!cancelled) setLoaded(c => c + 1)
+      }
     })).then(() => {
       if (!cancelled) {
         recomputeTransportDuration()
@@ -3122,6 +3127,16 @@ function MasterPlayerBar({
   const durationRef = useRef(duration)
   durationRef.current = duration
   const isLoading = loaded < total && total > 0
+  const loadProgress = (
+    isLoading ? (
+      <TrackLoadProgressBar
+        loaded={loaded}
+        total={total}
+        label="Loading tracks"
+        className={compact ? 'w-full basis-full' : 'w-full basis-full order-first'}
+      />
+    ) : null
+  )
 
   // Drive progress bar fill + cursor via rAF — no React state per frame.
   useEffect(() => {
@@ -3174,7 +3189,7 @@ function MasterPlayerBar({
         tooltip="Metronome click track"
       />
       <TransportToggle
-        label="CD"
+        label="Count-in"
         active={countdownOn}
         onClick={onToggleCountdown}
         tooltip="One-bar count-in before play"
@@ -3194,7 +3209,8 @@ function MasterPlayerBar({
 
   if (compact) {
     return (
-      <div className="border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 h-10">
+      <div className={`border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 ${isLoading ? 'flex-wrap py-2 min-h-10' : 'h-10'}`}>
+        {loadProgress}
         {transportToggles}
         <button
           type="button"
@@ -3232,6 +3248,7 @@ function MasterPlayerBar({
 
   return (
     <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 hidden landscape:flex sm:flex items-center gap-3 sm:gap-6 flex-wrap shrink-0">
+      {loadProgress}
       <div className="flex items-center gap-3">
         {transportToggles}
         <button
@@ -3681,13 +3698,13 @@ export default function ProjectPage() {
   }
 
   async function loadProject(keepActiveVersion = true, force = false) {
-    // Cache hit: if the active version is already cached, skip the full re-fetch
-    if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
-      console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
-      return
-    }
-
     try {
+      // Cache hit: if the active version is already cached, skip the full re-fetch
+      if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
+        console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
+        return
+      }
+
       const res = await fetch(`/api/projects/${projectId}`)
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -4813,7 +4830,13 @@ export default function ProjectPage() {
     </>
   )
 
-  if (loading) return <BrandSpinner />
+  if (loading && !project) {
+    return (
+      <div className="flex h-screen flex-col justify-end bg-background px-4 pb-8 sm:px-6">
+        <TrackLoadProgressBar indeterminate label="Loading project" />
+      </div>
+    )
+  }
 
   if (error || !project) {
     const isAccessDenied = error === 'access_denied'
@@ -4885,10 +4908,17 @@ export default function ProjectPage() {
           onToggleCountdown={player.toggleCountdown}
           mixer={{
             project,
+            versionId: activeVersionId,
+            versions,
+            activeVersionId,
+            onVersionChange: id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) },
+            onNewBranch: () => setShowBranchModal(true),
             sections,
+            onSectionsChange: setSections,
             sectionRanges,
             activeTracks,
             totalProjectBars,
+            totalDurationMs: totalProjectDurationMs,
             barDurationMs: projBarDurationMs,
             player: {
               playing: player.playing,
@@ -4902,6 +4932,10 @@ export default function ProjectPage() {
               sectionLoopOn: player.sectionLoopOn,
               sectionLoopEnabled: sectionLoopButtonEnabled,
               onToggleSectionLoop: handleToggleSectionLoop,
+              metronomeOn: player.metronomeOn,
+              countdownOn: player.countdownOn,
+              onToggleMetronome: player.toggleMetronome,
+              onToggleCountdown: player.toggleCountdown,
             },
             mutedTracks: player.mutedTracks,
             soloedTracks: player.soloedTracks,
@@ -4912,6 +4946,7 @@ export default function ProjectPage() {
             onAddRecording: handleAddRecordingTrack,
             onReplaceTrack: promptReplaceTrack,
             onDeleteTrack: handleDeleteTrack,
+            onColorUpdate: handleColorUpdate,
             onRecordTransport: () => { void handleMobileRecordTransport() },
             recordingTransportState: (() => {
               const id = activeRecordingId ?? recordingSessions[recordingSessions.length - 1]?.id
@@ -4919,6 +4954,18 @@ export default function ProjectPage() {
             })(),
             scrollToRecordingId,
             onRecordingScrollDone: () => setScrollToRecordingId(null),
+            commentMode,
+            onToggleCommentMode: () => { setCommentMode(m => !m); setActiveCommentInput(null) },
+            commentCount: totalComments,
+            activeCommentInput,
+            onCommentPlace: setActiveCommentInput,
+            onCommentDelete: handleCommentDelete,
+            onCommentCreate: handleCommentCreate,
+            onCloseCommentInput: () => setActiveCommentInput(null),
+            onReplyCreate: handleReplyCreate,
+            currentUserId: user?.id,
+            isOwner,
+            currentUser,
             recordingSlot: recordingSessions.map(session => (
               <RecordingTrackRow
                 key={session.id}
@@ -5347,11 +5394,9 @@ export default function ProjectPage() {
                 )
               })()}
 
-              {versionLoading ? (
-                <BrandSpinner fullscreen={false} label="Loading tracks" />
-              ) : activeTracks.length === 0 ? (
+              {activeTracks.length === 0 ? (
                 <div className="px-4 sm:px-6 py-12 text-center text-[10px] uppercase tracking-widest text-muted-foreground">
-                  No tracks yet — add one below
+                  {versionLoading ? 'Loading tracks…' : 'No tracks yet — add one below'}
                 </div>
               ) : activeTracks.map((t, i) => (
                 <TrackRow
