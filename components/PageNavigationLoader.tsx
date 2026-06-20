@@ -10,6 +10,8 @@ function isSameOriginNav(href: string): string | null {
   try {
     const url = new URL(href, window.location.href)
     if (url.origin !== window.location.origin) return null
+    // API routes (downloads, exports, etc.) are not page navigations.
+    if (url.pathname.startsWith('/api/')) return null
     if (url.pathname + url.search === window.location.pathname + window.location.search) return null
     return url.pathname
   } catch {
@@ -64,6 +66,8 @@ export function PageNavigationLoader() {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
       const el = (e.target as Element).closest('a')
       if (!el || el.getAttribute('target') === '_blank') return
+      // File downloads don't navigate — never show the page loader for them.
+      if (el.hasAttribute('download')) return
       const path = isSameOriginNav(el.getAttribute('href') ?? '')
       if (!path) return
       setTargetPath(path)

@@ -9,7 +9,7 @@ import { useVersionCache } from '@/hooks/useVersionCache'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
-import { TrackLoadProgressBar } from '@/components/TrackLoadProgressBar'
+import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
@@ -1525,13 +1525,7 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
-  if (loading && !project) {
-    return (
-      <div className="flex h-screen flex-col justify-end bg-background px-[22px] pb-8">
-        <TrackLoadProgressBar indeterminate label="Loading project" />
-      </div>
-    )
-  }
+  if (loading && !project) return <BrandSpinner label="Loading project" />
 
   if (error || !project) {
     const isAccessDenied = error === 'access_denied'

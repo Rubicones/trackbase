@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
@@ -23,6 +23,10 @@ import type { SectionRange } from '@/lib/sectionPlayback'
 import { trackAccentColor } from '@/lib/trackIcon'
 import type { RecordState } from '@/components/RecordingTrackRow'
 import type { Project, Section, Track, TrackComment, Version } from '@/lib/types'
+
+// Stable empty-comments reference so memoized rows don't re-render when a track
+// simply has no comments (`?? []` would allocate a fresh array each render).
+const EMPTY_COMMENTS: TrackComment[] = []
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +135,9 @@ const TIMELINE_WIDTH_PCT = 180
 const TIMELINE_PCT_PER_BAR = 6
 const PLAYHEAD_RIGHT_INDENT_PX = 32
 const PLAYHEAD_LEFT_INDENT_PX = 16
+const WAVEFORM_BAR_COUNT = 96
+// Flat placeholder shown before the real waveform is decoded — then bars animate in.
+const WAVEFORM_PLACEHOLDER_BARS = Array.from({ length: WAVEFORM_BAR_COUNT }, () => 0.12)
 
 const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
   track, color, muted, totalBars, barDurationMs, projectBpm,
@@ -156,7 +163,7 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
       setBars(cached)
       return
     }
-    decodeWaveformBars(track.id, 96).then(result => {
+    decodeWaveformBars(track.id, WAVEFORM_BAR_COUNT).then(result => {
       if (!cancelled) setBars(result)
     })
     return () => { cancelled = true }
@@ -164,7 +171,13 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
 
   const barsPerTact = 4
   const tactCount = Math.max(1, Math.ceil(totalBars / barsPerTact))
-  const waveOpacity = muted ? 0.35 : 0.75
+  // Played (left of playhead) vs unplayed (dark) opacities — matches uikit reference.
+  const dimOpacity = muted ? 0.18 : 0.4
+  const playedOpacity = muted ? 0.32 : 0.95
+  // While loading: flat placeholder bars. Once decoded: real heights that animate in
+  // (same draw-in effect as the desktop mixer).
+  const audioReady = bars !== null
+  const renderedBars = bars ?? WAVEFORM_PLACEHOLDER_BARS
 
   return (
     <>
@@ -204,34 +217,61 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
             <Spinner size={14} />
           </div>
         )
-      ) : bars ? (
-        <div
-          className="absolute inset-y-1 right-1 flex items-center gap-px"
-          style={{ left: `${startPct}%` }}
-        >
-          {bars.map((h, i) => (
-            <div
-              key={i}
-              className="flex-1"
-              style={{
-                height: `${Math.max(10, h * 100)}%`,
-                background: color,
-                opacity: waveOpacity,
-              }}
-            />
-          ))}
-        </div>
       ) : (
-        <div className="absolute inset-1 flex items-center justify-center">
-          <Spinner size={14} />
-        </div>
+        <>
+          {/* Unplayed (dark) base — placeholder until decoded, then real bars draw in */}
+          <div
+            className="absolute inset-y-1 right-1 flex items-center gap-px"
+            style={{ left: `${startPct}%` }}
+          >
+            {renderedBars.map((h, i) => (
+              <div
+                key={i}
+                className={`flex-1${audioReady ? ' animate-draw-wave' : ''}`}
+                style={{
+                  height: `${Math.max(10, h * 100)}%`,
+                  background: color,
+                  opacity: audioReady ? dimOpacity : (muted ? 0.12 : 0.2),
+                  animationDelay: audioReady ? `${i * 4}ms` : undefined,
+                }}
+              />
+            ))}
+          </div>
+          {/* Played (bright) overlay — identical bars, revealed left→right purely by
+              the inherited --played-pct CSS variable + clip-path. No per-frame JS,
+              no re-render of these (memoized) bars. */}
+          {audioReady && (
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{ clipPath: 'inset(0 calc(100% - var(--played-pct, 0%)) 0 0)' }}
+            >
+              <div
+                className="absolute inset-y-1 right-1 flex items-center gap-px"
+                style={{ left: `${startPct}%` }}
+              >
+                {renderedBars.map((h, i) => (
+                  <div
+                    key={i}
+                    className="flex-1 animate-draw-wave"
+                    style={{
+                      height: `${Math.max(10, h * 100)}%`,
+                      background: color,
+                      opacity: playedOpacity,
+                      animationDelay: `${i * 4}ms`,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </>
   )
 })
 
 function TrackWaveformLane({
-  track, color, muted, totalBars, progressPct, barDurationMs, projectBpm,
+  track, color, muted, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
@@ -240,7 +280,6 @@ function TrackWaveformLane({
   color: string
   muted: boolean
   totalBars: number
-  progressPct: number
   barDurationMs: number
   projectBpm?: number
   timelineDurationMs: number
@@ -258,38 +297,8 @@ function TrackWaveformLane({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
-  const playheadRef = useRef<HTMLDivElement>(null)
-  const scrollSync = useMobileTimelineScroll()
   useRegisterTimelineScroll(scrollRef)
   const timelineWidthPct = Math.max(TIMELINE_WIDTH_PCT, totalBars * TIMELINE_PCT_PER_BAR)
-
-  useEffect(() => {
-    const playhead = playheadRef.current
-    const scrollEl = scrollRef.current
-    if (!playhead) return
-
-    playhead.style.left = `${progressPct}%`
-
-    if (!scrollEl) return
-    const playheadPx = (progressPct / 100) * scrollEl.scrollWidth
-    const viewLeft = scrollEl.scrollLeft
-    const viewRight = viewLeft + scrollEl.clientWidth
-
-    let nextScroll = scrollEl.scrollLeft
-    if (playheadPx > viewRight - PLAYHEAD_RIGHT_INDENT_PX) {
-      nextScroll = Math.min(
-        playheadPx - scrollEl.clientWidth + PLAYHEAD_RIGHT_INDENT_PX,
-        scrollEl.scrollWidth - scrollEl.clientWidth,
-      )
-    } else if (playheadPx < viewLeft + PLAYHEAD_LEFT_INDENT_PX) {
-      nextScroll = Math.max(0, playheadPx - PLAYHEAD_LEFT_INDENT_PX)
-    }
-
-    if (nextScroll !== scrollEl.scrollLeft) {
-      scrollEl.scrollLeft = nextScroll
-      scrollSync?.syncTo(nextScroll, scrollEl)
-    }
-  }, [progressPct, scrollSync])
 
   return (
     <div ref={scrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1">
@@ -324,9 +333,8 @@ function TrackWaveformLane({
           currentUser={currentUser}
         />
         <div
-          ref={playheadRef}
           className="absolute top-0 bottom-0 w-px bg-foreground/80 pointer-events-none z-10"
-          style={{ left: `${progressPct}%` }}
+          style={{ left: 'var(--played-pct, 0%)' }}
         />
       </div>
     </div>
@@ -336,7 +344,7 @@ function TrackWaveformLane({
 // ─── Track mini waveform (legacy export name kept for row usage) ──────────────
 
 function TrackMiniWaveform({
-  track, color, muted, totalBars, progressPct, barDurationMs, projectBpm,
+  track, color, muted, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
@@ -345,7 +353,6 @@ function TrackMiniWaveform({
   color: string
   muted: boolean
   totalBars: number
-  progressPct: number
   barDurationMs: number
   projectBpm?: number
   timelineDurationMs: number
@@ -367,7 +374,6 @@ function TrackMiniWaveform({
       color={color}
       muted={muted}
       totalBars={totalBars}
-      progressPct={progressPct}
       barDurationMs={barDurationMs}
       projectBpm={projectBpm}
       timelineDurationMs={timelineDurationMs}
@@ -394,7 +400,6 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   muted,
   soloed,
   totalBars,
-  progressPct,
   barDurationMs,
   projectBpm,
   timelineDurationMs,
@@ -415,7 +420,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onToggleMute,
   onToggleSolo,
   onOpenColorPicker,
-  onColorApply,
+  onColorUpdate,
   onCloseColorPicker,
   onReplace,
   onDelete,
@@ -425,7 +430,6 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   muted: boolean
   soloed: boolean
   totalBars: number
-  progressPct: number
   barDurationMs: number
   projectBpm?: number
   timelineDurationMs: number
@@ -442,18 +446,56 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   currentUser: { username: string } | null
   openMenu: boolean
   colorPickerOpen: boolean
-  onToggleMenu: () => void
-  onToggleMute: () => void
-  onToggleSolo: () => void
-  onOpenColorPicker: () => void
-  onColorApply: (color: string) => void
+  onToggleMenu: (id: string) => void
+  onToggleMute: (id: string) => void
+  onToggleSolo: (id: string) => void
+  onOpenColorPicker: (id: string) => void
+  onColorUpdate: (id: string, color: string) => void
   onCloseColorPicker: () => void
-  onReplace: () => void
-  onDelete: () => void
+  onReplace: (track: Track) => void
+  onDelete: (id: string) => void
 }) {
   const isMidi = track.file_type === 'midi'
   const badgeLetter = (track.name?.[0] ?? 'T').toUpperCase()
   const startBar = track.start_bar ?? 0
+  // Download state: null = idle, -1 = active/indeterminate, 0–100 = determinate %.
+  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  const downloading = downloadPct !== null
+
+  async function handleDownload() {
+    onToggleMenu(track.id)
+    if (downloading) return
+    setDownloadPct(-1)
+    try {
+      const res = await fetch(`/api/tracks/${track.id}/download`)
+      if (!res.ok || !res.body) throw new Error('download failed')
+      const total = Number(res.headers.get('Content-Length') ?? 0)
+      const reader = res.body.getReader()
+      const chunks: Uint8Array[] = []
+      let received = 0
+      setDownloadPct(total > 0 ? 0 : -1)
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        received += value.length
+        if (total > 0) setDownloadPct(Math.min(99, Math.round((received / total) * 100)))
+      }
+      const blob = new Blob(chunks as BlobPart[], { type: 'audio/wav' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(track.original_filename ?? track.name).replace(/\.[^/.]+$/, '')}.wav`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setDownloadPct(100)
+      setTimeout(() => setDownloadPct(null), 400)
+    } catch {
+      setDownloadPct(null)
+    }
+  }
 
   return (
     <div className="relative border-b border-border">
@@ -463,7 +505,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onOpenColorPicker}
+            onClick={() => onOpenColorPicker(track.id)}
             className="size-7 shrink-0 grid place-items-center text-[10px] font-bold text-background"
             style={{ background: color }}
             aria-label="Change track color"
@@ -486,7 +528,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           </div>
           <button
             type="button"
-            onClick={onToggleMute}
+            onClick={() => onToggleMute(track.id)}
             className={`size-7 border text-[10px] font-bold grid place-items-center ${
               muted ? 'bg-foreground text-background border-foreground' : 'border-border hover:border-ember'
             }`}
@@ -496,7 +538,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           </button>
           <button
             type="button"
-            onClick={onToggleSolo}
+            onClick={() => onToggleSolo(track.id)}
             className={`size-7 border text-[10px] font-bold grid place-items-center ${
               soloed ? 'bg-chart-4 text-background border-chart-4' : 'border-border hover:border-chart-4'
             }`}
@@ -506,7 +548,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           </button>
           <button
             type="button"
-            onClick={onToggleMenu}
+            onClick={() => onToggleMenu(track.id)}
             className="size-7 border border-border grid place-items-center hover:border-ember hover:text-ember"
             aria-label="Track options"
           >
@@ -520,7 +562,6 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             color={color}
             muted={muted}
             totalBars={totalBars}
-            progressPct={progressPct}
             barDurationMs={barDurationMs}
             projectBpm={projectBpm}
             timelineDurationMs={timelineDurationMs}
@@ -544,39 +585,53 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           trackId={track.id}
           initialColor={color}
           badgeLetter={badgeLetter}
-          onApply={onColorApply}
+          onApply={c => onColorUpdate(track.id, c)}
           onClose={onCloseColorPicker}
         />
       )}
 
       {openMenu && (
         <>
-          <div className="fixed inset-0 z-20" onClick={onToggleMenu} />
+          <div className="fixed inset-0 z-20" onClick={() => onToggleMenu(track.id)} />
           <div className="absolute right-2 top-12 z-30 w-44 border border-border bg-popover shadow-2xl text-[11px]">
             <button
               type="button"
-              onClick={() => { onReplace(); onToggleMenu() }}
+              onClick={() => { onReplace(track); onToggleMenu(track.id) }}
               className="w-full text-left px-3 py-2 hover:bg-surface"
             >
               Replace track
             </button>
-            <a
-              href={`/api/tracks/${track.id}/download`}
-              download
-              className="block w-full text-left px-3 py-2 hover:bg-surface no-underline text-foreground"
-              onClick={onToggleMenu}
-            >
-              Download
-            </a>
             <button
               type="button"
-              onClick={() => { onDelete(); onToggleMenu() }}
+              onClick={handleDownload}
+              disabled={isMidi}
+              className="block w-full text-left px-3 py-2 hover:bg-surface text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Download
+            </button>
+            <button
+              type="button"
+              onClick={() => { onDelete(track.id); onToggleMenu(track.id) }}
               className="w-full text-left px-3 py-2 hover:bg-surface text-destructive"
             >
               Delete
             </button>
           </div>
         </>
+      )}
+
+      {/* File download progress — pinned to the bottom edge of the track */}
+      {downloading && (
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-surface-2 overflow-hidden pointer-events-none">
+          {downloadPct! < 0 ? (
+            <div className="h-full w-1/3 bg-ember animate-track-load-indeterminate" />
+          ) : (
+            <div
+              className="h-full bg-ember transition-[width] duration-200"
+              style={{ width: `${downloadPct}%` }}
+            />
+          )}
+        </div>
       )}
     </div>
   )
@@ -700,9 +755,23 @@ function MobileMixerPortraitInner({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [colorPickerTrackId, setColorPickerTrackId] = useState<string | null>(null)
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
+
+  // Stable per-row handlers — state setters are referentially stable, so these
+  // closures never change identity and keep the memoized track rows from
+  // re-rendering on every playback frame.
+  const handleToggleMenu = useCallback((id: string) => {
+    setOpenMenuId(prev => (prev === id ? null : id))
+  }, [])
+  const handleOpenColorPicker = useCallback((id: string) => {
+    setColorPickerTrackId(prev => (prev === id ? null : id))
+  }, [])
+  const handleCloseColorPicker = useCallback(() => {
+    setColorPickerTrackId(null)
+  }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionsScrollRef = useRef<HTMLDivElement>(null)
   const sectionBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const scrollSync = useMobileTimelineScroll()
 
   const sectionActions = useSectionEditActions({
     project,
@@ -726,6 +795,33 @@ function MobileMixerPortraitInner({
   const progressPct = timelineDurationSec > 0
     ? Math.min(100, (player.currentTime / timelineDurationSec) * 100)
     : 0
+
+  // Push the playhead position to the DOM as a single inherited CSS variable.
+  // All waveform lanes read --played-pct for the played/unplayed highlight and the
+  // playhead line, so the memoized track rows never re-render during playback.
+  useEffect(() => {
+    scrollRef.current?.style.setProperty('--played-pct', `${progressPct}%`)
+
+    const sample = scrollSync?.getSampleEl()
+    if (!sample) return
+    const playheadPx = (progressPct / 100) * sample.scrollWidth
+    const viewLeft = sample.scrollLeft
+    const viewRight = viewLeft + sample.clientWidth
+
+    let nextScroll = sample.scrollLeft
+    if (playheadPx > viewRight - PLAYHEAD_RIGHT_INDENT_PX) {
+      nextScroll = Math.min(
+        playheadPx - sample.clientWidth + PLAYHEAD_RIGHT_INDENT_PX,
+        sample.scrollWidth - sample.clientWidth,
+      )
+    } else if (playheadPx < viewLeft + PLAYHEAD_LEFT_INDENT_PX) {
+      nextScroll = Math.max(0, playheadPx - PLAYHEAD_LEFT_INDENT_PX)
+    }
+
+    if (nextScroll !== sample.scrollLeft) {
+      scrollSync?.syncTo(nextScroll)
+    }
+  }, [progressPct, scrollSync])
 
   const activeSectionIdx = useMemo(() => {
     const range = findSectionRangeAtTime(sectionRanges, player.currentTime, projBarDurationSec)
@@ -895,21 +991,20 @@ function MobileMixerPortraitInner({
               muted={muted}
               soloed={soloed}
               totalBars={mobileTimelineBars}
-              progressPct={progressPct}
               barDurationMs={barDurationMs}
               projectBpm={project.bpm ?? undefined}
-              comments={t.comments ?? []}
+              comments={t.comments ?? EMPTY_COMMENTS}
               {...waveformCommentProps}
               openMenu={openMenuId === t.id}
               colorPickerOpen={colorPickerTrackId === t.id}
-              onToggleMenu={() => setOpenMenuId(prev => (prev === t.id ? null : t.id))}
-              onToggleMute={() => onToggleMute(t.id)}
-              onToggleSolo={() => onToggleSolo(t.id)}
-              onOpenColorPicker={() => setColorPickerTrackId(prev => (prev === t.id ? null : t.id))}
-              onColorApply={c => onColorUpdate(t.id, c)}
-              onCloseColorPicker={() => setColorPickerTrackId(null)}
-              onReplace={() => onReplaceTrack(t)}
-              onDelete={() => onDeleteTrack(t.id)}
+              onToggleMenu={handleToggleMenu}
+              onToggleMute={onToggleMute}
+              onToggleSolo={onToggleSolo}
+              onOpenColorPicker={handleOpenColorPicker}
+              onColorUpdate={onColorUpdate}
+              onCloseColorPicker={handleCloseColorPicker}
+              onReplace={onReplaceTrack}
+              onDelete={onDeleteTrack}
             />
           )
         })}

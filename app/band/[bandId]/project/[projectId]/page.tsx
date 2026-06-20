@@ -30,7 +30,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { MobileExperience } from '@/components/MobileExperience'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
-import { TrackLoadProgressBar } from '@/components/TrackLoadProgressBar'
+import { BrandSpinner } from '@/components/BrandSpinner'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
@@ -3127,16 +3127,6 @@ function MasterPlayerBar({
   const durationRef = useRef(duration)
   durationRef.current = duration
   const isLoading = loaded < total && total > 0
-  const loadProgress = (
-    isLoading ? (
-      <TrackLoadProgressBar
-        loaded={loaded}
-        total={total}
-        label="Loading tracks"
-        className={compact ? 'w-full basis-full' : 'w-full basis-full order-first'}
-      />
-    ) : null
-  )
 
   // Drive progress bar fill + cursor via rAF — no React state per frame.
   useEffect(() => {
@@ -3209,8 +3199,7 @@ function MasterPlayerBar({
 
   if (compact) {
     return (
-      <div className={`border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 ${isLoading ? 'flex-wrap py-2 min-h-10' : 'h-10'}`}>
-        {loadProgress}
+      <div className="border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 h-10">
         {transportToggles}
         <button
           type="button"
@@ -3248,7 +3237,6 @@ function MasterPlayerBar({
 
   return (
     <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 hidden landscape:flex sm:flex items-center gap-3 sm:gap-6 flex-wrap shrink-0">
-      {loadProgress}
       <div className="flex items-center gap-3">
         {transportToggles}
         <button
@@ -4830,13 +4818,7 @@ export default function ProjectPage() {
     </>
   )
 
-  if (loading && !project) {
-    return (
-      <div className="flex h-screen flex-col justify-end bg-background px-4 pb-8 sm:px-6">
-        <TrackLoadProgressBar indeterminate label="Loading project" />
-      </div>
-    )
-  }
+  if (loading && !project) return <BrandSpinner label="Loading project" />
 
   if (error || !project) {
     const isAccessDenied = error === 'access_denied'

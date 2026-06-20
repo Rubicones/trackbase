@@ -14,6 +14,7 @@ type ScrollSyncCtx = {
   register: (el: HTMLDivElement) => () => void
   syncTo: (scrollLeft: number, source?: HTMLDivElement) => void
   getScrollLeft: () => number
+  getSampleEl: () => HTMLDivElement | null
 }
 
 const Ctx = createContext<ScrollSyncCtx | null>(null)
@@ -51,6 +52,10 @@ export function MobileTimelineScrollProvider({ children }: { children: ReactNode
     register,
     syncTo,
     getScrollLeft: () => scrollLeftRef.current,
+    getSampleEl: () => {
+      for (const el of elsRef.current) return el
+      return null
+    },
   }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
