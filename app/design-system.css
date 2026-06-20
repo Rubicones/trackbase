@@ -362,6 +362,19 @@
   transform-origin: center;
 }
 
+/* Height-only draw-in: animates scaleY but never opacity, so callers can encode
+   playback state (played/unplayed) via inline opacity without it being clobbered
+   by the animation's fill-mode. */
+@keyframes tb-draw-wave-h {
+  from { transform: scaleY(0.1); }
+  to   { transform: scaleY(1); }
+}
+
+@utility animate-draw-wave-h {
+  animation: tb-draw-wave-h 0.7s cubic-bezier(0.32, 0.72, 0, 1) both;
+  transform-origin: center;
+}
+
 /* Motion */
 @keyframes tb-slide-in {
   from { transform: translateY(20px); opacity: 0; }

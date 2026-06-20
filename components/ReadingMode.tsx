@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { sectionLabel } from '@/components/StructureEditor'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
@@ -98,36 +98,77 @@ function MasterWaveform({
 
   const playheadPct = Math.min(100, Math.max(0, playedRatio * 100))
 
+  // Bar layers are memoized so they never reconcile during playback. The
+  // played/unplayed highlight is done purely in CSS: the bright overlay is
+  // revealed left→right via clip-path + the --played-pct variable, so only that
+  // single variable changes per frame (no per-bar opacity recompute, no draw-in
+  // re-trigger). animate-draw-wave-h animates scaleY only, leaving the inline
+  // opacity (which encodes playback state) intact.
+  const dimBars = useMemo(
+    () => bars.map((h, i) => (
+      <div
+        key={`${animKey}-${i}`}
+        className={`flex-1 min-w-0${ready ? ' animate-draw-wave-h' : ''}`}
+        style={{
+          height: `${Math.max(6, h * 100)}%`,
+          background: 'var(--ember)',
+          opacity: ready ? 0.35 : 0.2,
+          animationDelay: ready ? `${i * 4}ms` : undefined,
+          transformOrigin: 'bottom',
+        }}
+      />
+    )),
+    [bars, ready, animKey],
+  )
+
+  const playedBars = useMemo(
+    () => bars.map((h, i) => (
+      <div
+        key={`${animKey}-${i}`}
+        className="flex-1 min-w-0 animate-draw-wave-h"
+        style={{
+          height: `${Math.max(6, h * 100)}%`,
+          background: 'var(--ember)',
+          opacity: 0.95,
+          animationDelay: `${i * 4}ms`,
+          transformOrigin: 'bottom',
+        }}
+      />
+    )),
+    [bars, animKey],
+  )
+
   return (
     <div
       ref={containerRef}
       className="relative mt-2 h-28 border border-border bg-surface/40 p-2 cursor-pointer touch-none select-none"
+      style={{ '--played-pct': `${playheadPct}%` } as React.CSSProperties}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <div className="relative h-full flex items-end gap-px">
-        {bars.map((h, i) => {
-          const played = (i + 0.5) / bars.length <= playedRatio
-          return (
-            <div
-              key={`${animKey}-${i}`}
-              className={`flex-1 min-w-0${ready ? ' animate-draw-wave' : ''}`}
-              style={{
-                height: `${Math.max(6, h * 100)}%`,
-                background: 'var(--ember)',
-                opacity: ready ? (played ? 0.95 : 0.35) : 0.2,
-                animationDelay: ready ? `${i * 4}ms` : undefined,
-                transformOrigin: 'bottom',
-              }}
-            />
-          )
-        })}
+      <div className="relative h-full">
+        {/* Unplayed (dim) base — full waveform */}
+        <div className="absolute inset-0 flex items-end gap-px">
+          {dimBars}
+        </div>
+        {/* Played (bright) overlay — identical bars, revealed left→right purely by
+            the --played-pct CSS variable + clip-path. No per-frame JS. */}
+        {ready && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ clipPath: 'inset(0 calc(100% - var(--played-pct, 0%)) 0 0)' }}
+          >
+            <div className="absolute inset-0 flex items-end gap-px">
+              {playedBars}
+            </div>
+          </div>
+        )}
         {ready && (
           <div
             className="absolute top-0 bottom-0 w-px -ml-px bg-foreground pointer-events-none z-10"
-            style={{ left: `${playheadPct}%` }}
+            style={{ left: 'var(--played-pct, 0%)' }}
           />
         )}
       </div>

@@ -227,7 +227,7 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
             {renderedBars.map((h, i) => (
               <div
                 key={i}
-                className={`flex-1${audioReady ? ' animate-draw-wave' : ''}`}
+                className={`flex-1${audioReady ? ' animate-draw-wave-h' : ''}`}
                 style={{
                   height: `${Math.max(10, h * 100)}%`,
                   background: color,
@@ -252,7 +252,7 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
                 {renderedBars.map((h, i) => (
                   <div
                     key={i}
-                    className="flex-1 animate-draw-wave"
+                    className="flex-1 animate-draw-wave-h"
                     style={{
                       height: `${Math.max(10, h * 100)}%`,
                       background: color,
