@@ -1,13 +1,22 @@
 'use client'
 
 import { useRef, useState, useEffect, useCallback, memo, type MutableRefObject } from 'react'
+import { Capacitor } from '@capacitor/core'
 import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
+import { NativeAudioRecorder, wavBase64ToBlob } from '@/lib/nativeAudioRecorder'
 import { TactGrid } from '@/components/design/TactGrid'
 import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
+
+// Inside the native Capacitor shell, capture audio through the NativeAudioRecorder
+// plugin (raw PCM → WAV) instead of getUserMedia / MediaRecorder, which is
+// unreliable in the Android WebView. The decoded blob feeds the same pipeline.
+const IS_NATIVE = Capacitor.isNativePlatform()
+const NATIVE_SAMPLE_RATE = 22050
+const NATIVE_CHANNELS = 1
 
 const TRACK_LABEL_W = 192
 const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
@@ -405,8 +414,33 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
     armInFlightRef.current = true
     const gen = ++armGenRef.current
-    if (!prefetchedStream) setState('permitting')
     setError('')
+
+    if (IS_NATIVE) {
+      setState('permitting')
+      try {
+        let granted = (await NativeAudioRecorder.checkPermission()).granted
+        if (!granted) granted = (await NativeAudioRecorder.requestPermission()).granted
+        if (gen !== armGenRef.current) return
+        if (!granted) {
+          setError('Mic access denied')
+          setState('idle')
+          return
+        }
+        setState('armed')
+        onArm(id)
+      } catch (e) {
+        if (gen === armGenRef.current) {
+          setError(e instanceof Error ? e.message : 'Microphone unavailable')
+          setState('idle')
+        }
+      } finally {
+        armInFlightRef.current = false
+      }
+      return
+    }
+
+    if (!prefetchedStream) setState('permitting')
 
     try {
       const stream = prefetchedStream
@@ -464,6 +498,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       armGenRef.current++
       previewSrcRef.current?.stop()
       recorderRef.current?.stop()
+      if (IS_NATIVE) void NativeAudioRecorder.cancelRecording().catch(() => {})
       stopStream()
     }
   }, [stopStream])
@@ -521,7 +556,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     if (stateRef.current !== 'armed' && stateRef.current !== 'countdown') return
     setError('')
 
-    if (!streamRef.current) {
+    if (!IS_NATIVE && !streamRef.current) {
       const gen = armGenRef.current
       try {
         const stream = await acquireMic(selectedDevice, gen)
@@ -553,6 +588,35 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     startBarRef.current = snapBar
     setRecordStartBar(snapBar)
 
+    chunksRef.current = []
+    setRecordingSec(0)
+    setRecordingBars([])
+    setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+    setNudgeOffsetMs(0)
+
+    // ── Native capture (Capacitor) ──────────────────────────────────────────
+    if (IS_NATIVE) {
+      try {
+        await promise
+        await NativeAudioRecorder.startRecording({
+          sampleRate: NATIVE_SAMPLE_RATE,
+          channels: NATIVE_CHANNELS,
+        })
+      } catch (err) {
+        console.error('[RecordingTrackRow] native start failed:', err)
+        setError(err instanceof Error ? err.message : 'Could not start recording')
+        setState('armed')
+        onPlaybackStop()
+        return
+      }
+      setState('recording')
+      recordTimerRef.current = setInterval(() => {
+        setRecordingSec(s => s + 0.25)
+      }, 250)
+      return
+    }
+
+    // ── Web capture (getUserMedia + MediaRecorder) ──────────────────────────
     const stream = streamRef.current
     if (!stream) {
       setError('Microphone not available')
@@ -577,12 +641,6 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       }
     }
 
-    chunksRef.current = []
-    setRecordingSec(0)
-    setRecordingBars([])
-    setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
-    setNudgeOffsetMs(0)
-
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
     recorder.onstop = () => { void processBlob(mimeType) }
     recorderRef.current = recorder
@@ -602,11 +660,34 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       clearInterval(recordTimerRef.current)
       recordTimerRef.current = null
     }
+    onPlaybackStop()
+
+    if (IS_NATIVE) {
+      setState('preview')
+      void finishNativeRecording()
+      return
+    }
+
     recorderRef.current?.stop()
     recorderRef.current = null
-    onPlaybackStop()
     stopStream()
     setState('preview')
+  }
+
+  // Stop the native recorder, pull the WAV back as a Blob, and feed it into the
+  // same decode → preview → save pipeline the web flow uses.
+  async function finishNativeRecording() {
+    try {
+      const { filePath } = await NativeAudioRecorder.stopRecording()
+      const { data } = await NativeAudioRecorder.readAsBase64({ filePath })
+      const blob = wavBase64ToBlob(data)
+      void NativeAudioRecorder.deleteFile({ filePath }).catch(() => {})
+      await processBlob('audio/wav', blob)
+    } catch (err) {
+      console.error('[RecordingTrackRow] native stop failed:', err)
+      setError(err instanceof Error ? err.message : 'Recording failed')
+      setState('armed')
+    }
   }
 
   const handleStopRecordRef = useRef(handleStopRecord)
@@ -648,8 +729,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     onPreviewTimelineChangeRef.current?.(id, endSec)
   }, [id])
 
-  async function processBlob(mimeType: string) {
-    const blob   = new Blob(chunksRef.current, { type: mimeType })
+  async function processBlob(mimeType: string, blobOverride?: Blob) {
+    const blob   = blobOverride ?? new Blob(chunksRef.current, { type: mimeType })
     const arrBuf = await blob.arrayBuffer()
     try {
       const ctx = new AudioContext()
@@ -743,6 +824,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
     setNudgeOffsetMs(0)
     setState('armed')
+
+    // Native: permission already granted; nothing to re-acquire.
+    if (IS_NATIVE) return
+
     const gen = armGenRef.current
     try {
       const stream = await acquireMic(selectedDevice, gen)
@@ -823,6 +908,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   function handleDelete() {
     previewSrcRef.current?.stop()
     recorderRef.current?.stop()
+    if (IS_NATIVE) void NativeAudioRecorder.cancelRecording().catch(() => {})
     stopStream()
     notifyPreviewTimeline(null)
     onRelease(id)

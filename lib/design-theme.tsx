@@ -9,6 +9,7 @@ import {
   NEXT_THEMES_STORAGE_KEY,
   type DesignThemeId,
 } from '@/lib/design-theme-shared'
+import { syncNativeSystemBars } from '@/lib/nativeSystemBars'
 
 export type { DesignThemeId } from '@/lib/design-theme-shared'
 export {
@@ -53,6 +54,10 @@ export function applyDesignTheme(theme: DesignThemeId) {
   } catch {
     /* noop */
   }
+  // Keep the native status / navigation bars matched to the app background.
+  // The attribute + class changes above have already updated the resolved
+  // CSS variables, so reading --background now reflects the new theme.
+  syncNativeSystemBars(isDark)
 }
 
 export function DesignThemeProvider({ children }: { children: ReactNode }) {

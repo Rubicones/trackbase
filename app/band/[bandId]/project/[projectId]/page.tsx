@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -4086,6 +4087,14 @@ export default function ProjectPage() {
 
     if (!targetId) {
       const id = crypto.randomUUID()
+      // Native shell: skip the getUserMedia prefetch entirely — the row's arm
+      // flow handles mic permission through the NativeAudioRecorder plugin.
+      if (Capacitor.isNativePlatform()) {
+        pendingMobileArmRef.current = id
+        setScrollToRecordingId(id)
+        setRecordingSessions(prev => [...prev, { id, name: 'New recording' }])
+        return
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         pendingMicStreamsRef.current.set(id, stream)
@@ -4108,11 +4117,15 @@ export default function ProjectPage() {
 
     const state = control.getState()
     if (state === 'idle') {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        await control.arm(stream)
-      } catch {
-        // Mic denied
+      if (Capacitor.isNativePlatform()) {
+        void control.arm()
+      } else {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          await control.arm(stream)
+        } catch {
+          // Mic denied
+        }
       }
     } else if (state === 'armed') {
       void control.startRecord()
