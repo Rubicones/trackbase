@@ -3,7 +3,6 @@
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { setAuthCookies } from '@/lib/auth/cookies'
 import { resolvePostLoginDestination } from '@/lib/auth/post-login'
 import { AuthShell } from '@/components/auth/AuthShell'
 import { Spinner } from '@/components/ui/Spinner'
@@ -17,58 +16,6 @@ export default function AuthCallbackPage() {
     handled.current = true
 
     const supabase = getSupabaseClient()
-
-    function readNext(): string {
-      try {
-        const stored = sessionStorage.getItem(NEXT_STORAGE_KEY)
-        if (stored) {
-          sessionStorage.removeItem(NEXT_STORAGE_KEY)
-          return stored
-        }
-      } catch {
-        /* noop */
-      }
-      return '/dashboard'
-    }
-
-    async function resolveDestination(session: {
-      user: { id: string; user_metadata?: { username?: string; onboarding_complete?: boolean } }
-      access_token: string
-      refresh_token: string
-      expires_in?: number
-    }) {
-      setAuthCookies(session)
-
-      const meta = session.user.user_metadata
-      if (!meta?.username) {
-        router.replace('/onboarding')
-        return
-      }
-
-      if (meta.onboarding_complete) {
-        router.replace(readNext())
-        return
-      }
-
-      const statusRes = await fetch('/api/me/setup-status')
-      const status = statusRes.ok ? await statusRes.json() : null
-
-      if (status?.can_use_app) {
-        const { error } = await supabase.auth.updateUser({
-          data: { onboarding_complete: true },
-        })
-        if (!error) {
-          const { data: { session: refreshed } } = await supabase.auth.refreshSession()
-          if (refreshed) {
-            setAuthCookies(refreshed)
-          }
-        }
-        router.replace(readNext())
-        return
-      }
-
-      router.replace('/onboarding?step=3')
-    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
