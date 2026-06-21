@@ -15,12 +15,15 @@ import { waveformBarsCache } from '@/lib/waveformCache'
 // plugin (raw PCM → WAV) instead of getUserMedia / MediaRecorder, which is
 // unreliable in the Android WebView. The decoded blob feeds the same pipeline.
 const IS_NATIVE = Capacitor.isNativePlatform()
-const NATIVE_SAMPLE_RATE = 22050
+// Request the device's native HAL rate so the native plugin can use the
+// low-latency capture path (a non-native rate forces a resampler + the slow
+// deep-buffer path, which is the main source of input lag). 48000 is the
+// near-universal Android native rate; the plugin falls back if unsupported.
+const NATIVE_SAMPLE_RATE = 48000
 const NATIVE_CHANNELS = 1
-// Steady-state capture latency to compensate for once the AudioRecord pipeline
-// is already warm (sound hitting the mic → appearing in the read buffer). The
-// large cold-start gap is removed by pre-warming; this trims the small residual
-// so the take lands on the beat. Users can still fine-tune with the nudge UI.
+// Fallback steady-state capture latency, only used when the device can't report
+// a measured latency via AudioRecord timestamps. The plugin now measures the
+// real value at runtime (see finishNativeRecording); this is just a safety net.
 const NATIVE_INPUT_LATENCY_SEC = 0.05
 
 const TRACK_LABEL_W = 192
@@ -301,6 +304,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   // Seconds of leading audio to trim from a native recording so it aligns to
   // the take start (set in handleStartRecord, applied in processBlob).
   const nativeTrimSecRef = useRef(0)
+  // Shared-AudioContext timestamps captured during a native take, so the trim
+  // can be recomputed at stop using the latency the plugin actually measured.
+  const nativeRecStartCtxTimeRef = useRef(0)
+  const nativeTakeStartTimeRef = useRef(0)
   const previewSrcRef   = useRef<AudioBufferSourceNode | null>(null)
   const recordTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const armGenRef       = useRef(0)
@@ -628,7 +635,11 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       setNudgeOffsetMs(0)
 
       // Samples captured between the recorder starting and the take beginning
-      // (count-in + warm-up) are trimmed off, minus a small input-latency comp.
+      // (count-in + warm-up) are trimmed off, minus the input-latency comp.
+      // Store the raw timestamps so finishNativeRecording can recompute this
+      // with the latency the plugin measured during the take.
+      nativeRecStartCtxTimeRef.current = recStartCtxTime
+      nativeTakeStartTimeRef.current = takeStartTime
       nativeTrimSecRef.current = Math.max(0, takeStartTime - recStartCtxTime - NATIVE_INPUT_LATENCY_SEC)
 
       await promise
@@ -713,11 +724,24 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   // same decode → preview → save pipeline the web flow uses.
   async function finishNativeRecording() {
     try {
-      const { filePath } = await NativeAudioRecorder.stopRecording()
+      const { filePath, inputLatencyMs } = await NativeAudioRecorder.stopRecording()
+
+      // Prefer the latency the plugin measured during the take (via AudioRecord
+      // timestamps) over the fixed fallback estimate. Recompute the trim so the
+      // captured audio lands exactly on the beat.
+      const measuredLatencySec =
+        typeof inputLatencyMs === 'number' && inputLatencyMs >= 0
+          ? inputLatencyMs / 1000
+          : NATIVE_INPUT_LATENCY_SEC
+      const trimSec = Math.max(
+        0,
+        nativeTakeStartTimeRef.current - nativeRecStartCtxTimeRef.current - measuredLatencySec,
+      )
+
       const { data } = await NativeAudioRecorder.readAsBase64({ filePath })
       const blob = wavBase64ToBlob(data)
       void NativeAudioRecorder.deleteFile({ filePath }).catch(() => {})
-      await processBlob('audio/wav', blob, nativeTrimSecRef.current)
+      await processBlob('audio/wav', blob, trimSec)
     } catch (err) {
       console.error('[RecordingTrackRow] native stop failed:', err)
       setError(err instanceof Error ? err.message : 'Recording failed')

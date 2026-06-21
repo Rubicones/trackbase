@@ -19,15 +19,29 @@ export interface NativeAudioRecorderPlugin {
 
   /**
    * Start recording. Returns immediately; capture runs on a background thread.
-   * `sampleRate` is a hint — the actual rate used is reported by stopRecording.
+   * `sampleRate` is only a hint — the plugin prefers the device's native HAL
+   * rate so the low-latency capture path is available. The actual rate and the
+   * resolved low-latency config are reported back here and by stopRecording.
    */
-  startRecording(options: { sampleRate: number; channels: number }): Promise<void>
+  startRecording(options: { sampleRate: number; channels: number }): Promise<{
+    sampleRate: number
+    framesPerBurst: number
+    lowLatency: boolean
+    /** Buffer-based latency estimate (ms), available immediately at start. */
+    estimatedLatencyMs: number
+  }>
 
   /** Stop recording and write a WAV file into the app cache directory. */
   stopRecording(): Promise<{
     filePath: string
     durationMs: number
     sampleRate: number
+    /**
+     * Measured end-to-end input latency in ms (sound at the mic → frame
+     * available to read), derived from AudioRecord timestamps. -1 when the
+     * device couldn't report timestamps.
+     */
+    inputLatencyMs: number
   }>
 
   /** Stop and discard the current recording without writing a file. */
