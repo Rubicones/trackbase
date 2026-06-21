@@ -25,6 +25,13 @@ const NATIVE_CHANNELS = 1
 // a measured latency via AudioRecord timestamps. The plugin now measures the
 // real value at runtime (see finishNativeRecording); this is just a safety net.
 const NATIVE_INPUT_LATENCY_SEC = 0.05
+// One-time manual alignment trim, in ms. The take is aligned with round-trip
+// compensation (measured input latency + AudioContext output latency); this
+// constant covers any constant residual that's left after that. POSITIVE shifts
+// the recorded take LATER (use this if takes land early), NEGATIVE shifts it
+// EARLIER. The per-take nudge UI reports the exact value you reach for — set
+// this to that number so it becomes the default for every take.
+const NATIVE_ALIGNMENT_TUNE_MS = 0
 
 const TRACK_LABEL_W = 192
 const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
@@ -726,16 +733,24 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     try {
       const { filePath, inputLatencyMs } = await NativeAudioRecorder.stopRecording()
 
-      // Prefer the latency the plugin measured during the take (via AudioRecord
-      // timestamps) over the fixed fallback estimate. Recompute the trim so the
-      // captured audio lands exactly on the beat.
-      const measuredLatencySec =
+      // Round-trip latency compensation. Two delays push the take off the beat:
+      //   • input path  — sound → captured frame (measured by the plugin via
+      //     AudioRecord timestamps; fixed fallback when the device can't report).
+      //   • output path — the monitoring/click the performer plays to is delayed
+      //     by the AudioContext output stage, so they naturally play that late.
+      // We trim the sum off the front so the take lands on the beat. A constant
+      // residual (driver/acoustic) is absorbed by NATIVE_ALIGNMENT_TUNE_MS.
+      const inputLatencySec =
         typeof inputLatencyMs === 'number' && inputLatencyMs >= 0
           ? inputLatencyMs / 1000
           : NATIVE_INPUT_LATENCY_SEC
+      const audioCtx = getSharedAudioContext()
+      const outputLatencySec = (audioCtx.baseLatency ?? 0) + (audioCtx.outputLatency ?? 0)
+      const compensationSec = inputLatencySec + outputLatencySec + NATIVE_ALIGNMENT_TUNE_MS / 1000
+
       const trimSec = Math.max(
         0,
-        nativeTakeStartTimeRef.current - nativeRecStartCtxTimeRef.current - measuredLatencySec,
+        nativeTakeStartTimeRef.current - nativeRecStartCtxTimeRef.current - compensationSec,
       )
 
       const { data } = await NativeAudioRecorder.readAsBase64({ filePath })

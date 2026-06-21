@@ -34,9 +34,11 @@ import java.util.Arrays;
  * <p>Latency: capture is configured for the lowest-latency path the device
  * offers — the HAL's native sample rate (so no resampler is inserted, which is
  * what forces the slow "deep buffer" path), a buffer sized to the native burst,
- * and {@code PERFORMANCE_MODE_LOW_LATENCY} on API 26+. The true input latency is
- * additionally measured at runtime via {@link AudioRecord#getTimestamp} and
- * reported back so the JS layer can align the take exactly instead of guessing.
+ * and a low-latency capture source ({@code VOICE_PERFORMANCE} on API 29+). The
+ * framework grants the FAST capture track implicitly for this configuration.
+ * The true input latency is additionally measured at runtime via
+ * {@link AudioRecord#getTimestamp} and reported back so the JS layer can align
+ * the take exactly instead of guessing.
  */
 @CapacitorPlugin(
     name = "NativeAudioRecorder",
@@ -143,17 +145,12 @@ public class NativeAudioRecorderPlugin extends Plugin {
         int desiredBuffer = framesPerBurst * bytesPerFrame * 2;
         final int bufferSize = Math.max(minBuffer, desiredBuffer);
 
-        // UNPROCESSED (API 24+) gives the rawest, lowest-latency capture with no
-        // OS-side AGC/noise suppression. VOICE_RECOGNITION is the closest
-        // low-latency, minimally-processed source on older devices.
-        int audioSource = Build.VERSION.SDK_INT >= 24
-            ? MediaRecorder.AudioSource.UNPROCESSED
-            : MediaRecorder.AudioSource.VOICE_RECOGNITION;
+        int audioSource = chooseAudioSource();
 
         AudioRecord recorder;
         try {
             recorder = buildRecorder(audioSource, sampleRate, bufferSize);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException | UnsupportedOperationException e) {
             call.reject("Failed to create AudioRecord: " + e.getMessage());
             return;
         }
@@ -196,6 +193,27 @@ public class NativeAudioRecorderPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /**
+     * Pick the lowest-latency capture source the device supports. Unlike
+     * AudioTrack, AudioRecord has no PERFORMANCE_MODE flag — the framework grants
+     * the FAST capture track implicitly when the rate is native, the buffer is
+     * small, and the source is low-latency:
+     *  • VOICE_PERFORMANCE (API 29+) is purpose-built for live monitoring/karaoke
+     *    and explicitly minimizes capture latency — ideal for tracking over a
+     *    backing track.
+     *  • UNPROCESSED (API 24+) is raw with no AGC/NS but isn't latency-tuned.
+     *  • VOICE_RECOGNITION is the low-latency fallback on older devices.
+     */
+    private int chooseAudioSource() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return MediaRecorder.AudioSource.VOICE_PERFORMANCE;
+        }
+        if (Build.VERSION.SDK_INT >= 24) {
+            return MediaRecorder.AudioSource.UNPROCESSED;
+        }
+        return MediaRecorder.AudioSource.VOICE_RECOGNITION;
+    }
+
     private AudioRecord buildRecorder(int audioSource, int sampleRate, int bufferSize) {
         AudioFormat format = new AudioFormat.Builder()
             .setEncoding(AUDIO_FORMAT)
@@ -203,24 +221,18 @@ public class NativeAudioRecorderPlugin extends Plugin {
             .setChannelMask(CHANNEL_CONFIG)
             .build();
 
-        AudioRecord.Builder builder = new AudioRecord.Builder()
+        AudioRecord recorder = new AudioRecord.Builder()
             .setAudioSource(audioSource)
             .setAudioFormat(format)
-            .setBufferSizeInBytes(bufferSize);
+            .setBufferSizeInBytes(bufferSize)
+            .build();
 
-        // PERFORMANCE_MODE_LOW_LATENCY (API 26+) asks the framework for the FAST
-        // capture track. Combined with the native rate + small buffer this is
-        // what actually brings input latency down into the tens-of-ms range.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                builder.setPerformanceMode(AudioRecord.PERFORMANCE_MODE_LOW_LATENCY);
-                lowLatencyRequested = true;
-            } catch (Exception ignored) {
-                lowLatencyRequested = false;
-            }
-        }
+        // The fast capture track is granted implicitly. Treat "native rate +
+        // VOICE_PERFORMANCE source" as our low-latency configuration for
+        // reporting purposes.
+        lowLatencyRequested = audioSource == MediaRecorder.AudioSource.VOICE_PERFORMANCE;
 
-        return builder.build();
+        return recorder;
     }
 
     private void readLoop(int readChunkBytes) {
