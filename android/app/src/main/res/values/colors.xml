@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- First-paint background for the system bars / window, matching the
+         default dark theme background (design token --background, ember-dark).
+         The web layer recolors the bars at runtime once the theme is known. -->
+    <color name="systemBarsBackground">#161616</color>
+</resources>

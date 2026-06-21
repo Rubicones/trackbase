@@ -13,6 +13,11 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- First-paint defaults before the web layer recolors the bars at
+             runtime (matches the default dark theme background). -->
+        <item name="android:windowBackground">@color/systemBarsBackground</item>
+        <item name="android:statusBarColor">@color/systemBarsBackground</item>
+        <item name="android:navigationBarColor">@color/systemBarsBackground</item>
     </style>
 
 

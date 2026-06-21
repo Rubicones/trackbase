@@ -1,24 +1,23 @@
 // Native status-bar + navigation-bar theming for the Capacitor Android/iOS shell.
 //
-// On the web this is a no-op.  Inside the native app we sync both the top
+// On the web this is a no-op. Inside the native app we sync both the top
 // (status bar) and bottom (navigation bar) system bars to the app's current
 // background color and switch the bar icons between light/dark to stay legible.
 //
-// The status bar is handled by the official @capacitor/status-bar plugin.
-// The Android navigation bar has no official Capacitor plugin, so it is handled
-// by a tiny local plugin ("SystemBars") implemented in the android/ project.
+// Both bars are driven by a local plugin ("SystemBars", implemented in the
+// android/ project). We don't use @capacitor/status-bar because on Android 15+
+// edge-to-edge is enforced and setStatusBarColor / setBackgroundColor are
+// ignored — the local plugin additionally paints the window background so the
+// transparent bars reveal the app color.
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { StatusBar, Style } from '@capacitor/status-bar'
 
 interface SystemBarsPlugin {
   /**
-   * Set the Android navigation bar (bottom) background color and button
-   * appearance.  `darkButtons` = true renders dark icons (for light
-   * backgrounds).  No-op / safely ignored on platforms without a navigation
-   * bar.
+   * Color both system bars to match the app background and set the bar icon
+   * appearance. `darkIcons` = true renders dark icons (for light backgrounds).
    */
-  setNavigationBar(options: { color: string; darkButtons: boolean }): Promise<void>
+  apply(options: { color: string; darkIcons: boolean }): Promise<void>
 }
 
 const SystemBars = registerPlugin<SystemBarsPlugin>('SystemBars')
@@ -28,7 +27,7 @@ const SystemBars = registerPlugin<SystemBarsPlugin>('SystemBars')
  * `#rrggbb` hex string.
  *
  * The design tokens are authored in oklch, which the native bar APIs can't
- * consume directly.  We let the browser resolve `var(--background)` on a probe
+ * consume directly. We let the browser resolve `var(--background)` on a probe
  * element, then round-trip the computed color through a 1×1 canvas so we read
  * back the true rendered sRGB bytes regardless of how the engine serializes
  * the computed value (rgb(), oklch(), color(), …).
@@ -73,15 +72,7 @@ function resolveBackgroundHex(): string {
  */
 export function syncNativeSystemBars(isDark: boolean): void {
   if (!Capacitor.isNativePlatform()) return
-
   const color = resolveBackgroundHex()
-
-  // Status bar (top) — official plugin.
-  // Style.Dark = light icons (for a dark background); Style.Light = dark icons.
-  void StatusBar.setOverlaysWebView({ overlay: false }).catch(() => {})
-  void StatusBar.setBackgroundColor({ color }).catch(() => {})
-  void StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(() => {})
-
-  // Navigation bar (bottom) — local plugin. Dark background → light buttons.
-  void SystemBars.setNavigationBar({ color, darkButtons: !isDark }).catch(() => {})
+  // Dark background → light icons; light background → dark icons.
+  void SystemBars.apply({ color, darkIcons: !isDark }).catch(() => {})
 }

@@ -17,6 +17,11 @@ import { waveformBarsCache } from '@/lib/waveformCache'
 const IS_NATIVE = Capacitor.isNativePlatform()
 const NATIVE_SAMPLE_RATE = 22050
 const NATIVE_CHANNELS = 1
+// Steady-state capture latency to compensate for once the AudioRecord pipeline
+// is already warm (sound hitting the mic → appearing in the read buffer). The
+// large cold-start gap is removed by pre-warming; this trims the small residual
+// so the take lands on the beat. Users can still fine-tune with the nudge UI.
+const NATIVE_INPUT_LATENCY_SEC = 0.05
 
 const TRACK_LABEL_W = 192
 const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
@@ -293,6 +298,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const chunksRef       = useRef<Blob[]>([])
   const audioBufferRef  = useRef<AudioBuffer | null>(null)
   const startBarRef     = useRef(0)
+  // Seconds of leading audio to trim from a native recording so it aligns to
+  // the take start (set in handleStartRecord, applied in processBlob).
+  const nativeTrimSecRef = useRef(0)
   const previewSrcRef   = useRef<AudioBufferSourceNode | null>(null)
   const recordTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const armGenRef       = useRef(0)
@@ -582,6 +590,56 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     onPreparePlayback?.()
 
     setState('countdown')
+
+    // ── Native capture (Capacitor) ──────────────────────────────────────────
+    // Pre-warm AudioRecord BEFORE the count-in so the hardware capture pipeline
+    // is already streaming when the take begins. This eliminates the cold-start
+    // gap (the main source of input lag); we then trim everything captured
+    // before the take start so the recording lands exactly on the beat.
+    if (IS_NATIVE) {
+      const audioCtx = getSharedAudioContext()
+      if (audioCtx.state === 'suspended') await audioCtx.resume()
+
+      try {
+        await NativeAudioRecorder.startRecording({
+          sampleRate: NATIVE_SAMPLE_RATE,
+          channels: NATIVE_CHANNELS,
+        })
+      } catch (err) {
+        console.error('[RecordingTrackRow] native start failed:', err)
+        setError(err instanceof Error ? err.message : 'Could not start recording')
+        setState('armed')
+        return
+      }
+      // Reference point on the shared AudioContext clock — the same clock the
+      // count-in / playback are scheduled against — captured right after the
+      // recorder begins streaming.
+      const recStartCtxTime = audioCtx.currentTime
+
+      const { promise, takeStartTime } = await playCountdown(bpm, timeSig)
+      onPlaybackStart(takeStartTime)
+
+      startBarRef.current = snapBar
+      setRecordStartBar(snapBar)
+
+      setRecordingSec(0)
+      setRecordingBars([])
+      setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
+      setNudgeOffsetMs(0)
+
+      // Samples captured between the recorder starting and the take beginning
+      // (count-in + warm-up) are trimmed off, minus a small input-latency comp.
+      nativeTrimSecRef.current = Math.max(0, takeStartTime - recStartCtxTime - NATIVE_INPUT_LATENCY_SEC)
+
+      await promise
+      setState('recording')
+      recordTimerRef.current = setInterval(() => {
+        setRecordingSec(s => s + 0.25)
+      }, 250)
+      return
+    }
+
+    // ── Web capture (getUserMedia + MediaRecorder) ──────────────────────────
     const { promise, takeStartTime } = await playCountdown(bpm, timeSig)
     onPlaybackStart(takeStartTime)
 
@@ -594,29 +652,6 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
     setNudgeOffsetMs(0)
 
-    // ── Native capture (Capacitor) ──────────────────────────────────────────
-    if (IS_NATIVE) {
-      try {
-        await promise
-        await NativeAudioRecorder.startRecording({
-          sampleRate: NATIVE_SAMPLE_RATE,
-          channels: NATIVE_CHANNELS,
-        })
-      } catch (err) {
-        console.error('[RecordingTrackRow] native start failed:', err)
-        setError(err instanceof Error ? err.message : 'Could not start recording')
-        setState('armed')
-        onPlaybackStop()
-        return
-      }
-      setState('recording')
-      recordTimerRef.current = setInterval(() => {
-        setRecordingSec(s => s + 0.25)
-      }, 250)
-      return
-    }
-
-    // ── Web capture (getUserMedia + MediaRecorder) ──────────────────────────
     const stream = streamRef.current
     if (!stream) {
       setError('Microphone not available')
@@ -682,7 +717,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       const { data } = await NativeAudioRecorder.readAsBase64({ filePath })
       const blob = wavBase64ToBlob(data)
       void NativeAudioRecorder.deleteFile({ filePath }).catch(() => {})
-      await processBlob('audio/wav', blob)
+      await processBlob('audio/wav', blob, nativeTrimSecRef.current)
     } catch (err) {
       console.error('[RecordingTrackRow] native stop failed:', err)
       setError(err instanceof Error ? err.message : 'Recording failed')
@@ -729,13 +764,16 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     onPreviewTimelineChangeRef.current?.(id, endSec)
   }, [id])
 
-  async function processBlob(mimeType: string, blobOverride?: Blob) {
+  async function processBlob(mimeType: string, blobOverride?: Blob, trimSec = 0) {
     const blob   = blobOverride ?? new Blob(chunksRef.current, { type: mimeType })
     const arrBuf = await blob.arrayBuffer()
     try {
       const ctx = new AudioContext()
-      const decoded = await ctx.decodeAudioData(arrBuf.slice(0))
+      const rawDecoded = await ctx.decodeAudioData(arrBuf.slice(0))
       await ctx.close()
+      // Trim the pre-take audio (count-in / warm-up) captured by the pre-warmed
+      // native recorder so the clip starts exactly on the beat.
+      const decoded = trimSec > 0 ? applyNudgeToBuffer(rawDecoded, -trimSec * 1000) : rawDecoded
       audioBufferRef.current = decoded
       setStaticBars(barsFromBuffer(decoded))
       setRecordedDurationSec(decoded.duration)
