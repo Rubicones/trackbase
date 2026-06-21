@@ -1,0 +1,179 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.trackbase.app"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="36" />
+10
+11    <!-- Permissions -->
+12
+13    <uses-permission android:name="android.permission.INTERNET" />
+13-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:47:5-67
+13-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:47:22-64
+14    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+14-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:48:5-71
+14-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:48:22-68
+15
+16    <permission
+16-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:22:5-24:47
+17        android:name="com.trackbase.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+17-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:23:9-81
+18        android:protectionLevel="signature" />
+18-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:24:9-44
+19
+20    <uses-permission android:name="com.trackbase.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+20-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:26:5-97
+20-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:26:22-94
+21
+22    <application
+22-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:4:5-43:19
+23        android:allowBackup="true"
+23-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:5:9-35
+24        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+24-->[androidx.core:core:1.17.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/11094a199bb7945826b161d8a9c17beb/transformed/core-1.17.0/AndroidManifest.xml:28:18-86
+25        android:debuggable="true"
+26        android:extractNativeLibs="false"
+27        android:icon="@mipmap/ic_launcher"
+27-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:6:9-43
+28        android:label="@string/app_name"
+28-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:7:9-41
+29        android:roundIcon="@mipmap/ic_launcher_round"
+29-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:8:9-54
+30        android:supportsRtl="true"
+30-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:9:9-35
+31        android:testOnly="true"
+32        android:theme="@style/AppTheme" >
+32-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:10:9-40
+33        <activity
+33-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:12:9-32:20
+34            android:name="com.trackbase.app.MainActivity"
+34-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:14:13-41
+35            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+35-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:13:13-148
+36            android:exported="true"
+36-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:18:13-36
+37            android:label="@string/title_activity_main"
+37-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:15:13-56
+38            android:launchMode="singleTask"
+38-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:17:13-44
+39            android:theme="@style/AppTheme.NoActionBarLaunch" >
+39-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:16:13-62
+40            <intent-filter>
+40-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:20:13-23:29
+41                <action android:name="android.intent.action.MAIN" />
+41-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:21:17-69
+41-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:21:25-66
+42
+43                <category android:name="android.intent.category.LAUNCHER" />
+43-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:22:17-77
+43-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:22:27-74
+44            </intent-filter>
+45            <intent-filter>
+45-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:25:13-30:29
+46                <action android:name="android.intent.action.VIEW" />
+46-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:26:17-69
+46-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:26:25-66
+47
+48                <category android:name="android.intent.category.DEFAULT" />
+48-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:27:17-76
+48-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:27:27-73
+49                <category android:name="android.intent.category.BROWSABLE" />
+49-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:28:17-78
+49-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:28:27-75
+50
+51                <data
+51-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:29:17-80
+52                    android:host="auth"
+52-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:29:58-77
+53                    android:scheme="com.trackbase.app" />
+53-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:29:23-57
+54            </intent-filter>
+55        </activity>
+56
+57        <provider
+58            android:name="androidx.core.content.FileProvider"
+58-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:35:13-62
+59            android:authorities="com.trackbase.app.fileprovider"
+59-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:36:13-64
+60            android:exported="false"
+60-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:37:13-37
+61            android:grantUriPermissions="true" >
+61-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:38:13-47
+62            <meta-data
+62-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:39:13-41:64
+63                android:name="android.support.FILE_PROVIDER_PATHS"
+63-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:40:17-67
+64                android:resource="@xml/file_paths" />
+64-->/Users/rubicon/Code/Web/svelte/not-work/trackbase/android/app/src/main/AndroidManifest.xml:41:17-51
+65        </provider>
+66        <provider
+66-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:24:9-32:20
+67            android:name="androidx.startup.InitializationProvider"
+67-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:25:13-67
+68            android:authorities="com.trackbase.app.androidx-startup"
+68-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:26:13-68
+69            android:exported="false" >
+69-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:27:13-37
+70            <meta-data
+70-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:29:13-31:52
+71                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+71-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:30:17-75
+72                android:value="androidx.startup" />
+72-->[androidx.emoji2:emoji2:1.3.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/353d69426d62513a7e19e841051a3a44/transformed/emoji2-1.3.0/AndroidManifest.xml:31:17-49
+73            <meta-data
+73-->[androidx.lifecycle:lifecycle-process:2.6.2] /Users/rubicon/.gradle/caches/8.14.3/transforms/14a3b51da1167f75215e7e32d2231e74/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:29:13-31:52
+74                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+74-->[androidx.lifecycle:lifecycle-process:2.6.2] /Users/rubicon/.gradle/caches/8.14.3/transforms/14a3b51da1167f75215e7e32d2231e74/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:30:17-78
+75                android:value="androidx.startup" />
+75-->[androidx.lifecycle:lifecycle-process:2.6.2] /Users/rubicon/.gradle/caches/8.14.3/transforms/14a3b51da1167f75215e7e32d2231e74/transformed/lifecycle-process-2.6.2/AndroidManifest.xml:31:17-49
+76            <meta-data
+76-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:29:13-31:52
+77                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+77-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:30:17-85
+78                android:value="androidx.startup" />
+78-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:31:17-49
+79        </provider>
+80
+81        <receiver
+81-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:34:9-52:20
+82            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+82-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:35:13-76
+83            android:directBootAware="false"
+83-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:36:13-44
+84            android:enabled="true"
+84-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:37:13-35
+85            android:exported="true"
+85-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:38:13-36
+86            android:permission="android.permission.DUMP" >
+86-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:39:13-57
+87            <intent-filter>
+87-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:40:13-42:29
+88                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+88-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:17-91
+88-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:41:25-88
+89            </intent-filter>
+90            <intent-filter>
+90-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:43:13-45:29
+91                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+91-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:17-85
+91-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:44:25-82
+92            </intent-filter>
+93            <intent-filter>
+93-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:46:13-48:29
+94                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+94-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:17-88
+94-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:47:25-85
+95            </intent-filter>
+96            <intent-filter>
+96-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:49:13-51:29
+97                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+97-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:17-95
+97-->[androidx.profileinstaller:profileinstaller:1.4.0] /Users/rubicon/.gradle/caches/8.14.3/transforms/f95ab50c54d3211c648684c462933e30/transformed/profileinstaller-1.4.0/AndroidManifest.xml:50:25-92
+98            </intent-filter>
+99        </receiver>
+100    </application>
+101
+102</manifest>

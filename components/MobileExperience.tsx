@@ -77,6 +77,8 @@ export type MobileExperienceProps = {
   onToggleMetronome: () => void
   onToggleCountdown: () => void
   mixer: MobileMixerPortraitProps
+  onOpenChat?: () => void
+  chatUnread?: number
 }
 
 export function MobileExperience({
@@ -100,6 +102,8 @@ export function MobileExperience({
   onToggleMetronome,
   onToggleCountdown,
   mixer,
+  onOpenChat,
+  chatUnread = 0,
 }: MobileExperienceProps) {
   const [mode, setMode] = useState<'rehearse' | 'mixer'>('rehearse')
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
@@ -209,6 +213,25 @@ export function MobileExperience({
           <MobileMixerPortrait {...mixer} />
         )}
       </div>
+
+      {onOpenChat && (
+        <button
+          type="button"
+          onClick={onOpenChat}
+          aria-label="Open band chat"
+          className="relative w-full shrink-0 flex items-center justify-center gap-2 py-2.5 border-t border-border bg-surface/40 text-[10px] font-bold uppercase tracking-[0.28em] text-foreground hover:text-ember hover:bg-surface/60 transition"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M2.5 3.5h11a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H9.2L7 13.5V11H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+          </svg>
+          Chat
+          {chatUnread > 0 && (
+            <span className="min-w-[16px] h-4 px-1 grid place-items-center bg-ember text-white text-[9px] font-bold leading-none">
+              {chatUnread > 99 ? '99+' : chatUnread}
+            </span>
+          )}
+        </button>
+      )}
     </div>
   )
 }

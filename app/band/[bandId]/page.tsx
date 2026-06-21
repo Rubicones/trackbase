@@ -18,6 +18,8 @@ import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
 import { registerPlaybackStop } from '@/lib/playbackSession'
+import { ChatDock } from '@/components/chat/ChatDock'
+import { useChatPanel } from '@/components/chat/useChatPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -545,6 +547,7 @@ export default function BandPage() {
   const router = useRouter()
   const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
   const { palette } = usePalette()
+  const { open: chatOpen, openChat, closeChat } = useChatPanel()
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [band, setBand] = useState<Band | null>(null)
@@ -1686,6 +1689,14 @@ export default function BandPage() {
           }}
         />
       )}
+
+      <ChatDock
+        bandId={bandId}
+        open={chatOpen}
+        onOpen={openChat}
+        onClose={closeChat}
+        currentUserId={user?.id}
+      />
     </div>
   )
 }

@@ -4,6 +4,8 @@
 /* ── Light theme (default) ─────────────────────────────────── */
 :root {
   --bg:           #F5F5F3;
+  --shell-header-h: 3.5rem;
+  --shell-footer-h: 2rem;
   --bg-surface:   #EFEFED;
   --bg-card:      #E8E8E5;
   --border:       #DDDDD8;

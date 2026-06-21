@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
@@ -31,6 +31,8 @@ import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from 
 import { MobileExperience } from '@/components/MobileExperience'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import { ChatDock } from '@/components/chat/ChatDock'
+import { useChatPanel } from '@/components/chat/useChatPanel'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
@@ -3516,13 +3518,20 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => voi
 
 export default function ProjectPage() {
   const { bandId, projectId } = useParams<{ bandId: string; projectId: string }>()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const cache = useVersionCache()
   const { user, profile, updateOnboarding } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
+  const { open: chatOpen, openChat, closeChat } = useChatPanel()
+  const [chatUnread, setChatUnread] = useState(0)
 
   const [project, setProject] = useState<Project | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [activeVersionId, setActiveVersionId] = useState('')
+  const activeVersionIdRef = useRef('')
+  activeVersionIdRef.current = activeVersionId
+  const versionDeepLinkApplied = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   const [showBranchModal, setShowBranchModal] = useState(false)
@@ -3688,8 +3697,8 @@ export default function ProjectPage() {
   async function loadProject(keepActiveVersion = true, force = false) {
     try {
       // Cache hit: if the active version is already cached, skip the full re-fetch
-      if (!force && keepActiveVersion && activeVersionId && cache.getVersion(activeVersionId)) {
-        console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionId)
+      if (!force && keepActiveVersion && activeVersionIdRef.current && cache.getVersion(activeVersionIdRef.current)) {
+        console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionIdRef.current)
         return
       }
 
@@ -3718,10 +3727,21 @@ export default function ProjectPage() {
         cache.setVersion(v.id, { tracks: v.tracks, comments, fetchedAt: Date.now() })
       }
 
-      if (!keepActiveVersion || !activeVersionId) {
-        const main = data.versions.find((v: Version) => v.type === 'main')
-        setActiveVersionId(main?.id ?? data.versions[0]?.id ?? '')
+      const main = data.versions.find((v: Version) => v.type === 'main')
+      const fallbackId = main?.id ?? data.versions[0]?.id ?? ''
+      const selectedId = activeVersionIdRef.current
+
+      if (!keepActiveVersion) {
+        // Explicit reset (e.g. project change, post-merge).
+        setActiveVersionId(fallbackId)
+      } else if (!selectedId) {
+        // First load with no selection yet.
+        setActiveVersionId(fallbackId)
+      } else if (!data.versions.some((v: Version) => v.id === selectedId)) {
+        // Previously selected version was deleted.
+        setActiveVersionId(fallbackId)
       }
+      // else: keep the user's current branch selection
 
       fetch(`/api/projects/${projectId}/storage`)
         .then(r => r.json())
@@ -3735,6 +3755,35 @@ export default function ProjectPage() {
   }
 
   useEffect(() => { loadProject(false) }, [projectId]) // eslint-disable-line
+
+  useEffect(() => {
+    versionDeepLinkApplied.current = false
+  }, [projectId])
+
+  const selectVersion = useCallback((id: string) => {
+    setActiveVersionId(id)
+    setCommentMode(false)
+    setActiveCommentInput(null)
+    if (searchParams.has('v') || searchParams.has('t') || searchParams.has('s') || searchParams.has('e')) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('v')
+      params.delete('t')
+      params.delete('s')
+      params.delete('e')
+      const qs = params.toString()
+      router.replace(`/band/${bandId}/project/${projectId}${qs ? `?${qs}` : ''}`, { scroll: false })
+    }
+  }, [bandId, projectId, router, searchParams])
+
+  // Deep link from chat context chips: ?v=<versionId> — apply once on load only.
+  useEffect(() => {
+    if (versionDeepLinkApplied.current || versions.length === 0) return
+    versionDeepLinkApplied.current = true
+    const v = searchParams.get('v')
+    if (v && versions.some(ver => ver.id === v)) {
+      setActiveVersionId(v)
+    }
+  }, [versions, searchParams])
 
   // Load stage, checklist, and band members in parallel once projectId is known
   useEffect(() => {
@@ -4862,7 +4911,7 @@ export default function ProjectPage() {
           bandId={bandId}
           versions={versions}
           activeVersionId={activeVersionId}
-          onVersionChange={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          onVersionChange={selectVersion}
           player={{
             playing: player.playing,
             currentTime: player.currentTime,
@@ -4893,7 +4942,7 @@ export default function ProjectPage() {
             versionId: activeVersionId,
             versions,
             activeVersionId,
-            onVersionChange: id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) },
+            onVersionChange: selectVersion,
             onNewBranch: () => setShowBranchModal(true),
             sections,
             onSectionsChange: setSections,
@@ -4980,6 +5029,8 @@ export default function ProjectPage() {
               />
             )),
           }}
+          onOpenChat={openChat}
+          chatUnread={chatUnread}
         />
       )}
 
@@ -5066,7 +5117,7 @@ export default function ProjectPage() {
         <MobileVersionBar
           versions={versions}
           activeId={activeVersionId}
-          onSelect={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null) }}
+          onSelect={selectVersion}
           onNewBranch={() => setShowBranchModal(true)}
         />
       )}
@@ -5128,7 +5179,7 @@ export default function ProjectPage() {
         />
         <Sidebar
           versions={versions} activeId={activeVersionId}
-          onSelect={id => { setActiveVersionId(id); setCommentMode(false); setActiveCommentInput(null); if (window.innerWidth < 1024) setSidebarOpen(false) }}
+          onSelect={id => { selectVersion(id); if (window.innerWidth < 1024) setSidebarOpen(false) }}
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
           mergeCheckingId={mergeCheckingId}
@@ -5260,7 +5311,7 @@ export default function ProjectPage() {
                     <button
                       key={v.id}
                       type="button"
-                      onClick={() => { setActiveVersionId(v.id); setCommentMode(false); setActiveCommentInput(null) }}
+                      onClick={() => selectVersion(v.id)}
                       className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
                         isActive
                           ? 'bg-ember text-white border-ember'
@@ -5627,6 +5678,19 @@ export default function ProjectPage() {
 
       {/* Toast */}
       {toast && <Toast message={toast} />}
+
+      <ChatDock
+        bandId={bandId}
+        open={chatOpen}
+        onOpen={openChat}
+        onClose={closeChat}
+        initialChannelKey={projectId}
+        currentUserId={user?.id}
+        currentProjectId={projectId}
+        hideMobileLauncher={isMobilePortrait}
+        onUnreadChange={setChatUnread}
+        onSwitchVersion={selectVersion}
+      />
     </div>
   )
 }

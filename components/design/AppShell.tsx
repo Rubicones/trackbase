@@ -37,7 +37,7 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
 
 export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactNode }) {
   return (
-    <footer className="sticky bottom-0 left-0 right-0 border-t border-border bg-background/95 backdrop-blur px-6 py-2 flex items-center justify-between text-[10px] text-muted-foreground z-40">
+    <footer className="sticky bottom-0 left-0 right-0 h-[var(--shell-footer-h)] border-t border-border bg-background/95 backdrop-blur px-6 flex items-center justify-between text-[10px] text-muted-foreground z-40">
       <div className="flex gap-6 items-center min-w-0">
         <div className="hidden sm:flex items-center gap-2 shrink-0">
           <span className="size-1.5 rounded-full bg-online animate-pulse-dot" />

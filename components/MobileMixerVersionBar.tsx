@@ -85,14 +85,12 @@ export function MobileMixerVersionBar({
       >
         + Branch
       </button>
-      <div className="shrink-0 self-stretch border-l border-border px-2 grid place-items-center">
-        <CommentToggleBtn
-          active={commentMode}
-          count={commentCount}
-          onClick={onToggleCommentMode}
-          className="size-8"
-        />
-      </div>
+      <CommentToggleBtn
+        active={commentMode}
+        count={commentCount}
+        onClick={onToggleCommentMode}
+        className="shrink-0 self-stretch border-l border-border w-10"
+      />
     </div>
   )
 }

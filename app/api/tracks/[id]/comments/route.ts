@@ -66,20 +66,37 @@ export async function POST(
       replies: [],
     }
 
-    // Log activity (fire-and-forget)
-    supabase
+    // Resolve the owning project, then mirror the comment into band chat and
+    // log activity. Done server-side (service role) so the auto-generated chat
+    // message is created exactly once, regardless of how many clients are online.
+    const { data: ver } = await supabase
       .from('versions').select('project_id').eq('id', track.version_id).maybeSingle()
-      .then(({ data: ver }) => ver
-        ? supabase.from('projects').select('band_id, name').eq('id', ver.project_id).maybeSingle()
-            .then(({ data: proj }) => {
-              if (proj) logActivity({
-                bandId: proj.band_id, userId, action: 'comment',
-                subject: proj.name, detail: fmtTimecode(timecode_start_ms),
-                projectId: ver.project_id,
-              })
-            })
-        : null
-      )
+    if (ver) {
+      const { data: proj } = await supabase
+        .from('projects').select('band_id, name').eq('id', ver.project_id).maybeSingle()
+      if (proj) {
+        // Auto-generated track-comment message in the project's channel.
+        const { error: msgError } = await supabase.from('band_messages').insert({
+          band_id: proj.band_id,
+          channel_id: ver.project_id,
+          user_id: comment.created_by,
+          content: comment.content,
+          type: 'track_comment',
+          context_version_id: comment.version_id,
+          context_track_id: comment.track_id,
+          context_timecode_start_ms: comment.timecode_start_ms,
+          context_timecode_end_ms: comment.timecode_end_ms,
+          source_track_comment_id: comment.id,
+        })
+        if (msgError) console.error('[comments/post] band_messages insert error:', msgError)
+
+        logActivity({
+          bandId: proj.band_id, userId, action: 'comment',
+          subject: proj.name, detail: fmtTimecode(timecode_start_ms),
+          projectId: ver.project_id,
+        })
+      }
+    }
 
     return NextResponse.json({ comment: commentWithAuthor }, { status: 201 })
   } catch (err) {
