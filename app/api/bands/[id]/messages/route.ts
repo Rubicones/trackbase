@@ -151,9 +151,19 @@ export async function GET(
         }),
       )
 
+      const { data: versionRows } = projectIds.length
+        ? await supabase.from('versions').select('project_id').in('project_id', projectIds)
+        : { data: [] as { project_id: string }[] }
+
+      const branchCounts: Record<string, number> = {}
+      for (const pid of projectIds) branchCounts[pid] = 0
+      for (const v of versionRows ?? []) {
+        branchCounts[v.project_id] = (branchCounts[v.project_id] ?? 0) + 1
+      }
+
       const counts: Record<string, number> = { band: bandCount.count ?? 0 }
       for (const [pid, count] of perProject) counts[pid] = count
-      return NextResponse.json({ counts })
+      return NextResponse.json({ counts, branchCounts })
     }
 
     // ── Single message (used to enrich a realtime INSERT) ──

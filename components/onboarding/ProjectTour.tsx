@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { TbButton } from '@/components/design/TbButton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface TourStep {
+export interface TourStep {
   target: string | null   // data-tour value; null = full-dim, card centered
   title: string
   body: string
+  /** When set, Next stays disabled until this returns true (e.g. user switches tab). */
+  gate?: () => boolean
+  gateHint?: string
 }
 
 type Placement = 'above' | 'below' | 'left' | 'right' | 'center'
@@ -41,6 +45,11 @@ const ALL_STEPS: TourStep[] = [
     body: 'Drag and drop WAV, MP3, or MIDI files here — or click to browse. Each instrument becomes its own track with its own waveform.',
   },
   {
+    target: 'record-track-button',
+    title: 'Record a take',
+    body: 'Click Record track to add a live recording row. Arm it from the row, hit record in the transport, and capture audio straight into the project — same as adding an uploaded file when you save.',
+  },
+  {
     target: 'versions-sidebar',
     title: 'Versions are like save points',
     body: "'main' is your primary version. Want to try re-recording a part without affecting main? Create a new branch — it starts as an exact copy, and you can always merge your changes back later.",
@@ -69,6 +78,11 @@ const ALL_STEPS: TourStep[] = [
     target: 'resources-card',
     title: 'Keep everything in one place',
     body: 'Click Resources to attach lyrics, DAW project files, reference links — anything related to this song. Everything stays in one place for the whole band.',
+  },
+  {
+    target: 'chat-launcher',
+    title: 'Band chat',
+    body: 'Open chat from the edge tab to message the band, @mention teammates, and link branches or time ranges on a track — everyone stays in sync without leaving the project.',
   },
   {
     target: 'share-button',
@@ -154,17 +168,19 @@ function computeCardPlacement(
 interface ProjectTourProps {
   projectName: string
   show: boolean
+  steps?: TourStep[]
   onFinish: () => void
   onSkip: () => void
 }
 
-export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTourProps) {
+export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, onSkip }: ProjectTourProps) {
   const [visibleSteps, setVisibleSteps] = useState<TourStep[]>([])
   const [stepIndex, setStepIndex] = useState(0)
   const [spotlight, setSpotlight] = useState<SpotlightState | null>(null)
   const [card, setCard] = useState<CardState | null>(null)
   const [mounted, setMounted] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
+  const [gateOpen, setGateOpen] = useState(true)
   const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMounted(true), [])
@@ -172,8 +188,12 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
   useEffect(() => {
     if (!show) return
     setStepIndex(0)
-    setVisibleSteps(ALL_STEPS)
   }, [show])
+
+  useEffect(() => {
+    if (!show) return
+    setVisibleSteps(steps)
+  }, [show, steps])
 
   const goToStep = useCallback(async (idx: number, steps: TourStep[]) => {
     if (idx >= steps.length) return
@@ -239,13 +259,27 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
     return () => window.removeEventListener('resize', handleResize)
   }, [show, stepIndex, visibleSteps, goToStep])
 
+  useEffect(() => {
+    const step = visibleSteps[stepIndex]
+    if (!show || !step?.gate) {
+      setGateOpen(true)
+      return
+    }
+    const tick = () => setGateOpen(step.gate!())
+    tick()
+    const id = window.setInterval(tick, 200)
+    return () => window.clearInterval(id)
+  }, [show, stepIndex, visibleSteps])
+
   const handleNext = useCallback(() => {
+    const step = visibleSteps[stepIndex]
+    if (step?.gate && !step.gate()) return
     if (stepIndex < visibleSteps.length - 1) {
       setStepIndex(i => i + 1)
     } else {
       onFinish()
     }
-  }, [stepIndex, visibleSteps.length, onFinish])
+  }, [stepIndex, visibleSteps, onFinish])
 
   const handleBack = useCallback(() => {
     if (stepIndex > 0) setStepIndex(i => i - 1)
@@ -265,6 +299,7 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
   const isFirst = stepIndex === 0
   const isLast = stepIndex === totalSteps - 1
   const showSkip = stepIndex <= 1
+  const isGated = Boolean(currentStep.gate && !gateOpen)
 
   const title = currentStep.title.replace('{PROJECT_NAME}', projectName)
   const isCenter = currentStep.target === null
@@ -288,14 +323,14 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
         />
       ) : null}
 
-      {/* Click-capture layer */}
-      <div className="fixed inset-0 z-[300] cursor-default" />
+      {/* Click-capture layer — gated steps let the user interact with highlighted UI */}
+      <div className={`fixed inset-0 z-[300] cursor-default ${isGated ? 'pointer-events-none' : ''}`} />
 
       {/* Tour card */}
       {card && (
         <div
           ref={cardRef}
-          className="fixed z-[302] border border-border bg-popover shadow-2xl p-5 animate-slide-in"
+          className="fixed z-[302] border border-border bg-popover shadow-2xl p-5 animate-slide-in pointer-events-auto"
           style={{
             top: card.top,
             left: card.left,
@@ -361,8 +396,14 @@ export function ProjectTour({ projectName, show, onFinish, onSkip }: ProjectTour
             {!isFirst && (
               <TbButton onClick={handleBack}>Back</TbButton>
             )}
-            <TbButton variant="primary" onClick={handleNext}>
-              {isFirst ? 'Start' : isLast ? 'Finish' : 'Next'}
+            <TbButton variant="primary" onClick={handleNext} disabled={transitioning || isGated}>
+              {isGated
+                ? (currentStep.gateHint ?? 'Complete the step above')
+                : isFirst
+                  ? 'Start'
+                  : isLast
+                    ? 'Finish'
+                    : 'Next'}
             </TbButton>
           </div>
         </div>
@@ -505,18 +546,15 @@ function XIcon() {
 
 export function TourHelpButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Show tour"
-      aria-label="Show tour"
-      className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition"
-    >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <circle cx="8" cy="8" r="6.5" />
-        <path d="M6 6a2 2 0 1 1 2.5 1.9C7.9 8.2 8 8.7 8 9" />
-        <circle cx="8" cy="11.5" r="0.6" fill="currentColor" stroke="none" />
-      </svg>
-    </button>
+    <HoverTooltip label="Restart tour" placement="bottom">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="Restart tour"
+        className="size-8 border border-border bg-surface-2 grid place-items-center text-foreground hover:border-ember transition"
+      >
+        <span className="text-[11px] leading-none" aria-hidden>?</span>
+      </button>
+    </HoverTooltip>
   )
 }

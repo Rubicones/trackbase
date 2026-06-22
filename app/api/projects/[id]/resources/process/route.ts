@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { deleteFromR2, uploadToR2 } from '@/lib/r2'
 import { getUserIdFromToken } from '@/lib/supabase/server'
+import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
 
 // ── POST /api/projects/[id]/resources/process ─────────────────────────────────
 // Called after the browser has finished uploading to R2 via presigned URL.
@@ -70,6 +71,14 @@ export async function POST(
   }
   if (typeof fileSize !== 'number' || fileSize <= 0) {
     return NextResponse.json({ error: 'fileSize must be a positive number' }, { status: 400 })
+  }
+
+  const quota = await checkBandStorageQuota(supabase, project.band_id, fileSize)
+  if (!quota.ok) {
+    return NextResponse.json(
+      { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
+      { status: 413 },
+    )
   }
 
   // Build final storage key: resources/{projectId}/{uuid}-{filename}

@@ -64,6 +64,25 @@ export function msToBar(
   return Math.floor(ms / barMs) + 1
 }
 
+/** Formats a stored timecode (ms) as M:SS. */
+export function formatTimecodeMs(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  return `${m}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** Formats a context time chip range, e.g. "1:23" or "1:23–2:45". */
+export function formatTimecodeRange(
+  startMs: number | null,
+  endMs: number | null,
+): string | null {
+  if (startMs == null) return null
+  const start = formatTimecodeMs(startMs)
+  if (endMs == null) return start
+  const end = formatTimecodeMs(endMs)
+  return end !== start ? `${start}–${end}` : start
+}
+
 /** Formats a context time chip's bar range, e.g. "bar 5" or "bar 5–8". */
 export function formatBarRange(
   startMs: number | null,

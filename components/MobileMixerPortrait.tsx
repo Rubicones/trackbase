@@ -679,6 +679,7 @@ export type MobileMixerPortraitProps = {
   onToggleSolo: (id: string) => void
   onAddTrack: () => void
   onAddRecording: () => void
+  storageFull?: boolean
   onReplaceTrack: (track: Track) => void
   onDeleteTrack: (id: string) => void
   onColorUpdate: (trackId: string, color: string) => void
@@ -731,6 +732,7 @@ function MobileMixerPortraitInner({
   onToggleSolo,
   onAddTrack,
   onAddRecording,
+  storageFull = false,
   onReplaceTrack,
   onDeleteTrack,
   onColorUpdate,
@@ -920,15 +922,17 @@ function MobileMixerPortraitInner({
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      <MobileMixerVersionBar
-        versions={versions}
-        activeId={activeVersionId}
-        onSelect={onVersionChange}
-        onNewBranch={onNewBranch}
-        commentMode={commentMode}
-        commentCount={commentCount}
-        onToggleCommentMode={onToggleCommentMode}
-      />
+      <div data-tour="mobile-mixer-version-bar">
+        <MobileMixerVersionBar
+          versions={versions}
+          activeId={activeVersionId}
+          onSelect={onVersionChange}
+          onNewBranch={onNewBranch}
+          commentMode={commentMode}
+          commentCount={commentCount}
+          onToggleCommentMode={onToggleCommentMode}
+        />
+      </div>
 
       {commentMode && (
         <div className="px-3 py-1.5 border-b border-ember/30 bg-ember-soft shrink-0">
@@ -978,7 +982,7 @@ function MobileMixerPortraitInner({
       </div>
 
       {/* Tracks list */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background min-h-0">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background min-h-0" data-tour="mobile-mixer-tracks">
         {activeTracks.map((t, i) => {
           const color = trackAccentColor(t.icon_color, i)
           const muted = mutedTracks.has(t.id) || midiRenderingTracks.has(t.id)
@@ -1015,15 +1019,19 @@ function MobileMixerPortraitInner({
           <button
             type="button"
             onClick={onAddTrack}
-            className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:border-ember flex items-center justify-center gap-2 bg-background"
+            disabled={storageFull}
+            data-tour="mobile-mixer-add-track"
+            className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:border-ember flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
           >
             <span className="text-base leading-none">+</span>
-            Add audio / MIDI / loop
+            {storageFull ? 'Storage full' : 'Add audio / MIDI / loop'}
           </button>
           <button
             type="button"
             onClick={onAddRecording}
-            className="w-full border border-dashed border-border px-3 py-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-destructive hover:border-destructive flex items-center justify-center gap-2 bg-background"
+            disabled={storageFull}
+            data-tour="mobile-mixer-recording"
+            className="w-full border border-dashed border-border px-3 py-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-destructive hover:border-destructive flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
           >
             <span className="inline-block size-2 rounded-full bg-destructive shrink-0" />
             Record track
@@ -1114,6 +1122,7 @@ function MobileMixerPortraitInner({
             type="button"
             onClick={onRecordTransport}
             disabled={isPermitting}
+            data-tour="mobile-mixer-record-transport"
             className={`mx-auto size-10 rounded-full grid place-items-center border-2 transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
               isRecording
                 ? 'bg-destructive border-destructive text-white animate-pulse'

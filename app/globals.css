@@ -1756,6 +1756,22 @@ html.dark[data-palette="green"] .theme-avatar {
   to   { background-position:  200% 0; }
 }
 
+/* Hide scrollbars in project workspace and chat — scroll still works */
+.project-page,
+.chat-dock-aside,
+.project-page *,
+.chat-dock-aside * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.project-page *::-webkit-scrollbar,
+.chat-dock-aside *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Chat dock — desktop column sits flush between shell header + footer */
 @media (width >= 1024px) {
   @keyframes chat-dock-slide-in {
@@ -1770,6 +1786,7 @@ html.dark[data-palette="green"] .theme-avatar {
     right: 0;
     left: auto;
     width: 380px;
+    overscroll-behavior: none;
     animation: chat-dock-slide-in 0.18s ease-out both;
   }
 }

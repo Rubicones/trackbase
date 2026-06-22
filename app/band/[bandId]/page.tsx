@@ -20,6 +20,7 @@ import type { ProjectRoadmap } from '@/lib/roadmap'
 import { registerPlaybackStop } from '@/lib/playbackSession'
 import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
+import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -558,7 +559,7 @@ export default function BandPage() {
   const [stats, setStats] = useState<BandStats>({ branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 })
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [totalActivity, setTotalActivity] = useState(0)
-  const [storageLimitBytes, setStorageLimitBytes] = useState(10 * 1024 * 1024 * 1024)
+  const [storageLimitBytes, setStorageLimitBytes] = useState(BAND_STORAGE_LIMIT_BYTES)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
 
@@ -684,7 +685,7 @@ export default function BandPage() {
     setStats(data.stats ?? { branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 })
     setRecentActivity(data.recentActivity ?? [])
     setTotalActivity(data.totalActivity ?? 0)
-    setStorageLimitBytes(data.storageLimitBytes ?? 10 * 1024 * 1024 * 1024)
+    setStorageLimitBytes(data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES)
     setInviteCode(data.inviteCode ?? null)
     setPendingJoinRequests(data.pendingJoinRequests ?? [])
     setLoading(false)
@@ -1061,6 +1062,7 @@ export default function BandPage() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
+  const storageFull = stats.storage_bytes >= storageLimitBytes
   const bandColor = band ? avatarColor(band.name, palette) : 'var(--ember)'
   const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
@@ -1576,7 +1578,7 @@ export default function BandPage() {
 
           {/* Storage — sidebar only; stats live in the hero grid above */}
           <div className="hidden lg:block">
-            <SectionLabel>STORAGE</SectionLabel>
+            <SectionLabel>STORAGE · 1 GB</SectionLabel>
             <div className="mt-3">
               <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
                 <span>USED</span>
@@ -1587,11 +1589,14 @@ export default function BandPage() {
               <div className="h-1 bg-surface-2 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 ${
-                    storagePct > 95 ? 'bg-destructive' : storagePct > 80 ? 'bg-chart-2' : 'bg-ember'
+                    storageFull || storagePct > 95 ? 'bg-destructive' : storagePct > 80 ? 'bg-chart-2' : 'bg-ember'
                   }`}
                   style={{ width: `${storagePct}%` }}
                 />
               </div>
+              {storageFull && (
+                <p className="text-[9px] text-destructive mt-1 m-0">Storage full</p>
+              )}
             </div>
           </div>
 

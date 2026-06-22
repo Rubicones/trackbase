@@ -15,7 +15,7 @@ import {
 export interface ChatChannelProject {
   id: string
   name: string
-  track_count: number
+  version_count: number
 }
 
 export interface ChatMember {
@@ -79,6 +79,7 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
   const [hasMore, setHasMore] = useState(false)
 
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [branchCounts, setBranchCounts] = useState<Record<string, number>>({})
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
 
@@ -119,15 +120,15 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
     readsRef.current = readStoredReads(bandId)
     async function load() {
       try {
-        const res = await fetch(`/api/bands/${bandId}`)
+        const res = await fetch(`/api/bands/${bandId}`, { cache: 'no-store' })
         if (!res.ok) return
         const data = await res.json()
         if (cancelled) return
         setProjects(
-          (data.projects ?? []).map((p: { id: string; name: string; track_count?: number }) => ({
+          (data.projects ?? []).map((p: { id: string; name: string; version_count?: number }) => ({
             id: p.id,
             name: p.name,
-            track_count: p.track_count ?? 0,
+            version_count: Number(p.version_count) || 0,
           })),
         )
         setMembers(
@@ -159,10 +160,12 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    fetch(`/api/bands/${bandId}/messages?counts=1`)
+    fetch(`/api/bands/${bandId}/messages?counts=1`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (!cancelled && data?.counts) setCounts(data.counts)
+        if (cancelled || !data) return
+        if (data.counts) setCounts(data.counts)
+        if (data.branchCounts) setBranchCounts(data.branchCounts)
       })
       .catch(() => {})
     return () => {
@@ -186,6 +189,10 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
     activeKeyRef.current = open ? channelKey : null
     if (!open) return
     let cancelled = false
+    setMessages([])
+    messageIdsRef.current = new Set()
+    lastCreatedAtRef.current = null
+    setHasMore(false)
     setLoadingMessages(true)
     const channelParam = channelIdOf(channelKey) ?? 'band'
     fetch(`/api/bands/${bandId}/messages?channel=${channelParam}`)
@@ -428,6 +435,7 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
     hasMore,
     loadOlder,
     counts,
+    branchCounts,
     unread,
     onlineUserIds,
     send,

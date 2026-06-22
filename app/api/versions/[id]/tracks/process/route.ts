@@ -11,8 +11,9 @@ import { audioToFlacFromFile } from '@/lib/ffmpeg'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
-import { randomTrackIconColor } from '@/lib/trackIcon'
+import { pickTrackIconColor } from '@/lib/trackIcon'
 import { markPreviewMixStale } from '@/lib/previewMix'
+import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -105,11 +106,15 @@ export async function POST(
   const trackName = filename.replace(/\.[^.]+$/, '')
 
   // Determine position from existing track count (server-authoritative)
-  const { count: trackCount } = await supabase
+  const { count: trackCount, data: siblingTracks } = await supabase
     .from('tracks')
-    .select('*', { count: 'exact', head: true })
+    .select('icon_color', { count: 'exact' })
     .eq('version_id', versionId)
   const position = trackCount ?? 0
+  const iconColor = pickTrackIconColor(
+    (siblingTracks ?? []).map(t => t.icon_color),
+    position,
+  )
 
   // Determine temp local path for streaming download
   const ext = filename.match(/\.[^.]+$/)?.[0] ?? '.tmp'
@@ -163,6 +168,13 @@ export async function POST(
       if (existing) {
         storagePath = existing.storage_path
       } else {
+        const quota = await checkBandStorageQuota(supabase, access.project.band_id, midiBuffer.byteLength)
+        if (!quota.ok) {
+          return NextResponse.json(
+            { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
+            { status: 413 },
+          )
+        }
         storagePath = `projects/${version.project_id}/${fileHash}.mid`
         try {
           await uploadToR2(storagePath, midiBuffer, 'audio/midi')
@@ -192,7 +204,7 @@ export async function POST(
           midi_data: midiData,
           midi_start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
           start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
-          icon_color: randomTrackIconColor(),
+          icon_color: iconColor,
         })
         .select()
         .single()
@@ -246,6 +258,14 @@ export async function POST(
           )
         }
 
+        const quota = await checkBandStorageQuota(supabase, access.project.band_id, flacBuffer.byteLength)
+        if (!quota.ok) {
+          return NextResponse.json(
+            { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
+            { status: 413 },
+          )
+        }
+
         storagePath = r2Key(version.project_id, fileHash)
         try {
           await uploadToR2(storagePath, flacBuffer)
@@ -275,7 +295,7 @@ export async function POST(
           position,
           file_type: 'audio',
           start_bar: audioStartBar,
-          icon_color: randomTrackIconColor(),
+          icon_color: iconColor,
         })
         .select()
         .single()

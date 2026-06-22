@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
 import { ChatLauncherButton } from '@/components/chat/ChatDock'
+import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
+import { buildMobileProjectTourSteps } from '@/components/onboarding/mobileProjectTourSteps'
 import type { Project, Section, Track, Version } from '@/lib/types'
 
 // ─── Version drawer ───────────────────────────────────────────────────────────
@@ -80,6 +82,10 @@ export type MobileExperienceProps = {
   mixer: MobileMixerPortraitProps
   onOpenChat?: () => void
   chatUnread?: number
+  showTour?: boolean
+  onTourFinish?: () => void
+  onTourSkip?: () => void
+  storageFull?: boolean
 }
 
 export function MobileExperience({
@@ -105,9 +111,38 @@ export function MobileExperience({
   mixer,
   onOpenChat,
   chatUnread = 0,
+  showTour = false,
+  onTourFinish,
+  onTourSkip,
+  storageFull = false,
 }: MobileExperienceProps) {
   const [mode, setMode] = useState<'rehearse' | 'mixer'>('rehearse')
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
+  const [localTourOpen, setLocalTourOpen] = useState(false)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+
+  const tourOpen = showTour || localTourOpen
+  const mobileTourSteps = useMemo(
+    () => buildMobileProjectTourSteps(() => modeRef.current),
+    [],
+  )
+  const prevTourOpenRef = useRef(false)
+
+  useEffect(() => {
+    if (tourOpen && !prevTourOpenRef.current) setMode('rehearse')
+    prevTourOpenRef.current = tourOpen
+  }, [tourOpen])
+
+  function finishTour() {
+    setLocalTourOpen(false)
+    onTourFinish?.()
+  }
+
+  function skipTour() {
+    setLocalTourOpen(false)
+    onTourSkip?.()
+  }
 
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
@@ -152,6 +187,7 @@ export function MobileExperience({
           </nav>
         </div>
 
+        <TourHelpButton onClick={() => setLocalTourOpen(true)} />
         <AvatarDropdown />
       </header>
 
@@ -167,13 +203,15 @@ export function MobileExperience({
       {/* Chat bar + mode switch */}
       <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
         {onOpenChat && (
-          <ChatLauncherButton
-            variant="bar"
-            unread={chatUnread}
-            onClick={onOpenChat}
-          />
+          <div data-tour="mobile-chat">
+            <ChatLauncherButton
+              variant="bar"
+              unread={chatUnread}
+              onClick={onOpenChat}
+            />
+          </div>
         )}
-        <div className="grid grid-cols-2 border border-border bg-background">
+        <div className="grid grid-cols-2 border border-border bg-background" data-tour="mobile-mode-switch">
           {(['rehearse', 'mixer'] as const).map(m => {
             const active = mode === m
             return (
@@ -181,6 +219,7 @@ export function MobileExperience({
                 key={m}
                 type="button"
                 onClick={() => setMode(m)}
+                data-tour={m === 'rehearse' ? 'mobile-mode-rehearse' : 'mobile-mode-mixer'}
                 className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
                   active ? 'bg-ember text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}
@@ -216,12 +255,20 @@ export function MobileExperience({
             isCounting={isCounting}
             onToggleMetronome={onToggleMetronome}
             onToggleCountdown={onToggleCountdown}
+            storageFull={storageFull}
           />
         ) : (
           <MobileMixerPortrait {...mixer} />
         )}
       </div>
 
+      <ProjectTour
+        projectName={project.name}
+        show={tourOpen}
+        steps={mobileTourSteps}
+        onFinish={finishTour}
+        onSkip={skipTour}
+      />
     </div>
   )
 }

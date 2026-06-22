@@ -8,14 +8,13 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
-import { ProjectTour } from '@/components/onboarding/ProjectTour'
+import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectResourcesButton } from '@/components/ResourcesModal'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
-import { TbMenuButton, tbMenuButtonClassName } from '@/components/design/TbButton'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
@@ -29,8 +28,9 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { MobileExperience } from '@/components/MobileExperience'
-import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, defaultTrackIconColorForIndex } from '@/lib/trackIcon'
+import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
+import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
 import { ChatDock } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -3346,12 +3346,13 @@ function MobileVersionBar({
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, commentCounts, projectId, projectName, isOpen, compact = false }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
   storageUsed: number
   storageLimit: number
+  storageFull: boolean
   commentCounts: Record<string, number>
   projectId: string
   projectName: string
@@ -3454,11 +3455,11 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
         </div>
 
         <div className={compact ? '' : 'mt-auto'}>
-          <SectionLabel>STORAGE</SectionLabel>
+          <SectionLabel>STORAGE · {formatStorageLimit(storageLimit)}</SectionLabel>
           {compact ? (
             <div className="text-[10px] tabular-nums mt-1 text-muted-foreground truncate">
               {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
-              <span className={`ml-2 ${storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
+              <span className={`ml-2 ${storageFull ? 'text-destructive' : storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
                 {Math.round(storagePct)}%
               </span>
             </div>
@@ -3469,13 +3470,15 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
               </div>
               <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
                 <div
-                  className={`h-full transition-all ${storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
+                  className={`h-full transition-all ${storageFull || storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
                   style={{ width: `${storagePct}%` }}
                 />
               </div>
-              {storageUsed / storageLimit > 0.95 && (
+              {storageFull ? (
+                <p className="text-[9px] text-destructive mt-1 m-0">Storage full — delete tracks or files to upload more</p>
+              ) : storageUsed / storageLimit > 0.95 ? (
                 <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
-              )}
+              ) : null}
             </>
           )}
         </div>
@@ -3483,7 +3486,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
 
       {!compact && (
         <div className="p-4 pt-0 border-t border-border">
-          <ProjectResourcesButton projectId={projectId} projectName={projectName} className="mt-4" />
+          <ProjectResourcesButton projectId={projectId} projectName={projectName} storageFull={storageFull} className="mt-4" />
         </div>
       )}
     </aside>
@@ -3546,11 +3549,13 @@ export default function ProjectPage() {
   const [mergeCheckingId, setMergeCheckingId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
-  const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
+  const [storageLimit, setStorageLimit] = useState(BAND_STORAGE_LIMIT_BYTES)
+  const storageFull = storageUsed >= storageLimit
   const [shareCopied, setShareCopied] = useState(false)
   const [sections, setSections] = useState<Section[]>([])
   const [editStructure, setEditStructure] = useState(false)
   const [showTour, setShowTour] = useState(false)
+  const [showMobileTour, setShowMobileTour] = useState(false)
 
   // ── Roadmap + checklist ──────────────────────────────────────────────────────
   const [planOpen, setPlanOpen] = useState(false)
@@ -3590,8 +3595,6 @@ export default function ProjectPage() {
   }, [isMobilePortrait, projectId])
 
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
-  const moreRef = useRef<HTMLDivElement>(null)
   const trackListRef = useRef<HTMLDivElement>(null)
   const tracksBodyRef = useRef<HTMLDivElement>(null)
   const [recordingSessions, setRecordingSessions] = useState<{ id: string; name: string }[]>([])
@@ -3745,7 +3748,7 @@ export default function ProjectPage() {
 
       fetch(`/api/projects/${projectId}/storage`)
         .then(r => r.json())
-        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
+        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? BAND_STORAGE_LIMIT_BYTES) })
         .catch(() => {})
     } catch {
       setError('unknown')
@@ -3821,6 +3824,15 @@ export default function ProjectPage() {
     }
   }, [loading, profile, isDesktopMixer])
 
+  // Auto-start mobile tour — portrait rehearsal → mixer flow
+  useEffect(() => {
+    if (!isMobilePortrait) return
+    if (!loading && profile && !profile.onboarding?.mobile_project_tour_completed && !profile.onboarding?.mobile_project_tour_skipped) {
+      const t = setTimeout(() => setShowMobileTour(true), 600)
+      return () => clearTimeout(t)
+    }
+  }, [loading, profile, isMobilePortrait])
+
   // On version switch: serve from cache if available, otherwise fetch fresh data.
   async function loadVersionData(versionId: string) {
     if (!versionId) return
@@ -3874,18 +3886,23 @@ export default function ProjectPage() {
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
   const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
-  // Assign vivid palette colors to legacy tracks (null / old rgba / emoji-era defaults).
+  // Assign vivid palette colors — backfill legacy defaults and dedupe batch-upload collisions.
   const backfillingColorsRef = useRef(false)
   const trackColorKey = activeTracks.map(t => `${t.id}:${t.icon_color ?? ''}`).join('|')
   useEffect(() => {
     if (!activeVersionId || !activeTracks.length || backfillingColorsRef.current) return
 
-    const assignments = activeTracks
-      .map((t, i) => ({ id: t.id, color: defaultTrackIconColorForIndex(i) }))
-      .filter(({ id }) => {
-        const track = activeTracks.find(t => t.id === id)
-        return track && needsTrackIconColor(track.icon_color)
-      })
+    const used = new Set<string>()
+    const assignments: { id: string; color: string }[] = []
+
+    activeTracks.forEach((t, i) => {
+      let color = t.icon_color
+      if (!color || needsTrackIconColor(color) || used.has(color)) {
+        color = pickTrackIconColor(Array.from(used), i)
+      }
+      used.add(color)
+      if (color !== t.icon_color) assignments.push({ id: t.id, color })
+    })
 
     if (!assignments.length) return
 
@@ -4100,6 +4117,11 @@ export default function ProjectPage() {
   }, [activeVersionId])
 
   function handleAddRecordingTrack() {
+    if (storageFull) {
+      setToast(storageQuotaError(storageUsed, storageLimit))
+      setTimeout(() => setToast(null), 4000)
+      return
+    }
     if (!activeVersionId) return
     setRecordingSessions(prev => [...prev, { id: crypto.randomUUID(), name: 'New recording' }])
   }
@@ -4249,7 +4271,7 @@ export default function ProjectPage() {
     if (!commentMode) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      if (showBranchModal || mergeModal || showTour) return
+      if (showBranchModal || mergeModal || showTour || showMobileTour) return
       const el = e.target as HTMLElement
       if (el.closest('[role="dialog"]')) return
       setCommentMode(false)
@@ -4257,7 +4279,7 @@ export default function ProjectPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [commentMode, showBranchModal, mergeModal, showTour])
+  }, [commentMode, showBranchModal, mergeModal, showTour, showMobileTour])
 
   const durationMs = player.duration * 1000
   // Total bars: max(start_bar + durationBars) across ALL tracks.
@@ -4609,6 +4631,11 @@ export default function ProjectPage() {
 
   function handleUploadFiles(files: File[]) {
     if (!files.length || !activeVersionId) return
+    if (storageFull) {
+      setToast(storageQuotaError(storageUsed, storageLimit))
+      setTimeout(() => setToast(null), 4000)
+      return
+    }
 
     const newUploads: UploadItem[] = []
     for (const file of files) {
@@ -4687,6 +4714,10 @@ export default function ProjectPage() {
   }
 
   async function handleReplaceTrack(track: Track, file: File) {
+    if (storageFull) {
+      alert(storageQuotaError(storageUsed, storageLimit))
+      return
+    }
     setUploading(true)
     try {
       const fd = new FormData()
@@ -4796,15 +4827,6 @@ export default function ProjectPage() {
     setTimeout(() => setShareCopied(false), 2000)
   }
 
-  useEffect(() => {
-    if (!moreOpen) return
-    function onDoc(e: MouseEvent) {
-      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [moreOpen])
-
   const headerActions = (
     <>
       <TbBtn variant="ghost" className="hidden lg:inline-flex" onClick={handleShare} data-tour="share-button">
@@ -4833,37 +4855,7 @@ export default function ProjectPage() {
           onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
         />
       )}
-      <div className="relative" ref={moreRef}>
-        <button
-          type="button"
-          onClick={() => setMoreOpen(o => !o)}
-          aria-label="More actions"
-          className="size-8 border border-border bg-surface-2 grid place-items-center text-xs hover:border-ember hover:text-ember transition"
-        >
-          ⋯
-        </button>
-        {moreOpen && (
-          <div className="absolute right-0 top-full mt-2 w-52 z-50 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
-            <TbMenuButton onClick={() => { setMoreOpen(false); setShowTour(true) }} className="justify-between">
-              <span>Restart tour</span><span className="text-ember">?</span>
-            </TbMenuButton>
-            <TbMenuButton onClick={() => { handleShare(); setMoreOpen(false) }} className="lg:hidden">Share</TbMenuButton>
-            <TbMenuButton
-              onClick={() => { if (canSaveVersion) handleMergeClick(activeVersionId); setMoreOpen(false) }}
-              className="lg:hidden"
-              disabled={!canSaveVersion}
-            >
-              Save Version
-            </TbMenuButton>
-            <a href={`/api/versions/${activeVersionId}/export`} className={`${tbMenuButtonClassName()} sm:hidden no-underline`}>
-              Export WAV
-            </a>
-            <TbMenuButton onClick={() => { setMoreOpen(false); setSidebarOpen(o => !o) }} className="lg:hidden">
-              {sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            </TbMenuButton>
-          </div>
-        )}
-      </div>
+      <TourHelpButton onClick={() => setShowTour(true)} />
     </>
   )
 
@@ -4902,7 +4894,7 @@ export default function ProjectPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-background">
+    <div className="project-page flex flex-col h-screen overflow-hidden bg-background">
 
       {/* Portrait mobile — Rehearsal ⇄ Mixer tabs */}
       {isMobilePortrait && project && (
@@ -4975,6 +4967,7 @@ export default function ProjectPage() {
             onToggleSolo: player.toggleSolo,
             onAddTrack: () => fileInputRef.current?.click(),
             onAddRecording: handleAddRecordingTrack,
+            storageFull,
             onReplaceTrack: promptReplaceTrack,
             onDeleteTrack: handleDeleteTrack,
             onColorUpdate: handleColorUpdate,
@@ -5031,6 +5024,18 @@ export default function ProjectPage() {
           }}
           onOpenChat={openChat}
           chatUnread={chatUnread}
+          showTour={showMobileTour}
+          onTourFinish={() => {
+            setShowMobileTour(false)
+            updateOnboarding('mobile_project_tour_completed', true)
+            setToast("You're all set! Tap ? anytime for a refresher.")
+            setTimeout(() => setToast(null), 4000)
+          }}
+          onTourSkip={() => {
+            setShowMobileTour(false)
+            updateOnboarding('mobile_project_tour_skipped', true)
+          }}
+          storageFull={storageFull}
         />
       )}
 
@@ -5075,14 +5080,7 @@ export default function ProjectPage() {
             onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
             className="size-7"
           />
-          <button
-            type="button"
-            onClick={() => setTopbarSheetOpen(true)}
-            aria-label="More actions"
-            className="size-7 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember bg-transparent cursor-pointer"
-          >
-            ⋯
-          </button>
+          <TourHelpButton onClick={() => setShowTour(true)} />
         </header>
       ) : (
         <AppHeader
@@ -5185,6 +5183,7 @@ export default function ProjectPage() {
           mergeCheckingId={mergeCheckingId}
           storageUsed={storageUsed}
           storageLimit={storageLimit}
+          storageFull={storageFull}
           commentCounts={commentCounts}
           projectId={projectId}
           projectName={project.name}
@@ -5541,7 +5540,7 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
+                    disabled={uploading || storageFull}
                     className={`w-full min-h-[60px] p-4 text-left text-[10px] uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isDraggingAddRow
                         ? 'text-ember bg-ember-soft'
@@ -5553,7 +5552,8 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={handleAddRecordingTrack}
-                    disabled={!activeVersionId}
+                    disabled={!activeVersionId || storageFull}
+                    data-tour="record-track-button"
                     className="w-full min-h-[48px] px-4 text-left text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:bg-surface/30 transition disabled:opacity-40 disabled:cursor-not-allowed border-t border-border flex items-center gap-2"
                   >
                     <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />

@@ -20,6 +20,31 @@ export function randomTrackIconColor(): string {
   return TRACK_ICON_SWATCHES[Math.floor(Math.random() * TRACK_ICON_SWATCHES.length)]
 }
 
+/** Swatch colors already assigned on sibling tracks. */
+export function usedTrackIconSwatches(colors: (string | null | undefined)[]): Set<string> {
+  const used = new Set<string>()
+  for (const c of colors) {
+    if (c && !needsTrackIconColor(c)) used.add(c)
+  }
+  return used
+}
+
+/**
+ * Default color for a new track — prefers swatches not yet used on siblings;
+ * rotates by trackIndex when the palette is exhausted.
+ */
+export function pickTrackIconColor(
+  siblingColors: (string | null | undefined)[],
+  trackIndex = 0,
+): string {
+  const used = usedTrackIconSwatches(siblingColors)
+  const unused = TRACK_ICON_SWATCHES.filter(s => !used.has(s))
+  if (unused.length > 0) {
+    return unused[trackIndex % unused.length]
+  }
+  return defaultTrackIconColorForIndex(trackIndex)
+}
+
 export function defaultTrackIconColorForIndex(index: number): string {
   return TRACK_ICON_SWATCHES[index % TRACK_ICON_SWATCHES.length]
 }

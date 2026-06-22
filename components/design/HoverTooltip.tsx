@@ -8,10 +8,12 @@ export function HoverTooltip({
   label,
   children,
   className,
+  placement = 'top',
 }: {
   label: string
   children: ReactNode
   className?: string
+  placement?: 'top' | 'bottom'
 }) {
   const [hovered, setHovered] = useState(false)
   const [coords, setCoords] = useState({ top: 0, left: 0 })
@@ -22,7 +24,7 @@ export function HoverTooltip({
     if (!el) return
     const rect = el.getBoundingClientRect()
     setCoords({
-      top: rect.top - 8,
+      top: placement === 'bottom' ? rect.bottom + 8 : rect.top - 8,
       left: rect.left + rect.width / 2,
     })
   }
@@ -36,7 +38,12 @@ export function HoverTooltip({
       window.removeEventListener('scroll', updatePosition, true)
       window.removeEventListener('resize', updatePosition)
     }
-  }, [hovered])
+  }, [hovered, placement])
+
+  const tooltipClass =
+    placement === 'bottom'
+      ? 'fixed z-[9999] -translate-x-1/2 px-3 py-1.5 text-xs bg-foreground text-background whitespace-nowrap pointer-events-none shadow-sm'
+      : 'fixed z-[9999] -translate-x-1/2 -translate-y-full px-3 py-1.5 text-xs bg-foreground text-background whitespace-nowrap pointer-events-none shadow-sm'
 
   return (
     <div
@@ -52,7 +59,7 @@ export function HoverTooltip({
       {hovered && typeof document !== 'undefined' && createPortal(
         <div
           role="tooltip"
-          className="fixed z-[9999] -translate-x-1/2 -translate-y-full px-3 py-1.5 text-xs bg-foreground text-background whitespace-nowrap pointer-events-none shadow-sm"
+          className={tooltipClass}
           style={{ top: coords.top, left: coords.left }}
         >
           {label}

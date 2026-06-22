@@ -77,6 +77,8 @@ interface Props {
   hideLyrics?: boolean
   /** Hide drag-and-drop upload field (mobile rehearsal — use Add files instead). */
   hideUploadZone?: boolean
+  /** Band storage quota reached — block file uploads. */
+  storageFull?: boolean
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -92,7 +94,7 @@ function fmtRelative(iso: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function ResourcesCard({ projectId, projectName, bare = false, variant = 'default', hideLyrics = false, hideUploadZone = false }: Props) {
+export function ResourcesCard({ projectId, projectName, bare = false, variant = 'default', hideLyrics = false, hideUploadZone = false, storageFull = false }: Props) {
   const isDrawer = variant === 'drawer'
   const [resources, setResources] = useState<ProjectResource[]>([])
   const [loading, setLoading] = useState(true)
@@ -184,7 +186,10 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
   // Add dropdown item
   function openAddMenu(action: 'file' | 'link' | 'lyrics') {
     setMenuOpen(false)
-    if (action === 'file') uploadRef.current?.openFilePicker()
+    if (action === 'file') {
+      if (storageFull) return
+      uploadRef.current?.openFilePicker()
+    }
     else if (action === 'link') { setShowLinkForm(true) }
     else if (action === 'lyrics') {
       setShowLyricsTrigger(true)
@@ -224,13 +229,14 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
           {menuOpen && (
             <div className="absolute right-0 top-full mt-1 z-50 min-w-[150px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
               {[
-                { key: 'file', Icon: IconUpload, label: 'Add files' },
-                { key: 'link', Icon: IconLink, label: 'Add link' },
-                ...(!lyrics ? [{ key: 'lyrics', Icon: IconMic, label: 'Edit lyrics' }] : []),
-              ].map(({ key, Icon, label }) => (
+                { key: 'file', Icon: IconUpload, label: storageFull ? 'Storage full' : 'Add files', disabled: storageFull },
+                { key: 'link', Icon: IconLink, label: 'Add link', disabled: false },
+                ...(!lyrics ? [{ key: 'lyrics', Icon: IconMic, label: 'Edit lyrics', disabled: false }] : []),
+              ].map(({ key, Icon, label, disabled }) => (
                 <TbMenuButton
                   key={key}
                   className="gap-2"
+                  disabled={disabled}
                   onClick={() => openAddMenu(key as 'file' | 'link' | 'lyrics')}
                 >
                   <Icon size={13} />
@@ -264,12 +270,13 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
               </p>
               <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
                 {[
-                  { action: 'file', Icon: IconUpload, label: 'Add files' },
-                  { action: 'link', Icon: IconLink, label: 'Add link' },
-                  { action: 'lyrics', Icon: IconMic, label: 'Add lyrics' },
-                ].map(({ action, Icon, label }) => (
+                  { action: 'file', Icon: IconUpload, label: storageFull ? 'Storage full' : 'Add files', disabled: storageFull },
+                  { action: 'link', Icon: IconLink, label: 'Add link', disabled: false },
+                  { action: 'lyrics', Icon: IconMic, label: 'Add lyrics', disabled: false },
+                ].map(({ action, Icon, label, disabled }) => (
                   <TbButton
                     key={action}
+                    disabled={disabled}
                     className="h-9 px-3 gap-1.5"
                     onClick={() => openAddMenu(action as 'file' | 'link' | 'lyrics')}
                   >
@@ -389,6 +396,7 @@ export function ResourcesCard({ projectId, projectName, bare = false, variant = 
               ref={uploadRef}
               projectId={projectId}
               hideDropZone={hideUploadZone}
+              uploadDisabled={storageFull}
               onUploadComplete={r => { upsertResource(r) }}
             />
           </div>

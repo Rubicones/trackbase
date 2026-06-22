@@ -5,13 +5,12 @@ import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 import { logActivity } from '@/lib/activity'
+import { bandStorageLimitBytes, getBandStorageUsed } from '@/lib/bandStorage'
 
 function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get('sb-at')?.value
   return token ? getUserIdFromToken(token) : null
 }
-
-const BAND_STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024 // 10 GB
 
 type TrackRow = TimelineTrack & {
   id: string
@@ -224,14 +223,7 @@ export async function GET(
   const mainVersionIds = Array.from(mainVersionByProject.values())
   const totalTracks = allTracks.filter(t => mainVersionIds.includes(t.version_id)).length
 
-  const seenHashes = new Set<string>()
-  let storageBytes = 0
-  for (const t of allTracks) {
-    if (t.file_hash && !seenHashes.has(t.file_hash)) {
-      seenHashes.add(t.file_hash)
-      storageBytes += t.file_size_bytes ?? 0
-    }
-  }
+  const storageBytes = await getBandStorageUsed(adminSupabase, bandId)
 
   // ── Recent activity (graceful if table missing) ───────────────────────────
   let recentActivity: unknown[] = []
@@ -338,7 +330,7 @@ export async function GET(
     stats: { branches, merges, comments: totalComments, storage_bytes: storageBytes, tracks: totalTracks },
     recentActivity,
     totalActivity,
-    storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+    storageLimitBytes: bandStorageLimitBytes(),
     inviteCode,
     pendingJoinRequests,
   })

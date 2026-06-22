@@ -8,7 +8,7 @@ function getUserId(req: NextRequest): string | null {
   return token ? getUserIdFromToken(token) : null
 }
 
-const STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024 // 10 GB
+import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 
 // GET /api/dashboard — all data needed for the bands list page
 export async function GET(req: NextRequest) {
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
         lastUpdated: r.created_at,
         latestActivity: null,
         storageBytes: 0,
-        storageLimitBytes: STORAGE_LIMIT_BYTES,
+        storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
         isPending: true,
         joinRequestId: r.id,
         joinRequestedAt: r.created_at,
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
       totalBands: 0,
       totalProjects: 0,
       totalCollaborators: 0,
-      storageLimitBytes: STORAGE_LIMIT_BYTES,
+      storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
     })
   }
 
@@ -119,12 +119,18 @@ export async function GET(req: NextRequest) {
     : { data: [] as { version_id: string; file_size_bytes: number | null; file_hash: string | null }[] }
   const allTracks = tracksRes.data ?? []
 
+  const resourcesRes = projectIds.length > 0
+    ? await supabase.from('project_resources').select('project_id, file_size_bytes').in('project_id', projectIds).eq('type', 'file')
+    : { data: [] as { project_id: string; file_size_bytes: number | null }[] }
+  const allResources = resourcesRes.data ?? []
+
   // ── Build lookup maps ─────────────────────────────────────────────────────
 
   type Project = { id: string; band_id: string; created_at: string }
   type Member = { band_id: string; user_id: string }
   type Track = { version_id: string; file_size_bytes: number | null; file_hash: string | null }
   type Version = { id: string; project_id: string }
+  type Resource = { project_id: string; file_size_bytes: number | null }
 
   const projectsByBand = new Map<string, Project[]>()
   for (const p of allProjects as Project[]) {
@@ -148,6 +154,11 @@ export async function GET(req: NextRequest) {
   for (const t of allTracks as Track[]) {
     const arr = tracksByVersion.get(t.version_id) ?? []
     arr.push(t); tracksByVersion.set(t.version_id, arr)
+  }
+
+  const resourcesByProject = new Map<string, number>()
+  for (const r of allResources as Resource[]) {
+    resourcesByProject.set(r.project_id, (resourcesByProject.get(r.project_id) ?? 0) + (r.file_size_bytes ?? 0))
   }
 
   // Latest activity per band (allActivity is ordered DESC)
@@ -177,6 +188,7 @@ export async function GET(req: NextRequest) {
           }
         }
       }
+      storageBytes += resourcesByProject.get(p.id) ?? 0
     }
 
     // lastUpdated: latest project created_at vs latest activity
@@ -205,7 +217,7 @@ export async function GET(req: NextRequest) {
         project_name: (latestAct.projects as { name: string } | null)?.name ?? null,
       } : null,
       storageBytes,
-      storageLimitBytes: STORAGE_LIMIT_BYTES,
+      storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
       isPending: false,
     }
   })
@@ -223,6 +235,6 @@ export async function GET(req: NextRequest) {
     totalBands: bands.length,
     totalProjects,
     totalCollaborators: allCollaboratorIds.size,
-    storageLimitBytes: STORAGE_LIMIT_BYTES,
+    storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
   })
 }

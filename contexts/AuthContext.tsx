@@ -13,6 +13,8 @@ export interface OnboardingData {
   band_seen?: boolean
   project_tour_completed?: boolean
   project_tour_skipped?: boolean
+  mobile_project_tour_completed?: boolean
+  mobile_project_tour_skipped?: boolean
 }
 
 export interface Profile {

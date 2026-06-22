@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '@/lib/supabase'
 import { getPresignedUploadUrl } from '@/lib/r2'
 import { getUserIdFromToken } from '@/lib/supabase/server'
+import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
 
 // ── Limits ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,14 @@ export async function POST(
   if (fileSize > MAX_FILE_SIZE) {
     return NextResponse.json(
       { error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.` },
+      { status: 413 },
+    )
+  }
+
+  const quota = await checkBandStorageQuota(supabase, project.band_id, fileSize)
+  if (!quota.ok) {
+    return NextResponse.json(
+      { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
       { status: 413 },
     )
   }

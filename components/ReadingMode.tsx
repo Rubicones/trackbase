@@ -277,6 +277,7 @@ export function ReadingMode({
   isCounting,
   onToggleMetronome,
   onToggleCountdown,
+  storageFull = false,
 }: {
   project: Project
   player: ReadingModePlayer
@@ -300,6 +301,7 @@ export function ReadingMode({
   isCounting: boolean
   onToggleMetronome: () => void
   onToggleCountdown: () => void
+  storageFull?: boolean
 }) {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
   const [composite, setComposite] = useState<number[]>(() => new Array(REHEARSAL_BAR_COUNT).fill(0.12))
@@ -596,7 +598,7 @@ export function ReadingMode({
               No structure added yet
             </p>
           ) : (
-            <div className="mt-2 border border-border divide-y divide-border">
+            <div className="mt-2 border border-border divide-y divide-border" data-tour="mobile-rehearse-sections">
               {sections.map(section => (
                 <button
                   key={section.id}
@@ -637,14 +639,17 @@ export function ReadingMode({
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
               Resources
             </div>
-            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} hideUploadZone />
+            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} hideUploadZone storageFull={storageFull} />
           </div>
         )}
 
       </div>
 
       {/* Fixed master player */}
-      <div className={`absolute left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 grid grid-cols-[auto_1fr] grid-rows-2 gap-x-3 gap-y-2 items-center z-10 ${embedded ? 'bottom-0' : 'bottom-[52px]'}`}>
+      <div
+        data-tour="mobile-rehearse-transport"
+        className={`absolute left-0 right-0 border-t border-border bg-surface/95 backdrop-blur px-4 py-3 grid grid-cols-[auto_1fr] grid-rows-2 gap-x-3 gap-y-2 items-center z-10 ${embedded ? 'bottom-0' : 'bottom-[52px]'}`}
+      >
         <button
           type="button"
           onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}

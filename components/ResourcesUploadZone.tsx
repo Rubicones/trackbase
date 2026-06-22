@@ -32,6 +32,8 @@ export interface Props {
   variant?: 'default' | 'drawer'
   /** Hide the drag-and-drop field (file picker via ref still works). */
   hideDropZone?: boolean
+  /** Band storage quota reached — block uploads. */
+  uploadDisabled?: boolean
 }
 
 export type ResourcesUploadZoneHandle = {
@@ -70,7 +72,7 @@ function xhrPut(url: string, file: File, onProgress: (pct: number) => void): Pro
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(function ResourcesUploadZone(
-  { projectId, onUploadComplete, hideDropZone = false },
+  { projectId, onUploadComplete, hideDropZone = false, uploadDisabled = false },
   ref,
 ) {
   const [dragging, setDragging] = useState(false)
@@ -78,8 +80,8 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useImperativeHandle(ref, () => ({
-    openFilePicker: () => fileInputRef.current?.click(),
-  }), [])
+    openFilePicker: () => { if (!uploadDisabled) fileInputRef.current?.click() },
+  }), [uploadDisabled])
 
   function patch(id: string, update: Partial<UploadItem>) {
     setQueue(q => q.map(i => (i.id === id ? { ...i, ...update } : i)))
@@ -137,6 +139,7 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
   }
 
   function enqueue(files: FileList | File[]) {
+    if (uploadDisabled) return
     const items: UploadItem[] = Array.from(files).map(file => ({
       id: uid(),
       file,
@@ -152,18 +155,22 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
     <div>
       {!hideDropZone && (
       <div
-        onClick={() => fileInputRef.current?.click()}
-        onDragOver={e => { e.preventDefault(); setDragging(true) }}
+        onClick={() => { if (!uploadDisabled) fileInputRef.current?.click() }}
+        onDragOver={e => { if (uploadDisabled) return; e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) enqueue(e.dataTransfer.files) }}
-        className={`border border-dashed p-6 text-center text-xs text-muted-foreground cursor-pointer transition-colors ${
-          dragging ? 'border-ember bg-ember-soft' : 'border-border hover:border-ember'
+        onDrop={e => { e.preventDefault(); setDragging(false); if (!uploadDisabled && e.dataTransfer.files.length) enqueue(e.dataTransfer.files) }}
+        className={`border border-dashed p-6 text-center text-xs text-muted-foreground transition-colors ${
+          uploadDisabled
+            ? 'border-border opacity-50 cursor-not-allowed'
+            : dragging
+              ? 'border-ember bg-ember-soft cursor-pointer'
+              : 'border-border hover:border-ember cursor-pointer'
         }`}
       >
         <p className="m-0 leading-relaxed font-mono">
-          Drag-and-drop WAV / MP3 / MIDI / PDF / DAW — max 200 MB
-          {' · '}
-          <span className="text-ember">browse</span>
+          {uploadDisabled
+            ? 'Band storage full (1 GB) — delete tracks or files to upload more'
+            : <>Drag-and-drop WAV / MP3 / MIDI / PDF / DAW — max 200 MB{' · '}<span className="text-ember">browse</span></>}
         </p>
       </div>
       )}

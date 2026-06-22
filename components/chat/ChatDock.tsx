@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { UserAvatar } from '@/components/ui/avatar'
+import { SpinnerBars } from '@/components/ui/Spinner'
 import {
   BAND_CHANNEL,
   findActiveMention,
-  formatBarRange,
+  formatTimecodeRange,
   formatMessageTime,
   groupMessages,
   insertMention,
@@ -189,6 +190,7 @@ export function ChatDock({
     hasMore,
     loadOlder,
     counts,
+    branchCounts,
     unread,
     onlineUserIds,
     send,
@@ -200,6 +202,42 @@ export function ChatDock({
   const [activeMention, setActiveMention] = useState<{ start: number; query: string } | null>(null)
   const [mentionPickIdx, setMentionPickIdx] = useState(0)
 
+  const projectVersionsCacheRef = useRef<Map<string, PopoverVersion[]>>(new Map())
+  const projectVersionsInflightRef = useRef<Map<string, Promise<PopoverVersion[]>>>(new Map())
+
+  const loadProjectVersions = useCallback(async (projectId: string): Promise<PopoverVersion[]> => {
+    const cached = projectVersionsCacheRef.current.get(projectId)
+    if (cached) return cached
+
+    const inflight = projectVersionsInflightRef.current.get(projectId)
+    if (inflight) return inflight
+
+    const promise = fetch(`/api/projects/${projectId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => (data?.versions ?? []) as PopoverVersion[])
+      .catch(() => [] as PopoverVersion[])
+      .then(versions => {
+        projectVersionsCacheRef.current.set(projectId, versions)
+        projectVersionsInflightRef.current.delete(projectId)
+        return versions
+      })
+
+    projectVersionsInflightRef.current.set(projectId, promise)
+    return promise
+  }, [])
+
+  const getCachedProjectVersions = useCallback(
+    (projectId: string) => projectVersionsCacheRef.current.get(projectId),
+    [],
+  )
+
+  useEffect(() => {
+    if (open) return
+    projectVersionsCacheRef.current.clear()
+    projectVersionsInflightRef.current.clear()
+  }, [open])
+
+  const asideRef = useRef<HTMLElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const channelStripRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -251,6 +289,96 @@ export function ChatDock({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
+  }, [open])
+
+  // Trap scroll inside the dock — never scroll the page behind it.
+  useEffect(() => {
+    if (!open) return
+
+    const isMobile = window.matchMedia('(max-width: 1023px)').matches
+    const prevBodyOverflow = document.body.style.overflow
+    const prevHtmlOverflow = document.documentElement.style.overflow
+    if (isMobile) {
+      document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+    }
+
+    const aside = asideRef.current
+    if (!aside) {
+      return () => {
+        if (isMobile) {
+          document.body.style.overflow = prevBodyOverflow
+          document.documentElement.style.overflow = prevHtmlOverflow
+        }
+      }
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      let el = e.target as Element | null
+      while (el && el !== aside) {
+        if (el instanceof HTMLElement) {
+          const { overflowY, overflowX } = getComputedStyle(el)
+          const canScrollY =
+            (overflowY === 'auto' || overflowY === 'scroll') &&
+            el.scrollHeight > el.clientHeight
+          const canScrollX =
+            (overflowX === 'auto' || overflowX === 'scroll') &&
+            el.scrollWidth > el.clientWidth
+          if (canScrollY) {
+            const atTop = el.scrollTop <= 0
+            const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
+            if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) return
+            break
+          }
+          if (canScrollX && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+            const atLeft = el.scrollLeft <= 0
+            const atRight = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1
+            if ((e.deltaY < 0 && !atLeft) || (e.deltaY > 0 && !atRight)) return
+            break
+          }
+        }
+        el = el.parentElement
+      }
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    const isScrollableInsideAside = (target: EventTarget | null) => {
+      let el = target as Element | null
+      while (el && el !== aside) {
+        if (el instanceof HTMLTextAreaElement) return true
+        if (el instanceof HTMLElement) {
+          const { overflowY, overflowX } = getComputedStyle(el)
+          const canScrollY =
+            (overflowY === 'auto' || overflowY === 'scroll') &&
+            el.scrollHeight > el.clientHeight
+          const canScrollX =
+            (overflowX === 'auto' || overflowX === 'scroll') &&
+            el.scrollWidth > el.clientWidth
+          if (canScrollY || canScrollX) return true
+        }
+        el = el.parentElement
+      }
+      return false
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (aside.contains(e.target as Node) && isScrollableInsideAside(e.target)) return
+      e.preventDefault()
+    }
+
+    aside.addEventListener('wheel', onWheel, { passive: false })
+    if (isMobile) {
+      document.addEventListener('touchmove', onTouchMove, { passive: false })
+    }
+    return () => {
+      aside.removeEventListener('wheel', onWheel)
+      if (isMobile) {
+        document.removeEventListener('touchmove', onTouchMove)
+        document.body.style.overflow = prevBodyOverflow
+        document.documentElement.style.overflow = prevHtmlOverflow
+      }
+    }
   }, [open])
 
   function updateDraft(value: string, cursor: number) {
@@ -370,6 +498,7 @@ export function ChatDock({
         type="button"
         onClick={onOpen}
         aria-label="Open chat panel"
+        data-tour="chat-launcher"
         className={`fixed right-0 top-1/2 z-[300] hidden -translate-y-1/2 lg:flex flex-col items-center gap-3 border-l border-y border-border bg-surface/60 hover:bg-surface px-1.5 py-4 transition ${
           open ? 'opacity-0 pointer-events-none' : ''
         }`}
@@ -404,7 +533,8 @@ export function ChatDock({
           <div className="fixed inset-0 z-[300] bg-background/60 lg:hidden" onClick={onClose} />
 
           <aside
-            className="chat-dock-aside fixed z-[310] flex flex-col bg-background border-border inset-0 lg:border lg:border-r-0"
+            ref={asideRef}
+            className="chat-dock-aside fixed z-[310] flex flex-col bg-background border-border inset-0 overscroll-none lg:border-l"
             role="dialog"
             aria-label="Band chat"
           >
@@ -445,7 +575,7 @@ export function ChatDock({
             <ChannelTab
               active={isBandChannel}
               label="# band"
-              hint={`${members.length} members · ${counts[BAND_CHANNEL] ?? 0}R`}
+              hint={`${members.length} members · ${counts[BAND_CHANNEL] ?? 0}M`}
               unread={isBandChannel ? 0 : unread[BAND_CHANNEL] ?? 0}
               onClick={() => setChannelKey(BAND_CHANNEL)}
             />
@@ -454,7 +584,7 @@ export function ChatDock({
                 key={p.id}
                 active={channelKey === p.id}
                 label={`# ${p.name.toLowerCase()}`}
-                hint={`${p.track_count}T · ${counts[p.id] ?? 0}R`}
+                hint={`${branchCounts[p.id] ?? p.version_count ?? 0}B · ${counts[p.id] ?? 0}M`}
                 unread={channelKey === p.id ? 0 : unread[p.id] ?? 0}
                 onClick={() => setChannelKey(p.id)}
               />
@@ -463,16 +593,23 @@ export function ChatDock({
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 relative">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overscroll-y-contain scrollbar-none px-3 py-3 space-y-3 relative">
           {loadingOlder && (
-            <div className="text-center text-[9px] uppercase tracking-widest text-muted-foreground py-1">Loading…</div>
+            <div className="flex justify-center py-1" role="status" aria-label="Loading older messages">
+              <SpinnerBars />
+            </div>
+          )}
+          {loadingMessages && (
+            <div className="flex justify-center pt-10" role="status" aria-label="Loading messages">
+              <SpinnerBars />
+            </div>
           )}
           {!loadingMessages && messages.length === 0 && (
             <div className="text-muted-foreground text-center pt-10 text-[10px] uppercase tracking-widest">
               No messages in this channel yet
             </div>
           )}
-          {groups.map((g, gi) => (
+          {!loadingMessages && groups.map((g, gi) => (
             <MessageGroupView
               key={`${g.user_id}-${gi}-${g.items[0].id}`}
               group={g}
@@ -494,7 +631,7 @@ export function ChatDock({
 
         {/* Attached chips */}
         {(attach.versionId || attach.trackId) && (
-          <div className="border-t border-border bg-surface/40 px-3 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0">
+          <div className="bg-surface/40 px-3 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0">
             <span className="text-muted-foreground uppercase tracking-widest">Attached:</span>
             {attach.versionId && (
               <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5">
@@ -536,13 +673,14 @@ export function ChatDock({
                 active={!!attach.trackId}
                 onClick={() => setOpenPopover(p => (p === 'track' ? null : 'track'))}
               />
-              <ComposerChip icon={<IconClock />} label="time" disabled onClick={() => {}} />
 
               {openPopover && activeProject && (
                 <ContextPopover
                   projectId={activeProject.id}
                   mode={openPopover}
                   selectedVersionId={attach.versionId}
+                  getCachedVersions={getCachedProjectVersions}
+                  loadVersions={loadProjectVersions}
                   onClose={() => setOpenPopover(null)}
                   onPickVersion={(id, name) => {
                     setAttach(a => ({ ...a, versionId: id, versionName: name }))
@@ -558,7 +696,7 @@ export function ChatDock({
           )}
           <div className="relative flex items-end gap-2 px-2 py-2">
             {activeMention && mentionCandidates.length > 0 && (
-              <div className="absolute bottom-full left-2 right-2 mb-1 z-50 max-h-40 overflow-y-auto border border-border bg-surface-2 shadow-2xl">
+              <div className="absolute bottom-full left-2 right-2 mb-1 z-50 max-h-40 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl">
                 {mentionCandidates.map((m, i) => (
                   <button
                     key={m.user_id}
@@ -691,31 +829,38 @@ function ComposerChip({
   )
 }
 
-// ─── Branch / track popover (fetches fresh data on open) ────────────────────────
+// ─── Branch / track popover (uses session cache while chat is open) ─────────────
 
 function ContextPopover({
-  projectId, mode, selectedVersionId, onClose, onPickVersion, onPickTrack,
+  projectId, mode, selectedVersionId, getCachedVersions, loadVersions, onClose, onPickVersion, onPickTrack,
 }: {
   projectId: string
   mode: 'branch' | 'track'
   selectedVersionId?: string
+  getCachedVersions: (projectId: string) => PopoverVersion[] | undefined
+  loadVersions: (projectId: string) => Promise<PopoverVersion[]>
   onClose: () => void
   onPickVersion: (id: string, name: string) => void
   onPickTrack: (id: string, name: string) => void
 }) {
-  const [versions, setVersions] = useState<PopoverVersion[] | null>(null)
+  const [versions, setVersions] = useState<PopoverVersion[] | null>(
+    () => getCachedVersions(projectId) ?? null,
+  )
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    const cached = getCachedVersions(projectId)
+    if (cached) {
+      setVersions(cached)
+      return
+    }
     let cancelled = false
-    fetch(`/api/projects/${projectId}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (!cancelled && data?.versions) setVersions(data.versions)
-      })
-      .catch(() => { if (!cancelled) setVersions([]) })
+    setVersions(null)
+    loadVersions(projectId).then(data => {
+      if (!cancelled) setVersions(data)
+    })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, getCachedVersions, loadVersions])
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -734,13 +879,15 @@ function ContextPopover({
   return (
     <div
       ref={ref}
-      className="absolute bottom-full left-2 mb-1 z-50 w-56 max-h-64 overflow-y-auto border border-border bg-surface-2 shadow-2xl"
+      className="absolute bottom-full left-2 mb-1 z-50 w-56 max-h-64 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl"
     >
       <div className="px-2 py-1.5 border-b border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
         {mode === 'branch' ? 'Attach branch' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
       </div>
       {versions === null && (
-        <div className="px-2 py-3 text-[10px] text-muted-foreground text-center">Loading…</div>
+        <div className="flex justify-center py-3" role="status" aria-label="Loading branches and tracks">
+          <SpinnerBars />
+        </div>
       )}
       {mode === 'branch' && versions?.map(v => (
         <button
@@ -814,13 +961,13 @@ function MessageBubble({
   onChipClick: (m: BandMessage) => void
 }) {
   const tokens = parseMessageTokens(m.content)
-  const barRange = formatBarRange(
+  const timeRange = formatTimecodeRange(
     m.context_timecode_start_ms,
     m.context_timecode_end_ms,
-    m.context_project_bpm,
-    m.context_project_time_signature,
   )
-  const hasChips = m.context_version_id || m.context_track_id || barRange
+  const hasChips = m.context_version_id || m.context_track_id || timeRange
+  const showTrack = !!m.context_track_name
+  const showTime = !!timeRange
 
   return (
     <div className="group/msg relative text-[12px] leading-relaxed text-foreground">
@@ -855,21 +1002,21 @@ function MessageBubble({
           className="mt-1 inline-flex max-w-full items-stretch border border-border bg-surface text-[10px] font-mono hover:border-ember transition overflow-hidden"
         >
           {m.context_version_name && (
-            <span className="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 border-r border-border">
+            <span className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5${showTrack || showTime ? ' border-r border-border' : ''}`}>
               <span className="text-ember"><IconBranch /></span>
               <span className="max-w-[4.5rem] truncate">{m.context_version_name}</span>
             </span>
           )}
           {m.context_track_name && (
-            <span className="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 border-r border-border max-w-[9rem] overflow-hidden">
+            <span className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 max-w-[9rem] overflow-hidden${showTime ? ' border-r border-border' : ''}`}>
               <span className="shrink-0"><IconNote /></span>
               <span className="truncate">{m.context_track_name}</span>
             </span>
           )}
-          {barRange && (
+          {timeRange && (
             <span className="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 tabular-nums text-muted-foreground whitespace-nowrap">
               <span className="shrink-0"><IconClock /></span>
-              <span>{barRange}</span>
+              <span>{timeRange}</span>
             </span>
           )}
         </button>

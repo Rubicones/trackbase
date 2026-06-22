@@ -19,11 +19,13 @@ export function ResourcesModal({
   onClose,
   projectId,
   projectName,
+  storageFull = false,
 }: {
   open: boolean
   onClose: () => void
   projectId: string
   projectName: string
+  storageFull?: boolean
 }) {
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -107,6 +109,7 @@ export function ResourcesModal({
             projectName={projectName}
             bare
             variant="drawer"
+            storageFull={storageFull}
           />
         </div>
       </div>
@@ -118,10 +121,12 @@ export function ResourcesModal({
 export function ProjectResourcesButton({
   projectId,
   projectName,
+  storageFull = false,
   className = '',
 }: {
   projectId: string
   projectName: string
+  storageFull?: boolean
   className?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -142,6 +147,7 @@ export function ProjectResourcesButton({
         onClose={() => setOpen(false)}
         projectId={projectId}
         projectName={projectName}
+        storageFull={storageFull}
       />
     </>
   )

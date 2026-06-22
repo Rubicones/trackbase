@@ -13,6 +13,7 @@ import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ProjectSidebarResources } from '@/components/ProjectSidebarResources'
+import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { Toast } from '@/components/design/Toast'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { registerPlaybackStop } from '@/lib/playbackSession'
@@ -1278,7 +1279,7 @@ export default function ProjectPage() {
   const [mergeCheckingId, setMergeCheckingId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
-  const [storageLimit, setStorageLimit] = useState(500 * 1024 * 1024)
+  const [storageLimit, setStorageLimit] = useState(BAND_STORAGE_LIMIT_BYTES)
   const [shareCopied, setShareCopied] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
   const { roadmap } = useProjectRoadmap(projectId)
@@ -1324,7 +1325,7 @@ export default function ProjectPage() {
 
       fetch(`/api/projects/${projectId}/storage`)
         .then(r => r.json())
-        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? 500*1024*1024) })
+        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? BAND_STORAGE_LIMIT_BYTES) })
         .catch(() => {})
     } catch {
       setError('unknown')
@@ -1560,7 +1561,7 @@ export default function ProjectPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
+    <div className="project-page flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
 
       {/* Topbar */}
       <header className="flex items-center h-[56px] shrink-0 px-[18px] gap-2.5" style={{ background: 'var(--bg-surface)', borderBottom: '0.5px solid var(--border)' }}>

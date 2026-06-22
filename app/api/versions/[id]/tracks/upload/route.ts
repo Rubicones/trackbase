@@ -6,7 +6,8 @@ import { audioToFlac } from '@/lib/ffmpeg'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
-import { randomTrackIconColor } from '@/lib/trackIcon'
+import { pickTrackIconColor } from '@/lib/trackIcon'
+import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
 
 const ALLOWED_AUDIO_MIMETYPES: Record<string, 'wav' | 'mp3'> = {
   'audio/wav':   'wav',
@@ -75,10 +76,10 @@ export async function POST(
   const mimetype = file.type
 
   if (isMidiFile(filename, mimetype)) {
-    return handleMidiUpload({ file, trackName, position, midiStartBar, versionId, version, userId })
+    return handleMidiUpload({ file, trackName, position, midiStartBar, versionId, version, userId, bandId: access.project.band_id })
   } else if (isAudioFile(filename, mimetype)) {
     const inputFormat = ALLOWED_AUDIO_MIMETYPES[mimetype] ?? (filename.endsWith('.mp3') ? 'mp3' : 'wav')
-    return handleAudioUpload({ file, trackName, position, versionId, version, userId, inputFormat })
+    return handleAudioUpload({ file, trackName, position, versionId, version, userId, inputFormat, bandId: access.project.band_id })
   } else {
     console.error('[upload] unsupported file type:', mimetype, filename)
     return NextResponse.json(
@@ -88,10 +89,18 @@ export async function POST(
   }
 }
 
+async function iconColorForNewTrack(versionId: string, position: number): Promise<string> {
+  const { data: siblings } = await supabase
+    .from('tracks')
+    .select('icon_color')
+    .eq('version_id', versionId)
+  return pickTrackIconColor((siblings ?? []).map(t => t.icon_color), position)
+}
+
 // ─── Audio upload (existing flow) ─────────────────────────────────────────────
 
 async function handleAudioUpload({
-  file, trackName, position, versionId, version, userId, inputFormat,
+  file, trackName, position, versionId, version, userId, inputFormat, bandId,
 }: {
   file: File
   trackName: string
@@ -100,6 +109,7 @@ async function handleAudioUpload({
   version: { id: string; project_id: string }
   userId: string | null
   inputFormat: 'wav' | 'mp3'
+  bandId: string
 }) {
   // Read buffer + hash
   let audioBuffer: Buffer
@@ -140,6 +150,13 @@ async function handleAudioUpload({
       console.error('[upload] ffmpeg conversion failed:', err)
       return NextResponse.json({ error: 'Audio conversion failed', detail: String(err) }, { status: 500 })
     }
+    const quota = await checkBandStorageQuota(supabase, bandId, flacBuffer.byteLength)
+    if (!quota.ok) {
+      return NextResponse.json(
+        { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
+        { status: 413 },
+      )
+    }
     storagePath = r2Key(version.project_id, fileHash)
     try {
       await uploadToR2(storagePath, flacBuffer)
@@ -149,6 +166,8 @@ async function handleAudioUpload({
     }
     fileSizeBytes = flacBuffer.byteLength
   }
+
+  const iconColor = await iconColorForNewTrack(versionId, position)
 
   const { data: track, error: trkErr } = await supabase
     .from('tracks')
@@ -162,7 +181,7 @@ async function handleAudioUpload({
       duration_ms: audioDurationMs || null,
       position,
       file_type: 'audio',
-      icon_color: randomTrackIconColor(),
+      icon_color: iconColor,
     })
     .select()
     .single()
@@ -189,7 +208,7 @@ async function handleAudioUpload({
 // ─── MIDI upload ──────────────────────────────────────────────────────────────
 
 async function handleMidiUpload({
-  file, trackName, position, midiStartBar, versionId, version, userId,
+  file, trackName, position, midiStartBar, versionId, version, userId, bandId,
 }: {
   file: File
   trackName: string
@@ -198,6 +217,7 @@ async function handleMidiUpload({
   versionId: string
   version: { id: string; project_id: string }
   userId: string | null
+  bandId: string
 }) {
   console.log('[upload] MIDI file detected')
 
@@ -240,6 +260,13 @@ async function handleMidiUpload({
     storagePath = existing.storage_path
     console.log('[upload] MIDI dedup hit — reusing', storagePath)
   } else {
+    const quota = await checkBandStorageQuota(supabase, bandId, midiBuffer.byteLength)
+    if (!quota.ok) {
+      return NextResponse.json(
+        { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
+        { status: 413 },
+      )
+    }
     // Store raw .mid file in R2
     storagePath = `projects/${version.project_id}/${fileHash}.mid`
     try {
@@ -251,6 +278,8 @@ async function handleMidiUpload({
       return NextResponse.json({ error: 'Storage upload failed', detail: String(err) }, { status: 500 })
     }
   }
+
+  const iconColor = await iconColorForNewTrack(versionId, position)
 
   const { data: track, error: trkErr } = await supabase
     .from('tracks')
@@ -267,7 +296,7 @@ async function handleMidiUpload({
       midi_data: midiData,
       midi_start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
       start_bar: isNaN(midiStartBar) ? 0 : Math.max(0, midiStartBar),
-      icon_color: randomTrackIconColor(),
+      icon_color: iconColor,
     })
     .select()
     .single()

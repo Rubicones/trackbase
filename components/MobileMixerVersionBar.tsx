@@ -3,24 +3,33 @@
 import type { Version } from '@/lib/types'
 
 export function CommentToggleBtn({
-  active, count, onClick, className = 'size-8',
+  active, count, onClick, className = 'size-8', variant = 'icon', showCount = true, tourId,
 }: {
   active: boolean
   count: number
   onClick: () => void
   className?: string
+  /** icon = boxed toolbar button; bar = inline segment matching + Branch */
+  variant?: 'icon' | 'bar'
+  showCount?: boolean
+  tourId?: string
 }) {
+  const isBar = variant === 'bar'
   return (
     <button
       type="button"
       onClick={onClick}
-      data-tour="comments-toggle"
-      aria-label={active ? 'Exit comment mode' : `Comments${count > 0 ? ` (${count})` : ''}`}
+      data-tour={tourId ?? 'comments-toggle'}
+      aria-label={active ? 'Exit comment mode' : 'Comments'}
       aria-pressed={active}
-      className={`${className} border grid place-items-center transition shrink-0 relative ${
-        active
-          ? 'border-ember bg-ember text-white'
-          : 'border-border bg-surface-2 text-muted-foreground hover:border-ember hover:text-ember'
+      className={`${className} grid place-items-center transition shrink-0 relative ${
+        isBar
+          ? active
+            ? 'border-l border-ember bg-ember text-white'
+            : 'border-l border-border text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60'
+          : active
+            ? 'border border-ember bg-ember text-white'
+            : 'border border-border bg-surface-2 text-muted-foreground hover:border-ember hover:text-ember'
       }`}
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -31,7 +40,7 @@ export function CommentToggleBtn({
           strokeLinejoin="round"
         />
       </svg>
-      {!active && count > 0 && (
+      {!isBar && !active && showCount && count > 0 && (
         <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-ember text-white text-[8px] font-bold leading-[14px] text-center">
           {count > 9 ? '9+' : count}
         </span>
@@ -89,7 +98,10 @@ export function MobileMixerVersionBar({
         active={commentMode}
         count={commentCount}
         onClick={onToggleCommentMode}
-        className="shrink-0 self-stretch border-l border-border w-10"
+        variant="bar"
+        showCount={false}
+        tourId="mobile-mixer-comments"
+        className="shrink-0 self-stretch w-10"
       />
     </div>
   )
