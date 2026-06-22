@@ -1780,6 +1780,7 @@ html.dark[data-palette="green"] .theme-avatar {
     top: var(--shell-header-h);
     bottom: var(--shell-footer-h);
     z-index: 29;
+    background: var(--background);
   }
 
   .chat-dock-aside {
@@ -1790,6 +1791,8 @@ html.dark[data-palette="green"] .theme-avatar {
     bottom: var(--shell-footer-h);
     width: 100%;
     z-index: 30;
+    overflow: hidden;
+    background: var(--background);
   }
 }
 

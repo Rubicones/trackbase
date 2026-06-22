@@ -246,6 +246,7 @@ export function ChatDock({
   const prevFirstIdRef = useRef<string | null>(null)
   const prevChannelRef = useRef<ChannelKey | null>(null)
   const prevScrollHeightRef = useRef(0)
+  const savedPageScrollRef = useRef(0)
   const [showNewIndicator, setShowNewIndicator] = useState(false)
   const [keyboardInset, setKeyboardInset] = useState(0)
 
@@ -317,47 +318,35 @@ export function ChatDock({
     return () => el.removeEventListener('wheel', onWheel)
   }, [open])
 
+  // Snap page to top on mobile so fixed chat aligns with shell header/footer.
+  useLayoutEffect(() => {
+    if (!open) return
+
+    const isMobile = window.matchMedia('(max-width: 1023px)').matches
+    if (!isMobile) return
+
+    savedPageScrollRef.current = window.scrollY
+    window.scrollTo(0, 0)
+
+    const prevBodyOverflow = document.body.style.overflow
+    const prevHtmlOverflow = document.documentElement.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow
+      document.documentElement.style.overflow = prevHtmlOverflow
+      window.scrollTo(0, savedPageScrollRef.current)
+    }
+  }, [open])
+
   // Trap scroll inside the dock — never scroll the page behind it.
   useEffect(() => {
     if (!open) return
 
     const isMobile = window.matchMedia('(max-width: 1023px)').matches
-    const prevBodyOverflow = document.body.style.overflow
-    const prevHtmlOverflow = document.documentElement.style.overflow
-    const prevBodyPosition = document.body.style.position
-    const prevBodyTop = document.body.style.top
-    const prevBodyLeft = document.body.style.left
-    const prevBodyRight = document.body.style.right
-    const prevBodyWidth = document.body.style.width
-    let scrollY = 0
-
-    if (isMobile) {
-      scrollY = window.scrollY
-      document.body.style.overflow = 'hidden'
-      document.documentElement.style.overflow = 'hidden'
-      document.body.style.position = 'fixed'
-      document.body.style.top = `-${scrollY}px`
-      document.body.style.left = '0'
-      document.body.style.right = '0'
-      document.body.style.width = '100%'
-    }
-
     const aside = asideRef.current
-    if (!aside) {
-      return () => {
-        if (isMobile) {
-          document.body.style.overflow = prevBodyOverflow
-          document.documentElement.style.overflow = prevHtmlOverflow
-          document.body.style.position = prevBodyPosition
-          document.body.style.top = prevBodyTop
-          document.body.style.left = prevBodyLeft
-          document.body.style.right = prevBodyRight
-          document.body.style.width = prevBodyWidth
-          window.scrollTo(0, scrollY)
-        }
-      }
-    }
-
+    if (!aside) return
     const onWheel = (e: WheelEvent) => {
       let el = e.target as Element | null
       while (el && el !== aside) {
@@ -420,14 +409,6 @@ export function ChatDock({
       aside.removeEventListener('wheel', onWheel)
       if (isMobile) {
         document.removeEventListener('touchmove', onTouchMove)
-        document.body.style.overflow = prevBodyOverflow
-        document.documentElement.style.overflow = prevHtmlOverflow
-        document.body.style.position = prevBodyPosition
-        document.body.style.top = prevBodyTop
-        document.body.style.left = prevBodyLeft
-        document.body.style.right = prevBodyRight
-        document.body.style.width = prevBodyWidth
-        window.scrollTo(0, scrollY)
       }
     }
   }, [open])
