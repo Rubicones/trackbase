@@ -1772,6 +1772,12 @@ html.dark[data-palette="green"] .theme-avatar {
   height: 0;
 }
 
+@media (width < 1024px) {
+  .chat-dock-aside {
+    max-height: 100dvh;
+  }
+}
+
 /* Chat dock — desktop column sits flush between shell header + footer */
 @media (width >= 1024px) {
   @keyframes chat-dock-slide-in {
