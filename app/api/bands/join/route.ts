@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { normalizeInviteCode } from '@/lib/inviteCode'
+import { sendPushNotification } from '@/lib/push/server'
 
 function getUserId(req: NextRequest) {
   const token = req.cookies.get('sb-at')?.value
@@ -83,10 +84,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  void notifyOwnersOfJoinRequest(band.id, band.name, userId)
+
   return NextResponse.json({
     band_id: band.id,
     band_name: band.name,
     request_id: request.id,
     status: request.status,
   }, { status: 201 })
+}
+
+async function notifyOwnersOfJoinRequest(bandId: string, bandName: string, requesterId: string) {
+  try {
+    const [{ data: requesterProfile }, { data: owners }] = await Promise.all([
+      supabase.from('profiles').select('username').eq('id', requesterId).maybeSingle(),
+      supabase.from('band_members').select('user_id').eq('band_id', bandId).eq('role', 'owner'),
+    ])
+
+    const requesterUsername = requesterProfile?.username ?? 'someone'
+    const ownerIds = (owners ?? []).map(o => o.user_id).filter(id => id !== requesterId)
+    if (!ownerIds.length) return
+
+    await Promise.allSettled(
+      ownerIds.map(ownerId =>
+        sendPushNotification(ownerId, {
+          title: 'New join request',
+          body: `@${requesterUsername} wants to join ${bandName}`,
+          url: `/band/${bandId}?tab=members`,
+        }),
+      ),
+    )
+  } catch (err) {
+    console.error('[bands/join] push notification error:', err)
+  }
 }

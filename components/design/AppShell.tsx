@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { PushBellButton } from '@/components/push/PushBellButton'
 
 export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?: ReactNode; left?: ReactNode }) {
   return (
@@ -29,6 +30,7 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
       </div>
       <div className="flex items-center gap-3">
         {right}
+        <PushBellButton />
         <AvatarDropdown />
       </div>
     </nav>

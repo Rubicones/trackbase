@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { extractMentions, type BandMessage } from '@/lib/chat'
+import { sendPushNotification } from '@/lib/push/server'
 
 const PAGE_SIZE = 50
 
@@ -274,15 +275,77 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    // Mentions are stored as plain text in content; parsing here is a no-op
-    // placeholder for future notification wiring.
-    void extractMentions(content)
-
     const [message] = await enrichMessages([row as RawMessage])
+    void notifyMentionedUsers({
+      bandId,
+      authorId: userId,
+      authorUsername: message.author_username,
+      content,
+      channelId,
+    })
+
     return NextResponse.json({ message }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[bands/messages] POST error:', err)
     return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+function truncatePreview(text: string, max = 100): string {
+  if (text.length <= max) return text
+  return `${text.slice(0, max)}…`
+}
+
+async function notifyMentionedUsers({
+  bandId,
+  authorId,
+  authorUsername,
+  content,
+  channelId,
+}: {
+  bandId: string
+  authorId: string
+  authorUsername: string
+  content: string
+  channelId: string | null
+}) {
+  try {
+    const handles = extractMentions(content)
+    if (!handles.length) return
+
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('username', handles)
+
+    if (!profiles?.length) return
+
+    const mentionedIds = profiles.map(p => p.id).filter(id => id !== authorId)
+    if (!mentionedIds.length) return
+
+    const { data: members } = await supabase
+      .from('band_members')
+      .select('user_id')
+      .eq('band_id', bandId)
+      .in('user_id', mentionedIds)
+
+    const memberIds = new Set((members ?? []).map(m => m.user_id))
+    const channelParam = channelId ?? 'band'
+    const preview = truncatePreview(content)
+
+    await Promise.allSettled(
+      profiles
+        .filter(p => p.id !== authorId && memberIds.has(p.id))
+        .map(p =>
+          sendPushNotification(p.id, {
+            title: `@${authorUsername} mentioned you`,
+            body: preview,
+            url: `/band/${bandId}?chat=1&channel=${channelParam}`,
+          }),
+        ),
+    )
+  } catch (err) {
+    console.error('[bands/messages] mention push error:', err)
   }
 }

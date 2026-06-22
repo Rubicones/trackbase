@@ -20,6 +20,7 @@ import type { ProjectRoadmap } from '@/lib/roadmap'
 import { registerPlaybackStop } from '@/lib/playbackSession'
 import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
+import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -550,6 +551,7 @@ export default function BandPage() {
   const { palette } = usePalette()
   const { open: chatOpen, openChat, closeChat } = useChatPanel()
   const [chatUnread, setChatUnread] = useState(0)
+  const [chatInitialChannel, setChatInitialChannel] = useState<ChannelKey | undefined>(undefined)
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [band, setBand] = useState<Band | null>(null)
@@ -652,6 +654,16 @@ export default function BandPage() {
     if (p.get('tab') === 'activity') {
       setActiveTab('activity')
       loadActivity()
+    }
+    if (p.get('tab') === 'members') {
+      requestAnimationFrame(() => {
+        document.getElementById('band-members')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
+    if (p.get('chat') === '1') {
+      const channel = p.get('channel') ?? BAND_CHANNEL
+      setChatInitialChannel(channel)
+      openChat()
     }
   }, []) // eslint-disable-line
 
@@ -1352,7 +1364,7 @@ export default function BandPage() {
         {/* Sidebar */}
         <aside className="space-y-6 lg:space-y-8 min-w-0">
           {/* Members */}
-          <div>
+          <div id="band-members">
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <SectionLabel>MEMBERS</SectionLabel>
@@ -1695,6 +1707,7 @@ export default function BandPage() {
         open={chatOpen}
         onOpen={openChat}
         onClose={closeChat}
+        initialChannelKey={chatInitialChannel}
         currentUserId={user?.id}
         onUnreadChange={setChatUnread}
       />

@@ -17,8 +17,11 @@ const ffmpegRoutes = [
 ] as const
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+  },
   // Keep native/binary packages out of the webpack bundle so __dirname paths stay valid.
-  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg'],
+  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'web-push'],
   outputFileTracingIncludes: Object.fromEntries(
     ffmpegRoutes.map(route => [route, ffmpegTracing]),
   ),
