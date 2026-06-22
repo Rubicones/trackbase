@@ -107,8 +107,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
+    // Local scope only — global signOut revokes every refresh token (all devices).
+    await supabase.auth.signOut({ scope: 'local' })
     clearAuthCookies()
-    await supabase.auth.signOut()
     setState({ user: null, profile: null, session: null, loading: false })
   }, [supabase])
 
