@@ -595,7 +595,7 @@ export function ChatDock({
             aria-label="Band chat"
           >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border bg-surface/40 px-3 h-11 shrink-0">
+        <div className="flex items-center justify-between border-b border-border bg-surface/40 px-6 h-11 shrink-0">
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-foreground min-w-0">
             <span className="text-ember"><IconChat /></span>
             <span>Chat</span>
@@ -649,7 +649,7 @@ export function ChatDock({
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-none px-3 py-3 space-y-3 relative">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-none px-6 py-3 space-y-3 relative">
           {loadingOlder && (
             <div className="flex justify-center py-1" role="status" aria-label="Loading older messages">
               <SpinnerBars />
@@ -687,7 +687,7 @@ export function ChatDock({
 
         {/* Attached chips */}
         {(attach.versionId || attach.trackId) && (
-          <div className="bg-surface/40 px-3 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0">
+          <div className="bg-surface/40 px-6 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0">
             <span className="text-muted-foreground uppercase tracking-widest">Attached:</span>
             {attach.versionId && (
               <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5">
@@ -719,7 +719,7 @@ export function ChatDock({
           }}
         >
           {!isBandChannel && (
-            <div className="relative flex items-center gap-1 px-2 pt-2">
+            <div className="relative flex items-center gap-1 px-6 pt-2">
               <ComposerChip
                 icon={<IconBranch />}
                 label="branch"
@@ -753,9 +753,9 @@ export function ChatDock({
               )}
             </div>
           )}
-          <div className="relative flex items-end gap-2 px-2 py-2">
+          <div className="relative flex items-end gap-2 px-6 py-2">
             {activeMention && mentionCandidates.length > 0 && (
-              <div className="absolute bottom-full left-2 right-2 mb-1 z-50 max-h-40 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl">
+              <div className="absolute bottom-full left-6 right-6 mb-1 z-50 max-h-40 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl">
                 {mentionCandidates.map((m, i) => (
                   <button
                     key={m.user_id}
