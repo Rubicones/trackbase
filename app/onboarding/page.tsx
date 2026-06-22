@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
+import { syncSupabaseSessionFromCookies } from '@/lib/auth/browser-token'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
-import { useAuth } from '@/contexts/AuthContext'
 import {
   AuthShell,
   AuthCard,
@@ -30,35 +31,32 @@ type BandMode = 'create' | 'join'
 type CodeStatus = 'idle' | 'checking' | 'valid' | 'invalid'
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
 
-async function persistUsername(userId: string, username: string) {
-  const supabase = getSupabaseClient()
-  const clean = username.trim().toLowerCase()
-
-  const { error: profileErr } = await supabase
-    .from('profiles')
-    .update({ username: clean })
-    .eq('id', userId)
-  if (profileErr) throw profileErr
-
-  const { error: metaErr } = await supabase.auth.updateUser({ data: { username: clean } })
-  if (metaErr) throw metaErr
-
-  const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
-  if (refreshErr) throw refreshErr
-  if (newSession) {
-    setAuthCookies(newSession)
+async function persistUsername(username: string) {
+  const res = await fetch('/api/profile/username', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error ?? 'Could not save username')
   }
+  await syncSupabaseSessionFromCookies()
+  const supabase = getSupabaseClient()
+  const { data: { session } } = await supabase.auth.refreshSession()
+  if (session) setAuthCookies(session)
 }
 
 async function markOnboardingComplete() {
-  const supabase = getSupabaseClient()
-  const { error } = await supabase.auth.updateUser({ data: { onboarding_complete: true } })
-  if (error) throw error
-  const { data: { session: newSession }, error: refreshErr } = await supabase.auth.refreshSession()
-  if (refreshErr) throw refreshErr
-  if (newSession) {
-    setAuthCookies(newSession)
+  const res = await fetch('/api/profile/complete-onboarding', { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error ?? 'Could not complete onboarding')
   }
+  await syncSupabaseSessionFromCookies()
+  const supabase = getSupabaseClient()
+  const { data: { session } } = await supabase.auth.refreshSession()
+  if (session) setAuthCookies(session)
 }
 
 function OnboardingContent() {
@@ -88,7 +86,13 @@ function OnboardingContent() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (authLoading || !user) return
+    if (authLoading) return
+    if (!user) {
+      router.replace('/auth')
+      return
+    }
+
+    void syncSupabaseSessionFromCookies()
 
     if (user.user_metadata?.onboarding_complete) {
       router.replace('/dashboard')
@@ -184,11 +188,15 @@ function OnboardingContent() {
     setSavingUsername(true)
     setError('')
     try {
-      await persistUsername(user.id, username)
+      await persistUsername(username)
       await refreshProfile()
       setStep(3)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save username')
+      const message = err instanceof Error ? err.message : 'Could not save username'
+      setError(message)
+      if (message.toLowerCase().includes('sign in')) {
+        setTimeout(() => router.replace('/auth'), 2000)
+      }
     } finally {
       setSavingUsername(false)
     }
@@ -205,7 +213,7 @@ function OnboardingContent() {
     setError('')
     try {
       if (!user.user_metadata?.username) {
-        await persistUsername(user.id, username)
+        await persistUsername(username)
       }
 
       if (bandMode === 'create') {
@@ -239,6 +247,7 @@ function OnboardingContent() {
   }
 
   if (authLoading) return <AuthLoadingScreen />
+  if (!user) return <AuthLoadingScreen label="Redirecting to sign in" />
 
   const canProceed =
     bandMode === 'create' ? bandName.trim().length > 0 : codeStatus === 'valid'

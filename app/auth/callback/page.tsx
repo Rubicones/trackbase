@@ -27,7 +27,7 @@ function readNext(): string {
     /* noop */
   }
   return '/dashboard'
-}
+} 
 
 function parseAuthHashError(): string | null {
   const hash = window.location.hash.replace(/^#/, '')
