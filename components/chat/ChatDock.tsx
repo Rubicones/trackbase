@@ -247,12 +247,12 @@ export function ChatDock({
   const prevChannelRef = useRef<ChannelKey | null>(null)
   const prevScrollHeightRef = useRef(0)
   const [showNewIndicator, setShowNewIndicator] = useState(false)
-  const [mobileViewport, setMobileViewport] = useState<{ top: number; height: number } | null>(null)
+  const [keyboardInset, setKeyboardInset] = useState(0)
 
-  // Shrink the dock to the visible viewport when the mobile keyboard opens.
+  // Keep the dock fullscreen; lift the composer when the mobile keyboard opens.
   useEffect(() => {
     if (!open) {
-      setMobileViewport(null)
+      setKeyboardInset(0)
       return
     }
 
@@ -261,7 +261,7 @@ export function ChatDock({
 
     const vv = window.visualViewport
     const sync = () => {
-      setMobileViewport({ top: vv.offsetTop, height: vv.height })
+      setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
     }
 
     sync()
@@ -270,7 +270,7 @@ export function ChatDock({
     return () => {
       vv.removeEventListener('resize', sync)
       vv.removeEventListener('scroll', sync)
-      setMobileViewport(null)
+      setKeyboardInset(0)
     }
   }, [open])
 
@@ -324,9 +324,22 @@ export function ChatDock({
     const isMobile = window.matchMedia('(max-width: 1023px)').matches
     const prevBodyOverflow = document.body.style.overflow
     const prevHtmlOverflow = document.documentElement.style.overflow
+    const prevBodyPosition = document.body.style.position
+    const prevBodyTop = document.body.style.top
+    const prevBodyLeft = document.body.style.left
+    const prevBodyRight = document.body.style.right
+    const prevBodyWidth = document.body.style.width
+    let scrollY = 0
+
     if (isMobile) {
+      scrollY = window.scrollY
       document.body.style.overflow = 'hidden'
       document.documentElement.style.overflow = 'hidden'
+      document.body.style.position = 'fixed'
+      document.body.style.top = `-${scrollY}px`
+      document.body.style.left = '0'
+      document.body.style.right = '0'
+      document.body.style.width = '100%'
     }
 
     const aside = asideRef.current
@@ -335,6 +348,12 @@ export function ChatDock({
         if (isMobile) {
           document.body.style.overflow = prevBodyOverflow
           document.documentElement.style.overflow = prevHtmlOverflow
+          document.body.style.position = prevBodyPosition
+          document.body.style.top = prevBodyTop
+          document.body.style.left = prevBodyLeft
+          document.body.style.right = prevBodyRight
+          document.body.style.width = prevBodyWidth
+          window.scrollTo(0, scrollY)
         }
       }
     }
@@ -403,6 +422,12 @@ export function ChatDock({
         document.removeEventListener('touchmove', onTouchMove)
         document.body.style.overflow = prevBodyOverflow
         document.documentElement.style.overflow = prevHtmlOverflow
+        document.body.style.position = prevBodyPosition
+        document.body.style.top = prevBodyTop
+        document.body.style.left = prevBodyLeft
+        document.body.style.right = prevBodyRight
+        document.body.style.width = prevBodyWidth
+        window.scrollTo(0, scrollY)
       }
     }
   }, [open])
@@ -555,42 +580,22 @@ export function ChatDock({
 
       {open && (
         <>
-          {/* Mobile scrim — desktop leaves the app usable behind the dock */}
+          {/* Mobile scrim — covers page content between shell header + footer */}
           <div
-            className="fixed inset-0 z-[300] bg-background/60 lg:hidden"
-            style={
-              mobileViewport
-                ? {
-                    top: mobileViewport.top,
-                    height: mobileViewport.height,
-                    left: 0,
-                    right: 0,
-                    bottom: 'auto',
-                  }
-                : undefined
-            }
+            className="chat-dock-scrim bg-background lg:hidden"
+            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
             onClick={onClose}
           />
 
           <aside
             ref={asideRef}
-            className="chat-dock-aside fixed z-[310] flex flex-col bg-background border-border inset-0 overscroll-none lg:border-l"
-            style={
-              mobileViewport
-                ? {
-                    top: mobileViewport.top,
-                    height: mobileViewport.height,
-                    left: 0,
-                    right: 0,
-                    bottom: 'auto',
-                  }
-                : undefined
-            }
+            className="chat-dock-aside flex flex-col bg-background border-border overscroll-none lg:fixed lg:border-l"
+            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
             role="dialog"
             aria-label="Band chat"
           >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border bg-surface/40 px-4 h-12 shrink-0 lg:px-3 lg:h-11">
+        <div className="flex items-center justify-between border-b border-border bg-surface/40 px-3 h-11 shrink-0">
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-foreground min-w-0">
             <span className="text-ember"><IconChat /></span>
             <span>Chat</span>
@@ -644,7 +649,7 @@ export function ChatDock({
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-none px-4 pt-5 pb-6 space-y-4 relative lg:px-3 lg:py-3 lg:space-y-3">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-none px-3 py-3 space-y-3 relative">
           {loadingOlder && (
             <div className="flex justify-center py-1" role="status" aria-label="Loading older messages">
               <SpinnerBars />
@@ -674,7 +679,7 @@ export function ChatDock({
         {showNewIndicator && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 border border-ember bg-ember text-white px-3 py-1 text-[9px] font-bold uppercase tracking-widest shadow-lg lg:bottom-28"
+            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 border border-ember bg-ember text-white px-3 py-1 text-[9px] font-bold uppercase tracking-widest shadow-lg"
           >
             <IconArrowDown /> New messages
           </button>
@@ -682,7 +687,7 @@ export function ChatDock({
 
         {/* Attached chips */}
         {(attach.versionId || attach.trackId) && (
-          <div className="bg-surface/40 px-4 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0 lg:px-3">
+          <div className="bg-surface/40 px-3 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono shrink-0">
             <span className="text-muted-foreground uppercase tracking-widest">Attached:</span>
             {attach.versionId && (
               <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5">
@@ -708,10 +713,13 @@ export function ChatDock({
         {/* Composer */}
         <form
           onSubmit={e => { e.preventDefault(); submit() }}
-          className="border-t border-border bg-surface/40 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:pb-0"
+          className="border-t border-border bg-surface/40 shrink-0"
+          style={{
+            paddingBottom: keyboardInset === 0 ? 'max(0.5rem, env(safe-area-inset-bottom))' : undefined,
+          }}
         >
           {!isBandChannel && (
-            <div className="relative flex items-center gap-1 px-4 pt-3 lg:px-2 lg:pt-2">
+            <div className="relative flex items-center gap-1 px-2 pt-2">
               <ComposerChip
                 icon={<IconBranch />}
                 label="branch"
@@ -745,9 +753,9 @@ export function ChatDock({
               )}
             </div>
           )}
-          <div className="relative flex items-end gap-2 px-4 py-3 lg:px-2 lg:py-2">
+          <div className="relative flex items-end gap-2 px-2 py-2">
             {activeMention && mentionCandidates.length > 0 && (
-              <div className="absolute bottom-full left-4 right-4 mb-1 z-50 max-h-40 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl lg:left-2 lg:right-2">
+              <div className="absolute bottom-full left-2 right-2 mb-1 z-50 max-h-40 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl">
                 {mentionCandidates.map((m, i) => (
                   <button
                     key={m.user_id}

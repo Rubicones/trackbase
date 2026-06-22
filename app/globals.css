@@ -1773,8 +1773,23 @@ html.dark[data-palette="green"] .theme-avatar {
 }
 
 @media (width < 1024px) {
+  .chat-dock-scrim {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--shell-header-h);
+    bottom: var(--shell-footer-h);
+    z-index: 29;
+  }
+
   .chat-dock-aside {
-    max-height: 100dvh;
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--shell-header-h);
+    bottom: var(--shell-footer-h);
+    width: 100%;
+    z-index: 30;
   }
 }
 
@@ -1792,6 +1807,7 @@ html.dark[data-palette="green"] .theme-avatar {
     right: 0;
     left: auto;
     width: 380px;
+    z-index: 310;
     overscroll-behavior: none;
     animation: chat-dock-slide-in 0.18s ease-out both;
   }
