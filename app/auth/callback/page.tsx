@@ -1,35 +1,81 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
-import { AuthShell } from '@/components/auth/AuthShell'
+import {
+  AuthShell,
+  AuthCard,
+  AuthCardHeader,
+  AuthCardBody,
+} from '@/components/auth/AuthShell'
+import { AuthButton, AuthHint } from '@/components/auth/AuthPrimitives'
 import { Spinner } from '@/components/ui/Spinner'
 
 const NEXT_STORAGE_KEY = 'tb-auth-next'
+const CALLBACK_TIMEOUT_MS = 12_000
+
+function readNext(): string {
+  try {
+    const stored = sessionStorage.getItem(NEXT_STORAGE_KEY)
+    if (stored) {
+      sessionStorage.removeItem(NEXT_STORAGE_KEY)
+      return stored
+    }
+  } catch {
+    /* noop */
+  }
+  return '/dashboard'
+}
+
+function parseAuthHashError(): string | null {
+  const hash = window.location.hash.replace(/^#/, '')
+  if (!hash) return null
+
+  const params = new URLSearchParams(hash)
+  const error = params.get('error')
+  if (!error) return null
+
+  const description = params.get('error_description')?.replace(/\+/g, ' ')
+  if (description) return description
+
+  const code = params.get('error_code')
+  if (code === 'otp_expired') return 'Email link is invalid or has expired.'
+  if (error === 'access_denied') return 'Sign-in was denied. Please request a new link.'
+
+  return 'Sign-in link could not be verified. Please request a new one.'
+}
+
+function clearAuthHash() {
+  if (window.location.hash) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  }
+}
 
 export default function AuthCallbackPage() {
   const router = useRouter()
   const handled = useRef(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (handled.current) return
     handled.current = true
 
-    const supabase = getSupabaseClient()
+    const hashError = parseAuthHashError()
+    if (hashError) {
+      clearAuthHash()
+      setErrorMessage(hashError)
+      return
+    }
 
-    function readNext(): string {
-      try {
-        const stored = sessionStorage.getItem(NEXT_STORAGE_KEY)
-        if (stored) {
-          sessionStorage.removeItem(NEXT_STORAGE_KEY)
-          return stored
-        }
-      } catch {
-        /* noop */
-      }
-      return '/dashboard'
+    const supabase = getSupabaseClient()
+    let settled = false
+
+    function fail(message: string) {
+      if (settled) return
+      settled = true
+      setErrorMessage(message)
     }
 
     async function resolveDestination(session: {
@@ -38,6 +84,7 @@ export default function AuthCallbackPage() {
       refresh_token: string
       expires_in?: number
     }) {
+      settled = true
       setAuthCookies(session)
 
       const meta = session.user.user_metadata
@@ -71,22 +118,51 @@ export default function AuthCallbackPage() {
       router.replace('/onboarding?step=3')
     }
 
+    const timeoutId = window.setTimeout(() => {
+      fail('Sign-in timed out. The link may have expired — please request a new one.')
+    }, CALLBACK_TIMEOUT_MS)
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event !== 'SIGNED_IN' || !session) return
+        window.clearTimeout(timeoutId)
         subscription.unsubscribe()
-        resolveDestination(session)
-      }
+        void resolveDestination(session)
+      },
     )
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) return
+      window.clearTimeout(timeoutId)
       subscription.unsubscribe()
-      resolveDestination(session)
+      void resolveDestination(session)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      window.clearTimeout(timeoutId)
+      subscription.unsubscribe()
+    }
   }, [router])
+
+  if (errorMessage) {
+    return (
+      <AuthShell>
+        <AuthCard>
+          <AuthCardHeader
+            tag="01 // Sign in"
+            title="Link expired"
+            subtitle="This sign-in link is no longer valid."
+          />
+          <AuthCardBody className="space-y-4">
+            <AuthHint error>{errorMessage}</AuthHint>
+            <AuthButton onClick={() => router.replace('/auth')}>
+              Back to email sign-in →
+            </AuthButton>
+          </AuthCardBody>
+        </AuthCard>
+      </AuthShell>
+    )
+  }
 
   return (
     <AuthShell>

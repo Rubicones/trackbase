@@ -1,5 +1,5 @@
 self.addEventListener('push', event => {
-  let payload = { title: 'Trackbase', body: '', url: '/', icon: '/icon-192.png' }
+  let payload = { title: 'Trackbase', body: '', url: '/', icon: '/icon.svg' }
   try {
     if (event.data) payload = { ...payload, ...event.data.json() }
   } catch {
@@ -11,8 +11,8 @@ self.addEventListener('push', event => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: icon || '/icon-192.png',
-      badge: '/badge-72.png',
+      icon: icon || '/icon.svg',
+      badge: '/icon.svg',
       data: { url },
       tag: url,
       renotify: false,

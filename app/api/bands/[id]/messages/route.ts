@@ -314,13 +314,14 @@ async function notifyMentionedUsers({
     const handles = extractMentions(content)
     if (!handles.length) return
 
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, username')
-      .in('username', handles)
+    const [{ data: band }, { data: profiles }] = await Promise.all([
+      supabase.from('bands').select('name').eq('id', bandId).maybeSingle(),
+      supabase.from('profiles').select('id, username').in('username', handles),
+    ])
 
     if (!profiles?.length) return
 
+    const bandName = band?.name ?? 'Band'
     const mentionedIds = profiles.map(p => p.id).filter(id => id !== authorId)
     if (!mentionedIds.length) return
 
@@ -339,8 +340,8 @@ async function notifyMentionedUsers({
         .filter(p => p.id !== authorId && memberIds.has(p.id))
         .map(p =>
           sendPushNotification(p.id, {
-            title: `@${authorUsername} mentioned you`,
-            body: preview,
+            title: bandName,
+            body: `@${authorUsername}: ${preview}`,
             url: `/band/${bandId}?chat=1&channel=${channelParam}`,
           }),
         ),

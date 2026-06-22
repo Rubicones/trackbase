@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import { supabase } from '@/lib/supabase'
+import { PUSH_ICON_URL } from '@/lib/push/constants'
 
 let vapidInitialized = false
 
@@ -45,7 +46,7 @@ export async function sendPushNotification(userId: string, payload: PushPayload)
             endpoint: sub.endpoint,
             keys: { p256dh: sub.p256dh, auth: sub.auth },
           },
-          JSON.stringify(payload),
+          JSON.stringify({ icon: PUSH_ICON_URL, ...payload }),
         )
         .catch(err => {
           if (err.statusCode === 410) {
