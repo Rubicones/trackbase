@@ -18,7 +18,7 @@ import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
 import { registerPlaybackStop } from '@/lib/playbackSession'
-import { ChatDock } from '@/components/chat/ChatDock'
+import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -548,6 +548,7 @@ export default function BandPage() {
   const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
   const { palette } = usePalette()
   const { open: chatOpen, openChat, closeChat } = useChatPanel()
+  const [chatUnread, setChatUnread] = useState(0)
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [band, setBand] = useState<Band | null>(null)
@@ -1173,6 +1174,13 @@ export default function BandPage() {
         </div>
       </section>
 
+      {/* Mobile chat bar — full width above tabs (matches rehearsal/mixer) */}
+      <section className="lg:hidden border-b border-border bg-surface/40">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-2">
+          <ChatLauncherButton variant="bar" unread={chatUnread} onClick={openChat} />
+        </div>
+      </section>
+
       {/* Tabs */}
       <section className="border-b border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 flex items-center justify-between gap-4">
@@ -1566,25 +1574,12 @@ export default function BandPage() {
             </div>
           )}
 
-          {/* Band stats */}
-          <div>
-            <SectionLabel>BAND STATS</SectionLabel>
-            <div className="mt-3 grid grid-cols-2 gap-px bg-border border border-border">
-              {[
-                { label: 'BRANCHES', value: stats.branches },
-                { label: 'MERGES', value: stats.merges },
-                { label: 'COMMENTS', value: stats.comments },
-                { label: 'TRACKS', value: stats.tracks },
-              ].map(stat => (
-                <div key={stat.label} className="bg-background px-3 py-3">
-                  <div className="text-[8px] uppercase tracking-widest text-muted-foreground">{stat.label}</div>
-                  <div className="font-display text-2xl text-foreground tabular-nums mt-1">{stat.value}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4">
+          {/* Storage — sidebar only; stats live in the hero grid above */}
+          <div className="hidden lg:block">
+            <SectionLabel>STORAGE</SectionLabel>
+            <div className="mt-3">
               <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
-                <span>STORAGE</span>
+                <span>USED</span>
                 <span className="tabular-nums text-foreground">
                   {formatBytes(stats.storage_bytes)} / {formatLimit(storageLimitBytes)}
                 </span>
@@ -1696,6 +1691,7 @@ export default function BandPage() {
         onOpen={openChat}
         onClose={closeChat}
         currentUserId={user?.id}
+        onUnreadChange={setChatUnread}
       />
     </div>
   )

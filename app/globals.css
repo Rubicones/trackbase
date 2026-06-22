@@ -5,7 +5,7 @@
 :root {
   --bg:           #F5F5F3;
   --shell-header-h: 3.5rem;
-  --shell-footer-h: 2rem;
+  --shell-footer-h: 2.5rem;
   --bg-surface:   #EFEFED;
   --bg-card:      #E8E8E5;
   --border:       #DDDDD8;
@@ -1754,4 +1754,30 @@ html.dark[data-palette="green"] .theme-avatar {
 @keyframes shimmer {
   from { background-position: -200% 0; }
   to   { background-position:  200% 0; }
+}
+
+/* Chat dock — desktop column sits flush between shell header + footer */
+@media (width >= 1024px) {
+  @keyframes chat-dock-slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+
+  .chat-dock-aside {
+    inset: auto;
+    top: var(--shell-header-h);
+    bottom: var(--shell-footer-h);
+    right: 0;
+    left: auto;
+    width: 380px;
+    animation: chat-dock-slide-in 0.18s ease-out both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @media (width >= 1024px) {
+    .chat-dock-aside {
+      animation: none;
+    }
+  }
 }

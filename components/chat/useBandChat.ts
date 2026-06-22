@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabase/client'
+import { syncSupabaseRealtimeAuth } from '@/lib/supabase/realtime-auth'
 import {
   BAND_CHANNEL,
   channelIdOf,
@@ -87,6 +88,7 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
   const readsRef = useRef<Record<string, string>>({})
   const markReadRef = useRef<(key: ChannelKey) => void>(() => {})
   const currentUserIdRef = useRef(currentUserId)
+  const lastCreatedAtRef = useRef<string | null>(null)
   currentUserIdRef.current = currentUserId
 
   /** Band channel shows every message; project channels are filtered. */
@@ -99,6 +101,7 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
   const appendMessage = useCallback((message: BandMessage) => {
     if (messageIdsRef.current.has(message.id)) return
     messageIdsRef.current.add(message.id)
+    lastCreatedAtRef.current = message.created_at
     setMessages(prev => (prev.some(m => m.id === message.id) ? prev : [...prev, message]))
   }, [])
 
@@ -192,6 +195,7 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
         const asc: BandMessage[] = (data.messages ?? []).slice().reverse()
         setMessages(asc)
         messageIdsRef.current = new Set(asc.map(m => m.id))
+        lastCreatedAtRef.current = asc[asc.length - 1]?.created_at ?? null
         setHasMore(Boolean(data.hasMore))
         markRead(channelKey)
       })
@@ -231,10 +235,36 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
     let active = true
     let channel: RealtimeChannel | null = null
 
+    const handleInsert = (row: { id: string; channel_id: string | null; user_id: string }) => {
+      if (messageIdsRef.current.has(row.id)) return
+
+      const key = channelKeyOf(row.channel_id)
+      bumpCounts(row.channel_id)
+
+      const viewing = activeKeyRef.current
+      if (messageMatchesActiveChannel(viewing, key)) {
+        fetch(`/api/bands/${bandId}/messages?message=${row.id}`)
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => {
+            if (d?.message) {
+              appendMessage(d.message)
+              if (viewing) markReadRef.current(viewing)
+            }
+          })
+          .catch(() => {})
+      } else if (row.user_id !== currentUserIdRef.current) {
+        setUnread(prev => ({ ...prev, [key]: (prev[key] ?? 0) + 1 }))
+      }
+    }
+
     async function subscribe() {
-      const { data } = await supabase.auth.getSession()
-      const token = data.session?.access_token
-      if (token) await supabase.realtime.setAuth(token)
+      await syncSupabaseRealtimeAuth()
+      if (!active) return
+
+      if (channel) {
+        supabase.removeChannel(channel)
+        channel = null
+      }
       if (!active) return
 
       channel = supabase
@@ -243,39 +273,30 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'band_messages', filter: `band_id=eq.${bandId}` },
           payload => {
-            const row = payload.new as {
-              id: string
-              channel_id: string | null
-              user_id: string
-            }
-            if (messageIdsRef.current.has(row.id)) return
-
-            const key = channelKeyOf(row.channel_id)
-            bumpCounts(row.channel_id)
-
-            const viewing = activeKeyRef.current
-            if (messageMatchesActiveChannel(viewing, key)) {
-              fetch(`/api/bands/${bandId}/messages?message=${row.id}`)
-                .then(r => (r.ok ? r.json() : null))
-                .then(d => {
-                  if (d?.message) {
-                    appendMessage(d.message)
-                    if (viewing) markReadRef.current(viewing)
-                  }
-                })
-                .catch(() => {})
-            } else if (row.user_id !== currentUserIdRef.current) {
-              setUnread(prev => ({ ...prev, [key]: (prev[key] ?? 0) + 1 }))
-            }
+            handleInsert(
+              payload.new as { id: string; channel_id: string | null; user_id: string },
+            )
           },
         )
-        .subscribe()
+        .subscribe(status => {
+          if (!active) return
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            // Retry once auth/session may have landed after first mount.
+            window.setTimeout(() => {
+              if (active) void subscribe()
+            }, 2000)
+          }
+        })
     }
 
-    subscribe()
+    void subscribe()
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.access_token) void supabase.realtime.setAuth(session.access_token)
+      if (session?.access_token && active) {
+        void syncSupabaseRealtimeAuth(session.access_token).then(() => {
+          if (active) void subscribe()
+        })
+      }
     })
 
     return () => {
@@ -284,6 +305,44 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
       if (channel) supabase.removeChannel(channel)
     }
   }, [bandId, supabase, appendMessage, bumpCounts, messageMatchesActiveChannel])
+
+  // ── Poll for new messages while the panel is open (fallback if Realtime is down) ──
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+
+    const poll = async () => {
+      const after = lastCreatedAtRef.current
+      if (!after) return
+      const channelParam = channelIdOf(channelKey) ?? 'band'
+      try {
+        const res = await fetch(
+          `/api/bands/${bandId}/messages?channel=${channelParam}&after=${encodeURIComponent(after)}`,
+        )
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        const incoming = (data.messages ?? []) as BandMessage[]
+        if (incoming.length === 0) return
+
+        const viewing = activeKeyRef.current
+        for (const message of incoming) {
+          if (messageMatchesActiveChannel(viewing, channelKeyOf(message.channel_id))) {
+            appendMessage(message)
+          }
+        }
+        if (viewing) markReadRef.current(viewing)
+      } catch {
+        /* ignore transient network errors */
+      }
+    }
+
+    void poll()
+    const interval = window.setInterval(poll, 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [open, bandId, channelKey, appendMessage, messageMatchesActiveChannel])
 
   // ── Realtime presence ──
   // Observe who's in the chat for the whole mount (so the closed rail can show

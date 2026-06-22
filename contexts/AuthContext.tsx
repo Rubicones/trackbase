@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import type { Session, User } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
+import { syncSupabaseRealtimeAuth } from '@/lib/supabase/realtime-auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (session) {
         setAuthCookies(session)
+        await syncSupabaseRealtimeAuth(session.access_token)
         const profile = await fetchProfile(session.user.id)
         setState({ user: session.user, profile, session, loading: false })
       } else {
@@ -131,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (_event, session) => {
         if (session) {
           setAuthCookies(session)
+          void syncSupabaseRealtimeAuth(session.access_token)
           const profile = await fetchProfile(session.user.id)
           setState({ user: session.user, profile, session, loading: false })
         } else {

@@ -5687,9 +5687,8 @@ export default function ProjectPage() {
         initialChannelKey={projectId}
         currentUserId={user?.id}
         currentProjectId={projectId}
-        hideMobileLauncher={isMobilePortrait}
-        onUnreadChange={setChatUnread}
         onSwitchVersion={selectVersion}
+        onUnreadChange={setChatUnread}
       />
     </div>
   )

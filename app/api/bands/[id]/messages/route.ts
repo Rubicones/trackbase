@@ -113,6 +113,7 @@ async function enrichMessages(rows: RawMessage[]): Promise<BandMessage[]> {
 // GET /api/bands/[id]/messages
 //   ?channel=[projectId|band]   list a channel (50 newest, DESC)
 //   &before=[iso]               pagination cursor (older than this created_at)
+//   &after=[iso]                 messages newer than this created_at (ASC, for live sync)
 //   ?message=[id]               fetch a single enriched message (realtime handler)
 //   ?counts=1                   per-channel message counts for the band
 export async function GET(
@@ -172,6 +173,7 @@ export async function GET(
     // ── Channel listing ──
     const channelParam = url.searchParams.get('channel')
     const before = url.searchParams.get('before')
+    const after = url.searchParams.get('after')
     const isBandChannel = !channelParam || channelParam === 'band'
 
     // Validate project channel belongs to this band.
@@ -185,15 +187,16 @@ export async function GET(
       if (!project) return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
     }
 
-    let query = supabase
-      .from('band_messages')
-      .select(MESSAGE_COLUMNS)
-      .eq('band_id', bandId)
-      .order('created_at', { ascending: false })
-      .limit(PAGE_SIZE)
+    let query = supabase.from('band_messages').select(MESSAGE_COLUMNS).eq('band_id', bandId)
+
+    if (after) {
+      query = query.gt('created_at', after).order('created_at', { ascending: true }).limit(PAGE_SIZE)
+    } else {
+      query = query.order('created_at', { ascending: false }).limit(PAGE_SIZE)
+      if (before) query = query.lt('created_at', before)
+    }
 
     query = isBandChannel ? query : query.eq('channel_id', channelParam)
-    if (before) query = query.lt('created_at', before)
 
     const { data: rows, error } = await query
     if (error) {

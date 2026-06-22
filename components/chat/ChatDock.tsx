@@ -25,6 +25,55 @@ function IconChat({ size = 14 }: { size?: number }) {
     </svg>
   )
 }
+
+/** Inline chat trigger for mobile toolbars (band tabs, rehearsal/mixer row). */
+export function ChatLauncherButton({
+  unread = 0,
+  onClick,
+  className = '',
+  variant = 'icon',
+}: {
+  unread?: number
+  onClick: () => void
+  className?: string
+  /** icon = square toolbar button; bar = full-width strip above mode switch */
+  variant?: 'icon' | 'bar'
+}) {
+  if (variant === 'bar') {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="Open band chat"
+        className={`relative w-full flex items-center justify-center gap-2 py-2.5 border border-border bg-background text-[10px] font-bold uppercase tracking-[0.28em] text-foreground hover:text-ember hover:bg-surface/60 transition ${className}`}
+      >
+        <IconChat size={14} />
+        Chat
+        {unread > 0 && (
+          <span className="min-w-[16px] h-4 px-1 grid place-items-center bg-ember text-white text-[9px] font-bold leading-none">
+            {unread > 99 ? '99+' : unread}
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Open band chat"
+      className={`relative grid place-items-center border border-border bg-background text-foreground hover:border-ember hover:text-ember transition ${className}`}
+    >
+      <IconChat size={14} />
+      {unread > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 grid h-4 min-w-4 place-items-center border border-background bg-ember px-1 text-[9px] font-bold text-white">
+          {Math.min(unread, 99)}
+        </span>
+      )}
+    </button>
+  )
+}
 function IconClose({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -115,7 +164,6 @@ export function ChatDock({
   currentUserId,
   currentProjectId,
   onSwitchVersion,
-  hideMobileLauncher = false,
   onUnreadChange,
 }: {
   bandId: string
@@ -127,8 +175,6 @@ export function ChatDock({
   /** When open from the mixer, used to switch branch in-place on chip click. */
   currentProjectId?: string
   onSwitchVersion?: (versionId: string) => void
-  /** Hide the floating mobile FAB when another surface provides a chat entry point. */
-  hideMobileLauncher?: boolean
   onUnreadChange?: (total: number) => void
 }) {
   const router = useRouter()
@@ -316,69 +362,52 @@ export function ChatDock({
   const groups = useMemo(() => groupMessages(messages), [messages])
   const onlineMembers = members.filter(m => onlineUserIds.has(m.user_id))
 
-  // Closed: show the persistent right-edge rail (desktop) + launcher (mobile).
-  if (!open) {
-    return (
-      <>
-        {!hideMobileLauncher && (
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label="Open chat"
-            className="fixed bottom-4 right-4 z-40 grid h-11 w-11 place-items-center border border-border bg-background text-foreground hover:border-ember hover:text-ember transition lg:hidden"
-          >
-            <IconChat size={16} />
-            {totalUnread > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 grid h-4 min-w-4 place-items-center border border-background bg-ember px-1 text-[9px] font-bold text-white">
-                {Math.min(totalUnread, 99)}
-              </span>
-            )}
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label="Open chat panel"
-          className="fixed right-0 z-40 hidden lg:flex flex-col items-center gap-3 border-l border-y border-border bg-surface/60 hover:bg-surface px-1.5 py-4 transition top-[calc(var(--shell-header-h)+(100vh-var(--shell-header-h)-var(--shell-footer-h))/2)] -translate-y-1/2"
-        >
-          <span className="text-muted-foreground rotate-180"><IconChevron /></span>
-          <span
-            className="text-[10px] font-bold uppercase tracking-[0.3em] text-foreground"
-            style={{ writingMode: 'vertical-rl' }}
-          >
-            Chat
-          </span>
-          {totalUnread > 0 && (
-            <span className="grid h-4 min-w-4 place-items-center bg-ember px-1 text-[9px] font-bold text-white">
-              {Math.min(totalUnread, 99)}
-            </span>
-          )}
-          {onlineMembers.length > 0 && (
-            <span className="flex flex-col items-center -space-y-1 mt-1">
-              {onlineMembers.slice(0, 4).map(m => (
-                <span key={m.user_id} className="relative" title={`@${m.username} · online`}>
-                  <UserAvatar seed={m.username} size={20} kind="user" />
-                  <span className="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-online border border-background" />
-                </span>
-              ))}
-            </span>
-          )}
-        </button>
-      </>
-    )
-  }
-
   return (
     <>
-      {/* Mobile scrim — desktop leaves the app usable behind the dock */}
-      <div className="fixed inset-0 z-40 bg-background/60 lg:hidden" onClick={onClose} />
+      {/* Mobile FAB removed — pages embed ChatLauncherButton in their own chrome */}
 
-      <aside
-        className="fixed z-50 flex flex-col bg-background border-border inset-0 lg:inset-auto lg:top-[var(--shell-header-h)] lg:bottom-[var(--shell-footer-h)] lg:right-0 lg:w-[380px] lg:border lg:border-r-0"
-        role="dialog"
-        aria-label="Band chat"
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label="Open chat panel"
+        className={`fixed right-0 top-1/2 z-[300] hidden -translate-y-1/2 lg:flex flex-col items-center gap-3 border-l border-y border-border bg-surface/60 hover:bg-surface px-1.5 py-4 transition ${
+          open ? 'opacity-0 pointer-events-none' : ''
+        }`}
       >
+        <span className="text-muted-foreground rotate-180"><IconChevron /></span>
+        <span
+          className="text-[10px] font-bold uppercase tracking-[0.3em] text-foreground"
+          style={{ writingMode: 'vertical-rl' }}
+        >
+          Chat
+        </span>
+        {totalUnread > 0 && (
+          <span className="grid h-4 min-w-4 place-items-center bg-ember px-1 text-[9px] font-bold text-white">
+            {Math.min(totalUnread, 99)}
+          </span>
+        )}
+        {onlineMembers.length > 0 && (
+          <span className="flex flex-col items-center -space-y-1 mt-1">
+            {onlineMembers.slice(0, 4).map(m => (
+              <span key={m.user_id} className="relative" title={`@${m.username} · online`}>
+                <UserAvatar seed={m.username} size={20} kind="user" />
+                <span className="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-online border border-background" />
+              </span>
+            ))}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          {/* Mobile scrim — desktop leaves the app usable behind the dock */}
+          <div className="fixed inset-0 z-[300] bg-background/60 lg:hidden" onClick={onClose} />
+
+          <aside
+            className="chat-dock-aside fixed z-[310] flex flex-col bg-background border-border inset-0 lg:border lg:border-r-0"
+            role="dialog"
+            aria-label="Band chat"
+          >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border bg-surface/40 px-3 h-11 shrink-0">
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-foreground min-w-0">
@@ -595,7 +624,9 @@ export function ChatDock({
             </button>
           </div>
         </form>
-      </aside>
+          </aside>
+        </>
+      )}
     </>
   )
 }

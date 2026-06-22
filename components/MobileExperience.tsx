@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
+import { ChatLauncherButton } from '@/components/chat/ChatDock'
 import type { Project, Section, Track, Version } from '@/lib/types'
 
 // ─── Version drawer ───────────────────────────────────────────────────────────
@@ -163,8 +164,15 @@ export function MobileExperience({
         />
       )}
 
-      {/* Mode switch — Rehearsal | Mixer */}
-      <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0">
+      {/* Chat bar + mode switch */}
+      <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
+        {onOpenChat && (
+          <ChatLauncherButton
+            variant="bar"
+            unread={chatUnread}
+            onClick={onOpenChat}
+          />
+        )}
         <div className="grid grid-cols-2 border border-border bg-background">
           {(['rehearse', 'mixer'] as const).map(m => {
             const active = mode === m
@@ -173,7 +181,7 @@ export function MobileExperience({
                 key={m}
                 type="button"
                 onClick={() => setMode(m)}
-                className={`py-2 text-[10px] font-bold uppercase tracking-widest transition ${
+                className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
                   active ? 'bg-ember text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -214,24 +222,6 @@ export function MobileExperience({
         )}
       </div>
 
-      {onOpenChat && (
-        <button
-          type="button"
-          onClick={onOpenChat}
-          aria-label="Open band chat"
-          className="relative w-full shrink-0 flex items-center justify-center gap-2 py-2.5 border-t border-border bg-surface/40 text-[10px] font-bold uppercase tracking-[0.28em] text-foreground hover:text-ember hover:bg-surface/60 transition"
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="M2.5 3.5h11a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H9.2L7 13.5V11H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-          </svg>
-          Chat
-          {chatUnread > 0 && (
-            <span className="min-w-[16px] h-4 px-1 grid place-items-center bg-ember text-white text-[9px] font-bold leading-none">
-              {chatUnread > 99 ? '99+' : chatUnread}
-            </span>
-          )}
-        </button>
-      )}
     </div>
   )
 }
