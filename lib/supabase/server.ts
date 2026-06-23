@@ -1,13 +1,8 @@
 /**
  * Server-side auth utilities.
  *
- * We can't use @supabase/ssr (npm 403 in this env), so we decode the
- * JWT that the browser client stores in the sb-at cookie.
- *
- * The Supabase access token is a standard RS256 JWT.  We only *decode*
- * (base64), never verify the signature — the payload is trusted because
- * it was issued by Supabase and is only accessible server-side via cookies
- * that were set by our own AuthContext.
+ * Session cookies (sb-at / sb-rt) are HttpOnly and set via POST /api/auth/session.
+ * Access tokens are verified with Supabase Auth before trusting the user id.
  *
  * IMPORTANT: All DB queries use the service-role client which bypasses RLS.
  * Access control is therefore enforced here, in application code.  Every
@@ -21,43 +16,43 @@ import { supabase } from '@/lib/supabase'
 import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
-  decodeJwt,
   refreshAccessToken,
-  type JwtPayload,
 } from '@/lib/auth/session'
+import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 
-export type { JwtPayload }
+export type { VerifiedUser as JwtPayload }
 
 /**
- * Extract the user ID from a JWT cookie value.
- * Returns null if invalid / expired.
+ * Verify an access token and return the user id, or null if invalid.
  */
-export function getUserIdFromToken(token: string): string | null {
-  return decodeJwt(token)?.sub ?? null
+export async function getUserIdFromToken(token: string): Promise<string | null> {
+  const verified = await verifyAccessToken(token)
+  return verified?.id ?? null
 }
 
 /**
- * Get the username stored in user_metadata from a JWT.
- * Returns null if the token is invalid or the user hasn't completed onboarding.
+ * Get the username stored in user_metadata from a verified access token.
  */
-export function getUsernameFromToken(token: string): string | null {
-  return decodeJwt(token)?.user_metadata?.username ?? null
+export async function getUsernameFromToken(token: string): Promise<string | null> {
+  const verified = await verifyAccessToken(token)
+  return verified?.user_metadata?.username ?? null
 }
 
-// ── Application-level access control ─────────────────────────────────────────
-//
-// Because we use the service-role Supabase client everywhere (bypasses RLS),
-// every route must call one of these guards before reading or mutating data.
-
 /**
- * Extract the authenticated user ID from the request cookie.
+ * Extract the authenticated user from the request cookies.
  * Refreshes the access token when only the refresh token cookie is still valid.
  */
 export async function getRequestUserId(req: NextRequest): Promise<string | null> {
-  const token = req.cookies.get(ACCESS_COOKIE)?.value
-  if (token) {
-    const userId = getUserIdFromToken(token)
-    if (userId) return userId
+  const user = await getRequestUser(req)
+  return user?.id ?? null
+}
+
+/** Full verified user from cookies (includes user_metadata). */
+export async function getRequestUser(req: NextRequest): Promise<VerifiedUser | null> {
+  const accessToken = req.cookies.get(ACCESS_COOKIE)?.value
+  if (accessToken) {
+    const verified = await verifyAccessToken(accessToken)
+    if (verified) return verified
   }
 
   const refreshToken = req.cookies.get(REFRESH_COOKIE)?.value
@@ -66,7 +61,7 @@ export async function getRequestUserId(req: NextRequest): Promise<string | null>
   const refreshed = await refreshAccessToken(refreshToken)
   if (!refreshed) return null
 
-  return decodeJwt(refreshed.access_token)?.sub ?? null
+  return verifyAccessToken(refreshed.access_token)
 }
 
 export interface MembershipResult {
@@ -79,10 +74,6 @@ export interface MembershipResult {
  * Verify that the requesting user is an active member of the band that owns
  * the given project.  Returns the userId, project row, and membership role on
  * success, or an error descriptor that the route should forward as a response.
- *
- * Usage:
- *   const access = await requireBandMember(req, projectId)
- *   if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
  */
 export async function requireBandMember(
   req: NextRequest,
@@ -108,10 +99,6 @@ export async function requireBandMember(
 
   return { userId, project, role: membership.role }
 }
-
-// ── Resource-traversal helpers ────────────────────────────────────────────────
-// These look up the owning project for resources that don't carry a project_id
-// directly, then delegate to requireBandMember.
 
 /** Resolve the project ID for a track, then enforce band membership. */
 export async function requireBandMemberForTrack(
@@ -175,7 +162,9 @@ export async function requireBandMemberForSection(
 export async function requireBandMemberForComment(
   req: NextRequest,
   commentId: string,
-): Promise<MembershipResult & { comment: { id: string; created_by: string } } | { error: string; status: number }> {
+): Promise<
+  MembershipResult & { comment: { id: string; created_by: string } } | { error: string; status: number }
+> {
   const { data: comment } = await supabase
     .from('track_comments')
     .select('id, created_by, version_id')
@@ -199,7 +188,9 @@ export async function requireBandMemberForComment(
 export async function requireBandMemberForReply(
   req: NextRequest,
   replyId: string,
-): Promise<MembershipResult & { reply: { id: string; created_by: string; comment_id: string } } | { error: string; status: number }> {
+): Promise<
+  MembershipResult & { reply: { id: string; created_by: string; comment_id: string } } | { error: string; status: number }
+> {
   const { data: reply } = await supabase
     .from('comment_replies')
     .select('id, created_by, comment_id')

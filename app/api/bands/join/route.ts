@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { normalizeInviteCode } from '@/lib/inviteCode'
 import { sendPushNotification } from '@/lib/push/server'
-
-function getUserId(req: NextRequest) {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
+import { clientRateLimitKey, rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 // POST /api/bands/join — submit a join request (owner must approve)
 export async function POST(req: NextRequest) {
-  const userId = getUserId(req)
+  const rl = rateLimit(clientRateLimitKey(req, 'bands-join'), 10, 60_000)
+  if (!rl.ok) return rateLimitResponse(rl.retryAfterSec)
+
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   let body: { code?: string }

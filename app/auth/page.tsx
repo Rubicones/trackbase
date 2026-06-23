@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
+import { sanitizeRedirectPath } from '@/lib/auth/safe-redirect'
 import { getSiteUrl } from '@/lib/site-url'
 import {
   AuthShell,
@@ -34,7 +35,7 @@ export default function AuthPage() {
 function AuthPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const next = searchParams.get('next') ?? '/dashboard'
+  const next = sanitizeRedirectPath(searchParams.get('next'))
 
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,7 +47,7 @@ function AuthPageContent() {
     const supabase = getSupabaseClient()
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
-        setAuthCookies(session)
+        await setAuthCookies(session)
         const meta = session.user.user_metadata
         if (!meta?.username) {
           router.replace('/onboarding')
@@ -58,7 +59,7 @@ function AuthPageContent() {
               await supabase.auth.updateUser({ data: { onboarding_complete: true } })
               const { data: { session: refreshed } } = await supabase.auth.refreshSession()
               if (refreshed) {
-                setAuthCookies(refreshed)
+                void setAuthCookies(refreshed)
               }
               router.replace(next)
             } else {

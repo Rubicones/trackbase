@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { getUserBandCount, getUserPendingJoinRequestCount } from '@/lib/bandAccess'
 
-function getUserId(req: NextRequest) {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
 
 // GET /api/me/setup-status — routing helper for onboarding
 export async function GET(req: NextRequest) {
-  const userId = getUserId(req)
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const [bandCount, pendingCount] = await Promise.all([

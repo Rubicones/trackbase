@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { getUserBandCount, getUserPendingJoinRequestCount } from '@/lib/bandAccess'
 
-function getUserId(req: NextRequest) {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
 
 const adminSupabase = createClient(
   process.env.SUPABASE_URL!,
@@ -16,7 +12,7 @@ const adminSupabase = createClient(
 
 // GET /api/me/join-requests — current user's pending join requests
 export async function GET(req: NextRequest) {
-  const userId = getUserId(req)
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { data: requests, error } = await adminSupabase

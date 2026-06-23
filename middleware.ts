@@ -4,11 +4,11 @@ import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
   REFRESH_TOKEN_MAX_AGE,
-  decodeJwt,
   refreshAccessToken,
-  type JwtPayload,
   type RefreshedSession,
 } from '@/lib/auth/session'
+import { authCookieOptions } from '@/lib/auth/cookie-options'
+import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -26,16 +26,8 @@ function isProfileExempt(pathname: string) {
 }
 
 function applyRefreshedCookies(res: NextResponse, session: RefreshedSession) {
-  res.cookies.set(ACCESS_COOKIE, session.access_token, {
-    path: '/',
-    sameSite: 'lax',
-    maxAge: session.expires_in,
-  })
-  res.cookies.set(REFRESH_COOKIE, session.refresh_token, {
-    path: '/',
-    sameSite: 'lax',
-    maxAge: REFRESH_TOKEN_MAX_AGE,
-  })
+  res.cookies.set(ACCESS_COOKIE, session.access_token, authCookieOptions(session.expires_in))
+  res.cookies.set(REFRESH_COOKIE, session.refresh_token, authCookieOptions(REFRESH_TOKEN_MAX_AGE))
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -56,24 +48,27 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/onboarding?step=3', request.url))
   }
 
-  let token = request.cookies.get(ACCESS_COOKIE)?.value ?? null
-  let payload: JwtPayload | null = token ? decodeJwt(token) : null
+  let verified: VerifiedUser | null = null
   let refreshedSession: RefreshedSession | null = null
 
-  if (!payload) {
+  const accessToken = request.cookies.get(ACCESS_COOKIE)?.value
+  if (accessToken) {
+    verified = await verifyAccessToken(accessToken)
+  }
+
+  if (!verified) {
     const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value
     if (refreshToken) {
       refreshedSession = await refreshAccessToken(refreshToken)
       if (refreshedSession) {
-        token = refreshedSession.access_token
-        payload = decodeJwt(token)
+        verified = await verifyAccessToken(refreshedSession.access_token)
       }
     }
   }
 
-  const isAuthed = payload !== null
-  const hasUsername = !!payload?.user_metadata?.username
-  const onboardingComplete = !!payload?.user_metadata?.onboarding_complete
+  const isAuthed = verified !== null
+  const hasUsername = !!verified?.user_metadata?.username
+  const onboardingComplete = !!verified?.user_metadata?.onboarding_complete
 
   function finalize(res: NextResponse) {
     if (refreshedSession) applyRefreshedCookies(res, refreshedSession)

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 
 // POST /api/versions/[id]/structure/submit — log structure submission to band activity
 export async function POST(
@@ -9,8 +9,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const token = req.cookies.get('sb-at')?.value
-    const userId = token ? getUserIdFromToken(token) : null
+    const userId = await getRequestUserId(req)
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { id: versionId } = await params

@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 
-function getUserId(req: NextRequest): string | null {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
 
 // GET /api/bands — return bands the current user is a member of
 export async function GET(req: NextRequest) {
-  const userId = getUserId(req)
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { data, error } = await supabase
@@ -48,7 +44,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/bands — create a new band and add creator as owner
 export async function POST(req: NextRequest) {
-  const userId = getUserId(req)
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {

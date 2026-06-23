@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 
 // ── GET /api/projects/[id]/resources/[resourceId]/download ────────────────────
 // Streams a file resource from R2 to the browser with Content-Disposition:
@@ -13,8 +13,7 @@ export async function GET(
 ) {
   const { id: projectId, resourceId } = await params
 
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   // Verify project membership

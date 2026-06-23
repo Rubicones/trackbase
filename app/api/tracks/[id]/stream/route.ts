@@ -3,6 +3,9 @@ import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
+/** Auth-gated audio — must not be cached as public at CDN/browser. */
+const STREAM_CACHE_CONTROL = 'private, no-store'
+
 // GET /api/tracks/[id]/stream
 // Streams the FLAC file for a track.
 // Supports Range requests for seek support in Web Audio / <audio>.
@@ -41,7 +44,8 @@ export async function GET(
           'Accept-Ranges': 'bytes',
           'Content-Length': String(chunkSize),
           'Content-Type': 'audio/flac',
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': STREAM_CACHE_CONTROL,
+          Vary: 'Cookie',
         },
       })
     }
@@ -51,7 +55,8 @@ export async function GET(
         'Content-Type': 'audio/flac',
         'Content-Length': String(totalSize),
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': STREAM_CACHE_CONTROL,
+        Vary: 'Cookie',
       },
     })
   } catch (err) {

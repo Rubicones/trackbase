@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
+import { sanitizeRedirectPath } from '@/lib/auth/safe-redirect'
 import {
   AuthShell,
   AuthCard,
@@ -21,13 +22,13 @@ function readNext(): string {
     const stored = sessionStorage.getItem(NEXT_STORAGE_KEY)
     if (stored) {
       sessionStorage.removeItem(NEXT_STORAGE_KEY)
-      return stored
+      return sanitizeRedirectPath(stored)
     }
   } catch {
     /* noop */
   }
-  return '/dashboard'
-} 
+  return sanitizeRedirectPath(null)
+}
 
 function parseAuthHashError(): string | null {
   const hash = window.location.hash.replace(/^#/, '')
@@ -85,7 +86,7 @@ export default function AuthCallbackPage() {
       expires_in?: number
     }) {
       settled = true
-      setAuthCookies(session)
+      void setAuthCookies(session)
 
       const meta = session.user.user_metadata
       if (!meta?.username) {
@@ -108,7 +109,7 @@ export default function AuthCallbackPage() {
         if (!error) {
           const { data: { session: refreshed } } = await supabase.auth.refreshSession()
           if (refreshed) {
-            setAuthCookies(refreshed)
+            void setAuthCookies(refreshed)
           }
         }
         router.replace(readNext())

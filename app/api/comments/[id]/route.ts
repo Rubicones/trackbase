@@ -13,7 +13,11 @@ export async function DELETE(
 
     const access = await requireBandMemberForComment(req, id)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
-    const { userId, project } = access
+    const { userId, project, role, comment } = access
+
+    if (comment.created_by !== userId && role !== 'owner') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const [{ data: commentRow }, { data: projectMeta }] = await Promise.all([
       supabase.from('track_comments').select('timecode_start_ms').eq('id', id).single(),

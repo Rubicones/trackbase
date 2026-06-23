@@ -14,6 +14,7 @@ import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { pickTrackIconColor } from '@/lib/trackIcon'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { isValidTempKey } from '@/lib/r2TempKey'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -97,6 +98,9 @@ export async function POST(
 
   if (!tempKey || typeof tempKey !== 'string') {
     return NextResponse.json({ error: 'tempKey is required' }, { status: 400 })
+  }
+  if (!isValidTempKey(tempKey, 'track')) {
+    return NextResponse.json({ error: 'Invalid upload key' }, { status: 400 })
   }
   if (!originalFilename || typeof originalFilename !== 'string') {
     return NextResponse.json({ error: 'originalFilename is required' }, { status: 400 })

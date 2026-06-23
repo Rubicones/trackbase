@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { logActivity, resourceSubject } from '@/lib/activity'
 import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2 } from '@/lib/r2'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -45,8 +45,7 @@ export async function PATCH(
 ) {
   const { id: projectId, resourceId } = await params
 
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const resolved = await resolveResource(projectId, resourceId, userId)
@@ -138,8 +137,7 @@ export async function DELETE(
 ) {
   const { id: projectId, resourceId } = await params
 
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const resolved = await resolveResource(projectId, resourceId, userId)

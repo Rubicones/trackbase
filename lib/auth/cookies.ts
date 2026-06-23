@@ -1,22 +1,29 @@
 'use client'
 
-import {
-  ACCESS_COOKIE,
-  REFRESH_COOKIE,
-  REFRESH_TOKEN_MAX_AGE,
-} from '@/lib/auth/session'
-
-export function setAuthCookies(session: {
+/**
+ * Mirror Supabase session tokens into HttpOnly cookies for server-side auth.
+ * Tokens remain in the Supabase client (localStorage) for Realtime.
+ */
+export async function setAuthCookies(session: {
   access_token: string
   refresh_token: string
   expires_in?: number
-}) {
-  const accessMaxAge = session.expires_in ?? 3600
-  document.cookie = `${ACCESS_COOKIE}=${session.access_token}; path=/; SameSite=Lax; max-age=${accessMaxAge}`
-  document.cookie = `${REFRESH_COOKIE}=${session.refresh_token}; path=/; SameSite=Lax; max-age=${REFRESH_TOKEN_MAX_AGE}`
+}): Promise<void> {
+  await fetch('/api/auth/session', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_in: session.expires_in,
+    }),
+  })
 }
 
-export function clearAuthCookies() {
-  document.cookie = `${ACCESS_COOKIE}=; path=/; max-age=0`
-  document.cookie = `${REFRESH_COOKIE}=; path=/; max-age=0`
+export async function clearAuthCookies(): Promise<void> {
+  await fetch('/api/auth/session', {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  })
 }

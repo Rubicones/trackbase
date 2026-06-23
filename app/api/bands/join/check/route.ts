@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { normalizeInviteCode } from '@/lib/inviteCode'
-
-function getUserId(req: NextRequest) {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
+import { clientRateLimitKey, rateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 // GET /api/bands/join/check?code=XXX — preview a band for a valid invite code
 export async function GET(req: NextRequest) {
-  const userId = getUserId(req)
+  const rl = rateLimit(clientRateLimitKey(req, 'bands-join-check'), 30, 60_000)
+  if (!rl.ok) return rateLimitResponse(rl.retryAfterSec)
+
+  const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const raw = req.nextUrl.searchParams.get('code') ?? ''

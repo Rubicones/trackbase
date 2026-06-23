@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { supabase } from '@/lib/supabase'
 
 const ADJECTIVES = [
@@ -24,11 +25,12 @@ function randomPick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]
 }
 
+/** ~36 bits of entropy in the suffix (cryptographically random). */
 function randomCode(): string {
   const adj = randomPick(ADJECTIVES).toUpperCase()
   const noun = randomPick(NOUNS).toUpperCase()
-  const num = Math.floor(Math.random() * 90) + 10
-  return `${adj}-${noun}-${num}`
+  const suffix = randomBytes(5).toString('base64url').slice(0, 8).toUpperCase()
+  return `${adj}-${noun}-${suffix}`
 }
 
 /** Generate a unique invite code for a band, retrying on collision. */

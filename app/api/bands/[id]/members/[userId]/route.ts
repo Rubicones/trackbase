@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { getUserIdFromToken } from '@/lib/supabase/server'
-
-function getRequestUserId(req: NextRequest): string | null {
-  const token = req.cookies.get('sb-at')?.value
-  return token ? getUserIdFromToken(token) : null
-}
+import { getRequestUserId } from '@/lib/supabase/server'
 
 async function assertMember(bandId: string, userId: string) {
   const { data } = await supabase
@@ -17,14 +12,19 @@ async function assertMember(bandId: string, userId: string) {
   return data ?? null
 }
 
-// PATCH /api/bands/[id]/members/[userId] — update role_label or role_color
+// PATCH /api/bands/[id]/members/[userId] — update own role_label or role_color
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; userId: string }> }
 ) {
-  const requesterId = getRequestUserId(req)
+  const requesterId = await getRequestUserId(req)
   if (!requesterId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id: bandId, userId: targetUserId } = await params
+
+  if (requesterId !== targetUserId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   if (!(await assertMember(bandId, requesterId))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
@@ -45,14 +45,13 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; userId: string }> }
 ) {
-  const requesterId = getRequestUserId(req)
+  const requesterId = await getRequestUserId(req)
   if (!requesterId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id: bandId, userId: targetUserId } = await params
 
   const membership = await assertMember(bandId, requesterId)
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Only owners can remove others; anyone can remove themselves
   if (requesterId !== targetUserId && membership.role !== 'owner') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

@@ -3,8 +3,9 @@ import { supabase } from '@/lib/supabase'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2, uploadToR2 } from '@/lib/r2'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { isValidTempKey, uuidFromTempKey } from '@/lib/r2TempKey'
 
 // ── POST /api/projects/[id]/resources/process ─────────────────────────────────
 // Called after the browser has finished uploading to R2 via presigned URL.
@@ -24,8 +25,7 @@ export async function POST(
 ) {
   const { id: projectId } = await params
 
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
+  const userId = await getRequestUserId(req)
   if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -77,6 +77,9 @@ export async function POST(
   if (!tempKey || typeof tempKey !== 'string') {
     return NextResponse.json({ error: 'tempKey is required' }, { status: 400 })
   }
+  if (!isValidTempKey(tempKey, 'resource')) {
+    return NextResponse.json({ error: 'Invalid upload key' }, { status: 400 })
+  }
   if (!originalFilename || typeof originalFilename !== 'string') {
     return NextResponse.json({ error: 'originalFilename is required' }, { status: 400 })
   }
@@ -103,9 +106,11 @@ export async function POST(
   }
 
   // Build final storage key: resources/{projectId}/{uuid}-{filename}
-  // We reuse the UUID already embedded in the tempKey to keep them correlated.
-  const uuidMatch = tempKey.match(/([0-9a-f-]{36})/)
-  const uuid = uuidMatch ? uuidMatch[1] : tempKey.split('/').pop() ?? tempKey
+  // UUID comes only from a validated temp key (never from arbitrary client input).
+  const uuid = uuidFromTempKey(tempKey, 'resource')
+  if (!uuid) {
+    return NextResponse.json({ error: 'Invalid upload key' }, { status: 400 })
+  }
   const sanitizedFilename = originalFilename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)
   const finalKey = `resources/${projectId}/${uuid}-${sanitizedFilename}`
 

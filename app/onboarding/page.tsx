@@ -44,7 +44,7 @@ async function persistUsername(username: string) {
   await syncSupabaseSessionFromCookies()
   const supabase = getSupabaseClient()
   const { data: { session } } = await supabase.auth.refreshSession()
-  if (session) setAuthCookies(session)
+  if (session) await setAuthCookies(session)
 }
 
 async function markOnboardingComplete() {
@@ -56,7 +56,7 @@ async function markOnboardingComplete() {
   await syncSupabaseSessionFromCookies()
   const supabase = getSupabaseClient()
   const { data: { session } } = await supabase.auth.refreshSession()
-  if (session) setAuthCookies(session)
+  if (session) await setAuthCookies(session)
 }
 
 function OnboardingContent() {

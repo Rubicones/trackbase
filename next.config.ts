@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next'
+import { securityHeaders } from './lib/securityHeaders'
 
 /** Force-include ffmpeg-static binary in serverless traces (dynamic path breaks default tracing). */
 const ffmpegTracing = [
@@ -19,6 +20,14 @@ const ffmpegRoutes = [
 const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+  },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders(),
+      },
+    ]
   },
   // Legacy upload clients POST here; body { filename, fileSize } is handled by POST /resources.
   async rewrites() {

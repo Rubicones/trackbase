@@ -82,7 +82,7 @@ export function AvatarDropdown() {
       if (metaErr) throw metaErr
       const { data: { session } } = await supabase.auth.refreshSession()
       if (session) {
-        setAuthCookies(session)
+        void setAuthCookies(session)
       }
       await refreshProfile()
       setUsernameStatus('saved')

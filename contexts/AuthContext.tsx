@@ -109,7 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     // Local scope only — global signOut revokes every refresh token (all devices).
     await supabase.auth.signOut({ scope: 'local' })
-    clearAuthCookies()
+    await clearAuthCookies()
     setState({ user: null, profile: null, session: null, loading: false })
   }, [supabase])
 
@@ -121,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : { data: { session: null as Session | null } }
 
       if (session) {
-        setAuthCookies(session)
+        await setAuthCookies(session)
         await syncSupabaseRealtimeAuth(session.access_token)
         const profile = await fetchProfile(session.user.id)
         setState({ user: session.user, profile, session, loading: false })
@@ -135,12 +135,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (session) {
-          setAuthCookies(session)
+          await setAuthCookies(session)
           void syncSupabaseRealtimeAuth(session.access_token)
           const profile = await fetchProfile(session.user.id)
           setState({ user: session.user, profile, session, loading: false })
         } else {
-          clearAuthCookies()
+          await clearAuthCookies()
           setState({ user: null, profile: null, session: null, loading: false })
         }
       }

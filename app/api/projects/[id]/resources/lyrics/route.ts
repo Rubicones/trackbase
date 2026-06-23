@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
-import { getUserIdFromToken } from '@/lib/supabase/server'
+import { getRequestUserId } from '@/lib/supabase/server'
 
 // ── PUT /api/projects/[id]/resources/lyrics ───────────────────────────────────
 // Upsert the lyrics resource for a project. There is at most one lyrics entry
@@ -14,8 +14,7 @@ export async function PUT(
 ) {
   const { id: projectId } = await params
 
-  const token = req.cookies.get('sb-at')?.value
-  const userId = token ? getUserIdFromToken(token) : null
+  const userId = await getRequestUserId(req)
   if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
