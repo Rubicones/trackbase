@@ -5,57 +5,12 @@ import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
+import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { ChatLauncherButton } from '@/components/chat/ChatDock'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { buildMobileProjectTourSteps } from '@/components/onboarding/mobileProjectTourSteps'
+import { sortMobileVersions } from '@/lib/versionSort'
 import type { Project, Section, Track, Version } from '@/lib/types'
-
-// ─── Version drawer ───────────────────────────────────────────────────────────
-
-function VersionDrawer({
-  versions, activeVersionId, onSelect, onClose,
-}: {
-  versions: Version[]
-  activeVersionId: string
-  onSelect: (id: string) => void
-  onClose: () => void
-}) {
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/45 z-[500]" onClick={onClose} />
-      <aside className="fixed top-0 left-0 h-full w-[min(76vw,280px)] z-[501] flex flex-col overflow-y-auto bg-surface border-r border-border py-5">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-4 mb-3">
-          Versions
-        </p>
-        {versions.map(v => {
-          const isActive = v.id === activeVersionId
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => { onSelect(v.id); onClose() }}
-              className={`w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-[13px] transition ${
-                isActive ? 'bg-surface-2 text-foreground' : 'text-muted-foreground hover:bg-surface/60'
-              }`}
-            >
-              <span
-                className={`size-1.5 rounded-full shrink-0 ${
-                  isActive ? 'bg-ember' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
-                }`}
-              />
-              <span className="flex-1 truncate">{v.name}</span>
-              {v.type === 'main' && (
-                <span className="text-[9px] uppercase tracking-widest text-ember border border-ember/40 px-1.5 shrink-0">
-                  main
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </aside>
-    </>
-  )
-}
 
 // ─── Mobile experience shell ──────────────────────────────────────────────────
 
@@ -79,6 +34,10 @@ export type MobileExperienceProps = {
   isCounting: boolean
   onToggleMetronome: () => void
   onToggleCountdown: () => void
+  onNewBranch: () => void
+  commentMode: boolean
+  commentCount: number
+  onToggleCommentMode: () => void
   mixer: MobileMixerPortraitProps
   onOpenChat?: () => void
   chatUnread?: number
@@ -108,6 +67,10 @@ export function MobileExperience({
   isCounting,
   onToggleMetronome,
   onToggleCountdown,
+  onNewBranch,
+  commentMode,
+  commentCount,
+  onToggleCommentMode,
   mixer,
   onOpenChat,
   chatUnread = 0,
@@ -117,8 +80,8 @@ export function MobileExperience({
   storageFull = false,
 }: MobileExperienceProps) {
   const [mode, setMode] = useState<'rehearse' | 'mixer'>('rehearse')
-  const [versionDrawerOpen, setVersionDrawerOpen] = useState(false)
   const [localTourOpen, setLocalTourOpen] = useState(false)
+  const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -146,21 +109,8 @@ export function MobileExperience({
 
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
-      {/* Slim top bar — versions drawer, logo, nav path, account */}
+      {/* Slim top bar — logo, nav path, account */}
       <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
-        <button
-          type="button"
-          onClick={() => setVersionDrawerOpen(true)}
-          aria-label="Versions"
-          className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
-        >
-          <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
-            <rect x="2" y="4" width="14" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="8.25" width="14" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="12.5" width="14" height="1.5" rx="0.75" fill="currentColor" />
-          </svg>
-        </button>
-
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <Link
             href="/dashboard"
@@ -190,15 +140,6 @@ export function MobileExperience({
         <TourHelpButton onClick={() => setLocalTourOpen(true)} />
         <AvatarDropdown />
       </header>
-
-      {versionDrawerOpen && (
-        <VersionDrawer
-          versions={versions}
-          activeVersionId={activeVersionId}
-          onSelect={onVersionChange}
-          onClose={() => setVersionDrawerOpen(false)}
-        />
-      )}
 
       {/* Chat bar + mode switch */}
       <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
@@ -233,7 +174,19 @@ export function MobileExperience({
 
       <div className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
         {mode === 'rehearse' ? (
-          <ReadingMode
+          <>
+            <div data-tour="mobile-mixer-version-bar">
+              <MobileMixerVersionBar
+                versions={sortedVersions}
+                activeId={activeVersionId}
+                onSelect={onVersionChange}
+                onNewBranch={onNewBranch}
+                commentMode={commentMode}
+                commentCount={commentCount}
+                onToggleCommentMode={onToggleCommentMode}
+              />
+            </div>
+            <ReadingMode
             embedded
             visible
             project={project}
@@ -257,6 +210,7 @@ export function MobileExperience({
             onToggleCountdown={onToggleCountdown}
             storageFull={storageFull}
           />
+          </>
         ) : (
           <MobileMixerPortrait {...mixer} />
         )}

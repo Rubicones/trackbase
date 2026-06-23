@@ -1,79 +1,26 @@
 'use client'
 
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useTheme } from 'next-themes'
-import type { BarState, ConflictRange, AutoBarRange } from '@/lib/sectionMerge'
+import type { BarState } from '@/lib/sectionMerge'
 import { formatTrackStartBar } from '@/lib/trackMerge'
 import { SectionLabel } from '@/components/design/AppShell'
 import { UserAvatar } from '@/components/ui/avatar'
+import type { MergePreview, MergeResolution, AutoMergeItem, ConflictTrack, TrackSnapshot, CommentPreview, CommentChanges } from '@/lib/mergePreview'
+import type { Version } from '@/lib/types'
+import { MergePreviewLoading, MergeTargetSelector } from '@/components/merge/MergeTargetSelector'
+import { useMergePreview } from '@/components/merge/useMergePreview'
+import { mergeTargetVersions } from '@/lib/versionSort'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+export type {
+  MergePreview,
+  ConflictTrack,
+  AutoMergeItem,
+  CommentPreview,
+  CommentChanges,
+} from '@/lib/mergePreview'
 
-interface TrackSnapshot {
-  id: string
-  name: string
-  display_name: string | null
-  original_filename: string | null
-  file_size_bytes: number | null
-  created_at: string
-  start_bar: number
-}
-
-export interface ConflictTrack {
-  trackName: string
-  fileConflict: boolean
-  renameConflict: boolean
-  offsetConflict: boolean
-  mainTrack: TrackSnapshot
-  branchTrack: TrackSnapshot
-  baseTrack: TrackSnapshot | null
-}
-
-export interface AutoMergeItem {
-  action: 'take_from_branch' | 'add_new' | 'apply_rename' | 'apply_offset'
-  trackName: string
-  track: { id: string; name: string; display_name: string | null; original_filename: string | null; start_bar?: number }
-  newDisplayName?: string
-  newStartBar?: number
-  previousStartBar?: number
-}
-
-export interface CommentPreview {
-  id: string
-  author_username: string | null
-  timecode_start_ms: number
-  timecode_end_ms: number
-  content: string
-  track_name: string
-  reply_count: number
-}
-
-export interface CommentChanges {
-  added: CommentPreview[]
-  deleted: CommentPreview[]
-}
-
-export interface MergePreview {
-  conflicts: ConflictTrack[]
-  autoMerge: AutoMergeItem[]
-  branchName: string
-  mainName: string
-  branchVersionId: string
-  mainVersionId: string
-  branchCommentCount: number
-  // ── Section bar merge ──────────────────────────────────────────────────────
-  sectionBarConflicts:   ConflictRange[]
-  sectionAutoFromBranch: AutoBarRange[]
-  // ── Comment diff ──────────────────────────────────────────────────────────
-  commentChanges?: CommentChanges
-}
-
-// Per-track resolution
-type Resolution = {
-  fileChoice?: 'main' | 'branch'
-  nameChoice?: 'main' | 'branch'
-  offsetChoice?: 'main' | 'branch'
-}
+type Resolution = MergeResolution
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,10 +94,10 @@ function MergeShell({ children, wide }: { children: ReactNode; wide?: boolean })
   )
 }
 
-function MergeTitle({ branchName }: { branchName: string }) {
+function MergeTitle({ branchName, targetName }: { branchName: string; targetName: string }) {
   return (
     <h2 className="font-display text-lg uppercase tracking-tight text-foreground m-0">
-      Merge &ldquo;{branchName}&rdquo; into main
+      Merge &ldquo;{branchName}&rdquo; → &ldquo;{targetName}&rdquo;
     </h2>
   )
 }
@@ -158,7 +105,7 @@ function MergeTitle({ branchName }: { branchName: string }) {
 function AutoCheckIcon() {
   return (
     <svg className="shrink-0 mt-0.5 text-ember" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden>
-      <circle cx="6.5" cy="6.5" r="6" className="fill-ember/15" />
+      <rect x="0.5" y="0.5" width="12" height="12" className="fill-ember/15" />
       <path
         d="M4 6.5l2 2 3-3"
         stroke="currentColor"
@@ -581,15 +528,28 @@ function CommentChangesSection({
 
 export function MergeModal({
   projectId,
-  preview,
+  branchId,
+  versions,
   onClose,
   onMerged,
 }: {
   projectId: string
-  preview: MergePreview
+  branchId: string
+  versions: Version[]
   onClose: () => void
-  onMerged: (result: { tracksUpdated: number; branchName: string }) => void
+  onMerged: (result: { tracksUpdated: number; branchName: string; targetName: string }) => void
 }) {
+  const defaultTargetId = useMemo(
+    () => versions.find(v => v.type === 'main')?.id ?? mergeTargetVersions(versions, branchId)[0]?.id ?? '',
+    [versions, branchId],
+  )
+  const [targetVersionId, setTargetVersionId] = useState(defaultTargetId)
+  const { preview, loading: previewLoading, error: previewError } = useMergePreview(
+    projectId,
+    branchId,
+    targetVersionId,
+  )
+
   const [resolutions, setResolutions]               = useState<Record<string, Resolution>>({})
   const [sectionResolutions, setSectionResolutions] = useState<Record<string, 'main' | 'branch'>>({})
   const [merging, setMerging]                       = useState(false)
@@ -597,6 +557,63 @@ export function MergeModal({
   const [commentDeletionChoice, setCommentDeletionChoice] = useState<'keep' | 'apply'>('keep')
   const [showAddedDetail, setShowAddedDetail]             = useState(false)
   const [showDeletedDetail, setShowDeletedDetail]         = useState(false)
+
+  useEffect(() => {
+    setResolutions({})
+    setSectionResolutions({})
+    setCommentDeletionChoice('keep')
+    setShowAddedDetail(false)
+    setShowDeletedDetail(false)
+    setMergeErr('')
+  }, [targetVersionId])
+
+  function targetSelectorRow() {
+    const branchName = preview?.branchName ?? versions.find(v => v.id === branchId)?.name ?? 'branch'
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{branchName} →</span>
+        <MergeTargetSelector
+          branchId={branchId}
+          versions={versions}
+          targetId={targetVersionId}
+          onTargetChange={setTargetVersionId}
+          disabled={merging || previewLoading}
+        />
+      </div>
+    )
+  }
+
+  if (!preview && (previewLoading || !previewError)) {
+    return (
+      <MergeShell>
+        <div className="p-5">
+          <MergeTitle branchName={versions.find(v => v.id === branchId)?.name ?? 'branch'} targetName="…" />
+          {targetSelectorRow()}
+          <MergePreviewLoading />
+          <div className="flex justify-end mt-4">
+            <MergeBtn variant="ghost" onClick={onClose}>Cancel</MergeBtn>
+          </div>
+        </div>
+      </MergeShell>
+    )
+  }
+
+  if (!preview && previewError) {
+    return (
+      <MergeShell>
+        <div className="p-5">
+          <MergeTitle branchName={versions.find(v => v.id === branchId)?.name ?? 'branch'} targetName="…" />
+          {targetSelectorRow()}
+          <p className="text-[12px] my-4 text-destructive">{previewError}</p>
+          <div className="flex justify-end">
+            <MergeBtn variant="ghost" onClick={onClose}>Close</MergeBtn>
+          </div>
+        </div>
+      </MergeShell>
+    )
+  }
+
+  if (!preview) return null
 
   function setFileChoice(trackName: string, choice: 'main' | 'branch') {
     setResolutions(r => ({ ...r, [trackName]: { ...r[trackName], fileChoice: choice } }))
@@ -624,10 +641,11 @@ export function MergeModal({
   ).length
 
   const unresolvedCount = unresolvedTrackCount + unresolvedSectionCount
-  const canMerge = unresolvedCount === 0 && !merging
+  const canMerge = unresolvedCount === 0 && !merging && !previewLoading
 
   async function handleMerge() {
-    if (!canMerge) return
+    if (!canMerge || !preview) return
+    const p = preview
     setMerging(true)
     setMergeErr('')
     try {
@@ -635,7 +653,8 @@ export function MergeModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          branchVersionId: preview.branchVersionId,
+          branchVersionId: p.branchVersionId,
+          target_version_id: p.targetVersionId,
           resolutions: Object.entries(resolutions).map(([trackName, { fileChoice, nameChoice, offsetChoice }]) => ({
             trackName,
             ...(fileChoice && { fileChoice }),
@@ -646,7 +665,7 @@ export function MergeModal({
             const [startBar, endBar] = key.split('-').map(Number)
             return { startBar, endBar, choice }
           }),
-          ...((preview.commentChanges?.deleted.length ?? 0) > 0 && { commentDeletionChoice }),
+          ...((p.commentChanges?.deleted.length ?? 0) > 0 && { commentDeletionChoice }),
         }),
       })
       if (!res.ok) {
@@ -655,7 +674,7 @@ export function MergeModal({
         return
       }
       const data = await res.json()
-      onMerged({ tracksUpdated: data.tracks_updated ?? 0, branchName: preview.branchName })
+      onMerged({ tracksUpdated: data.tracks_updated ?? 0, branchName: p.branchName, targetName: p.targetVersionName })
     } catch {
       setMergeErr('Network error')
     } finally {
@@ -670,7 +689,12 @@ export function MergeModal({
     return (
       <MergeShell>
         <div className="p-6 overflow-y-auto">
-          <MergeTitle branchName={preview.branchName} />
+          <MergeTitle branchName={preview.branchName} targetName={preview.targetVersionName} />
+          {targetSelectorRow()}
+          {previewLoading ? (
+            <MergePreviewLoading label="Updating comparison…" />
+          ) : (
+          <>
           <p className="text-xs text-muted-foreground mt-1 mb-5 m-0">No conflicts — ready to merge</p>
 
           {preview.autoMerge.length > 0 && (
@@ -731,11 +755,14 @@ export function MergeModal({
             </div>
           )}
 
+          </>
+          )}
+
           {mergeErr && <p className="text-xs text-destructive mb-3 m-0">{mergeErr}</p>}
 
           <div className="flex gap-2 justify-end pt-2 border-t border-border">
             <MergeBtn onClick={onClose}>Cancel</MergeBtn>
-            <MergeBtn variant="primary" disabled={merging} onClick={handleMerge}>
+            <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
               {merging ? 'Merging…' : 'Merge →'}
             </MergeBtn>
           </div>
@@ -748,15 +775,22 @@ export function MergeModal({
   return (
     <MergeShell wide>
       <div className="px-5 pt-5 pb-4 shrink-0 border-b border-border">
-        <MergeTitle branchName={preview.branchName} />
-        <p className={`text-xs mt-1 m-0 ${unresolvedCount > 0 ? 'text-ember' : 'text-muted-foreground'}`}>
-          {unresolvedCount > 0
+        <MergeTitle branchName={preview.branchName} targetName={preview.targetVersionName} />
+        {targetSelectorRow()}
+        <p className={`text-xs mt-1 m-0 ${previewLoading ? 'text-muted-foreground' : unresolvedCount > 0 ? 'text-ember' : 'text-muted-foreground'}`}>
+          {previewLoading
+            ? 'Updating comparison…'
+            : unresolvedCount > 0
             ? `Resolve ${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} before merging`
             : 'All conflicts resolved — ready to merge'}
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+        {previewLoading ? (
+          <MergePreviewLoading label="Updating comparison…" />
+        ) : (
+        <>
         {preview.conflicts.length > 0 && (
           <div className="flex flex-col gap-4">
             <SectionLabel>Tracks</SectionLabel>
@@ -925,6 +959,8 @@ export function MergeModal({
               </MergeListRow>
             ))}
           </MergeListBox>
+        )}
+        </>
         )}
       </div>
 

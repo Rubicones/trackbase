@@ -7,6 +7,7 @@ import { getBarMath, sectionLabel } from '@/components/StructureEditor'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { SectionLabel } from '@/components/design/AppShell'
+import { VersionChipSelector } from '@/components/VersionChipSelector'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, fetchProjectRoadmap } from '@/components/SongRoadmap'
 import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
@@ -570,19 +571,14 @@ export function StructurePreviewPanel({
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <SectionLabel>VIEWING · {viewingLabel}</SectionLabel>
-                  {versions.length > 0 && (
-                    <select
-                      value={selectedVersionId ?? ''}
-                      onChange={e => handleVersionChange(e.target.value)}
+                  {versions.length > 0 && selectedVersionId && (
+                    <VersionChipSelector
+                      versions={versions}
+                      selectedId={selectedVersionId}
+                      onChange={handleVersionChange}
                       disabled={versionLoading}
-                      className="bg-surface border border-border text-[10px] uppercase tracking-widest px-2 py-1 outline-none focus:border-ember max-w-[160px] truncate cursor-pointer disabled:opacity-50"
-                    >
-                      {versions.map(v => (
-                        <option key={v.id} value={v.id}>
-                          {v.name}{v.type === 'main' ? ' (main)' : ''}
-                        </option>
-                      ))}
-                    </select>
+                      popoverLabel="Version"
+                    />
                   )}
                 </div>
 

@@ -11,10 +11,12 @@ import {
   BarState,
 } from '@/lib/sectionMerge'
 import { trackStartBar } from '@/lib/trackMerge'
+import { buildVersionParentMap, findMergeBaseVersionId } from '@/lib/mergeBase'
 
 // POST /api/projects/[id]/merge
 // Body: {
 //   branchVersionId: string,
+//   target_version_id?: string,         // defaults to main version if omitted
 //   resolutions: Array<{
 //     trackName: string,
 //     fileChoice?: 'main' | 'branch',   // required when fileConflict
@@ -29,14 +31,14 @@ import { trackStartBar } from '@/lib/trackMerge'
 // }
 //
 // Algorithm:
-//   1. Load base/branch/main track sets
+//   1. Load base/branch/target track sets
 //   2. Re-run conflict detection to determine fileConflict, renameConflict,
 //      fileChangedInBranch, renamedInBranch flags per track
 //   3. Determine final file source and display_name for each track
-//   4. Wipe main tracks and insert the merged set
+//   4. Wipe target tracks and insert the merged set
 //   5. Build section finalMap from bar-by-bar merge + resolutions
-//   6. Replace main sections with finalMap output
-//   7. Mark branch as merged
+//   6. Replace target sections with finalMap output
+//   7. Mark branch as merged (merged_at + merged_into_id)
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -47,8 +49,9 @@ export async function POST(
     const access = await requireBandMember(req, projectId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project: _project } = access
-    const { branchVersionId, resolutions = [], sectionResolutions = [] } = await req.json() as {
+    const { branchVersionId, target_version_id, resolutions = [], sectionResolutions = [] } = await req.json() as {
       branchVersionId: string
+      target_version_id?: string
       resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch'; offsetChoice?: 'main' | 'branch' }>
       sectionResolutions: Array<{ startBar: number; endBar: number; choice: 'main' | 'branch' }>
     }
@@ -71,17 +74,56 @@ export async function POST(
       return NextResponse.json({ error: 'branch already merged' }, { status: 400 })
     }
 
-    // Fetch main
-    const { data: main, error: mainErr } = await supabase
-      .from('versions')
-      .select('*')
-      .eq('project_id', projectId)
-      .eq('type', 'main')
-      .single()
-    if (mainErr || !main) throw mainErr ?? new Error('main not found')
+    // Fetch target version (explicit or default to main)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let main: any
+    if (target_version_id) {
+      const { data: targetVersion, error: targetErr } = await supabase
+        .from('versions')
+        .select('*')
+        .eq('id', target_version_id)
+        .eq('project_id', projectId)
+        .single()
+      if (targetErr || !targetVersion) {
+        return NextResponse.json({ error: 'target version not found' }, { status: 404 })
+      }
+      if (target_version_id === branchVersionId) {
+        return NextResponse.json({ error: 'cannot merge a branch into itself' }, { status: 400 })
+      }
+      if (targetVersion.merged_at) {
+        return NextResponse.json({ error: 'cannot merge into a closed (already merged) branch' }, { status: 400 })
+      }
+      main = targetVersion
+    } else {
+      const { data: mainVersion, error: mainErr } = await supabase
+        .from('versions')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'main')
+        .single()
+      if (mainErr || !mainVersion) throw mainErr ?? new Error('main not found')
+      main = mainVersion
+    }
 
-    // Fetch all relevant track sets
-    const baseVersionId = branch.parent_id
+    const { data: projectVersions, error: versionsErr } = await supabase
+      .from('versions')
+      .select('id, parent_id')
+      .eq('project_id', projectId)
+    if (versionsErr) throw versionsErr
+
+    const baseVersionId = findMergeBaseVersionId(
+      branch,
+      main.id,
+      buildVersionParentMap(projectVersions ?? []),
+    )
+    if (!baseVersionId) {
+      return NextResponse.json(
+        { error: 'branch and merge target share no common ancestor' },
+        { status: 400 },
+      )
+    }
+
+    // Fetch all relevant track sets (base = LCA of branch and target, not parent_id)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [baseTrk, branchTrk, mainTrk]: [any[], any[], any[]] = await Promise.all([
       baseVersionId
@@ -256,7 +298,7 @@ export async function POST(
     // Mark branch as merged
     const { error: mergeErr } = await supabase
       .from('versions')
-      .update({ merged_at: new Date().toISOString() })
+      .update({ merged_at: new Date().toISOString(), merged_into_id: main.id })
       .eq('id', branchVersionId)
     if (mergeErr) throw mergeErr
 
@@ -351,16 +393,17 @@ export async function POST(
       .eq('version_id', main.id)
       .order('position', { ascending: true })
 
-    // Merging a branch into main changes the track set — mark preview stale.
+    // Merging a branch changes the target version's track set — mark preview stale.
     void markPreviewMixStale(projectId)
 
     // Log activity (fire-and-forget)
+    const targetName = (main?.name as string | undefined) ?? 'main'
     supabase
       .from('projects').select('band_id, name').eq('id', projectId).maybeSingle()
       .then(({ data: proj }) => {
         if (proj) logActivity({
           bandId: proj.band_id, userId, action: 'merge',
-          subject: `${branch.name} → main`, projectId,
+          subject: `${branch.name} → ${targetName}`, projectId,
         })
       })
 

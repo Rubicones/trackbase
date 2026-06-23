@@ -9,6 +9,7 @@ import {
   AutoBarRange,
 } from '@/lib/sectionMerge'
 import { trackStartBar } from '@/lib/trackMerge'
+import { buildVersionParentMap, findMergeBaseVersionId } from '@/lib/mergeBase'
 
 // ─── Shared types (re-exported so MergeModal can import them) ─────────────────
 
@@ -64,6 +65,8 @@ export interface MergePreview {
   branchVersionId: string
   mainVersionId: string
   branchCommentCount: number
+  targetVersionId: string
+  targetVersionName: string
   // ── Section bar merge ──────────────────────────────────────────────────────
   sectionBarConflicts:   ConflictRange[]
   sectionAutoFromBranch: AutoBarRange[]
@@ -72,7 +75,7 @@ export interface MergePreview {
 }
 
 // POST /api/projects/[id]/merge/preview
-// Body: { branch_id: string }
+// Body: { branch_id: string, target_version_id?: string }
 // Returns conflict detection results without applying any changes.
 export async function POST(
   req: NextRequest,
@@ -84,7 +87,7 @@ export async function POST(
     const access = await requireBandMember(req, projectId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
-    const { branch_id } = await req.json()
+    const { branch_id, target_version_id } = await req.json()
 
     if (!branch_id) {
       return NextResponse.json({ error: 'branch_id is required' }, { status: 400 })
@@ -104,17 +107,56 @@ export async function POST(
       return NextResponse.json({ error: 'branch already merged' }, { status: 400 })
     }
 
-    // Fetch main
-    const { data: main, error: mainErr } = await supabase
-      .from('versions')
-      .select('*')
-      .eq('project_id', projectId)
-      .eq('type', 'main')
-      .single()
-    if (mainErr || !main) throw mainErr ?? new Error('main not found')
+    // Fetch target version (explicit or default to main)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let main: any
+    if (target_version_id) {
+      const { data: targetVersion, error: targetErr } = await supabase
+        .from('versions')
+        .select('*')
+        .eq('id', target_version_id)
+        .eq('project_id', projectId)
+        .single()
+      if (targetErr || !targetVersion) {
+        return NextResponse.json({ error: 'target version not found' }, { status: 404 })
+      }
+      if (target_version_id === branch_id) {
+        return NextResponse.json({ error: 'cannot merge a branch into itself' }, { status: 400 })
+      }
+      if (targetVersion.merged_at) {
+        return NextResponse.json({ error: 'cannot merge into a closed (already merged) branch' }, { status: 400 })
+      }
+      main = targetVersion
+    } else {
+      const { data: mainVersion, error: mainErr } = await supabase
+        .from('versions')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'main')
+        .single()
+      if (mainErr || !mainVersion) throw mainErr ?? new Error('main not found')
+      main = mainVersion
+    }
 
-    // Fetch all three track sets
-    const baseVersionId = branch.parent_id
+    const { data: projectVersions, error: versionsErr } = await supabase
+      .from('versions')
+      .select('id, parent_id')
+      .eq('project_id', projectId)
+    if (versionsErr) throw versionsErr
+
+    const baseVersionId = findMergeBaseVersionId(
+      branch,
+      main.id,
+      buildVersionParentMap(projectVersions ?? []),
+    )
+    if (!baseVersionId) {
+      return NextResponse.json(
+        { error: 'branch and merge target share no common ancestor' },
+        { status: 400 },
+      )
+    }
+
+    // Fetch all three track sets (base = LCA of branch and target, not parent_id)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const baseTracks: any[] = baseVersionId
       ? (await supabase.from('tracks').select('*').eq('version_id', baseVersionId)).data ?? []
@@ -328,6 +370,8 @@ export async function POST(
       mainName: main.name,
       branchVersionId: branch_id,
       mainVersionId: main.id,
+      targetVersionId: main.id,
+      targetVersionName: main.name,
       branchCommentCount: addedInBranch.length,
       sectionBarConflicts,
       sectionAutoFromBranch,

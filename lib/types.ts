@@ -114,6 +114,7 @@ export interface Version {
   type: 'main' | 'branch'
   created_at: string
   merged_at: string | null
+  merged_into_id: string | null
   tracks: Track[]
 }
 

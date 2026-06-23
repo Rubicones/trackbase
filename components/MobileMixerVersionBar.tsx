@@ -1,6 +1,8 @@
 'use client'
 
+import { useMemo } from 'react'
 import type { Version } from '@/lib/types'
+import { sortMobileVersions } from '@/lib/versionSort'
 
 export function CommentToggleBtn({
   active, count, onClick, className = 'size-8', variant = 'icon', showCount = true, tourId,
@@ -61,10 +63,12 @@ export function MobileMixerVersionBar({
   commentCount: number
   onToggleCommentMode: () => void
 }) {
+  const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
+
   return (
     <div className="flex items-stretch border-b border-border bg-surface/40 shrink-0 h-10">
       <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 px-2 scrollbar-none">
-        {versions.map(v => {
+        {sortedVersions.map(v => {
           const isActive = v.id === activeId
           return (
             <button
@@ -79,9 +83,9 @@ export function MobileMixerVersionBar({
                     : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
               }`}
             >
-              {isActive && v.type === 'main' && '● '}
+              {v.type === 'main' && '● '}
               {v.merged_at && '✓ '}
-              {v.type === 'branch' && !v.merged_at && !isActive && '⌥ '}
+              {v.type === 'branch' && !v.merged_at && '⌥ '}
               {v.name}
             </button>
           )

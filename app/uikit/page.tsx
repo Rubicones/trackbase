@@ -5,45 +5,35 @@ import React, {
   type ReactNode,
 } from 'react'
 
+import { DESIGN_THEMES } from '@/lib/design-theme'
+import { AppHeader, StatusFooter, SectionLabel } from '@/components/design/AppShell'
+import { Button } from '@/components/ui/button'
 import {
-  DESIGN_THEMES,
-  DEFAULT_DESIGN_THEME,
-  type DesignThemeId,
-} from '@/lib/design-theme'
-
-// ─── Theme ───────────────────────────────────────────────────────────────────
-
-const THEMES = DESIGN_THEMES
-type ThemeId = DesignThemeId
-
-type ThemeCtx = { theme: ThemeId; setTheme: (t: ThemeId) => void }
-const ThemeContext = createContext<ThemeCtx>({ theme: DEFAULT_DESIGN_THEME, setTheme: () => {} })
-const useTheme = () => useContext(ThemeContext)
-
-function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeId>(DEFAULT_DESIGN_THEME)
-  const wrapperRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('tb-uikit-theme') as ThemeId | null
-      if (saved && THEMES.some(t => t.id === saved)) setThemeState(saved)
-    } catch { /* noop */ }
-  }, [])
-
-  const setTheme = (t: ThemeId) => {
-    setThemeState(t)
-    try { localStorage.setItem('tb-uikit-theme', t) } catch { /* noop */ }
-  }
-
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
-      <div ref={wrapperRef} className="tb-kit min-h-screen flex flex-col" data-theme={theme}>
-        {children}
-      </div>
-    </ThemeContext.Provider>
-  )
-}
+  UikitRoot,
+  PageTag,
+  Section,
+  Tile,
+  Caption,
+  ActiveTheme,
+  ThemeMatrix,
+} from './kit-helpers'
+import {
+  ProductionButtonsSection,
+  ProductionFormsSection,
+  ProductionTagsSection,
+  ProductionOverlaysSection,
+  ProductionLoadingSection,
+  ProductionVersioningSection,
+  ProductionContextSection,
+  ProductionRoadmapSection,
+  ProductionAuthSection,
+  ProductionThemeSection,
+  ProductionShellSection,
+  ProductionFilterTabsSection,
+  ProductionPopoverSection,
+  ProductionChecklistSection,
+  ProductionErrorSection,
+} from './production-sections'
 
 // ─── Waveform ────────────────────────────────────────────────────────────────
 
@@ -84,39 +74,6 @@ function IcoCheck({ className = 'size-5' }) { return <svg className={className} 
 function IcoChevronDown({ className = 'size-4' }) { return <svg className={className} {...svgProps}><polyline points="6 9 12 15 18 9" /></svg> }
 
 // ─── UI Components ───────────────────────────────────────────────────────────
-
-// Button
-type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'
-type ButtonSize = 'default' | 'sm' | 'lg' | 'icon'
-function Button({ children, variant = 'default', size = 'default', onClick, disabled, className = '', type = 'button' }: {
-  children?: ReactNode; variant?: ButtonVariant; size?: ButtonSize
-  onClick?: () => void; disabled?: boolean; className?: string; type?: 'button' | 'submit'
-}) {
-  const v: Record<ButtonVariant, string> = {
-    default: 'bg-primary text-primary-foreground hover:opacity-90',
-    secondary: 'bg-secondary text-secondary-foreground hover:opacity-80',
-    outline: 'border border-border bg-background hover:bg-accent hover:text-accent-foreground',
-    ghost: 'hover:bg-accent hover:text-accent-foreground',
-    destructive: 'bg-destructive text-destructive-foreground hover:opacity-90',
-    link: 'text-primary underline-offset-4 hover:underline',
-  }
-  const s: Record<ButtonSize, string> = {
-    default: 'h-9 px-4 py-2 text-sm',
-    sm: 'h-8 px-3 text-xs',
-    lg: 'h-10 px-8 text-sm',
-    icon: 'h-9 w-9',
-  }
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 font-medium rounded-sm transition-colors disabled:pointer-events-none disabled:opacity-50 ${v[variant]} ${s[size]} ${className}`}
-    >
-      {children}
-    </button>
-  )
-}
 
 // Input
 function Input({ placeholder, className = '', id, defaultValue }: { placeholder?: string; className?: string; id?: string; defaultValue?: string }) {
@@ -218,39 +175,6 @@ function Slider({ defaultValue, className = '' }: { defaultValue?: number[]; cla
       className={`w-full accent-ember h-1 ${className}`}
       style={{ accentColor: 'var(--ember)' }}
     />
-  )
-}
-
-// Badge
-type BadgeVariant = 'default' | 'secondary' | 'outline' | 'destructive'
-function Badge({ children, variant = 'default' }: { children: ReactNode; variant?: BadgeVariant }) {
-  const v: Record<BadgeVariant, string> = {
-    default: 'bg-primary text-primary-foreground border-transparent',
-    secondary: 'bg-secondary text-secondary-foreground border-transparent',
-    outline: 'border border-border text-foreground',
-    destructive: 'bg-destructive text-destructive-foreground border-transparent',
-  }
-  return (
-    <span className={`inline-flex items-center border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest transition-colors ${v[variant]}`}>
-      {children}
-    </span>
-  )
-}
-
-// Avatar
-function Avatar({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <span className={`relative flex h-10 w-10 shrink-0 overflow-hidden ${className}`}>{children}</span>
-}
-function AvatarFallback({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <span className={`flex h-full w-full items-center justify-center ${className}`}>{children}</span>
-}
-
-// Progress
-function Progress({ value = 0, className = '' }: { value?: number; className?: string }) {
-  return (
-    <div className={`relative h-2 w-full overflow-hidden bg-secondary ${className}`}>
-      <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
-    </div>
   )
 }
 
@@ -378,70 +302,6 @@ function AccordionContent({ children }: { children: ReactNode }) {
   )
 }
 
-// Dialog
-type DialogCtx = { open: boolean; setOpen: (v: boolean) => void }
-const DialogContext = createContext<DialogCtx>({ open: false, setOpen: () => {} })
-function Dialog({ open, onOpenChange, children }: { open?: boolean; onOpenChange?: (v: boolean) => void; children: ReactNode }) {
-  const [local, setLocal] = useState(false)
-  const isOpen = open !== undefined ? open : local
-  const setIsOpen = (v: boolean) => { setLocal(v); onOpenChange?.(v) }
-  return <DialogContext.Provider value={{ open: isOpen, setOpen: setIsOpen }}>{children}</DialogContext.Provider>
-}
-function DialogTrigger({ children, asChild }: { children: ReactNode; asChild?: boolean }) {
-  const { setOpen } = useContext(DialogContext)
-  if (asChild && typeof children === 'object' && children !== null) {
-    // Clone child and add onClick
-    return <span onClick={() => setOpen(true)} style={{ display: 'contents' }}>{children}</span>
-  }
-  return <button onClick={() => setOpen(true)}>{children}</button>
-}
-function DialogContent({ children }: { children: ReactNode }) {
-  const { open, setOpen } = useContext(DialogContext)
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setOpen(false)} />
-      <div className="relative z-50 w-full max-w-lg border border-border bg-background p-6 shadow-2xl animate-slide-in space-y-4">
-        {children}
-        <button onClick={() => setOpen(false)} className="absolute right-4 top-4 text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
-      </div>
-    </div>
-  )
-}
-function DialogHeader({ children }: { children: ReactNode }) { return <div className="flex flex-col space-y-1.5">{children}</div> }
-function DialogTitle({ children }: { children: ReactNode }) { return <h2 className="font-display text-lg font-semibold leading-none tracking-tight">{children}</h2> }
-function DialogDescription({ children }: { children: ReactNode }) { return <p className="text-sm text-muted-foreground">{children}</p> }
-
-// Tooltip
-function TooltipProvider({ children }: { children: ReactNode }) { return <>{children}</> }
-type TooltipCtx = { show: boolean; setShow: (v: boolean) => void }
-const TooltipContext = createContext<TooltipCtx>({ show: false, setShow: () => {} })
-function Tooltip({ children }: { children: ReactNode }) {
-  const [show, setShow] = useState(false)
-  return <TooltipContext.Provider value={{ show, setShow }}><div className="relative inline-flex">{children}</div></TooltipContext.Provider>
-}
-function TooltipTrigger({ children, asChild }: { children: ReactNode; asChild?: boolean }) {
-  const { setShow } = useContext(TooltipContext)
-  return (
-    <span
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-      style={{ display: 'contents' }}
-    >
-      {children}
-    </span>
-  )
-}
-function TooltipContent({ children }: { children: ReactNode }) {
-  const { show } = useContext(TooltipContext)
-  if (!show) return null
-  return (
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 px-3 py-1.5 text-xs bg-foreground text-background whitespace-nowrap">
-      {children}
-    </div>
-  )
-}
-
 // Select
 type SelectCtx = { value: string; setValue: (v: string) => void; open: boolean; setOpen: (v: boolean) => void; label: string; setLabel: (v: string) => void }
 const SelectContext = createContext<SelectCtx>({ value: '', setValue: () => {}, open: false, setOpen: () => {}, label: '', setLabel: () => {} })
@@ -511,189 +371,6 @@ function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-primary/10 ${className}`} />
 }
 
-// Separator
-function Separator({ className = '' }: { className?: string }) {
-  return <div role="separator" className={`shrink-0 bg-border h-px w-full ${className}`} />
-}
-
-// ─── Shell Components ─────────────────────────────────────────────────────────
-
-function PageTag({ children }: { children: ReactNode }) {
-  return (
-    <div className="inline-block border border-ember/40 bg-ember-soft px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-ember">
-      {children}
-    </div>
-  )
-}
-function SectionLabel({ children }: { children: ReactNode }) {
-  return <div className="font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">{children}</div>
-}
-
-function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
-  const { theme, setTheme } = useTheme()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const current = THEMES.find(t => t.id === theme) ?? THEMES[0]
-  useEffect(() => {
-    function onDoc(e: MouseEvent) { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
-    if (open) document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 border border-border bg-surface/40 px-2 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember transition"
-        title={`Theme: ${current.label}`}
-      >
-        <span className="flex gap-px">
-          {current.swatches.map((c, i) => <span key={i} className="size-2 border border-border/40" style={{ background: c }} />)}
-        </span>
-        {!compact && <span className="hidden sm:inline">{current.label}</span>}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-2 z-50 w-72 border border-border bg-popover shadow-2xl">
-          <div className="px-3 py-2 border-b border-border text-[9px] uppercase tracking-widest text-muted-foreground">Themes</div>
-          <div className="divide-y divide-border">
-            {THEMES.map(t => (
-              <button
-                key={t.id}
-                onClick={() => { setTheme(t.id); setOpen(false) }}
-                className={`w-full text-left flex items-start gap-3 px-3 py-2.5 hover:bg-surface transition ${t.id === theme ? 'bg-ember-soft' : ''}`}
-              >
-                <div className="flex flex-col gap-px shrink-0">
-                  {[0, 2].map(row => (
-                    <div key={row} className="flex gap-px">
-                      {t.swatches.slice(row, row + 2).map((c, i) => <span key={i} className="size-3 border border-border/40" style={{ background: c }} />)}
-                    </div>
-                  ))}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest">
-                    {t.label}
-                    {t.id === theme && <span className="text-ember">●</span>}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{t.description}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function AppHeader({ crumbs, right }: { crumbs?: ReactNode; right?: ReactNode }) {
-  return (
-    <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md">
-      <div className="flex items-center gap-6 min-w-0">
-        <span className="font-display text-lg font-bold tracking-tight text-ember shrink-0">TRACKBASE</span>
-        <div className="hidden md:flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground min-w-0">
-          <span className="hover:text-foreground cursor-pointer transition-colors">Bands</span>
-          <span className="text-border">/</span>
-          {crumbs}
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        {right}
-        <ThemeSwitcher />
-        <div className="hidden sm:flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-online animate-pulse-dot" />
-          Live
-        </div>
-        <button className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold hover:border-ember transition-colors">
-          JD
-        </button>
-      </div>
-    </nav>
-  )
-}
-
-function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactNode }) {
-  return (
-    <footer className="sticky bottom-0 left-0 right-0 border-t border-border bg-background/95 backdrop-blur px-6 py-2 flex items-center justify-between text-[10px] text-muted-foreground z-40">
-      <div className="flex gap-6 items-center">
-        <div className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-online animate-pulse-dot" />
-          <span className="uppercase tracking-widest">SYS OK</span>
-        </div>
-        {left}
-      </div>
-      <div className="flex gap-6 items-center">
-        {right}
-        <span className="text-foreground font-bold tracking-widest">TRACKBASE // v0.9</span>
-      </div>
-    </footer>
-  )
-}
-
-// ─── Page Helpers ─────────────────────────────────────────────────────────────
-
-function Section({ title, tag, id, children }: { title: string; tag: string; id: string; children: ReactNode }) {
-  return (
-    <section id={id} className="scroll-mt-32">
-      <div className="flex items-baseline justify-between border-b border-border pb-2 mb-5">
-        <div className="flex items-baseline gap-3">
-          <span className="text-[10px] font-mono tracking-widest text-ember">{tag}</span>
-          <h2 className="tb-section-title">{title}</h2>
-        </div>
-        <a href={`#${id}`} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember">#{id}</a>
-      </div>
-      <div>{children}</div>
-    </section>
-  )
-}
-function Tile({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`border border-border bg-surface/30 p-4 ${className}`}>{children}</div>
-}
-function Caption({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-normal ${className}`}>{children}</div>
-}
-
-function ActiveTheme() {
-  const { theme } = useTheme()
-  const t = THEMES.find(x => x.id === theme) ?? THEMES[0]
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex gap-px">
-        {t.swatches.map((c, i) => <span key={i} className="size-4 border border-border/40" style={{ background: c }} />)}
-      </div>
-      <div className="text-xs font-bold uppercase tracking-widest font-mono">{t.label}</div>
-    </div>
-  )
-}
-
-function ThemeMatrix() {
-  const { theme, setTheme } = useTheme()
-  return (
-    <div className="grid sm:grid-cols-2 gap-3">
-      {THEMES.map(t => {
-        const active = t.id === theme
-        return (
-          <button
-            key={t.id}
-            onClick={() => setTheme(t.id)}
-            className={`text-left border p-4 transition ${active ? 'border-ember bg-ember-soft' : 'border-border hover:border-ember'}`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="font-display text-lg font-normal uppercase tracking-tight">{t.label}</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{t.mode} · {t.id}</div>
-              </div>
-              {active && <span className="text-[10px] uppercase tracking-widest text-ember">● ACTIVE</span>}
-            </div>
-            <div className="mt-3 flex gap-1">
-              {t.swatches.map((c, i) => <span key={i} className="flex-1 h-12 border border-border/40" style={{ background: c }} />)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-3 leading-relaxed">{t.description}</p>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 const TOKENS = [
   { name: 'background', role: 'Canvas / page surface' },
   { name: 'foreground', role: 'Primary text on canvas' },
@@ -729,15 +406,14 @@ const TYPE_SCALE: { label: string; cls: string; sample: string; spec: string }[]
 
 function UikitContent() {
   const [tab, setTab] = useState('foundations')
-  const [dialogOpen, setDialogOpen] = useState(false)
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <AppHeader
         crumbs={<span className="text-foreground">UI Kit</span>}
         right={
-          <a href="/"
-            className="hidden sm:inline-flex border border-border px-3 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember"
+          <a href="/dashboard"
+            className="hidden sm:inline-flex border border-border px-3 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember no-underline text-muted-foreground"
           >
             ← App
           </a>
@@ -755,16 +431,18 @@ function UikitContent() {
               <span className="tb-hero-title-accent">UI Kit</span>
             </h1>
             <p className="tb-hero-lead">
-              The single source of truth for the product surface: design tokens, themes,
-              components, motion and the brand voice that ties them together. Built for
-              musicians, indexed for engineers.
+              Production components imported from <code className="font-mono text-xs">@/components/design</code> and{' '}
+              <code className="font-mono text-xs">@/components/ui</code> — the same code the app runs.
+              Themes sync via <code className="font-mono text-xs">useDesignTheme()</code>.
             </p>
           </div>
           <div className="border border-border bg-background p-4">
             <SectionLabel>Active theme</SectionLabel>
             <div className="mt-3 flex items-center justify-between gap-3">
               <ActiveTheme />
-              <ThemeSwitcher />
+              <a href="#theme-picker" className="text-[10px] uppercase tracking-widest text-ember hover:underline no-underline">
+                Change theme →
+              </a>
             </div>
           </div>
         </div>
@@ -781,8 +459,9 @@ function UikitContent() {
                 ['type',        '03 · Typography'],
                 ['components',  '04 · Components'],
                 ['studio',      '05 · Studio Elements'],
-                ['motion',      '06 · Motion'],
-                ['voice',       '07 · Voice'],
+                ['product',     '06 · Product Surfaces'],
+                ['motion',      '07 · Motion'],
+                ['voice',       '08 · Voice'],
               ] as [string, string][]).map(([id, label]) => (
                 <TabsTrigger
                   key={id}
@@ -900,6 +579,8 @@ function UikitContent() {
                 ))}
               </div>
             </Section>
+
+            <ProductionThemeSection />
           </TabsContent>
 
           {/* ─── TYPE ─── */}
@@ -934,103 +615,9 @@ function UikitContent() {
 
           {/* ─── COMPONENTS ─── */}
           <TabsContent value="components" className="m-0 space-y-12">
-            <Section title="Buttons" id="buttons" tag="04.01">
-              <div className="grid sm:grid-cols-2 gap-6">
-                <Tile>
-                  <Caption className="mb-3">Brutalist primary set — used across the studio</Caption>
-                  <div className="flex flex-wrap gap-2">
-                    <button className="bg-ember text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:brightness-110 active:scale-95">Primary</button>
-                    <button className="border border-border px-3 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember">Ghost</button>
-                    <button className="bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest">Invert</button>
-                    <button className="border border-dashed border-border px-3 py-1.5 text-[10px] uppercase tracking-widest">+ Add</button>
-                    <button disabled className="bg-ember/40 text-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest cursor-not-allowed">Disabled</button>
-                  </div>
-                </Tile>
-                <Tile>
-                  <Caption className="mb-3">shadcn variants (rounded set)</Caption>
-                  <div className="flex flex-wrap gap-2">
-                    <Button>Default</Button>
-                    <Button variant="secondary">Secondary</Button>
-                    <Button variant="outline">Outline</Button>
-                    <Button variant="ghost">Ghost</Button>
-                    <Button variant="destructive">Destructive</Button>
-                    <Button variant="link">Link</Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <Button size="sm">Small</Button>
-                    <Button size="default">Default</Button>
-                    <Button size="lg">Large</Button>
-                  </div>
-                </Tile>
-              </div>
-            </Section>
-
-            <Section title="Form fields" id="forms" tag="04.02">
-              <div className="grid md:grid-cols-2 gap-6">
-                <Tile className="space-y-3">
-                  <div>
-                    <Label>Project name</Label>
-                    <Input placeholder="Wildfire" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label>Notes</Label>
-                    <Textarea rows={3} placeholder="Take 3 — re-tracked the bridge" className="mt-1" />
-                  </div>
-                  <div>
-                    <Label>Time signature</Label>
-                    <Select>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="4/4" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="44">4/4</SelectItem>
-                        <SelectItem value="34">3/4</SelectItem>
-                        <SelectItem value="68">6/8</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </Tile>
-                <Tile className="space-y-5">
-                  <div className="flex items-center gap-3">
-                    <Checkbox id="cb" defaultChecked />
-                    <Label htmlFor="cb">Auto-merge non-conflicting branches</Label>
-                  </div>
-                  <RadioGroup defaultValue="audio" className="space-y-1">
-                    <div className="flex items-center gap-2"><RadioGroupItem value="audio" id="r1" /><Label htmlFor="r1">Audio (WAV)</Label></div>
-                    <div className="flex items-center gap-2"><RadioGroupItem value="midi" id="r2" /><Label htmlFor="r2">MIDI</Label></div>
-                  </RadioGroup>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="sw">Click track</Label>
-                    <Switch id="sw" defaultChecked />
-                  </div>
-                  <div>
-                    <Label>Master volume</Label>
-                    <Slider defaultValue={[75]} className="mt-2" />
-                  </div>
-                </Tile>
-              </div>
-            </Section>
-
-            <Section title="Tags · badges · avatars" id="tags" tag="04.03">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge>Default</Badge>
-                <Badge variant="secondary">Secondary</Badge>
-                <Badge variant="outline">Outline</Badge>
-                <Badge variant="destructive">Destructive</Badge>
-                <span className="border border-ember/40 bg-ember-soft px-2 py-1 text-[10px] uppercase tracking-widest text-ember">● LIVE</span>
-                <span className="border border-online/40 bg-online/10 px-2 py-1 text-[10px] uppercase tracking-widest text-online">● ONLINE</span>
-                <span className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">DRAFT</span>
-              </div>
-              <div className="flex items-center gap-3 mt-4">
-                {['AM', 'SV', 'TR', 'ML'].map(i => (
-                  <Avatar key={i} className="rounded-none border border-border">
-                    <AvatarFallback className="rounded-none bg-surface-2 text-[10px] font-bold">{i}</AvatarFallback>
-                  </Avatar>
-                ))}
-                <Progress value={48} className="w-48" />
-                <span className="text-[10px] text-muted-foreground tabular-nums">2.4 / 5 GB</span>
-              </div>
-            </Section>
+            <ProductionButtonsSection />
+            <ProductionFormsSection />
+            <ProductionTagsSection />
 
             <Section title="Cards & alerts" id="cards" tag="04.04">
               <div className="grid md:grid-cols-2 gap-6">
@@ -1089,36 +676,52 @@ function UikitContent() {
               </div>
             </Section>
 
-            <Section title="Overlays" id="overlays" tag="04.06">
-              <div className="flex flex-wrap gap-3">
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button onClick={() => setDialogOpen(true)}>Open dialog</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>New branch</DialogTitle>
-                      <DialogDescription>Branch from main. You can merge back later.</DialogDescription>
-                    </DialogHeader>
-                    <Input placeholder="feature/dirty-synth" />
-                    <div className="flex justify-end gap-2">
-                      <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancel</Button>
-                      <Button onClick={() => setDialogOpen(false)}>Create</Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="outline">Hover for tooltip</Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Saved 2m ago by Alex</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+            <ProductionOverlaysSection />
+
+            <Section title="Form controls (legacy reference)" id="form-controls" tag="04.11">
+              <div className="grid md:grid-cols-2 gap-6">
+                <Tile className="space-y-3">
+                  <Caption className="mb-1">Native-style controls — prefer TbInput + chip selectors in product UI</Caption>
+                  <div>
+                    <Label>Project name</Label>
+                    <Input placeholder="Wildfire" className="mt-1 focus-visible:ring-0 focus-visible:border-ember" />
+                  </div>
+                  <div>
+                    <Label>Time signature</Label>
+                    <Select>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="4/4" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="44">4/4</SelectItem>
+                        <SelectItem value="34">3/4</SelectItem>
+                        <SelectItem value="68">6/8</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </Tile>
+                <Tile className="space-y-5">
+                  <div className="flex items-center gap-3">
+                    <Checkbox id="cb" defaultChecked />
+                    <Label htmlFor="cb">Auto-merge non-conflicting branches</Label>
+                  </div>
+                  <RadioGroup defaultValue="audio" className="space-y-1">
+                    <div className="flex items-center gap-2"><RadioGroupItem value="audio" id="r1" /><Label htmlFor="r1">Audio (WAV)</Label></div>
+                    <div className="flex items-center gap-2"><RadioGroupItem value="midi" id="r2" /><Label htmlFor="r2">MIDI</Label></div>
+                  </RadioGroup>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="sw">Click track</Label>
+                    <Switch id="sw" defaultChecked />
+                  </div>
+                  <div>
+                    <Label>Master volume</Label>
+                    <Slider defaultValue={[75]} className="mt-2" />
+                  </div>
+                </Tile>
               </div>
             </Section>
 
-            <Section title="Table" id="table" tag="04.07">
+            <Section title="Table" id="table" tag="04.12">
               <div className="border border-border">
                 <Table>
                   <TableHeader>
@@ -1148,12 +751,13 @@ function UikitContent() {
               </div>
             </Section>
 
-            <Section title="Loading & empty" id="loading" tag="04.08">
+            <Section title="Loading & empty" id="loading-empty" tag="04.09">
               <div className="grid md:grid-cols-2 gap-6">
                 <Tile className="space-y-2">
                   <Skeleton className="h-4 w-2/3" />
                   <Skeleton className="h-4 w-1/2" />
                   <Skeleton className="h-12 w-full" />
+                  <Caption className="pt-2">Skeleton — placeholder blocks (prefer SpinnerBars in product)</Caption>
                 </Tile>
                 <Tile className="text-center">
                   <div className="text-3xl">∅</div>
@@ -1162,8 +766,10 @@ function UikitContent() {
                   <Button className="mt-3">+ New Project</Button>
                 </Tile>
               </div>
-              <Separator className="my-6" />
             </Section>
+
+            <ProductionLoadingSection />
+            <ProductionPopoverSection />
           </TabsContent>
 
           {/* ─── STUDIO ─── */}
@@ -1203,7 +809,7 @@ function UikitContent() {
               <Tile className="p-0">
                 <div className="relative h-20 bg-surface">
                   <div className="absolute inset-y-0 left-[30%] right-[55%] border-x border-ember bg-ember/15">
-                    <div className="absolute -top-1 left-0 size-2 rounded-full bg-ember" />
+                    <div className="absolute -top-1 left-0 size-2 bg-ember" />
                   </div>
                   <div className="absolute top-3 left-[32%] w-56 border border-border bg-background p-3 shadow-2xl">
                     <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Sarah · 12m · BAR 36–40</div>
@@ -1233,11 +839,24 @@ function UikitContent() {
                 ))}
               </div>
             </Section>
+
+            <ProductionVersioningSection />
+            <ProductionContextSection />
+            <ProductionRoadmapSection />
+          </TabsContent>
+
+          {/* ─── PRODUCT ─── */}
+          <TabsContent value="product" className="m-0 space-y-12">
+            <ProductionShellSection />
+            <ProductionAuthSection />
+            <ProductionFilterTabsSection />
+            <ProductionChecklistSection />
+            <ProductionErrorSection />
           </TabsContent>
 
           {/* ─── MOTION ─── */}
           <TabsContent value="motion" className="m-0 space-y-12">
-            <Section title="Motion library" id="motion-lib" tag="06.01">
+            <Section title="Motion library" id="motion-lib" tag="07.01">
               <div className="grid sm:grid-cols-3 gap-3">
                 <Tile>
                   <div className="size-12 bg-ember animate-pulse-dot" />
@@ -1262,7 +881,7 @@ function UikitContent() {
 
           {/* ─── VOICE ─── */}
           <TabsContent value="voice" className="m-0 space-y-12">
-            <Section title="Voice & tone" id="voice" tag="07.01">
+            <Section title="Voice & tone" id="voice" tag="08.01">
               <div className="grid md:grid-cols-2 gap-4">
                 <Tile>
                   <SectionLabel>We are</SectionLabel>
@@ -1284,7 +903,7 @@ function UikitContent() {
                 </Tile>
               </div>
             </Section>
-            <Section title="Sample copy" id="copy" tag="07.02">
+            <Section title="Sample copy" id="copy" tag="08.02">
               <div className="grid sm:grid-cols-2 gap-3 text-sm">
                 <Tile><Caption>Button</Caption><div className="mt-1 font-display uppercase tracking-widest">Initialize studio</div></Tile>
                 <Tile><Caption>Empty state</Caption><div className="mt-1">No takes yet. Drop a WAV to get started.</div></Tile>
@@ -1298,7 +917,7 @@ function UikitContent() {
       </Tabs>
 
       <StatusFooter
-        left={<span>UI KIT · {TOKENS.length} TOKENS · {THEMES.length} THEMES</span>}
+        left={<span>UI KIT · {TOKENS.length} TOKENS · {DESIGN_THEMES.length} THEMES</span>}
         right={<span>BRANDBOOK // v0.9</span>}
       />
     </div>
@@ -1308,8 +927,8 @@ function UikitContent() {
 // ─── Default export ──────────────────────────────────────────────────────────
 export default function UikitPage() {
   return (
-    <ThemeProvider>
+    <UikitRoot>
       <UikitContent />
-    </ThemeProvider>
+    </UikitRoot>
   )
 }

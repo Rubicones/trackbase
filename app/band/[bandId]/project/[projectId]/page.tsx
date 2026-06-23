@@ -10,7 +10,6 @@ import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
-import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ResourcesCard } from '@/components/ResourcesCard'
@@ -28,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
 import { MobileExperience } from '@/components/MobileExperience'
+import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
@@ -3308,59 +3308,11 @@ function formatBytes(b: number): string {
   return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-// ─── Mobile version bar (scrollable pills + fixed + branch) ───────────────────
-
-function MobileVersionBar({
-  versions, activeId, onSelect, onNewBranch,
-}: {
-  versions: Version[]
-  activeId: string
-  onSelect: (id: string) => void
-  onNewBranch: () => void
-}) {
-  return (
-    <div className="flex items-stretch border-b border-border bg-surface/40 shrink-0 h-9">
-      <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 px-3 scrollbar-none">
-        {versions.map(v => {
-          const isActive = v.id === activeId
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onSelect(v.id)}
-              className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition ${
-                isActive
-                  ? 'bg-ember text-white border-ember'
-                  : v.merged_at
-                    ? 'border-border text-muted-foreground opacity-50'
-                    : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
-              }`}
-            >
-              {isActive && v.type === 'main' && '● '}
-              {v.merged_at && '✓ '}
-              {v.type === 'branch' && !v.merged_at && !isActive && '⌥ '}
-              {v.name}
-            </button>
-          )
-        })}
-      </div>
-      <button
-        type="button"
-        onClick={onNewBranch}
-        className="shrink-0 self-stretch border-l border-border px-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
-      >
-        + Branch
-      </button>
-    </div>
-  )
-}
-
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
-  mergeCheckingId: string | null
   storageUsed: number
   storageLimit: number
   storageFull: boolean
@@ -3375,10 +3327,25 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   onNavigateResourceVersion?: (versionId: string) => void
   onNavigateResourceTrack?: (trackId: string, versionId: string) => void
 }) {
+  const [hideMerged, setHideMerged] = useState(false)
   const main = versions.find(v => v.type === 'main')
   const branches = versions.filter(v => v.type === 'branch')
+  const listedVersions = [main, ...branches].filter(Boolean).filter(
+    v => !hideMerged || !v!.merged_at || v!.id === activeId,
+  )
   const active = versions.find(v => v.id === activeId)
   const canMerge = active?.type === 'branch' && !active.merged_at
+
+  // Build a name lookup for merged_into_id display
+  const versionNameById = new Map(versions.map(v => [v.id, v.name]))
+
+  // Compute depth per version for indentation (max 2)
+  function getDepth(v: Version): number {
+    if (!v.parent_id || v.type === 'main') return 0
+    const parent = versions.find(p => p.id === v.parent_id)
+    if (!parent || parent.type === 'main') return 1
+    return Math.min(2, getDepth(parent) + 1)
+  }
 
   const staticActions: { label: string; icon: React.ReactNode; action: () => void }[] = [
     {
@@ -3388,7 +3355,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
     },
   ]
 
-  const isChecking = mergeCheckingId === activeId
+  const isChecking = false
   const storagePct = Math.min(100, (storageUsed / storageLimit) * 100)
 
   return (
@@ -3401,10 +3368,26 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
       <div className="flex flex-col min-h-0 flex-1 basis-0">
         <div className={`flex-1 overflow-y-auto scrollbar-none ${compact ? 'p-3' : 'px-4 pt-4 pb-2'}`}>
           <SectionLabel>VERSION HISTORY</SectionLabel>
+          <button
+            type="button"
+            onClick={() => setHideMerged(v => !v)}
+            className={`w-full text-left mt-2 mb-1 text-[9px] uppercase tracking-widest transition ${
+              hideMerged ? 'text-ember' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {hideMerged ? 'Show merged' : 'Hide non-active'}
+          </button>
           <div className={compact ? 'mt-2 space-y-1' : 'mt-4 space-y-3'}>
-            {[main, ...branches].filter(Boolean).map(v => {
+            {listedVersions.map(v => {
               const isActive = v!.id === activeId
               const comments = commentCounts[v!.id] ?? 0
+              const depth = getDepth(v!)
+              const indentPx = depth * 12
+              const mergedIntoName = v!.merged_at
+                ? (v!.merged_into_id
+                  ? (versionNameById.get(v!.merged_into_id) ?? 'main')
+                  : 'main')
+                : null
               return (
                 <button
                   key={v!.id}
@@ -3413,19 +3396,26 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
                   className={`relative w-full text-left pl-4 border-l-2 transition-colors ${
                     isActive ? 'border-ember' : 'border-border hover:border-muted-foreground'
                   }`}
+                  style={{ marginLeft: indentPx }}
                 >
                   <div
-                    className={`absolute -left-[5px] size-2 rounded-full ${
+                    className={`absolute -left-[5px] size-2 ${
                       compact ? 'top-1/2 -translate-y-1/2' : 'top-1'
                     } ${isActive ? 'bg-ember' : v!.merged_at ? 'bg-online' : 'bg-muted-foreground'}`}
                   />
                   {compact ? (
-                    <div className="text-[10px] truncate leading-tight py-1">
-                      <span className="font-bold text-foreground">{v!.name}</span>
-                      <span className="text-muted-foreground font-normal">
-                        {' · '}{fmtDate(v!.created_at)}
+                    <div className="text-[10px] leading-tight py-1">
+                      <div className="font-bold text-foreground truncate">{v!.name}</div>
+                      <div className="text-muted-foreground font-normal truncate">
+                        {fmtDate(v!.created_at)}
                         {comments > 0 && ` · ${comments} comment${comments !== 1 ? 's' : ''}`}
-                      </span>
+                      </div>
+                      {mergedIntoName && (
+                        <div className="truncate flex items-center gap-1 text-[9px] uppercase tracking-widest">
+                          <span className="text-ember font-bold shrink-0">M</span>
+                          <span className="text-muted-foreground truncate">{mergedIntoName}</span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -3434,6 +3424,12 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
                         {fmtDate(v!.created_at)}
                         {comments > 0 && ` · ${comments} COMMENTS`}
                       </div>
+                      {mergedIntoName && (
+                        <div className="flex items-center gap-1 mt-0.5 text-[9px] uppercase tracking-widest">
+                          <span className="text-ember font-bold shrink-0">M</span>
+                          <span className="text-muted-foreground">{mergedIntoName}</span>
+                        </div>
+                      )}
                     </>
                   )}
                 </button>
@@ -3452,7 +3448,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
                 disabled={isChecking}
                 className="w-full text-left border border-ember/50 text-ember bg-ember-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-ember/20 transition disabled:opacity-50"
               >
-                {isChecking ? 'Checking…' : 'Merge to main →'}
+                {isChecking ? 'Checking…' : 'Merge branch →'}
               </button>
             )}
             {staticActions.map(({ label, icon, action }) => (
@@ -3577,8 +3573,7 @@ export default function ProjectPage() {
   const [resourceFilterTrackId, setResourceFilterTrackId] = useState<string | null>(null)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
   const [versionLoading, setVersionLoading] = useState(false)
-  const [mergeModal, setMergeModal] = useState<{ branchId: string; preview: MergePreview } | null>(null)
-  const [mergeCheckingId, setMergeCheckingId] = useState<string | null>(null)
+  const [mergeModal, setMergeModal] = useState<{ branchId: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
   const [storageLimit, setStorageLimit] = useState(BAND_STORAGE_LIMIT_BYTES)
@@ -3937,7 +3932,6 @@ export default function ProjectPage() {
     return () => { cancelled = true }
   }, [midiTracksNeedingDataKey])
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
-  const isSaveVersionChecking = mergeCheckingId === activeVersionId
 
   // Assign vivid palette colors — backfill legacy defaults and dedupe batch-upload collisions.
   const backfillingColorsRef = useRef(false)
@@ -4816,29 +4810,21 @@ export default function ProjectPage() {
     } catch (err) { alert(err instanceof Error ? err.message : 'Failed') }
   }
 
-  async function handleMergeClick(branchId: string) {
-    setMergeCheckingId(branchId)
-    try {
-      const res = await fetch(`/api/projects/${projectId}/merge/preview`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch_id: branchId }),
-      })
-      if (!res.ok) { alert((await res.json().catch(() => ({}))).error ?? 'Failed to check merge'); return }
-      const preview = await res.json()
-      console.log('Merge preview:', JSON.stringify(preview, null, 2))
-      setMergeModal({ branchId, preview })
-    } catch { alert('Network error') }
-    finally { setMergeCheckingId(null) }
+  function handleMergeClick(branchId: string) {
+    setMergeModal({ branchId })
   }
 
-  async function handleMergeComplete({ tracksUpdated, branchName }: { tracksUpdated: number; branchName: string }) {
+  async function handleMergeComplete({ tracksUpdated, branchName, targetName }: { tracksUpdated: number; branchName: string; targetName?: string }) {
+    const branchId = mergeModal?.branchId
     setMergeModal(null)
-    cache.invalidate(mergeModal?.branchId ?? '')
-    if (mainVersion) cache.invalidate(mainVersion.id)
+    if (branchId) cache.invalidate(branchId)
+    const target = versions.find(v => v.name === targetName) ?? versions.find(v => v.type === 'main')
+    if (target) cache.invalidate(target.id)
     await loadProject(false)
     const main = versions.find(v => v.type === 'main')
-    setActiveVersionId(main?.id ?? '')
-    const msg = `✓ "${branchName}" merged into main — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
+    setActiveVersionId(main?.id ?? branchId ?? '')
+    const intoLabel = targetName ?? 'main'
+    const msg = `✓ "${branchName}" merged into ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
   }
@@ -4888,12 +4874,12 @@ export default function ProjectPage() {
       <TbBtn
         variant="ghost"
         className="hidden lg:inline-flex"
-        disabled={!canSaveVersion || isSaveVersionChecking}
+        disabled={!canSaveVersion}
         onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
         data-tour="save-version-button"
-        title={canSaveVersion ? 'Merge this branch into main' : 'Switch to a branch to merge changes into main'}
+        title={canSaveVersion ? 'Merge this branch' : 'Switch to a branch to merge changes'}
       >
-        {isSaveVersionChecking ? 'Checking…' : 'Save Version'}
+        Save Version
       </TbBtn>
       <a
         href={`/api/versions/${activeVersionId}/export`}
@@ -4982,6 +4968,10 @@ export default function ProjectPage() {
           isCounting={player.isCounting}
           onToggleMetronome={player.toggleMetronome}
           onToggleCountdown={player.toggleCountdown}
+          onNewBranch={() => setShowBranchModal(true)}
+          commentMode={commentMode}
+          commentCount={totalComments}
+          onToggleCommentMode={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
           mixer={{
             project,
             versionId: activeVersionId,
@@ -5165,11 +5155,14 @@ export default function ProjectPage() {
       )}
 
       {isMobileLandscape && (
-        <MobileVersionBar
+        <MobileMixerVersionBar
           versions={versions}
           activeId={activeVersionId}
           onSelect={selectVersion}
           onNewBranch={() => setShowBranchModal(true)}
+          commentMode={commentMode}
+          commentCount={totalComments}
+          onToggleCommentMode={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
         />
       )}
 
@@ -5233,7 +5226,6 @@ export default function ProjectPage() {
           onSelect={id => { selectVersion(id); if (window.innerWidth < 1024) setSidebarOpen(false) }}
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
-          mergeCheckingId={mergeCheckingId}
           storageUsed={storageUsed}
           storageLimit={storageLimit}
           storageFull={storageFull}
@@ -5382,9 +5374,9 @@ export default function ProjectPage() {
                             : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
                       }`}
                     >
-                      {isActive && v.type === 'main' && '● '}
+                      {v.type === 'main' && '● '}
                       {v.merged_at && '✓ '}
-                      {v.type === 'branch' && !v.merged_at && !isActive && '⌥ '}
+                      {v.type === 'branch' && !v.merged_at && '⌥ '}
                       {v.name}
                     </button>
                   )
@@ -5731,11 +5723,11 @@ export default function ProjectPage() {
 
       {showBranchModal && <NewBranchModal onConfirm={handleNewBranch} onCancel={() => setShowBranchModal(false)} />}
 
-
       {mergeModal && (
         <MergeModal
           projectId={projectId}
-          preview={mergeModal.preview}
+          branchId={mergeModal.branchId}
+          versions={versions}
           onClose={() => setMergeModal(null)}
           onMerged={handleMergeComplete}
         />

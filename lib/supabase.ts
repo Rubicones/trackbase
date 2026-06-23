@@ -34,6 +34,7 @@ export interface Version {
   created_by: string | null
   created_at: string
   merged_at: string | null
+  merged_into_id: string | null
 }
 
 export interface Track {
