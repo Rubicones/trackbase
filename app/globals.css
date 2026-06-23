@@ -1881,6 +1881,47 @@ html.dark[data-palette="green"] .theme-avatar {
   color: oklch(0.93 0 0);
   background-color: oklch(0.13 0 0);
   color-scheme: dark;
+  overflow-x: clip;
+}
+
+/* Full-bleed: break selected chrome out of the centered content column */
+.landing-full-bleed {
+  width: 100vw;
+  max-width: 100vw;
+  margin-inline: calc(50% - 50vw);
+}
+
+/* Ultra-wide: absolute full-bleed layers */
+@media (min-width: 1921px) {
+  .landing-full-bleed-abs {
+    width: 100vw;
+    max-width: 100vw;
+    left: calc(50% - 50vw) !important;
+    right: auto !important;
+  }
+}
+
+.landing-section-border {
+  position: relative;
+}
+
+.landing-section-border::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 60%, transparent);
+  pointer-events: none;
+}
+
+@media (min-width: 1921px) {
+  .landing-section-border::after {
+    left: 50%;
+    width: 100vw;
+    transform: translateX(-50%);
+  }
 }
 
 .landing-page a {
@@ -1906,6 +1947,63 @@ html.dark[data-palette="green"] .theme-avatar {
   .landing-page .border-border { border-color: oklch(0.26 0 0); }
   .landing-page .border-foreground { border-color: oklch(0.93 0 0); }
   .landing-page .border-ember { border-color: oklch(0.68 0.22 35); }
+
+  /* Scroll-center active state (touch / narrow viewports — set via data-scroll-active) */
+  .landing-page [data-scroll-active].landing-hover-surface {
+    background-color: oklch(0.16 0 0);
+  }
+  .landing-page [data-scroll-active].landing-hover-border {
+    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent);
+  }
+  .landing-page [data-scroll-active].landing-hover-row {
+    border-color: oklch(0.26 0 0);
+    background-color: oklch(0.13 0 0);
+  }
+  .landing-page [data-scroll-active].landing-hover-ember {
+    background-color: oklch(0.68 0.22 35);
+    color: oklch(0.98 0 0);
+  }
+  .landing-page .landing-hover-bar {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  .landing-page .group:hover .landing-hover-bar,
+  .landing-page [data-scroll-active] .landing-hover-bar {
+    transform: scaleX(1);
+  }
+  .landing-page [data-scroll-active] .landing-hover-divider {
+    background: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-icon {
+    border-color: oklch(0.68 0.22 35) !important;
+    background-color: oklch(0.68 0.22 35) !important;
+    color: oklch(0.98 0 0) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-dot {
+    opacity: 1 !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-item-text {
+    color: oklch(0.93 0 0) !important;
+  }
+  .landing-page li.landing-hover-item-text[data-scroll-active] {
+    color: oklch(0.93 0 0) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-item-icon,
+  .landing-page li.landing-hover-item-text[data-scroll-active] .landing-hover-item-icon {
+    border-color: transparent !important;
+  }
+  .landing-page [data-scroll-active].landing-hover-border-soft {
+    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 40%, transparent);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-2 {
+    transform: translateY(-2px);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-3 {
+    transform: translateY(-3px);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-4 {
+    transform: translateY(-4px);
+  }
 }
 
 .font-mono-tb {

@@ -7,7 +7,9 @@ import {
   useReducedMotion,
   AnimatePresence,
 } from "motion/react";
-import { useEffect, useRef, useState, type ReactNode, type ComponentType } from "react";
+import { useEffect, useRef, useState, useCallback, Fragment, type ReactNode, type ComponentType, type ComponentProps } from "react";
+import { UserAvatar } from "@/components/ui/avatar";
+import { MetronomeIcon } from "@/components/design/TransportIcons";
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History, Undo2,
@@ -19,6 +21,156 @@ import {
   FileAudio, Share2, Eye, Hash,
   Disc3, KeyRound, Zap, Lightbulb, Check, Sparkles,
 } from "lucide-react";
+
+/* ============================================================
+ * Mobile scroll-center hover (touch devices)
+ * ============================================================ */
+
+function shouldUseScrollHover() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(
+    "(max-width: 1023px), (hover: none), (pointer: coarse)",
+  ).matches;
+}
+
+const scrollHoverRegistry = new Set<HTMLElement>();
+let scrollHoverFrame = 0;
+let scrollHoverTick = 0;
+let scrollHoverListening = false;
+
+function pickScrollHoverTarget() {
+  if (!shouldUseScrollHover()) {
+    scrollHoverRegistry.forEach((el) => el.removeAttribute("data-scroll-active"));
+    return;
+  }
+
+  const viewCenter = window.innerHeight / 2;
+  const band = Math.max(120, window.innerHeight * 0.38);
+  let best: { el: HTMLElement; dist: number } | null = null;
+
+  for (const el of scrollHoverRegistry) {
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom <= 8 || rect.top >= window.innerHeight - 8) continue;
+    const centerY = rect.top + rect.height / 2;
+    const dist = Math.abs(centerY - viewCenter);
+    if (dist > band) continue;
+    if (!best || dist < best.dist) best = { el, dist };
+  }
+
+  scrollHoverRegistry.forEach((el) => {
+    if (el !== best?.el) el.removeAttribute("data-scroll-active");
+  });
+  if (best) best.el.setAttribute("data-scroll-active", "");
+}
+
+function scheduleScrollHover() {
+  cancelAnimationFrame(scrollHoverFrame);
+  scrollHoverFrame = requestAnimationFrame(pickScrollHoverTarget);
+}
+
+function ensureScrollHoverListeners() {
+  if (scrollHoverListening) return;
+  scrollHoverListening = true;
+
+  scheduleScrollHover();
+  window.addEventListener("scroll", scheduleScrollHover, { passive: true });
+  document.addEventListener("scroll", scheduleScrollHover, { passive: true, capture: true });
+  window.visualViewport?.addEventListener("scroll", scheduleScrollHover);
+  window.visualViewport?.addEventListener("resize", scheduleScrollHover);
+  window.addEventListener("resize", scheduleScrollHover);
+  window.addEventListener("orientationchange", scheduleScrollHover);
+  scrollHoverTick = window.setInterval(pickScrollHoverTarget, 80);
+
+  const coarse = window.matchMedia("(max-width: 1023px), (hover: none), (pointer: coarse)");
+  const onCoarseChange = () => {
+    if (!coarse.matches) {
+      scrollHoverRegistry.forEach((el) => el.removeAttribute("data-scroll-active"));
+    }
+    scheduleScrollHover();
+  };
+  coarse.addEventListener("change", onCoarseChange);
+}
+
+function registerScrollHoverElement(el: HTMLElement) {
+  scrollHoverRegistry.add(el);
+  ensureScrollHoverListeners();
+  scheduleScrollHover();
+  return () => {
+    scrollHoverRegistry.delete(el);
+    el.removeAttribute("data-scroll-active");
+    scheduleScrollHover();
+  };
+}
+
+function useScrollHoverTarget<T extends HTMLElement>() {
+  const unregisterRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback((el: T | null) => {
+    unregisterRef.current?.();
+    unregisterRef.current = null;
+    if (el) unregisterRef.current = registerScrollHoverElement(el);
+  }, []);
+
+  useEffect(() => () => unregisterRef.current?.(), []);
+
+  return ref;
+}
+
+type LandingHoverCardProps = {
+  children: ReactNode;
+  className?: string;
+  lift?: number;
+} & Omit<ComponentProps<typeof motion.div>, "children">;
+
+function LandingHoverCard({
+  children,
+  className = "",
+  lift = 0,
+  ...motionProps
+}: LandingHoverCardProps) {
+  const ref = useScrollHoverTarget<HTMLDivElement>();
+
+  return (
+    <motion.div
+      ref={ref}
+      className={`${className}${lift ? ` landing-hover-lift-${lift}` : ""}`}
+      {...motionProps}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+type LandingHoverLiProps = {
+  children: ReactNode;
+  className?: string;
+} & Omit<ComponentProps<typeof motion.li>, "children">;
+
+function LandingHoverLi({ children, className = "", ...motionProps }: LandingHoverLiProps) {
+  const ref = useScrollHoverTarget<HTMLLIElement>();
+
+  return (
+    <motion.li ref={ref} className={className} {...motionProps}>
+      {children}
+    </motion.li>
+  );
+}
+
+function LandingHoverItem({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useScrollHoverTarget<HTMLLIElement>();
+
+  return (
+    <li ref={ref} className={className}>
+      {children}
+    </li>
+  );
+}
 
 /* ============================================================
  * Primitive bits
@@ -171,7 +323,9 @@ function Waveform({
  * Top nav
  * ============================================================ */
 
-function TopBar({ signInHref = "/auth" }: { signInHref?: string }) {
+function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
+  const authHref = isAuthenticated ? "/dashboard" : "/auth";
+  const authLabel = isAuthenticated ? "DASHBOARD →" : "+ SIGN IN";
   const [time, setTime] = useState("");
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -196,8 +350,8 @@ function TopBar({ signInHref = "/auth" }: { signInHref?: string }) {
   ];
 
   return (
-    <div className="sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
+    <div className="landing-full-bleed sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
+      <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between gap-3 px-4 py-3 md:px-8">
         <div className="flex min-w-0 items-center gap-6 md:gap-10">
           <a href="#top" className="flex shrink-0 items-center gap-2 text-foreground">
             <span
@@ -207,7 +361,7 @@ function TopBar({ signInHref = "/auth" }: { signInHref?: string }) {
               TRACKBASE
             </span>
             <span className="hidden font-mono-tb text-[10px] text-muted-foreground sm:inline">
-              // v0.9
+              // v0.1
             </span>
           </a>
           <nav className="hidden items-center gap-6 md:flex">
@@ -228,19 +382,34 @@ function TopBar({ signInHref = "/auth" }: { signInHref?: string }) {
             SYS OK · {time || "00:00"}
           </span>
           <a
-            href={signInHref}
+            href={authHref}
             className="hidden items-center gap-2 bg-ember px-3 py-2 font-mono-tb text-[11px] uppercase tracking-[0.22em] text-primary-foreground transition-colors hover:bg-(--ember-bright) sm:inline-flex"
           >
-            + SIGN IN
+            {authLabel}
           </a>
           <button
             onClick={() => setOpen((o) => !o)}
-            aria-label="Toggle menu"
-            className="grid size-10 place-items-center border border-border text-foreground transition-colors hover:border-ember hover:text-ember md:hidden"
+            aria-label={open ? "Close menu" : "Open menu"}
+            aria-expanded={open}
+            className="group inline-flex items-center gap-2.5 py-1 md:hidden"
           >
-            <motion.span animate={{ rotate: open ? 45 : 0, y: open ? 4 : 0 }} className="block h-px w-5 bg-current" />
-            <motion.span animate={{ opacity: open ? 0 : 1 }} className="my-1 block h-px w-5 bg-current" />
-            <motion.span animate={{ rotate: open ? -45 : 0, y: open ? -4 : 0 }} className="block h-px w-5 bg-current" />
+            <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors group-hover:text-ember">
+              {open ? "Close" : "Menu"}
+            </span>
+            <span className="relative flex h-3 w-5 flex-col justify-between" aria-hidden>
+              <motion.span
+                animate={{ rotate: open ? 45 : 0, y: open ? 6 : 0 }}
+                className="block h-px w-full origin-left bg-ember transition-colors"
+              />
+              <motion.span
+                animate={{ opacity: open ? 0 : 1, scaleX: open ? 0 : 1 }}
+                className="block h-px w-3 self-end bg-muted-foreground transition-colors group-hover:bg-ember/70"
+              />
+              <motion.span
+                animate={{ rotate: open ? -45 : 0, y: open ? -6 : 0 }}
+                className="block h-px w-full origin-left bg-ember transition-colors"
+              />
+            </span>
           </button>
         </div>
       </div>
@@ -272,11 +441,11 @@ function TopBar({ signInHref = "/auth" }: { signInHref?: string }) {
                 </motion.a>
               ))}
               <a
-                href={signInHref}
+                href={authHref}
                 onClick={() => setOpen(false)}
                 className="mt-3 mb-2 flex items-center justify-center gap-2 bg-ember px-4 py-3 font-mono-tb text-[11px] uppercase tracking-[0.22em] text-primary-foreground"
               >
-                + SIGN IN
+                {authLabel}
               </a>
             </nav>
           </motion.div>
@@ -298,28 +467,30 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
   const reduce = useReducedMotion();
 
   return (
-    <section
-      ref={ref}
-      id="top"
-      className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] tb-grid-bg-landing"
-    >
-      {!reduce && (
-        <motion.div
-          className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--ember)_60%,transparent)] to-transparent"
-          initial={{ y: -200 }}
-          animate={{ y: 1400 }}
-          transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+    <section ref={ref} id="top" className="relative">
+      <div className="relative">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 bottom-0 left-1/2 z-0 w-screen -translate-x-1/2 tb-grid-bg-landing"
         />
-      )}
+        <div className="relative z-10">
+          <div className="relative overflow-hidden">
+            <motion.div style={{ y, opacity }} className="relative px-4 pt-16 pb-10 md:px-8 md:pt-24 md:pb-14">
+        {!reduce && (
+          <motion.div
+            className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--ember)_60%,transparent)] to-transparent"
+            initial={{ y: -200 }}
+            animate={{ y: 900 }}
+            transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+          />
+        )}
 
-      <motion.div style={{ y, opacity }} className="relative px-4 pt-16 pb-28 md:px-8 md:pt-24 md:pb-36">
-        <div className="mb-10 flex flex-wrap items-center gap-4">
-          <EmberTag>BRANDBOOK V0.9 · NOW IN BETA</EmberTag>
-          <MonoLabel>/ HOME BASE · BANDS · STUDIOS</MonoLabel>
+        <div className="relative mb-10 flex flex-wrap items-center gap-4">
+          <EmberTag>PRIVATE BETA · OPEN · V0.1</EmberTag>
         </div>
 
         <h1
-          className="font-display-tb font-bold leading-[0.88] tracking-[-0.04em] text-foreground"
+          className="relative font-display-tb font-bold leading-[0.88] tracking-[-0.04em] text-foreground"
           style={{
             fontSize: "clamp(2.6rem, 9vw, 8.5rem)",
             fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
@@ -331,8 +502,8 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="text-muted-foreground">NOT A FILE.</span>
         </h1>
 
-        <div className="mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
-          <p className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-base">
+        <div className="relative mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
+          <p className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]">
             A track doesn't arrive finished. It moves through dozens of iterations, arguments,
             voice memos and renamed exports. TrackBase is the collaborative surface where bands
             think, branch and decide together — versioned, structured, indexed.
@@ -341,7 +512,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <MonoLabel>ACTIVE PROJECT · MAIN</MonoLabel>
-              <MonoLabel className="text-ember">142 BPM · A♭M</MonoLabel>
+              <MonoLabel className="text-ember">142 BPM · A#m</MonoLabel>
             </div>
             <Waveform seed={3.1} bars={56} color="var(--ember)" height={64} />
             <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -354,33 +525,38 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           </div>
         </div>
 
-        <div className="mt-10 flex flex-wrap gap-3">
+        <div className="relative mt-10">
           <GhostButton variant="ember" href={signInHref}>+ Start a band</GhostButton>
-          <GhostButton variant="outline" href={signInHref}>Join with invite code →</GhostButton>
-          <GhostButton variant="ghost" href={signInHref}>For studios &amp; labels</GhostButton>
+        </div>
+          </motion.div>
         </div>
 
-        <div className="mt-16 grid grid-cols-2 gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-4">
-          {[
-            ["1 PLACE", "files · chords · notes"],
-            ["∞ BRANCHES", "experiment without fear"],
-            ["ASYNC", "different cities, same track"],
-            ["EXPLICIT", "decisions instead of chaos"],
-          ].map(([k, v]) => (
-            <div key={k} className="bg-background p-5">
-              <div
-                className="font-bold tracking-tight text-foreground text-2xl"
-                style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
-              >
-                {k}
+        <div className="relative mb-28 px-4 md:mb-36 md:px-8">
+          <div className="grid w-full grid-cols-2 gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-4">
+            {[
+              ["1 PLACE", "files · chords · notes"],
+              ["∞ BRANCHES", "experiment without fear"],
+              ["ASYNC", "different cities, same track"],
+              ["EXPLICIT", "decisions instead of chaos"],
+            ].map(([k, v]) => (
+              <div key={k} className="min-w-0 bg-background px-5 py-5 sm:px-6">
+                <div
+                  className="font-bold tracking-tight text-foreground text-2xl"
+                  style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                >
+                  {k}
+                </div>
+                <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                  {v}
+                </div>
               </div>
-              <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                {v}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </motion.div>
+
+        <Marquee />
+        </div>
+      </div>
     </section>
   );
 }
@@ -396,7 +572,7 @@ function Marquee() {
   ];
   const row = [...items, ...items];
   return (
-    <div className="overflow-hidden border-y border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] py-4">
+    <div className="landing-full-bleed overflow-hidden border-y border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-background py-4">
       <div className="tb-marquee flex whitespace-nowrap">
         {row.map((it, i) => (
           <span
@@ -435,7 +611,7 @@ function Philosophy() {
     },
   ];
   return (
-    <section className="relative border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="00"
         kicker="PHILOSOPHY"
@@ -445,13 +621,13 @@ function Philosophy() {
       />
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-3">
         {pillars.map((p, i) => (
-          <motion.div
+          <LandingHoverCard
             key={p.n}
             initial={{ opacity: 0, y: 24 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.4 }}
             transition={{ delay: i * 0.1, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            className="group relative bg-background p-8 transition-colors hover:bg-card"
+            className="group relative landing-hover-surface bg-background p-8 transition-colors hover:bg-card"
           >
             <div className="mb-6 flex items-center justify-between">
               <span className="font-mono-tb text-xs uppercase tracking-[0.22em] text-ember">{p.n}</span>
@@ -464,8 +640,8 @@ function Philosophy() {
               {p.t}
             </h3>
             <p className="mt-4 font-mono-tb text-sm leading-relaxed text-muted-foreground">{p.d}</p>
-            <div className="mt-8 h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
-          </motion.div>
+            <div className="landing-hover-divider mt-8 h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
+          </LandingHoverCard>
         ))}
       </div>
     </section>
@@ -476,6 +652,181 @@ function Philosophy() {
  * Branch / version showcase
  * ============================================================ */
 
+function landingSectionTimeRange(startBar: number, endBar: number, barDurationMs: number) {
+  const fmt = (secs: number) => {
+    const s = Math.floor(secs);
+    return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+  };
+  const start = fmt((startBar * barDurationMs) / 1000);
+  const end = fmt((endBar * barDurationMs) / 1000);
+  return `${start}–${end}`;
+}
+
+function LandingMobileStructureStrip() {
+  const bpm = 142;
+  const barDurationMs = (60 / bpm) * 4 * 1000;
+  const activeIdx = 1;
+  const sections = [
+    { label: "Intro", start: 0, end: 8 },
+    { label: "Verse", start: 8, end: 24 },
+    { label: "Chorus", start: 32, end: 48 },
+    { label: "Bridge", start: 48, end: 60 },
+  ];
+  const active = sections[activeIdx];
+
+  return (
+    <div className="mb-3 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2 sm:hidden">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
+        <span className="truncate font-mono text-[9px] tabular-nums text-ember">
+          ● {active.label} · {landingSectionTimeRange(active.start, active.end, barDurationMs)}
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-1.5 pb-1">
+        {sections.map((s, i) => {
+          const activePill = i === activeIdx;
+          return (
+            <div
+              key={s.label}
+              className={`min-w-0 border px-1.5 py-1.5 text-center text-[10px] uppercase tracking-widest sm:px-2 ${
+                activePill
+                  ? "border-ember bg-ember text-primary-foreground"
+                  : "border-border bg-background text-muted-foreground"
+              }`}
+            >
+              <div className="truncate font-bold">{s.label}</div>
+              <div className="truncate font-mono text-[8px] tabular-nums opacity-80">
+                {landingSectionTimeRange(s.start, s.end, barDurationMs)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LandingStructureStrip() {
+  const totalBars = 72;
+  const barGridStep = 4;
+  const tp = (bar: number) => bar / totalBars;
+  const sectionBorder = "1px solid color-mix(in oklab, var(--border) 85%, var(--ember) 15%)";
+  const sections = [
+    { label: "INTRO", start: 0, end: 8, chords: "Am · F · C · G" },
+    { label: "VERSE", start: 8, end: 24, chords: "Am · F · C · G" },
+    { label: "PRE-CHORUS", start: 24, end: 32, chords: "F · G · Am" },
+    { label: "CHORUS", start: 32, end: 48, chords: "C · G · Am · F" },
+    { label: "BRIDGE", start: 48, end: 60, chords: "Dm · Am · Em · G" },
+    { label: "CHORUS", start: 60, end: 72, chords: "C · G · Am · F" },
+  ];
+
+  return (
+    <>
+      <LandingMobileStructureStrip />
+      <div className="mb-3 hidden items-stretch border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:flex">
+        {/* Label column — aligned with track rows below */}
+        <div className="hidden w-[160px] shrink-0 flex-col border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] sm:flex">
+          <div
+            className="flex flex-col justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3"
+            style={{ height: 40 }}
+          >
+            <span className="pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+              CHANNEL
+            </span>
+            <span className="pb-1.5 font-mono text-[9px] font-normal normal-case tracking-normal text-foreground/60">
+              {totalBars} bars · 4/4
+            </span>
+          </div>
+          <div
+            className="flex flex-col justify-center bg-ember-soft/40 px-3"
+            style={{ height: 56 }}
+          >
+            <span className="text-[9px] font-bold uppercase tracking-widest text-ember">
+              STRUCTURE
+            </span>
+          </div>
+        </div>
+
+        {/* Timeline — bar ruler + structure strip */}
+        <div className="min-w-0 flex-1 bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+          <div
+            className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]"
+            style={{ height: 40 }}
+          >
+            {[0, 16, 32, 48, 64].map((bar) => (
+              <span
+                key={bar}
+                className={`pointer-events-none absolute top-0.5 font-mono text-[9px] tabular-nums ${
+                  bar % 16 === 0 ? "font-medium text-foreground" : "text-muted-foreground/80"
+                }`}
+                style={{ left: `${tp(bar) * 100}%`, paddingLeft: bar === 0 ? 2 : 4 }}
+              >
+                {bar + 1}
+              </span>
+            ))}
+            {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
+              const bar = idx * barGridStep;
+              const isTact = bar % 4 === 0;
+              return (
+                <div
+                  key={`ruler-${bar}`}
+                  className="pointer-events-none absolute bottom-0 w-px"
+                  style={{
+                    left: `${tp(bar) * 100}%`,
+                    height: isTact ? 12 : 6,
+                    background: isTact
+                      ? "color-mix(in oklab, var(--foreground) 45%, transparent)"
+                      : "var(--border)",
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          <div className="relative overflow-hidden bg-ember-soft/40" style={{ height: 56 }}>
+            {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
+              const bar = idx * barGridStep;
+              const isTact = bar % 4 === 0;
+              return (
+                <div
+                  key={`grid-${bar}`}
+                  className="pointer-events-none absolute top-0 bottom-0 w-px"
+                  style={{
+                    left: `${tp(bar) * 100}%`,
+                    background: isTact ? "var(--border)" : "color-mix(in oklab, var(--border) 55%, transparent)",
+                    opacity: isTact ? 0.55 : 0.35,
+                  }}
+                />
+              );
+            })}
+
+            {sections.map((s) => (
+              <div
+                key={`${s.label}-${s.start}`}
+                className="absolute inset-y-0 flex flex-col items-start justify-start overflow-hidden px-2 pt-1.5"
+                style={{
+                  left: `${tp(s.start) * 100}%`,
+                  width: `${(tp(s.end) - tp(s.start)) * 100}%`,
+                  borderLeft: sectionBorder,
+                  borderRight: sectionBorder,
+                  background: "color-mix(in oklab, var(--ember) 12%, transparent)",
+                }}
+              >
+                <span className="pointer-events-none w-full truncate text-[9px] font-bold uppercase tracking-widest leading-tight text-ember">
+                  {s.label}
+                </span>
+                <span className="pointer-events-none mt-0.5 w-full truncate font-mono text-[9px] leading-tight text-foreground/75">
+                  {s.chords}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function BranchShowcase() {
   const branches = [
     { name: "main", color: "var(--ember)", date: "JUN 11", note: "live · 4 tracks · 2:59" },
@@ -484,7 +835,7 @@ function BranchShowcase() {
     { name: "new", color: "var(--wave-mint)", date: "JUN 14", note: "draft" },
   ];
   return (
-    <section id="mixer" className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="mixer" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="01"
         kicker="VERSIONING"
@@ -502,13 +853,13 @@ function BranchShowcase() {
           </div>
           <ul className="space-y-2">
             {branches.map((b, i) => (
-              <motion.li
+              <LandingHoverLi
                 key={b.name}
                 initial={{ opacity: 0, x: -12 }}
                 whileInView={{ opacity: 1, x: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.08 }}
-                className="group flex items-start gap-3 border border-transparent p-3 transition-colors hover:border-border hover:bg-background"
+                className="group landing-hover-row flex items-start gap-3 border border-transparent p-3 transition-colors hover:border-border hover:bg-background"
               >
                 <span className="mt-1 size-2.5 shrink-0" style={{ background: b.color }} />
                 <div className="min-w-0 flex-1">
@@ -522,12 +873,14 @@ function BranchShowcase() {
                     {b.date} · {b.note}
                   </div>
                 </div>
-              </motion.li>
+              </LandingHoverLi>
             ))}
           </ul>
-          <button className="mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember transition-colors hover:bg-ember hover:text-primary-foreground">
+          <LandingHoverCard
+            className="landing-hover-ember mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember transition-colors hover:bg-ember hover:text-primary-foreground"
+          >
             <span className="opacity-60">⌥</span> + NEW BRANCH
-          </button>
+          </LandingHoverCard>
         </div>
 
         {/* Mixer board */}
@@ -551,32 +904,7 @@ function BranchShowcase() {
             </div>
           </div>
 
-          {/* Structure ribbon */}
-          <div className="mb-3 flex flex-col gap-2 border border-[color-mix(in_oklab,var(--ember)_30%,transparent)] bg-[color-mix(in_oklab,var(--ember)_5%,transparent)] p-2 sm:grid sm:grid-cols-[120px_1fr]">
-            <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
-              STRUCTURE
-            </span>
-            <div className="flex gap-[2px]">
-              {[
-                ["INTRO", 8, "var(--ember)"],
-                ["VERSE", 16, "var(--ember-dim)"],
-                ["PRE-CHORUS", 8, "var(--ember)"],
-                ["CHORUS", 16, "var(--ember-dim)"],
-                ["BRIDGE", 12, "var(--ember)"],
-                ["CHORUS", 12, "var(--ember-dim)"],
-              ].map(([n, w, c], i) => (
-                <div
-                  key={i}
-                  className="flex h-7 items-center justify-center"
-                  style={{ flexBasis: `${(w as number) * 1.4}%`, background: c as string }}
-                >
-                  <span className="truncate px-1 font-mono-tb text-[8px] uppercase tracking-[0.18em] text-primary-foreground sm:text-[9px] sm:tracking-[0.2em]">
-                    {n as string}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <LandingStructureStrip />
 
           {/* Tracks */}
           {[
@@ -654,9 +982,486 @@ function BranchShowcase() {
  * Roadmap + Chat + Rehearsal
  * ============================================================ */
 
+function LandingRoadmapCheck({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path
+        d="M2 7l3.5 3.5L12 3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LandingRoadmapConnector({ filled }: { filled: boolean }) {
+  return (
+    <div className="h-px w-full bg-border" aria-hidden>
+      <div className={`h-full bg-ember transition-all duration-300 ${filled ? "w-full" : "w-0"}`} />
+    </div>
+  );
+}
+
+function LandingRoadmapChevronLeft({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path d="M9 2L5 7l4 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function LandingRoadmapChevronRight({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path d="M5 2l4 5-4 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function LandingWorkflowCard({
+  kicker,
+  meta,
+  badge,
+  caption,
+  children,
+}: {
+  kicker: string;
+  meta?: string;
+  badge?: string;
+  caption: string;
+  children: ReactNode;
+}) {
+  return (
+    <LandingHoverCard
+      lift={2}
+      className="flex h-full flex-col landing-hover-surface landing-hover-border-soft border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5 transition-colors hover:border-[color-mix(in_oklab,var(--ember)_40%,transparent)]"
+    >
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <MonoLabel>{kicker}</MonoLabel>
+          {meta && (
+            <span className="whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-widest text-muted-foreground">
+              {meta}
+            </span>
+          )}
+        </div>
+        {badge && <MonoLabel className="shrink-0 text-ember">{badge}</MonoLabel>}
+      </header>
+
+      <div className="flex flex-1 flex-col justify-center">{children}</div>
+
+      <p className="mt-4 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">{caption}</p>
+    </LandingHoverCard>
+  );
+}
+
+function LandingRoadmapMock() {
+  const steps = [
+    { name: "Write the song" },
+    { name: "Tracking week" },
+    { name: "Mix & master" },
+  ];
+  const completedCount = 1;
+  const current = steps[1];
+
+  return (
+    <LandingWorkflowCard
+      kicker="QUICK PEEK · ROADMAP"
+      meta="STAGE 2 / 3"
+      caption="Custom stages per song — the whole band sees what's done, what's now, and what's next."
+    >
+      <div className="mx-auto w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background">
+        <header className="flex items-center justify-end gap-1 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2.5">
+          <button
+            type="button"
+            aria-label="Move back one stage"
+            className="grid size-7 place-items-center border border-border text-muted-foreground transition hover:border-ember hover:text-ember"
+          >
+            <LandingRoadmapChevronLeft />
+          </button>
+          <button
+            type="button"
+            aria-label="Advance to next stage"
+            className="inline-flex h-7 items-center gap-1 border border-ember bg-ember px-2.5 text-[10px] font-bold uppercase tracking-widest text-primary-foreground transition hover:brightness-110"
+          >
+            Advance <LandingRoadmapChevronRight />
+          </button>
+        </header>
+
+        <div className="flex w-full items-start px-4 py-5">
+          {steps.map((step, i) => {
+            const state =
+              i < completedCount ? "done" : i === completedCount ? "current" : "ahead";
+            return (
+              <Fragment key={step.name}>
+                {i > 0 && (
+                  <div className="mt-3.5 min-w-[4px] flex-1 self-start">
+                    <LandingRoadmapConnector filled={i <= completedCount} />
+                  </div>
+                )}
+                <div className="flex w-[4.5rem] shrink-0 flex-col items-center">
+                  <div
+                    className={`relative z-10 grid size-7 place-items-center border text-[10px] font-bold ${
+                      state === "done"
+                        ? "border-ember bg-ember text-primary-foreground"
+                        : state === "current"
+                          ? "border-ember bg-background text-ember ring-2 ring-ember/30"
+                          : "border-border bg-background text-muted-foreground"
+                    }`}
+                  >
+                    {state === "done" ? <LandingRoadmapCheck size={12} /> : i + 1}
+                  </div>
+                  <span
+                    className={`mt-2 line-clamp-3 w-full break-words px-0.5 text-center text-[9px] font-bold uppercase leading-tight tracking-wide ${
+                      state === "ahead" ? "text-muted-foreground" : "text-foreground"
+                    }`}
+                  >
+                    {step.name.toUpperCase()}
+                  </span>
+                </div>
+              </Fragment>
+            );
+          })}
+        </div>
+
+        <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2.5 text-[10px] uppercase tracking-widest">
+          <span className="inline-flex items-center gap-1.5 font-bold text-foreground">
+            <span className="size-1.5 shrink-0 rounded-full bg-chart-4" aria-hidden />
+            {current.name}
+          </span>
+          <span className="ml-auto text-chart-4">Since 5d ago · Holding steady.</span>
+        </footer>
+      </div>
+    </LandingWorkflowCard>
+  );
+}
+
+function LandingChatBranchIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="4" cy="4" r="1.8" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="4" cy="12" r="1.8" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="12" cy="4" r="1.8" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M4 5.8v4.4M5.8 4H8a2 2 0 0 1 2 2v3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LandingChatNoteIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M6 12V4l7-1.5v8" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <ellipse cx="4.3" cy="12" rx="1.7" ry="1.4" stroke="currentColor" strokeWidth="1.2" />
+      <ellipse cx="11.3" cy="10.5" rx="1.7" ry="1.4" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function LandingChatClockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 5v3l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LandingChatLinkBadge({
+  branch,
+  track,
+  time,
+}: {
+  branch?: string;
+  track?: string;
+  time?: string;
+}) {
+  const showTrack = !!track;
+  const showTime = !!time;
+
+  return (
+    <div className="mt-1 inline-flex max-w-full items-stretch overflow-hidden border border-border bg-[color-mix(in_oklab,var(--card)_40%,transparent)] font-mono text-[10px]">
+      {branch && (
+        <span
+          className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5${
+            showTrack || showTime ? " border-r border-border" : ""
+          }`}
+        >
+          <span className="text-ember">
+            <LandingChatBranchIcon />
+          </span>
+          <span className="max-w-[4.5rem] truncate">{branch}</span>
+        </span>
+      )}
+      {track && (
+        <span
+          className={`inline-flex max-w-[9rem] shrink-0 items-center gap-1 overflow-hidden px-1.5 py-0.5${
+            showTime ? " border-r border-border" : ""
+          }`}
+        >
+          <span className="shrink-0">
+            <LandingChatNoteIcon />
+          </span>
+          <span className="truncate">{track}</span>
+        </span>
+      )}
+      {time && (
+        <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1.5 py-0.5 tabular-nums text-muted-foreground">
+          <span className="shrink-0">
+            <LandingChatClockIcon />
+          </span>
+          <span>{time}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LandingChatMention({ children }: { children: ReactNode }) {
+  return (
+    <span className="bg-ember-soft/50 px-0.5 font-bold text-ember">{children}</span>
+  );
+}
+
+function LandingChatChannelTab({
+  label,
+  hint,
+}: {
+  label: string;
+  hint: string;
+}) {
+  return (
+    <div className="relative flex h-10 w-full flex-col justify-center border-b-2 border-ember bg-ember-soft/40 px-3 text-left">
+      <div className="text-[10px] font-bold uppercase leading-none tracking-widest text-ember">
+        {label}
+      </div>
+      <div className="mt-0.5 font-mono text-[8px] uppercase leading-none tracking-widest text-muted-foreground">
+        {hint}
+      </div>
+    </div>
+  );
+}
+
+function LandingChatMock() {
+  const messages: Array<{
+    user: string;
+    time: string;
+    body: ReactNode;
+    branch?: string;
+    track?: string;
+    timecode?: string;
+  }> = [
+    {
+      user: "marek",
+      time: "21:14",
+      body: <>the bridge is finally landing. listen at 1:42</>,
+      branch: "alt-bridge",
+      track: "gtr-solo",
+      timecode: "1:42",
+    },
+    {
+      user: "ava",
+      time: "21:18",
+      body: (
+        <>
+          <LandingChatMention>@marek</LandingChatMention>
+          {" agree — keep the dry guitar, drop the reverb tail"}
+        </>
+      ),
+      track: "gtr-rhythm",
+    },
+    {
+      user: "jules",
+      time: "21:22",
+      body: <>merging into main tonight after tracking</>,
+      branch: "main",
+    },
+  ];
+
+  return (
+    <LandingWorkflowCard
+      kicker="CHAT"
+      caption="Project chat with @mentions, branch links, track refs, and timecodes — decisions stay where the song lives."
+    >
+      <div className="mx-auto w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background">
+        <div className="bg-background">
+          <LandingChatChannelTab label="# northern-room" hint="4 members · 12M" />
+        </div>
+        <div className="space-y-3 p-4">
+          {messages.map((m, i) => (
+            <motion.div
+              key={m.user}
+              initial={{ opacity: 0, y: 8 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1 }}
+              className="flex gap-2.5"
+            >
+              <UserAvatar seed={m.user} size={28} kind="user" className="mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2 text-[10px] leading-none">
+                  <span className="font-bold text-ember">@{m.user}</span>
+                  <span className="font-mono tabular-nums text-muted-foreground">{m.time}</span>
+                </div>
+                <div className="mt-1 text-[12px] leading-relaxed text-foreground">{m.body}</div>
+                {(m.branch || m.track || m.timecode) && (
+                  <LandingChatLinkBadge branch={m.branch} track={m.track} time={m.timecode} />
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </LandingWorkflowCard>
+  );
+}
+
+function LandingMobilePlayIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 5.5v13l11-6.5-11-6.5z" />
+    </svg>
+  );
+}
+
+function LandingMobileLoopIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="m17 2 4 4-4 4" />
+      <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+      <path d="m7 22-4-4 4-4" />
+      <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+    </svg>
+  );
+}
+
+function LandingMobileTransportBtn({
+  label,
+  children,
+  active = false,
+  size = "sm",
+}: {
+  label: string;
+  children: ReactNode;
+  active?: boolean;
+  size?: "sm" | "md";
+}) {
+  const dim = size === "md" ? "size-10" : "size-9";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={`${dim} mx-auto grid place-items-center border transition active:scale-95 ${
+        active
+          ? "border-ember bg-ember text-white"
+          : "border-border text-muted-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LandingRehearsalMock() {
+  const sections = [
+    { label: "INTRO", chords: "Bb · G · F", time: "0:00" },
+    { label: "VERSE", chords: "Bb · Gm · Cm · Gm", time: "0:12" },
+    { label: "CHORUS", chords: "Eb · F · Bb · Gm", time: "0:42" },
+  ];
+
+  return (
+    <LandingWorkflowCard
+      kicker="REHEARSAL VIEW · MOBILE"
+      badge="LIVE"
+      caption="Open the phone at the rehearsal room. Full mix, structure, chords, click — no laptop, no DAW."
+    >
+      <div className="mx-auto w-full max-w-[320px] border-2 border-border bg-background">
+        <div className="p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <MonoLabel className="text-ember">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-1.5 bg-ember tb-blink" /> REHEARSAL
+              </span>
+            </MonoLabel>
+            <MonoLabel>142 BPM · A#m</MonoLabel>
+          </div>
+          <Waveform seed={5.6} bars={42} color="var(--ember)" height={70} />
+          <div className="mt-2 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span>0:12</span>
+            <span>2:59</span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-1">
+            {["INTRO", "VERSE", "CHORUS"].map((s, i) => (
+              <span
+                key={s}
+                className={`px-1 py-1.5 text-center text-[10px] font-bold uppercase tracking-widest ${
+                  i === 1
+                    ? "border border-ember bg-ember text-white"
+                    : "border border-border bg-background text-muted-foreground"
+                }`}
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+
+          <div className="mt-3 border border-border divide-y divide-border">
+            {sections.map((section) => (
+              <div
+                key={section.label}
+                className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
+              >
+                <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-ember">
+                  {section.label}
+                </div>
+                <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">
+                  {section.chords}
+                </div>
+                <div className="shrink-0 pt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {section.time}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border-t border-border bg-[color-mix(in_oklab,var(--card)_30%,transparent)] px-3 pb-2.5 pt-1.5">
+          <div className="grid grid-cols-3 items-center gap-1.5">
+            <LandingMobileTransportBtn label="Metronome">
+              <MetronomeIcon size={16} />
+            </LandingMobileTransportBtn>
+            <button
+              type="button"
+              aria-label="Play"
+              className="mx-auto grid size-12 place-items-center bg-ember text-white transition hover:brightness-110 active:scale-95"
+            >
+              <LandingMobilePlayIcon />
+            </button>
+            <LandingMobileTransportBtn label="Loop section" active>
+              <LandingMobileLoopIcon />
+            </LandingMobileTransportBtn>
+          </div>
+        </div>
+      </div>
+    </LandingWorkflowCard>
+  );
+}
+
 function ProcessShowcase() {
   return (
-    <section className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="02"
         kicker="WORKFLOW"
@@ -665,149 +1470,12 @@ function ProcessShowcase() {
         description="Stop pinning voice memos in Telegram and stop renaming Drive folders. Everything that decides a track lives where the track lives."
       />
 
-      <div className="mt-12 grid gap-6 lg:grid-cols-3">
-        {/* Roadmap */}
-        <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <MonoLabel>QUICK PEEK · ROADMAP</MonoLabel>
-            <MonoLabel className="text-ember">2 / 3</MonoLabel>
-          </div>
-          <div className="space-y-4">
-            {[
-              { n: 1, label: "Write the song", state: "done" },
-              { n: 2, label: "Tracking week", state: "now" },
-              { n: 3, label: "Mix & master", state: "next" },
-            ].map((s, i) => (
-              <motion.div
-                key={s.n}
-                initial={{ opacity: 0, x: -10 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                className="flex items-center gap-3"
-              >
-                <span
-                  className={`grid size-8 place-items-center font-mono-tb text-xs font-bold ${
-                    s.state === "done"
-                      ? "bg-ember text-primary-foreground"
-                      : s.state === "now"
-                        ? "border border-ember text-ember tb-blink"
-                        : "border border-border text-muted-foreground"
-                  }`}
-                >
-                  {s.state === "done" ? "✓" : s.n}
-                </span>
-                <div className="flex-1 border-b border-dashed border-[color-mix(in_oklab,var(--border)_60%,transparent)]" />
-                <span className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {s.label}
-                </span>
-              </motion.div>
-            ))}
-          </div>
-          <div className="mt-6 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-4 font-mono-tb text-[10px] uppercase tracking-[0.2em]">
-            <span className="text-(--wave-amber)">● TRACKING</span>{" "}
-            <span className="text-muted-foreground">— since 5d · holding steady.</span>
-          </div>
-        </div>
+      <div className="mt-12 grid items-stretch gap-6 lg:grid-cols-3">
+        <LandingRoadmapMock />
 
-        {/* Chat */}
-        <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <MonoLabel>CHAT · # NORTHERN-ROOM</MonoLabel>
-            <MonoLabel className="text-ember">4 MEMBERS</MonoLabel>
-          </div>
-          <div className="space-y-4">
-            {[
-              {
-                u: "MK",
-                c: "var(--wave-sky)",
-                t: "the bridge is finally landing. listen at 1:42",
-                refs: [["BRANCH", "alt-bridge"], ["TRACK", "gtr-solo"]],
-              },
-              {
-                u: "AV",
-                c: "var(--ember)",
-                t: "agree. let's keep the dry guitar, drop the reverb tail",
-                refs: [["TRACK", "gtr-rhythm"]],
-              },
-              {
-                u: "JL",
-                c: "var(--wave-mint)",
-                t: "merging into main tonight after tracking",
-                refs: [["BRANCH", "main"]],
-              },
-            ].map((m, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 8 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.12 }}
-                className="flex gap-3"
-              >
-                <span
-                  className="grid size-7 shrink-0 place-items-center font-mono-tb text-[10px] font-bold text-primary-foreground"
-                  style={{ background: m.c }}
-                >
-                  {m.u}
-                </span>
-                <div className="flex-1">
-                  <p className="font-mono-tb text-[12px] leading-relaxed text-foreground">{m.t}</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {m.refs.map(([k, v]) => (
-                      <span
-                        key={v}
-                        className="inline-flex items-center gap-1 border border-[color-mix(in_oklab,var(--ember)_40%,transparent)] bg-[color-mix(in_oklab,var(--ember)_5%,transparent)] px-2 py-0.5 font-mono-tb text-[9px] uppercase tracking-[0.18em] text-ember"
-                      >
-                        <span className="opacity-60">{k === "BRANCH" ? "⎇" : "♪"}</span>
-                        {v}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
+        <LandingChatMock />
 
-        {/* Rehearsal mobile */}
-        <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <MonoLabel>REHEARSAL VIEW · MOBILE</MonoLabel>
-            <MonoLabel className="text-ember">LIVE</MonoLabel>
-          </div>
-          <div className="mx-auto max-w-[260px] border-2 border-border bg-background p-3">
-            <div className="mb-3 flex items-center justify-between">
-              <MonoLabel className="text-ember">● REHEARSAL</MonoLabel>
-              <MonoLabel>142 BPM · A♭M</MonoLabel>
-            </div>
-            <Waveform seed={5.6} bars={42} color="var(--ember)" height={70} />
-            <div className="mt-3 grid grid-cols-3 gap-1">
-              {["INTRO", "VERSE", "CHORUS"].map((s, i) => (
-                <span
-                  key={s}
-                  className={`px-1 py-1 text-center font-mono-tb text-[9px] uppercase tracking-[0.18em] ${
-                    i === 1
-                      ? "bg-ember text-primary-foreground"
-                      : "border border-border text-muted-foreground"
-                  }`}
-                >
-                  {s}
-                </span>
-              ))}
-            </div>
-            <div className="mt-3 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-              <span className="text-ember">VERSE</span> · Bb · Gm · Cm · Gm · Dm · Dm · Gm · Eb
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              <span className="grid size-8 place-items-center bg-ember text-primary-foreground">▶</span>
-              <span className="font-mono-tb text-[10px] text-muted-foreground">METRO · LOOP</span>
-            </div>
-          </div>
-          <p className="mt-4 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
-            Open the phone at the rehearsal room. Full mix, structure, chords, click — no laptop, no DAW.
-          </p>
-        </div>
+        <LandingRehearsalMock />
       </div>
     </section>
   );
@@ -829,12 +1497,12 @@ type Persona = {
 
 function PersonaCard({ p, i }: { p: Persona; i: number }) {
   return (
-    <motion.article
+    <LandingHoverCard
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.3 }}
       transition={{ delay: i * 0.07, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className="group relative flex flex-col border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-6 transition-colors hover:border-[color-mix(in_oklab,var(--ember)_60%,transparent)]"
+      className="group relative landing-hover-border flex flex-col border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-6 transition-colors hover:border-[color-mix(in_oklab,var(--ember)_60%,transparent)]"
     >
       <div className="mb-6 flex items-start justify-between">
         <span
@@ -868,7 +1536,7 @@ function PersonaCard({ p, i }: { p: Persona; i: number }) {
       </div>
 
       <div className="mt-auto pt-6">
-        <div className="h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
+        <div className="landing-hover-divider h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
         <div className="mt-3 flex items-center justify-between">
           <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
             {p.metric}
@@ -876,7 +1544,7 @@ function PersonaCard({ p, i }: { p: Persona; i: number }) {
           <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">→</span>
         </div>
       </div>
-    </motion.article>
+    </LandingHoverCard>
   );
 }
 
@@ -920,7 +1588,7 @@ function ForBands() {
     },
   ];
   return (
-    <section id="bands" className="relative border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="bands" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="03"
         kicker="FOR THE BAND"
@@ -975,7 +1643,7 @@ function ForStudios() {
     },
   ];
   return (
-    <section id="studios" className="relative border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="studios" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="04"
         kicker="FOR THE STUDIO"
@@ -1072,7 +1740,7 @@ function FeatureIndex() {
   ];
 
   return (
-    <section id="system" className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="system" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="05"
         kicker="SYSTEM"
@@ -1082,24 +1750,24 @@ function FeatureIndex() {
       />
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-2 lg:grid-cols-4">
         {groups.map((g, gi) => (
-          <motion.div
+          <LandingHoverCard
             key={g.t}
             initial={{ opacity: 0, y: 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.2 }}
             transition={{ delay: gi * 0.05 }}
-            whileHover={{ y: -2 }}
-            className="group relative overflow-hidden bg-background p-6 transition-colors hover:bg-card"
+            lift={2}
+            className="group relative landing-hover-surface overflow-hidden bg-background p-6 transition-colors hover:bg-card"
           >
             <span
-              className="absolute inset-x-0 top-0 h-[2px] origin-left scale-x-0 transition-transform duration-500 group-hover:scale-x-100"
+              className="landing-hover-bar absolute inset-x-0 top-0 h-[2px] transition-transform duration-500"
               style={{ background: g.accent }}
             />
             <div className="mb-4 flex items-center justify-between">
               <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em]" style={{ color: g.accent }}>
                 {g.n}
               </span>
-              <span className="size-1.5 opacity-60 transition-opacity group-hover:opacity-100" style={{ background: g.accent }} />
+              <span className="landing-hover-dot size-1.5 opacity-60 transition-opacity group-hover:opacity-100" style={{ background: g.accent }} />
             </div>
             <h3
               className="font-bold tracking-tight text-lg"
@@ -1109,21 +1777,21 @@ function FeatureIndex() {
             </h3>
             <ul className="mt-4 space-y-2.5">
               {g.items.map(({ label, icon: Icon }) => (
-                <li
+                <LandingHoverItem
                   key={label}
-                  className="group/item flex items-start gap-2.5 font-mono-tb text-[11px] leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
+                  className="group/item landing-hover-item-text flex items-start gap-2.5 font-mono-tb text-[11px] leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
                 >
                   <span
-                    className="mt-[1px] grid size-5 shrink-0 place-items-center border border-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-all duration-200 group-hover/item:border-transparent"
+                    className="landing-hover-item-icon mt-[1px] grid size-5 shrink-0 place-items-center border border-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-all duration-200 group-hover/item:border-transparent"
                     style={{ color: g.accent }}
                   >
                     <Icon size={11} />
                   </span>
                   <span>{label}</span>
-                </li>
+                </LandingHoverItem>
               ))}
             </ul>
-          </motion.div>
+          </LandingHoverCard>
         ))}
       </div>
     </section>
@@ -1150,7 +1818,7 @@ function RehearsalDeepDive() {
     },
     {
       icon: Mic,
-      kicker: "IDEA, NOW",
+      kicker: "A#m",
       title: "Capture before it leaves.",
       body: "A riff arrives between takes. Hit record. It lands in the project — versioned, timestamped, attached to the song it came from. Not buried in a voice-memo graveyard.",
     },
@@ -1163,7 +1831,7 @@ function RehearsalDeepDive() {
   ];
 
   return (
-    <section className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="02.5"
         kicker="REHEARSAL MODE"
@@ -1172,26 +1840,26 @@ function RehearsalDeepDive() {
         description="A mode built for the rehearsal room, the practice corner, and the back-of-the-tour-bus moment. No DAW, no cables, no excuses for losing the idea."
       />
 
-      <div className="mt-12 grid gap-8 lg:grid-cols-[420px_1fr] lg:items-start">
+      <div className="mt-12 grid gap-8 lg:grid-cols-[420px_1fr] lg:items-stretch">
         {/* Phone mock */}
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, amount: 0.3 }}
           transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-          className="relative mx-auto w-full max-w-[360px]"
+          className="relative mx-auto h-full w-full max-w-[360px] lg:mx-0 lg:max-w-none"
         >
-          <div className="relative border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
+          <div className="relative flex h-full flex-col border border-border bg-card p-4">
+            <div className="mb-3 flex shrink-0 items-center justify-between">
               <MonoLabel className="text-ember">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="size-1.5 bg-ember tb-blink" /> REHEARSAL
                 </span>
               </MonoLabel>
-              <MonoLabel>142 BPM · A♭M</MonoLabel>
+              <MonoLabel>142 BPM · A#m</MonoLabel>
             </div>
 
-            <div className="border border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-[color-mix(in_oklab,var(--background)_60%,transparent)] p-3">
+            <div className="flex shrink-0 flex-col border border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-[color-mix(in_oklab,var(--background)_60%,transparent)] p-3">
               <Waveform seed={7.3} bars={48} color="var(--ember)" height={84} />
               <div className="mt-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
                 <span>0:42</span>
@@ -1206,7 +1874,7 @@ function RehearsalDeepDive() {
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-4 gap-1">
+            <div className="mt-3 grid shrink-0 grid-cols-4 gap-1">
               {["INTRO", "VERSE", "CHORUS", "BRIDGE"].map((s, i) => (
                 <motion.span
                   key={s}
@@ -1222,9 +1890,9 @@ function RehearsalDeepDive() {
               ))}
             </div>
 
-            <div className="mt-3 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
-              <div className="mb-1 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-ember">CHORUS</div>
-              <div className="flex flex-wrap gap-1.5">
+            <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
+              <div className="mb-1 shrink-0 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-ember">CHORUS</div>
+              <div className="flex flex-1 flex-wrap content-start gap-1.5">
                 {["Bb", "Gm", "Eb", "F", "Bb", "Gm", "Cm", "F"].map((c, i) => (
                   <motion.span
                     key={i}
@@ -1244,7 +1912,7 @@ function RehearsalDeepDive() {
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-1.5">
+            <div className="mt-3 grid shrink-0 grid-cols-3 gap-1.5">
               <button className="flex items-center justify-center gap-1.5 bg-ember py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-primary-foreground transition-colors hover:bg-(--ember-bright)">
                 ▶ PLAY
               </button>
@@ -1253,12 +1921,12 @@ function RehearsalDeepDive() {
               </button>
               <motion.button
                 whileTap={{ scale: 0.94 }}
-                className="group/rec flex items-center justify-center gap-1.5 border border-(--wave-coral) py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-(--wave-coral) transition-colors hover:bg-(--wave-coral) hover:text-primary-foreground"
+                className="group/rec flex items-center justify-center gap-1.5 border border-destructive py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground"
               >
                 <motion.span
                   animate={{ scale: [1, 1.4, 1], opacity: [1, 0.4, 1] }}
                   transition={{ duration: 1.4, repeat: Infinity }}
-                  className="size-1.5 rounded-full bg-(--wave-coral) group-hover/rec:bg-primary-foreground"
+                  className="size-1.5 rounded-full bg-destructive group-hover/rec:bg-destructive-foreground"
                 />
                 REC
               </motion.button>
@@ -1267,23 +1935,23 @@ function RehearsalDeepDive() {
         </motion.div>
 
         {/* Scenarios */}
-        <div className="grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2">
+        <div className="grid h-full gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2">
           {scenarios.map((s, i) => {
             const Icon = s.icon;
             return (
-              <motion.div
+              <LandingHoverCard
                 key={s.kicker}
                 initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.3 }}
                 transition={{ delay: i * 0.08, duration: 0.5 }}
-                whileHover={{ y: -3 }}
-                className="group relative overflow-hidden bg-background p-6 transition-colors hover:bg-card"
+                lift={3}
+                className="group relative landing-hover-surface h-full overflow-hidden bg-background p-6 transition-colors hover:bg-card"
               >
-                <span className="absolute inset-x-0 top-0 h-[2px] origin-left scale-x-0 bg-ember transition-transform duration-500 group-hover:scale-x-100" />
+                <span className="landing-hover-bar absolute inset-x-0 top-0 h-[2px] bg-ember transition-transform duration-500" />
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="grid size-10 place-items-center border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] text-ember transition-colors duration-300 group-hover:border-ember group-hover:bg-ember group-hover:text-background">
-                    <Icon size={18} />
+                  <span className="landing-hover-icon grid size-10 place-items-center border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] text-ember transition-[color,background-color,border-color] duration-300 group-hover:border-ember group-hover:bg-ember group-hover:!text-primary-foreground">
+                    <Icon size={18} className="transition-colors duration-300" />
                   </span>
                   <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
                     {s.kicker}
@@ -1298,7 +1966,7 @@ function RehearsalDeepDive() {
                 <p className="mt-3 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">
                   {s.body}
                 </p>
-              </motion.div>
+              </LandingHoverCard>
             );
           })}
         </div>
@@ -1311,8 +1979,174 @@ function RehearsalDeepDive() {
  * Theming — seven rooms
  * ============================================================ */
 
+const THEME_REHEARSAL_SECTIONS = [
+  { label: "INTRO", chords: "Bb · G · F", time: "0:00" },
+  { label: "VERSE", chords: "Bb · Gm · Cm · Gm", time: "0:12" },
+  { label: "CHORUS", chords: "Eb · F · Bb · Gm", time: "0:42" },
+  { label: "BRIDGE", chords: "Gm · Eb · F · Bb", time: "1:08" },
+] as const;
+
+type ThemeTokens = {
+  id: string;
+  name: string;
+  sub: string;
+  bg: string;
+  surface: string;
+  line: string;
+  accent: string;
+  fg: string;
+  mute: string;
+};
+
+const THEME_PREVIEW_BRANCHES = [
+  { name: "main", kind: "main" as const, active: true },
+  { name: "alt-bridge", kind: "branch" as const, active: false },
+  { name: "darker-mix", kind: "merged" as const, active: false },
+];
+
+function ThemeBranchBar({ t }: { t: ThemeTokens }) {
+  return (
+    <div
+      className="flex h-8 shrink-0 items-stretch overflow-hidden border"
+      style={{
+        borderColor: t.line,
+        background: `color-mix(in oklab, ${t.fg} 5%, ${t.bg})`,
+      }}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1.5 scrollbar-none">
+        {THEME_PREVIEW_BRANCHES.map((b) => (
+          <span
+            key={b.name}
+            className="shrink-0 border px-1.5 py-0.5 font-mono-tb text-[8px] uppercase tracking-[0.16em]"
+            style={{
+              borderColor: b.active ? t.accent : t.line,
+              background: b.active ? t.accent : "transparent",
+              color: b.active ? t.surface : t.mute,
+              opacity: b.kind === "merged" && !b.active ? 0.55 : 1,
+            }}
+          >
+            {b.active && b.kind === "main" && "● "}
+            {b.kind === "merged" && "✓ "}
+            {b.kind === "branch" && !b.active && "⌥ "}
+            {b.name}
+          </span>
+        ))}
+      </div>
+      <span
+        className="flex shrink-0 items-center border-l px-2 font-mono-tb text-[8px] uppercase tracking-[0.16em]"
+        style={{ borderColor: t.line, color: t.mute }}
+      >
+        + Branch
+      </span>
+      <span
+        className="grid w-8 shrink-0 place-items-center border-l"
+        style={{ borderColor: t.line, color: t.mute }}
+        aria-hidden
+      >
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M2.5 3.5h11a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H9.2L7 13.5V11H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+    </div>
+  );
+}
+
+function ThemeRehearsalPreview({
+  t,
+  seed,
+  waveformHeight = 56,
+  activeSection = 2,
+}: {
+  t: ThemeTokens;
+  seed: number;
+  waveformHeight?: number;
+  activeSection?: number;
+}) {
+  return (
+    <>
+      <div className="border p-3" style={{ borderColor: t.line, background: t.surface }}>
+        <div
+          className="mb-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.2em]"
+          style={{ color: t.mute }}
+        >
+          <span>PROJECT · MAIN</span>
+          <span style={{ color: t.accent }}>142 BPM · A#m</span>
+        </div>
+        <Waveform seed={seed} bars={32} color={t.accent} height={waveformHeight} />
+        <div className="mt-2 flex items-center justify-between font-mono-tb text-[8px] uppercase tracking-[0.18em]" style={{ color: t.mute }}>
+          <span>0:42</span>
+          <span style={{ color: t.accent }}>● LOOP · CHORUS</span>
+          <span>1:08</span>
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex gap-1">
+            <span
+              className="px-2 py-1 font-mono-tb text-[8px] uppercase tracking-[0.18em]"
+              style={{ background: t.accent, color: t.surface }}
+            >
+              ▶ PLAY
+            </span>
+            <span
+              className="inline-flex items-center gap-1 border px-2 py-1 font-mono-tb text-[8px] uppercase tracking-[0.18em]"
+              style={{ borderColor: t.accent, color: t.accent }}
+            >
+              <LandingMobileLoopIcon size={10} />
+              LOOP
+            </span>
+          </div>
+          <span className="font-mono-tb text-[8px] uppercase tracking-[0.2em]" style={{ color: t.mute }}>
+            v04
+          </span>
+        </div>
+      </div>
+
+      <ThemeBranchBar t={t} />
+
+      <div className="border" style={{ borderColor: t.line, background: t.surface }}>
+        {THEME_REHEARSAL_SECTIONS.map((section, si) => (
+          <div
+            key={section.label}
+            className="flex items-start gap-2 px-2 py-1.5 text-left"
+            style={{
+              borderTop: si > 0 ? `1px solid ${t.line}` : undefined,
+              background:
+                si === activeSection
+                  ? `color-mix(in oklab, ${t.accent} 14%, ${t.surface})`
+                  : t.surface,
+            }}
+          >
+            <span
+              className="w-12 shrink-0 pt-px font-mono-tb text-[8px] font-bold uppercase tracking-[0.16em]"
+              style={{ color: si === activeSection ? t.accent : t.mute }}
+            >
+              {section.label}
+            </span>
+            <span
+              className="min-w-0 flex-1 truncate font-mono-tb text-[9px] leading-relaxed tracking-[0.04em]"
+              style={{ color: t.fg }}
+            >
+              {section.chords}
+            </span>
+            <span
+              className="shrink-0 pt-px font-mono-tb text-[8px] tabular-nums tracking-[0.08em]"
+              style={{ color: t.mute }}
+            >
+              {section.time}
+            </span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function ThemingSection() {
-  const themes = [
+  const themes: ThemeTokens[] = [
     { id: "ember-dark",        name: "EMBER DARK",        sub: "Bone-black canvas, hot amber signal.",  bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "oklch(0.68 0.22 35)",  fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
     { id: "ember-light",       name: "EMBER LIGHT",       sub: "Studio paper with ember fire.",         bg: "oklch(0.97 0 0)",        surface: "oklch(1 0 0)",           line: "oklch(0.85 0 0)",        accent: "oklch(0.62 0.22 32)",  fg: "oklch(0.16 0 0)",       mute: "oklch(0.42 0 0)" },
     { id: "blush-dark",        name: "BLUSH DARK",        sub: "Deep black, vivid blush accent.",       bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "oklch(0.72 0.20 350)", fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
@@ -1322,10 +2156,11 @@ function ThemingSection() {
     { id: "studio-paper-dark", name: "STUDIO PAPER DARK", sub: "Warm amber dark, same indigo depth.",   bg: "oklch(0.17 0.014 80)",   surface: "oklch(0.20 0.016 80)",  line: "oklch(0.30 0.016 80)",  accent: "oklch(0.62 0.15 282)", fg: "oklch(0.92 0.008 80)",  mute: "oklch(0.62 0.012 80)" },
   ];
 
-  const [active, setActive] = useState(0);
+  const [desktopActive, setDesktopActive] = useState(0);
+  const [mobileThemeOpen, setMobileThemeOpen] = useState<number | null>(0);
 
   return (
-    <section id="themes" className="relative border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="themes" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="05.5"
         kicker="THEMING"
@@ -1336,22 +2171,19 @@ function ThemingSection() {
 
       {/* Desktop expanding panels */}
       <div
-        className="mt-12 hidden h-[460px] gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:flex"
-        onMouseLeave={() => setActive(0)}
+        className="mt-12 hidden h-[540px] gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:flex"
+        onMouseLeave={() => setDesktopActive(0)}
       >
         {themes.map((t, i) => {
-          const isActive = active === i;
+          const isActive = desktopActive === i;
           return (
-            <motion.button
+            <motion.div
               key={t.id}
-              type="button"
-              onMouseEnter={() => setActive(i)}
-              onFocus={() => setActive(i)}
+              onMouseEnter={() => setDesktopActive(i)}
               animate={{ flex: isActive ? 4.2 : 1 }}
               transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-              className="group relative flex h-full min-w-0 cursor-pointer flex-col justify-between overflow-hidden p-4 text-left outline-none"
+              className="group relative flex h-full min-w-0 cursor-default flex-col justify-between overflow-hidden p-4 text-left"
               style={{ background: t.bg, color: t.fg }}
-              aria-label={t.name}
             >
               <div className="flex items-start justify-between">
                 <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em]" style={{ color: t.accent }}>
@@ -1368,44 +2200,11 @@ function ThemingSection() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 4 }}
                     transition={{ duration: 0.3, delay: 0.18 }}
-                    className="flex flex-1 flex-col justify-between gap-4 pt-4"
+                    className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden pt-4"
                   >
-                    <div className="border p-3" style={{ borderColor: t.line, background: t.surface }}>
-                      <div className="mb-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.2em]" style={{ color: t.mute }}>
-                        <span>PROJECT · MAIN</span>
-                        <span style={{ color: t.accent }}>142 BPM</span>
-                      </div>
-                      <Waveform seed={2.4 + i} bars={32} color={t.accent} height={56} />
-                      <div className="mt-3 flex items-center justify-between">
-                        <div className="flex gap-1">
-                          <span className="px-2 py-1 font-mono-tb text-[8px] uppercase tracking-[0.18em]" style={{ background: t.accent, color: t.surface }}>
-                            ▶ PLAY
-                          </span>
-                          <span className="border px-2 py-1 font-mono-tb text-[8px] uppercase tracking-[0.18em]" style={{ borderColor: t.accent, color: t.accent }}>
-                            ● LOOP
-                          </span>
-                        </div>
-                        <span className="font-mono-tb text-[8px] uppercase tracking-[0.2em]" style={{ color: t.mute }}>v04</span>
-                      </div>
-                    </div>
+                    <ThemeRehearsalPreview t={t} seed={2.4 + i} waveformHeight={48} />
 
-                    <div className="grid grid-cols-4 gap-px">
-                      {["INTRO", "VERSE", "CHORUS", "BRIDGE"].map((s, si) => (
-                        <span
-                          key={s}
-                          className="border px-1 py-1 text-center font-mono-tb text-[8px] uppercase tracking-[0.18em]"
-                          style={{
-                            borderColor: t.line,
-                            background: si === 2 ? t.accent : "transparent",
-                            color: si === 2 ? t.surface : t.mute,
-                          }}
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div>
+                    <div className="mt-auto shrink-0">
                       <div
                         className="text-lg font-bold tracking-tight"
                         style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
@@ -1427,8 +2226,9 @@ function ThemingSection() {
                     className="flex flex-1 items-end pb-1"
                   >
                     <span
-                      className="text-base font-bold uppercase tracking-tight"
+                      className="text-[1rem] font-bold uppercase tracking-tight"
                       style={{
+                        color: t.fg,
                         writingMode: "vertical-rl",
                         transform: "rotate(180deg)",
                         fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
@@ -1439,60 +2239,76 @@ function ThemingSection() {
                   </motion.div>
                 )}
               </AnimatePresence>
-            </motion.button>
+            </motion.div>
           );
         })}
       </div>
 
-      {/* Mobile accordion */}
+      {/* Mobile — tap accordion */}
       <div className="mt-10 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:hidden">
         {themes.map((t, i) => {
-          const isActive = active === i;
+          const isOpen = mobileThemeOpen === i;
           return (
-            <button
+            <div
               key={t.id}
-              type="button"
-              onClick={() => setActive(isActive ? -1 : i)}
-              className="block w-full p-4 text-left"
+              className="overflow-hidden"
               style={{ background: t.bg, color: t.fg }}
             >
-              <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setMobileThemeOpen(isOpen ? null : i)}
+                className="flex w-full items-center justify-between gap-3 p-4 text-left"
+              >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="size-3 shrink-0" style={{ background: t.accent }} />
                   <span
-                    className="truncate text-base font-bold tracking-tight"
-                    style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                    className="truncate text-[1rem] font-bold tracking-tight"
+                    style={{
+                      color: t.fg,
+                      fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
+                    }}
                   >
                     {t.name}
                   </span>
                 </div>
-                <span className="font-mono-tb text-[10px] uppercase tracking-[0.2em]" style={{ color: t.accent }}>
-                  0{i + 1}
-                </span>
-              </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span className="font-mono-tb text-[10px] uppercase tracking-[0.2em]" style={{ color: t.accent }}>
+                    0{i + 1}
+                  </span>
+                  <span
+                    className="grid size-6 place-items-center border font-mono-tb text-sm leading-none transition-transform duration-300"
+                    style={{
+                      borderColor: t.line,
+                      color: isOpen ? t.surface : t.accent,
+                      background: isOpen ? t.accent : "transparent",
+                      transform: isOpen ? "rotate(45deg)" : undefined,
+                    }}
+                    aria-hidden
+                  >
+                    +
+                  </span>
+                </div>
+              </button>
               <AnimatePresence initial={false}>
-                {isActive && (
+                {isOpen && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3 }}
+                    transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                     className="overflow-hidden"
                   >
-                    <div className="mt-4 border p-3" style={{ borderColor: t.line, background: t.surface }}>
-                      <div className="mb-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.2em]" style={{ color: t.mute }}>
-                        <span>PROJECT · MAIN</span>
-                        <span style={{ color: t.accent }}>142 BPM</span>
-                      </div>
-                      <Waveform seed={2.4 + i} bars={28} color={t.accent} height={48} />
+                    <div className="px-4 pb-4">
+                      <ThemeRehearsalPreview t={t} seed={2.4 + i} waveformHeight={44} />
+                      <p className="mt-3 font-mono-tb text-[10px] uppercase leading-relaxed tracking-[0.16em]" style={{ color: t.mute }}>
+                        {t.sub}
+                      </p>
                     </div>
-                    <p className="mt-3 font-mono-tb text-[10px] uppercase leading-relaxed tracking-[0.16em]" style={{ color: t.mute }}>
-                      {t.sub}
-                    </p>
                   </motion.div>
                 )}
               </AnimatePresence>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -1590,7 +2406,7 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
   ];
 
   return (
-    <section id="pricing" className="relative border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-20 md:px-8 md:py-28">
+    <section id="pricing" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="06"
         kicker="PRICING"
@@ -1601,15 +2417,15 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
 
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2 xl:grid-cols-4">
         {tiers.map((t, i) => (
-          <motion.article
+          <LandingHoverCard
             key={t.tag}
             initial={{ opacity: 0, y: 24 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.2 }}
             transition={{ delay: i * 0.1, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            whileHover={{ y: -4 }}
+            lift={4}
             className={`group relative flex flex-col p-7 transition-colors ${
-              t.featured ? "bg-card" : "bg-background hover:bg-card"
+              t.featured ? "bg-card" : "landing-hover-surface bg-background hover:bg-card"
             }`}
           >
             {t.featured && (
@@ -1684,7 +2500,7 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
                 </div>
               )}
             </div>
-          </motion.article>
+          </LandingHoverCard>
         ))}
       </div>
 
@@ -1702,7 +2518,11 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
 
 function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
   return (
-    <section id="join" className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-24 md:px-8 md:py-32 tb-grid-bg-landing">
+    <section id="join" className="relative landing-section-border px-4 py-24 md:px-8 md:py-32">
+      <div
+        aria-hidden
+        className="landing-full-bleed-abs pointer-events-none absolute inset-0 tb-grid-bg-landing"
+      />
       <div className="relative mx-auto max-w-5xl text-center">
         <EmberTag className="mx-auto">PRIVATE BETA · OPEN</EmberTag>
         <h2
@@ -1755,8 +2575,9 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
 
 function Footer() {
   return (
-    <footer className="px-4 py-10 md:px-8">
-      <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+    <footer className="landing-full-bleed px-4 py-10 md:px-8">
+      <div className="mx-auto w-full max-w-[1920px]">
+        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
           <div
             className="font-bold tracking-tight text-ember text-xl"
@@ -1771,7 +2592,7 @@ function Footer() {
         {[
           ["PRODUCT", ["Mixer", "Branches", "Rehearsal View", "Roadmap", "Chat"]],
           ["FOR", ["Bands", "Studios", "Schools", "Labels", "Producer centers"]],
-          ["CO", ["About", "Brandbook v0.9", "UI Kit", "Changelog", "Contact"]],
+          ["CO", ["About", "Brandbook v0.1", "UI Kit", "Changelog", "Contact"]],
         ].map(([t, items]) => (
           <div key={t as string}>
             <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
@@ -1786,14 +2607,15 @@ function Footer() {
             </ul>
           </div>
         ))}
-      </div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 px-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-        <span>
-          <span className="text-(--signal)">● SYS OK</span> · 3 bands · 9 projects · 676.4 MB used
-        </span>
-        <span>
-          TRACKBASE <span className="text-foreground">// v0.9</span> · © 2026
-        </span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 px-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          <span>
+            <span className="text-(--signal)">● SYS OK</span>
+          </span>
+          <span>
+            TRACKBASE <span className="text-foreground">// v0.1</span> · © 2026
+          </span>
+        </div>
       </div>
     </footer>
   );
@@ -1803,24 +2625,31 @@ function Footer() {
  * Page root
  * ============================================================ */
 
-export default function LandingPage({ signInHref = "/auth" }: { signInHref?: string }) {
+export default function LandingPage({
+  isAuthenticated = false,
+  signInHref = "/auth",
+}: {
+  isAuthenticated?: boolean;
+  signInHref?: string;
+}) {
   return (
     <div className="landing-page min-h-screen" data-theme="ember-dark">
-      <main className="min-h-screen bg-background text-foreground">
-        <TopBar signInHref={signInHref} />
-        <Hero signInHref={signInHref} />
-        <Marquee />
-        <Philosophy />
-        <BranchShowcase />
-        <ProcessShowcase />
-        <RehearsalDeepDive />
-        <ForBands />
-        <ForStudios />
-        <FeatureIndex />
-        <ThemingSection />
-        <CTA signInHref={signInHref} />
-        <Footer />
-      </main>
+      <div className="mx-auto w-full max-w-[1920px]">
+        <main className="min-h-screen bg-background text-foreground">
+          <TopBar isAuthenticated={isAuthenticated} />
+          <Hero signInHref={signInHref} />
+          <Philosophy />
+          <BranchShowcase />
+          <ProcessShowcase />
+          <RehearsalDeepDive />
+          <ForBands />
+          <ForStudios />
+          <FeatureIndex />
+          <ThemingSection />
+          <CTA signInHref={signInHref} />
+          <Footer />
+        </main>
+      </div>
     </div>
   );
 }

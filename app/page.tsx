@@ -1,4 +1,3 @@
-import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { ACCESS_COOKIE, REFRESH_COOKIE, decodeJwt, refreshAccessToken } from '@/lib/auth/session'
 import LandingPage from '@/components/LandingPage'
@@ -18,9 +17,5 @@ export default async function Home() {
     }
   }
 
-  if (payload) {
-    redirect('/dashboard')
-  }
-
-  return <LandingPage signInHref="/auth" />
+  return <LandingPage isAuthenticated={!!payload} />
 }
