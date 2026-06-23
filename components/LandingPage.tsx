@@ -141,21 +141,6 @@ function LandingHoverCard({
   );
 }
 
-type LandingHoverLiProps = {
-  children: ReactNode;
-  className?: string;
-} & Omit<ComponentProps<typeof motion.li>, "children">;
-
-function LandingHoverLi({ children, className = "", ...motionProps }: LandingHoverLiProps) {
-  const ref = useScrollHoverTarget<HTMLLIElement>();
-
-  return (
-    <motion.li ref={ref} className={className} {...motionProps}>
-      {children}
-    </motion.li>
-  );
-}
-
 function LandingHoverItem({
   children,
   className = "",
@@ -341,6 +326,32 @@ function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
     const id = setInterval(update, 1000 * 30);
     return () => clearInterval(id);
   }, []);
+  useEffect(() => {
+    if (!open) return;
+
+    const mq = window.matchMedia("(max-width: 767px)");
+    if (!mq.matches) return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    const unlock = () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+
+    const onViewportChange = (e: MediaQueryListEvent) => {
+      if (!e.matches) unlock();
+    };
+    mq.addEventListener("change", onViewportChange);
+
+    return () => {
+      mq.removeEventListener("change", onViewportChange);
+      unlock();
+    };
+  }, [open]);
   const navItems: Array<[string, string]> = [
     ["#bands", "BANDS"],
     ["#studios", "STUDIOS"],
@@ -553,10 +564,10 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
             ))}
           </div>
         </div>
-
-        <Marquee />
         </div>
       </div>
+
+      <Marquee />
     </section>
   );
 }
@@ -827,6 +838,19 @@ function LandingStructureStrip() {
   );
 }
 
+function LandingMixerScrubBar({ progress = 0, className = "" }: { progress?: number; className?: string }) {
+  const pct = Math.max(0, Math.min(100, progress));
+  return (
+    <div className={`relative h-2 w-full bg-[color-mix(in_oklab,var(--card)_70%,transparent)] ${className}`}>
+      <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct}%` }} />
+      <div
+        className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-foreground"
+        style={{ left: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 function BranchShowcase() {
   const branches = [
     { name: "main", color: "var(--ember)", date: "JUN 11", note: "live · 4 tracks · 2:59" },
@@ -853,13 +877,13 @@ function BranchShowcase() {
           </div>
           <ul className="space-y-2">
             {branches.map((b, i) => (
-              <LandingHoverLi
+              <motion.li
                 key={b.name}
                 initial={{ opacity: 0, x: -12 }}
                 whileInView={{ opacity: 1, x: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.08 }}
-                className="group landing-hover-row flex items-start gap-3 border border-transparent p-3 transition-colors hover:border-border hover:bg-background"
+                className="group flex items-start gap-3 border border-transparent p-3 transition-colors hover:border-border hover:bg-background"
               >
                 <span className="mt-1 size-2.5 shrink-0" style={{ background: b.color }} />
                 <div className="min-w-0 flex-1">
@@ -873,18 +897,16 @@ function BranchShowcase() {
                     {b.date} · {b.note}
                   </div>
                 </div>
-              </LandingHoverLi>
+              </motion.li>
             ))}
           </ul>
-          <LandingHoverCard
-            className="landing-hover-ember mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember transition-colors hover:bg-ember hover:text-primary-foreground"
-          >
-            <span className="opacity-60">⌥</span> + NEW BRANCH
-          </LandingHoverCard>
+          <div className="landing-new-branch-btn mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] transition-colors">
+            <span className="landing-new-branch-btn-icon opacity-60">⌥</span> + NEW BRANCH
+          </div>
         </div>
 
         {/* Mixer board */}
-        <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-4 md:p-6">
+        <div className="relative flex flex-col border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <MonoLabel>PROJECT · NORTHERN ROOM</MonoLabel>
             <div className="-mx-1 flex gap-1 overflow-x-auto px-1 sm:ml-auto sm:mx-0 sm:overflow-visible sm:px-0">
@@ -959,7 +981,7 @@ function BranchShowcase() {
           <div className="mt-4 flex items-center justify-between border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
             <div className="flex items-center gap-3">
               <span className="grid size-9 place-items-center bg-ember text-primary-foreground">▶</span>
-              <span className="font-mono-tb text-[11px] text-muted-foreground">0:00 / 2:59</span>
+              <span className="font-mono-tb text-[11px] text-muted-foreground">1:00 / 2:59</span>
             </div>
             <div className="hidden gap-2 md:flex">
               {["METRO", "COUNT-IN", "LOOP", "COMMENT MODE"].map((b) => (
@@ -972,6 +994,8 @@ function BranchShowcase() {
               ))}
             </div>
           </div>
+
+          <LandingMixerScrubBar progress={100 / 3} className="mt-3" />
         </div>
       </div>
     </section>
@@ -2533,7 +2557,7 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
           }}
         >
           STOP RENAMING <br />
-          <span className="text-ember">FINAL_V3_FINAL.</span>
+          <span className="text-ember">FINAL_V3_FINAL.zip</span>
         </h2>
         <p className="mx-auto mt-8 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
           Bring your band, your roster, your class. TrackBase is free during beta — every workspace

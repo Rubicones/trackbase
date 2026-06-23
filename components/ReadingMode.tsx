@@ -639,7 +639,18 @@ export function ReadingMode({
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
               Resources
             </div>
-            <ResourcesCard projectId={projectId} projectName={project.name} bare variant="drawer" hideLyrics={!!lyrics?.content?.trim()} hideUploadZone storageFull={storageFull} />
+            <ResourcesCard
+              projectId={projectId}
+              projectName={project.name}
+              bare
+              variant="drawer"
+              hideLyrics={!!lyrics?.content?.trim()}
+              hideUploadZone
+              storageFull={storageFull}
+              versions={versions}
+              onNavigateVersion={onVersionChange}
+              onNavigateTrack={(_trackId, versionId) => onVersionChange(versionId)}
+            />
           </div>
         )}
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity, fmtFileSize } from '@/lib/activity'
+import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2, uploadToR2 } from '@/lib/r2'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
@@ -54,6 +55,8 @@ export async function POST(
     fileSize?: number
     mimetype?: string
     title?: string
+    context_version_id?: string | null
+    context_track_id?: string | null
   }
   try {
     body = await req.json()
@@ -61,7 +64,15 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { tempKey, originalFilename, fileSize, mimetype = 'application/octet-stream', title } = body
+  const {
+    tempKey,
+    originalFilename,
+    fileSize,
+    mimetype = 'application/octet-stream',
+    title,
+    context_version_id,
+    context_track_id,
+  } = body
 
   if (!tempKey || typeof tempKey !== 'string') {
     return NextResponse.json({ error: 'tempKey is required' }, { status: 400 })
@@ -71,6 +82,16 @@ export async function POST(
   }
   if (typeof fileSize !== 'number' || fileSize <= 0) {
     return NextResponse.json({ error: 'fileSize must be a positive number' }, { status: 400 })
+  }
+
+  const ctx = await validateResourceContext(
+    supabase,
+    projectId,
+    context_version_id,
+    context_track_id,
+  )
+  if ('error' in ctx) {
+    return NextResponse.json({ error: ctx.error }, { status: 400 })
   }
 
   const quota = await checkBandStorageQuota(supabase, project.band_id, fileSize)
@@ -133,6 +154,8 @@ export async function POST(
       title: title?.trim() || null,
       created_by: userId,
       position: count ?? 0,
+      context_version_id: ctx.context_version_id,
+      context_track_id: ctx.context_track_id,
     })
     .select()
     .single()
@@ -151,5 +174,5 @@ export async function POST(
     projectId,
   })
 
-  return NextResponse.json({ resource }, { status: 201 })
+  return NextResponse.json({ resource: (await enrichResources(supabase, [resource]))[0] }, { status: 201 })
 }

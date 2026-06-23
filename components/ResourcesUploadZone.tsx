@@ -94,10 +94,11 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
   async function runUpload(item: UploadItem) {
     try {
       // 1 — Presign
-      const psRes = await fetch(`/api/projects/${projectId}/resources/presign`, {
+      const psRes = await fetch(`/api/projects/${projectId}/resources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          action: 'presign',
           filename: item.file.name,
           fileSize: item.file.size,
           contentType: item.file.type || 'application/octet-stream',

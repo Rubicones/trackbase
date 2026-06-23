@@ -33,6 +33,10 @@ export interface ProjectResource {
   // meta
   created_by: string | null
   author_username?: string
+  context_version_id?: string | null
+  context_track_id?: string | null
+  context_version_name?: string | null
+  context_track_name?: string | null
   position: number
   created_at: string
   updated_at: string

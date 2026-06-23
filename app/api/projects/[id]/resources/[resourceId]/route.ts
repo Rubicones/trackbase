@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity, resourceSubject } from '@/lib/activity'
+import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2 } from '@/lib/r2'
 import { getUserIdFromToken } from '@/lib/supabase/server'
 
@@ -54,7 +55,12 @@ export async function PATCH(
   }
   const { project, resource } = resolved
 
-  let body: { title?: string; url?: string }
+  let body: {
+    title?: string
+    url?: string
+    context_version_id?: string | null
+    context_track_id?: string | null
+  }
   try {
     body = await req.json()
   } catch {
@@ -74,6 +80,25 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 })
     }
     patch.url = body.url.trim()
+  }
+
+  if ('context_version_id' in body || 'context_track_id' in body) {
+    if (resource.type !== 'file' && resource.type !== 'link') {
+      return NextResponse.json({ error: 'Context can only be set on file or link resources' }, { status: 400 })
+    }
+    const versionInput = 'context_version_id' in body ? body.context_version_id : resource.context_version_id
+    const trackInput = 'context_track_id' in body ? body.context_track_id : resource.context_track_id
+    const ctx = await validateResourceContext(
+      supabase,
+      projectId,
+      versionInput,
+      trackInput,
+    )
+    if ('error' in ctx) {
+      return NextResponse.json({ error: ctx.error }, { status: 400 })
+    }
+    patch.context_version_id = ctx.context_version_id
+    patch.context_track_id = ctx.context_track_id
   }
 
   const { data: updated, error } = await supabase
@@ -101,7 +126,7 @@ export async function PATCH(
     })
   }
 
-  return NextResponse.json({ resource: updated })
+  return NextResponse.json({ resource: (await enrichResources(supabase, [updated]))[0] })
 }
 
 // ── DELETE /api/projects/[id]/resources/[resourceId] ──────────────────────────

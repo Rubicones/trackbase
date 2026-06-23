@@ -2,7 +2,14 @@
 
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { ProjectResource } from '@/lib/types'
+import type { ProjectResource, Version } from '@/lib/types'
+import {
+  ResourceContextControls,
+  resourceContextDraft,
+  type ResourceContextDraft,
+} from './ResourceContextControls'
+import { ResourceDeleteConfirm } from './ResourceDeleteConfirm'
+import { useResourceRowExpand } from './useResourceRowExpand'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -65,22 +72,40 @@ function getDisplayTitle(resource: ProjectResource): string {
 interface Props {
   resource: ProjectResource
   projectId: string
+  versions?: Version[]
   isLast: boolean
   onUpdated: (resource: ProjectResource) => void
   onDeleted: (id: string) => void
-  variant?: 'default' | 'drawer'
+  variant?: 'default' | 'drawer' | 'sidebar'
+  onNavigateVersion?: (versionId: string) => void
+  onNavigateTrack?: (trackId: string, versionId: string) => void
 }
 
-export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDeleted, variant = 'default' }: Props) {
+export function ResourcesLinkRow({
+  resource,
+  projectId,
+  versions = [],
+  isLast,
+  onUpdated,
+  onDeleted,
+  variant = 'default',
+  onNavigateVersion,
+  onNavigateTrack,
+}: Props) {
   const [editing, setEditing] = useState(false)
   const [titleInput, setTitleInput] = useState(resource.title ?? '')
   const [urlInput, setUrlInput] = useState(resource.url ?? '')
+  const [contextDraft, setContextDraft] = useState<ResourceContextDraft>(() => resourceContextDraft(resource))
   const [urlError, setUrlError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const { expanded, rowHandlers } = useResourceRowExpand()
 
   function startEdit() {
     setTitleInput(resource.title ?? '')
     setUrlInput(resource.url ?? '')
+    setContextDraft(resourceContextDraft(resource))
     setUrlError('')
     setEditing(true)
   }
@@ -94,7 +119,11 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
       const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: titleInput.trim() || null, url: urlInput.trim() }),
+        body: JSON.stringify({
+          title: titleInput.trim() || null,
+          url: urlInput.trim(),
+          ...contextDraft,
+        }),
       })
       if (res.ok) {
         const { resource: updated } = await res.json()
@@ -107,17 +136,41 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
   }
 
   async function handleDelete() {
-    if (!confirm(`Remove "${getDisplayTitle(resource)}"?`)) return
-    const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 204) onDeleted(resource.id)
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
+      if (res.ok || res.status === 204) onDeleted(resource.id)
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
+  if (confirmDelete) {
+    const wrapClass = variant === 'drawer' || variant === 'sidebar'
+      ? `${variant === 'sidebar' ? 'px-2 py-2' : 'p-3'} border border-destructive/30 bg-surface/80`
+      : undefined
+    return (
+      <div
+        className={wrapClass}
+        style={wrapClass ? undefined : { padding: '8px 0', borderBottom: isLast ? 'none' : '0.5px solid var(--border)' }}
+      >
+        <ResourceDeleteConfirm
+          label={getDisplayTitle(resource)}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={handleDelete}
+          deleting={deleting}
+        />
+      </div>
+    )
   }
 
   const btnStyle: CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 26,
-    height: 26,
+    width: 28,
+    height: 28,
     borderRadius: 5,
     border: 'none',
     background: 'transparent',
@@ -171,6 +224,17 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
           />
         </div>
         {urlError && <p style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>{urlError}</p>}
+        <div style={{ marginTop: 8 }}>
+          <ResourceContextControls
+            resource={resource}
+            projectId={projectId}
+            versions={versions}
+            compact={variant === 'drawer' || variant === 'sidebar'}
+            editing
+            draft={contextDraft}
+            onDraftChange={setContextDraft}
+          />
+        </div>
         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 6 }}>
           <button
             onClick={() => setEditing(false)}
@@ -191,25 +255,58 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
     )
   }
 
-  if (variant === 'drawer') {
+  if (variant === 'drawer' || variant === 'sidebar') {
+    const compact = variant === 'sidebar'
     return (
-      <div className="border border-border p-3 text-xs flex items-center justify-between gap-3 min-w-0 group hover:bg-surface transition-colors">
-        <span className="truncate font-medium text-foreground">{getDisplayTitle(resource)}</span>
-        <div className="flex items-center gap-2 shrink-0 min-w-0">
-          <a
-            href={resource.url ?? '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted-foreground truncate max-w-[120px] sm:max-w-[180px] hover:text-ember no-underline"
-          >
-            {resource.url}
-          </a>
-          <button type="button" onClick={startEdit} title="Edit" className="text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
-            <IconPencil size={12} />
+      <div
+        className={`resource-context-item ${compact ? 'px-2 py-2' : 'px-3 py-2'} text-xs hover:bg-surface transition-colors min-w-0 cursor-pointer touch-manipulation`}
+        data-expanded={expanded ? 'true' : undefined}
+        {...rowHandlers}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-7 shrink-0 flex items-center justify-center text-ember">
+            <IconLink size={13} />
+          </span>
+          <span className="flex-1 truncate min-w-0 text-sm font-medium text-foreground">{getDisplayTitle(resource)}</span>
+          {!compact && (
+            <a
+              href={resource.url ?? '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open link"
+              onClick={e => e.stopPropagation()}
+              className="shrink-0 text-muted-foreground hover:text-foreground p-0.5"
+            >
+              <IconExternalLink size={14} />
+            </a>
+          )}
+          <button type="button" onClick={e => { e.stopPropagation(); startEdit() }} title="Edit" className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
+            <IconPencil size={13} />
           </button>
-          <button type="button" onClick={handleDelete} title="Delete" className="text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
-            <IconTrash size={12} />
+          <button type="button" onClick={e => { e.stopPropagation(); setConfirmDelete(true) }} title="Delete" className="shrink-0 text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
+            <IconTrash size={13} />
           </button>
+        </div>
+        <div className="resource-context-chips-row space-y-2.5 min-w-0" data-stop-row-expand onClick={e => e.stopPropagation()}>
+          <ResourceContextControls
+            resource={resource}
+            projectId={projectId}
+            versions={versions}
+            compact={compact}
+            onUpdated={onUpdated}
+            onNavigateVersion={onNavigateVersion}
+            onNavigateTrack={onNavigateTrack}
+          />
+          {!compact && (
+            <a
+              href={resource.url ?? '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground truncate hover:text-ember no-underline block text-xs"
+            >
+              {resource.url}
+            </a>
+          )}
         </div>
       </div>
     )
@@ -245,7 +342,7 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
 
       {/* Center */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <p style={{ fontSize: 14, color: 'var(--text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {getDisplayTitle(resource)}
         </p>
         <a
@@ -260,11 +357,21 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            marginTop: 1,
+            marginTop: 2,
           }}
         >
           {resource.url}
         </a>
+        <div className="mt-3">
+          <ResourceContextControls
+            resource={resource}
+            projectId={projectId}
+            versions={versions}
+            onUpdated={onUpdated}
+            onNavigateVersion={onNavigateVersion}
+            onNavigateTrack={onNavigateTrack}
+          />
+        </div>
       </div>
 
       {/* Actions */}
@@ -277,7 +384,7 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--accent)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconExternalLink size={13} />
+        <IconExternalLink size={14} />
       </a>
       <button
         onClick={startEdit}
@@ -286,16 +393,16 @@ export function ResourcesLinkRow({ resource, projectId, isLast, onUpdated, onDel
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconPencil size={13} />
+        <IconPencil size={14} />
       </button>
       <button
-        onClick={handleDelete}
+        onClick={() => setConfirmDelete(true)}
         title="Delete"
         style={btnStyle}
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--danger)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconTrash size={13} />
+        <IconTrash size={14} />
       </button>
     </div>
   )
