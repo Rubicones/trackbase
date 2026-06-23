@@ -1823,3 +1823,217 @@ html.dark[data-palette="green"] .theme-avatar {
     }
   }
 }
+
+/* ── Landing page utilities ───────────────────────────────── */
+/* Semantic tokens come from design-system.css (.landing-page = ember-dark).
+ * Tailwind v4 @theme --color-* vars are registered on :root; override them
+ * here so text-foreground / text-muted-foreground / bg-background utilities
+ * resolve to ember-dark even when <html> uses another theme. */
+
+:root {
+  --ember-bright: oklch(0.74 0.22 38);
+  --ember-dim: oklch(0.45 0.16 32);
+  --surface-1: oklch(0.13 0.01 30);
+  --surface-2-landing: oklch(0.17 0.012 35);
+  --surface-3: oklch(0.22 0.015 40);
+  --wave-violet: oklch(0.72 0.16 295);
+  --wave-mint: oklch(0.78 0.16 165);
+  --wave-amber: oklch(0.82 0.17 80);
+  --wave-coral: oklch(0.75 0.17 25);
+  --wave-sky: oklch(0.78 0.13 220);
+  --signal: oklch(0.78 0.18 145);
+}
+
+.landing-page {
+  --ember-bright: oklch(0.74 0.22 38);
+  --ember-dim: oklch(0.45 0.16 32);
+  --wave-violet: oklch(0.72 0.16 295);
+  --wave-mint: oklch(0.78 0.16 165);
+  --wave-amber: oklch(0.82 0.17 80);
+  --wave-coral: oklch(0.75 0.17 25);
+  --wave-sky: oklch(0.78 0.13 220);
+  --signal: oklch(0.78 0.18 145);
+  /* Tailwind @theme color aliases — literal ember-dark values */
+  --color-background: oklch(0.13 0 0);
+  --color-foreground: oklch(0.93 0 0);
+  --color-card: oklch(0.16 0 0);
+  --color-card-foreground: oklch(0.93 0 0);
+  --color-popover: oklch(0.16 0 0);
+  --color-popover-foreground: oklch(0.93 0 0);
+  --color-primary: oklch(0.68 0.22 35);
+  --color-primary-foreground: oklch(0.98 0 0);
+  --color-secondary: oklch(0.22 0 0);
+  --color-secondary-foreground: oklch(0.93 0 0);
+  --color-muted: oklch(0.22 0 0);
+  --color-muted-foreground: oklch(0.58 0 0);
+  --color-accent: oklch(0.68 0.22 35);
+  --color-accent-foreground: oklch(0.98 0 0);
+  --color-destructive: oklch(0.62 0.22 22);
+  --color-destructive-foreground: oklch(0.98 0 0);
+  --color-border: oklch(0.26 0 0);
+  --color-input: oklch(0.22 0 0);
+  --color-ring: oklch(0.68 0.22 35);
+  --color-ember: oklch(0.68 0.22 35);
+  --color-ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --color-surface-2: oklch(0.19 0 0);
+  --color-grid: oklch(0.22 0 0);
+  --color-online: oklch(0.78 0.18 145);
+  color: oklch(0.93 0 0);
+  background-color: oklch(0.13 0 0);
+  color-scheme: dark;
+  overflow-x: clip;
+}
+
+/* Full-bleed: break selected chrome out of the centered content column */
+.landing-full-bleed {
+  width: 100vw;
+  max-width: 100vw;
+  margin-inline: calc(50% - 50vw);
+}
+
+/* Ultra-wide: absolute full-bleed layers */
+@media (min-width: 1921px) {
+  .landing-full-bleed-abs {
+    width: 100vw;
+    max-width: 100vw;
+    left: calc(50% - 50vw) !important;
+    right: auto !important;
+  }
+}
+
+.landing-section-border {
+  position: relative;
+}
+
+.landing-section-border::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 60%, transparent);
+  pointer-events: none;
+}
+
+@media (min-width: 1921px) {
+  .landing-section-border::after {
+    left: 50%;
+    width: 100vw;
+    transform: translateX(-50%);
+  }
+}
+
+.landing-page a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.landing-page ::selection,
+.landing-page ::-moz-selection {
+  background-color: oklch(0.68 0.22 35);
+  color: oklch(0.98 0 0);
+}
+
+@layer utilities {
+  .landing-page .text-foreground { color: oklch(0.93 0 0); }
+  .landing-page .text-muted-foreground { color: oklch(0.58 0 0); }
+  .landing-page .text-ember { color: oklch(0.68 0.22 35); }
+  .landing-page .text-primary-foreground { color: oklch(0.98 0 0); }
+  .landing-page .text-background { color: oklch(0.13 0 0); }
+  .landing-page .bg-background { background-color: oklch(0.13 0 0); }
+  .landing-page .bg-card { background-color: oklch(0.16 0 0); }
+  .landing-page .bg-ember { background-color: oklch(0.68 0.22 35); }
+  .landing-page .border-border { border-color: oklch(0.26 0 0); }
+  .landing-page .border-foreground { border-color: oklch(0.93 0 0); }
+  .landing-page .border-ember { border-color: oklch(0.68 0.22 35); }
+
+  /* Scroll-center active state (touch / narrow viewports — set via data-scroll-active) */
+  .landing-page [data-scroll-active].landing-hover-surface {
+    background-color: oklch(0.16 0 0);
+  }
+  .landing-page [data-scroll-active].landing-hover-border {
+    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent);
+  }
+  .landing-page [data-scroll-active].landing-hover-row {
+    border-color: oklch(0.26 0 0);
+    background-color: oklch(0.13 0 0);
+  }
+  .landing-page [data-scroll-active].landing-hover-ember {
+    background-color: oklch(0.68 0.22 35);
+    color: oklch(0.98 0 0);
+  }
+  .landing-page .landing-hover-bar {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  .landing-page .group:hover .landing-hover-bar,
+  .landing-page [data-scroll-active] .landing-hover-bar {
+    transform: scaleX(1);
+  }
+  .landing-page [data-scroll-active] .landing-hover-divider {
+    background: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-icon {
+    border-color: oklch(0.68 0.22 35) !important;
+    background-color: oklch(0.68 0.22 35) !important;
+    color: oklch(0.98 0 0) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-dot {
+    opacity: 1 !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-item-text {
+    color: oklch(0.93 0 0) !important;
+  }
+  .landing-page li.landing-hover-item-text[data-scroll-active] {
+    color: oklch(0.93 0 0) !important;
+  }
+  .landing-page [data-scroll-active] .landing-hover-item-icon,
+  .landing-page li.landing-hover-item-text[data-scroll-active] .landing-hover-item-icon {
+    border-color: transparent !important;
+  }
+  .landing-page [data-scroll-active].landing-hover-border-soft {
+    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 40%, transparent);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-2 {
+    transform: translateY(-2px);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-3 {
+    transform: translateY(-3px);
+  }
+  .landing-page [data-scroll-active].landing-hover-lift-4 {
+    transform: translateY(-4px);
+  }
+}
+
+.font-mono-tb {
+  font-family: var(--tb-font-mono), ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+
+.font-display-tb {
+  font-family: var(--tb-font-display), system-ui, sans-serif;
+}
+
+.tb-grid-bg-landing {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, oklch(0.68 0.21 35) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, oklch(0.68 0.21 35) 6%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+@keyframes tb-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0.2; }
+}
+.tb-blink {
+  animation: tb-blink 1.4s steps(2, end) infinite;
+}
+
+@keyframes tb-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.tb-marquee {
+  animation: tb-marquee 40s linear infinite;
+}

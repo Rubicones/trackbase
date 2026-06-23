@@ -38,8 +38,9 @@
   --online: oklch(0.78 0.18 145);
 }
 
-/* ─── ember-dark ─── */
-:root[data-theme="ember-dark"] {
+/* ─── ember-dark (also forced on marketing landing) ─── */
+:root[data-theme="ember-dark"],
+.landing-page {
   --background: oklch(0.13 0 0);
   --foreground: oklch(0.93 0 0);
   --surface: oklch(0.16 0 0);

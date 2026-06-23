@@ -13,11 +13,12 @@ import {
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
 const PUBLIC_PREFIXES = ['/auth', '/api/auth']
+const PUBLIC_EXACT = ['/']
 
 const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
 
 function isPublic(pathname: string) {
-  return PUBLIC_PREFIXES.some(p => pathname.startsWith(p))
+  return PUBLIC_EXACT.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p))
 }
 
 function isProfileExempt(pathname: string) {
