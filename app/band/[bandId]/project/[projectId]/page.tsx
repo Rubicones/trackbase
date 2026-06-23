@@ -13,7 +13,7 @@ import { MergeModal } from './MergeModal'
 import type { MergePreview } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
-import { ProjectResourcesButton } from '@/components/ResourcesModal'
+import { ResourcesCard } from '@/components/ResourcesCard'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
@@ -2362,6 +2362,8 @@ const TrackRow = React.memo(function TrackRow({
   projectId, versionId, project, totalBars, runtimeDurationMs,
   timelineDurationMs, onTrackDuration, waitForMidiRender,
   compact = false,
+  resourceFilterActive = false,
+  onResourceFilter,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   /** Ref updated every rAF frame — read directly by DOM updates, never triggers re-render. */
@@ -2395,6 +2397,8 @@ const TrackRow = React.memo(function TrackRow({
   onTrackDuration?: (trackId: string, durationMs: number) => void
   waitForMidiRender: (trackId: string) => Promise<void>
   compact?: boolean
+  resourceFilterActive?: boolean
+  onResourceFilter?: (trackId: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const accentColor = trackAccentColor(track.icon_color, index)
@@ -2674,8 +2678,10 @@ const TrackRow = React.memo(function TrackRow({
   return (
     <>
     <div
-      data-track-row
-      className="flex group/track hover:bg-surface/30 overflow-visible border-b border-border"
+      data-track-row={track.id}
+      className={`flex group/track hover:bg-surface/30 overflow-visible border-b border-border ${
+        resourceFilterActive ? 'bg-ember-soft/40 ring-1 ring-inset ring-ember/40' : ''
+      }`}
       style={{
         minHeight: rowH,
         background: rowBg,
@@ -2690,10 +2696,15 @@ const TrackRow = React.memo(function TrackRow({
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
+      onClick={(e) => {
+        const target = e.target as HTMLElement
+        if (target.closest('button, input, a, textarea, [data-no-resource-filter]')) return
+        onResourceFilter?.(track.id)
+      }}
     >
       {/* Label column */}
       <div
-        className={`shrink-0 border-r border-border flex flex-col justify-between ${compact ? 'p-2' : 'p-3'}`}
+        className={`shrink-0 border-r border-border flex flex-col justify-between ${compact ? 'p-2' : 'p-3'} cursor-pointer`}
         style={{ width: compact ? 140 : TRACK_LABEL_W }}
       >
         <div className="flex items-start gap-2 min-w-0">
@@ -3346,7 +3357,7 @@ function MobileVersionBar({
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeCheckingId, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   mergeCheckingId: string | null
@@ -3358,6 +3369,11 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
   projectName: string
   isOpen?: boolean
   compact?: boolean
+  resourceFilterTrackId?: string | null
+  resourceFilterTrackName?: string | null
+  onClearResourceFilter?: () => void
+  onNavigateResourceVersion?: (versionId: string) => void
+  onNavigateResourceTrack?: (trackId: string, versionId: string) => void
 }) {
   const main = versions.find(v => v.type === 'main')
   const branches = versions.filter(v => v.type === 'branch')
@@ -3382,8 +3398,8 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
         compact ? 'bg-surface' : 'bg-surface/30'
       }${isOpen ? ' sidebar-open' : ''}`}
     >
-      <div className={`flex-1 overflow-y-auto scrollbar-none flex flex-col ${compact ? 'p-3 gap-4' : 'p-4 gap-6'}`}>
-        <div>
+      <div className="flex flex-col min-h-0 flex-1 basis-0">
+        <div className={`flex-1 overflow-y-auto scrollbar-none ${compact ? 'p-3' : 'px-4 pt-4 pb-2'}`}>
           <SectionLabel>VERSION HISTORY</SectionLabel>
           <div className={compact ? 'mt-2 space-y-1' : 'mt-4 space-y-3'}>
             {[main, ...branches].filter(Boolean).map(v => {
@@ -3426,9 +3442,9 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
           </div>
         </div>
 
-        <div>
+        <div className={`shrink-0 border-t border-border ${compact ? 'p-3' : 'px-4 py-3'}`}>
           <SectionLabel>ACTIONS</SectionLabel>
-          <div className="mt-3 space-y-1">
+          <div className="mt-2 space-y-1">
             {canMerge && (
               <button
                 type="button"
@@ -3453,42 +3469,57 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, mergeChec
             ))}
           </div>
         </div>
-
-        <div className={compact ? '' : 'mt-auto'}>
-          <SectionLabel>STORAGE · {formatStorageLimit(storageLimit)}</SectionLabel>
-          {compact ? (
-            <div className="text-[10px] tabular-nums mt-1 text-muted-foreground truncate">
-              {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
-              <span className={`ml-2 ${storageFull ? 'text-destructive' : storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
-                {Math.round(storagePct)}%
-              </span>
-            </div>
-          ) : (
-            <>
-              <div className="text-[10px] tabular-nums mt-2 text-muted-foreground">
-                {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
-              </div>
-              <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${storageFull || storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
-                  style={{ width: `${storagePct}%` }}
-                />
-              </div>
-              {storageFull ? (
-                <p className="text-[9px] text-destructive mt-1 m-0">Storage full — delete tracks or files to upload more</p>
-              ) : storageUsed / storageLimit > 0.95 ? (
-                <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
-              ) : null}
-            </>
-          )}
-        </div>
       </div>
 
       {!compact && (
-        <div className="p-4 pt-0 border-t border-border">
-          <ProjectResourcesButton projectId={projectId} projectName={projectName} storageFull={storageFull} className="mt-4" />
+        <div className="flex flex-col min-h-0 flex-1 basis-0 border-t border-border">
+          <div className="flex-1 overflow-y-auto scrollbar-none px-2 py-2 min-h-0">
+            <ResourcesCard
+              projectId={projectId}
+              projectName={projectName}
+              bare
+              variant="sidebar"
+              hideLyrics
+              storageFull={storageFull}
+              filterTrackId={resourceFilterTrackId}
+              filterTrackName={resourceFilterTrackName}
+              onClearFilter={onClearResourceFilter}
+              versions={versions}
+              onNavigateVersion={onNavigateResourceVersion}
+              onNavigateTrack={onNavigateResourceTrack}
+            />
+          </div>
         </div>
       )}
+
+      <div className={`shrink-0 border-t border-border ${compact ? 'p-3' : 'px-4 py-2'}`}>
+        <SectionLabel>STORAGE · {formatStorageLimit(storageLimit)}</SectionLabel>
+        {compact ? (
+          <div className="text-[10px] tabular-nums mt-1 text-muted-foreground truncate">
+            {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
+            <span className={`ml-2 ${storageFull ? 'text-destructive' : storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
+              {Math.round(storagePct)}%
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="text-[10px] tabular-nums mt-1 text-muted-foreground">
+              {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
+            </div>
+            <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
+              <div
+                className={`h-full transition-all ${storageFull || storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
+                style={{ width: `${storagePct}%` }}
+              />
+            </div>
+            {storageFull ? (
+              <p className="text-[9px] text-destructive mt-1 m-0">Storage full — delete tracks or files to upload more</p>
+            ) : storageUsed / storageLimit > 0.95 ? (
+              <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
+            ) : null}
+          </>
+        )}
+      </div>
     </aside>
   )
 }
@@ -3543,6 +3574,7 @@ export default function ProjectPage() {
   const mobileReplaceInputRef = useRef<HTMLInputElement>(null)
   const replaceTrackRef = useRef<Track | null>(null)
   const [commentMode, setCommentMode] = useState(false)
+  const [resourceFilterTrackId, setResourceFilterTrackId] = useState<string | null>(null)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
   const [versionLoading, setVersionLoading] = useState(false)
   const [mergeModal, setMergeModal] = useState<{ branchId: string; preview: MergePreview } | null>(null)
@@ -3767,6 +3799,7 @@ export default function ProjectPage() {
     setActiveVersionId(id)
     setCommentMode(false)
     setActiveCommentInput(null)
+    setResourceFilterTrackId(null)
     if (searchParams.has('v') || searchParams.has('t') || searchParams.has('s') || searchParams.has('e')) {
       const params = new URLSearchParams(searchParams.toString())
       params.delete('v')
@@ -3777,6 +3810,21 @@ export default function ProjectPage() {
       router.replace(`/band/${bandId}/project/${projectId}${qs ? `?${qs}` : ''}`, { scroll: false })
     }
   }, [bandId, projectId, router, searchParams])
+
+  const navigateResourceVersion = useCallback((versionId: string) => {
+    selectVersion(versionId)
+    if (window.innerWidth < 1024) setSidebarOpen(false)
+  }, [selectVersion])
+
+  const navigateResourceTrack = useCallback((trackId: string, versionId: string) => {
+    setActiveVersionId(versionId)
+    setCommentMode(false)
+    setActiveCommentInput(null)
+    setResourceFilterTrackId(trackId)
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-track-row="${trackId}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [])
 
   // Deep link from chat context chips: ?v=<versionId> — apply once on load only.
   useEffect(() => {
@@ -3861,6 +3909,11 @@ export default function ProjectPage() {
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+  const resourceFilterTrackName = useMemo(() => {
+    if (!resourceFilterTrackId) return null
+    const track = activeTracks.find(t => t.id === resourceFilterTrackId)
+    return track ? (track.display_name ?? track.name) : null
+  }, [resourceFilterTrackId, activeTracks])
   const midiTracksNeedingDataKey = useMemo(
     () => activeTracks
       .filter(t => t.file_type === 'midi' && !t.midi_data)
@@ -5189,10 +5242,20 @@ export default function ProjectPage() {
           projectName={project.name}
           isOpen={sidebarOpen}
           compact={isMobileLandscape}
+          resourceFilterTrackId={resourceFilterTrackId}
+          resourceFilterTrackName={resourceFilterTrackName}
+          onClearResourceFilter={() => setResourceFilterTrackId(null)}
+          onNavigateResourceVersion={navigateResourceVersion}
+          onNavigateResourceTrack={navigateResourceTrack}
         />
 
         <main
           className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background relative"
+          onClick={(e) => {
+            if (!(e.target as HTMLElement).closest('[data-track-row]')) {
+              setResourceFilterTrackId(null)
+            }
+          }}
           onDragOver={handleContentDragOver}
           onDragLeave={handleContentDragLeave}
           onDrop={handleContentDrop}
@@ -5471,6 +5534,8 @@ export default function ProjectPage() {
                   timelineDurationMs={totalProjectDurationMs}
                   onTrackDuration={handleTrackDuration}
                   compact={isMobileLandscape}
+                  resourceFilterActive={resourceFilterTrackId === t.id}
+                  onResourceFilter={setResourceFilterTrackId}
                 />
               ))}
               {recordingSessions.map(session => (

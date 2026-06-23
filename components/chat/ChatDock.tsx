@@ -16,6 +16,7 @@ import {
   type ChannelKey,
 } from '@/lib/chat'
 import { useBandChat, type ChatMember } from '@/components/chat/useBandChat'
+import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 
 // ─── Inline icons (match the app's lightweight SVG convention) ─────────────────
 
@@ -86,25 +87,6 @@ function IconSend({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M2 8l12-5-5 12-2.5-4.5L2 8z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function IconBranch({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <circle cx="4" cy="4" r="1.8" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="4" cy="12" r="1.8" stroke="currentColor" strokeWidth="1.2" />
-      <circle cx="12" cy="4" r="1.8" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M4 5.8v4.4M5.8 4H8a2 2 0 0 1 2 2v3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
-}
-function IconNote({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M6 12V4l7-1.5v8" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <ellipse cx="4.3" cy="12" rx="1.7" ry="1.4" stroke="currentColor" strokeWidth="1.2" />
-      <ellipse cx="11.3" cy="10.5" rx="1.7" ry="1.4" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   )
 }
@@ -561,11 +543,12 @@ export function ChatDock({
 
       {open && (
         <>
-          {/* Mobile scrim — covers page content between shell header + footer */}
+          {/* Scrim — mobile opaque, desktop transparent (outside-click to close) */}
           <div
-            className="chat-dock-scrim bg-background lg:hidden"
-            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+            className="chat-dock-scrim fixed inset-0 z-[29] lg:z-[305] bg-background lg:bg-transparent"
+            style={keyboardInset > 0 ? { bottom: keyboardInset, top: 'var(--shell-header-h)' } : { top: 'var(--shell-header-h)', bottom: 'var(--shell-footer-h)' }}
             onClick={onClose}
+            aria-hidden
           />
 
           <aside

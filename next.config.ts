@@ -20,6 +20,15 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
   },
+  // Legacy upload clients POST here; body { filename, fileSize } is handled by POST /resources.
+  async rewrites() {
+    return [
+      {
+        source: '/api/projects/:id/resources/presign',
+        destination: '/api/projects/:id/resources',
+      },
+    ]
+  },
   // Keep native/binary packages out of the webpack bundle so __dirname paths stay valid.
   serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'web-push'],
   outputFileTracingIncludes: Object.fromEntries(

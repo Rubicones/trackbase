@@ -1674,6 +1674,68 @@ html.dark[data-palette="green"] .theme-avatar {
   }
 }
 
+/* Sidebar + drawer resource rows — chip reveal on hover / tap / focus */
+.sidebar-resource-item .sidebar-resource-actions,
+.resource-context-item .sidebar-resource-actions {
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+.sidebar-resource-item:hover .sidebar-resource-actions,
+.resource-context-item:hover .sidebar-resource-actions {
+  opacity: 1;
+}
+.sidebar-resource-item .sidebar-resource-chips-row,
+.resource-context-item .resource-context-chips-row {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  margin-top: 0;
+  pointer-events: none;
+  transition:
+    max-height 0.22s ease,
+    opacity 0.18s ease,
+    margin-top 0.22s ease;
+}
+.sidebar-resource-item:focus-within .sidebar-resource-chips-row,
+.sidebar-resource-item[data-expanded="true"] .sidebar-resource-chips-row,
+.resource-context-item:focus-within .resource-context-chips-row,
+.resource-context-item[data-expanded="true"] .resource-context-chips-row {
+  opacity: 1;
+  margin-top: 10px;
+  pointer-events: auto;
+}
+.sidebar-resource-item[data-expanded="true"] .sidebar-resource-chips-row,
+.sidebar-resource-item:focus-within .sidebar-resource-chips-row {
+  max-height: 56px;
+  overflow: visible;
+}
+.resource-context-item[data-expanded="true"] .resource-context-chips-row,
+.resource-context-item:focus-within .resource-context-chips-row {
+  max-height: 140px;
+  overflow: visible;
+}
+/* Fine-pointer hover only — touch devices (incl. iOS) rely on data-expanded */
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-resource-item:hover .sidebar-resource-chips-row {
+    max-height: 56px;
+    opacity: 1;
+    margin-top: 10px;
+    pointer-events: auto;
+  }
+  .resource-context-item:hover .resource-context-chips-row {
+    max-height: 140px;
+    opacity: 1;
+    margin-top: 10px;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-resource-item .sidebar-resource-chips-row,
+  .resource-context-item .resource-context-chips-row {
+    transition: none;
+  }
+}
+
 @keyframes brand-spinner-spin {
   to { transform: rotate(360deg); }
 }
@@ -1774,13 +1836,8 @@ html.dark[data-palette="green"] .theme-avatar {
 
 @media (width < 1024px) {
   .chat-dock-scrim {
-    position: fixed;
     left: 0;
     right: 0;
-    top: var(--shell-header-h);
-    bottom: var(--shell-footer-h);
-    z-index: 29;
-    background: var(--background);
   }
 
   .chat-dock-aside {
@@ -1830,18 +1887,15 @@ html.dark[data-palette="green"] .theme-avatar {
  * here so text-foreground / text-muted-foreground / bg-background utilities
  * resolve to ember-dark even when <html> uses another theme. */
 
-:root {
-  --ember-bright: oklch(0.74 0.22 38);
-  --ember-dim: oklch(0.45 0.16 32);
-  --surface-1: oklch(0.13 0.01 30);
-  --surface-2-landing: oklch(0.17 0.012 35);
-  --surface-3: oklch(0.22 0.015 40);
-  --wave-violet: oklch(0.72 0.16 295);
-  --wave-mint: oklch(0.78 0.16 165);
-  --wave-amber: oklch(0.82 0.17 80);
-  --wave-coral: oklch(0.75 0.17 25);
-  --wave-sky: oklch(0.78 0.13 220);
-  --signal: oklch(0.78 0.18 145);
+html:has(.landing-page) {
+  scroll-behavior: smooth;
+  scroll-padding-top: 3.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.landing-page) {
+    scroll-behavior: auto;
+  }
 }
 
 .landing-page {
@@ -1949,7 +2003,9 @@ html.dark[data-palette="green"] .theme-avatar {
   .landing-page .border-ember { border-color: oklch(0.68 0.22 35); }
 
   /* Scroll-center active state (touch / narrow viewports — set via data-scroll-active) */
-  .landing-page [data-scroll-active].landing-hover-surface {
+  .landing-page [data-scroll-active].landing-hover-surface,
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text[data-scroll-active]),
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text:hover) {
     background-color: oklch(0.16 0 0);
   }
   .landing-page [data-scroll-active].landing-hover-border {
@@ -1963,12 +2019,25 @@ html.dark[data-palette="green"] .theme-avatar {
     background-color: oklch(0.68 0.22 35);
     color: oklch(0.98 0 0);
   }
+  .landing-page .landing-new-branch-btn {
+    color: oklch(0.68 0.22 35);
+  }
+  .landing-page .landing-new-branch-btn:hover {
+    background-color: oklch(0.68 0.22 35);
+    color: oklch(0.98 0 0) !important;
+  }
+  .landing-page .landing-new-branch-btn:hover .landing-new-branch-btn-icon {
+    opacity: 1;
+    color: inherit;
+  }
   .landing-page .landing-hover-bar {
     transform: scaleX(0);
     transform-origin: left;
   }
   .landing-page .group:hover .landing-hover-bar,
-  .landing-page [data-scroll-active] .landing-hover-bar {
+  .landing-page [data-scroll-active] .landing-hover-bar,
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text[data-scroll-active]) .landing-hover-bar,
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text:hover) .landing-hover-bar {
     transform: scaleX(1);
   }
   .landing-page [data-scroll-active] .landing-hover-divider {
@@ -1979,29 +2048,35 @@ html.dark[data-palette="green"] .theme-avatar {
     background-color: oklch(0.68 0.22 35) !important;
     color: oklch(0.98 0 0) !important;
   }
-  .landing-page [data-scroll-active] .landing-hover-dot {
+  .landing-page [data-scroll-active] .landing-hover-dot,
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text[data-scroll-active]) .landing-hover-dot,
+  .landing-page .landing-hover-surface:has(.landing-hover-item-text:hover) .landing-hover-dot {
     opacity: 1 !important;
   }
-  .landing-page [data-scroll-active] .landing-hover-item-text {
+  .landing-page li.landing-hover-item-text[data-scroll-active],
+  .landing-page li.landing-hover-item-text:hover {
     color: oklch(0.93 0 0) !important;
   }
-  .landing-page li.landing-hover-item-text[data-scroll-active] {
-    color: oklch(0.93 0 0) !important;
-  }
-  .landing-page [data-scroll-active] .landing-hover-item-icon,
-  .landing-page li.landing-hover-item-text[data-scroll-active] .landing-hover-item-icon {
+  .landing-page li.landing-hover-item-text[data-scroll-active] .landing-hover-item-icon,
+  .landing-page li.landing-hover-item-text:hover .landing-hover-item-icon {
     border-color: transparent !important;
   }
   .landing-page [data-scroll-active].landing-hover-border-soft {
     border-color: color-mix(in oklab, oklch(0.68 0.22 35) 40%, transparent);
   }
-  .landing-page [data-scroll-active].landing-hover-lift-2 {
+  .landing-page [data-scroll-active].landing-hover-lift-2,
+  .landing-page .landing-hover-lift-2:has(.landing-hover-item-text[data-scroll-active]),
+  .landing-page .landing-hover-lift-2:has(.landing-hover-item-text:hover) {
     transform: translateY(-2px);
   }
-  .landing-page [data-scroll-active].landing-hover-lift-3 {
+  .landing-page [data-scroll-active].landing-hover-lift-3,
+  .landing-page .landing-hover-lift-3:has(.landing-hover-item-text[data-scroll-active]),
+  .landing-page .landing-hover-lift-3:has(.landing-hover-item-text:hover) {
     transform: translateY(-3px);
   }
-  .landing-page [data-scroll-active].landing-hover-lift-4 {
+  .landing-page [data-scroll-active].landing-hover-lift-4,
+  .landing-page .landing-hover-lift-4:has(.landing-hover-item-text[data-scroll-active]),
+  .landing-page .landing-hover-lift-4:has(.landing-hover-item-text:hover) {
     transform: translateY(-4px);
   }
 }

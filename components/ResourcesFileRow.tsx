@@ -2,7 +2,14 @@
 
 import { useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
-import type { ProjectResource } from '@/lib/types'
+import type { ProjectResource, Version } from '@/lib/types'
+import {
+  ResourceContextControls,
+  resourceContextDraft,
+  type ResourceContextDraft,
+} from './ResourceContextControls'
+import { ResourceDeleteConfirm } from './ResourceDeleteConfirm'
+import { useResourceRowExpand } from './useResourceRowExpand'
 
 // ── File type icons (Tabler-style SVGs) ───────────────────────────────────────
 
@@ -153,16 +160,33 @@ function fmtRelative(iso: string): string {
 interface Props {
   resource: ProjectResource
   projectId: string
+  versions?: Version[]
   isLast: boolean
   onUpdated: (resource: ProjectResource) => void
   onDeleted: (id: string) => void
-  variant?: 'default' | 'drawer'
+  variant?: 'default' | 'drawer' | 'sidebar'
+  onNavigateVersion?: (versionId: string) => void
+  onNavigateTrack?: (trackId: string, versionId: string) => void
 }
 
-export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDeleted, variant = 'default' }: Props) {
+export function ResourcesFileRow({
+  resource,
+  projectId,
+  versions = [],
+  isLast,
+  onUpdated,
+  onDeleted,
+  variant = 'default',
+  onNavigateVersion,
+  onNavigateTrack,
+}: Props) {
   const [renaming, setRenaming] = useState(false)
   const [nameInput, setNameInput] = useState(resource.title ?? resource.original_filename ?? '')
+  const [contextDraft, setContextDraft] = useState<ResourceContextDraft>(() => resourceContextDraft(resource))
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const { expanded, rowHandlers } = useResourceRowExpand()
 
   const { bg, fg, Icon } = getIconTheme(resource)
   const ext = resource.original_filename?.match(/\.[^.]+$/)?.[0]?.toUpperCase().replace('.', '') ?? ''
@@ -183,7 +207,7 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
       const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: nameInput.trim() }),
+        body: JSON.stringify({ title: nameInput.trim(), ...contextDraft }),
       })
       if (res.ok) {
         const { resource: updated } = await res.json()
@@ -195,18 +219,45 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
     }
   }
 
+  function startRename() {
+    setNameInput(resource.title ?? resource.original_filename ?? '')
+    setContextDraft(resourceContextDraft(resource))
+    setRenaming(true)
+  }
+
   async function handleDelete() {
-    if (!confirm(`Remove "${displayName}"?`)) return
-    const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 204) onDeleted(resource.id)
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
+      if (res.ok || res.status === 204) onDeleted(resource.id)
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
+  if (confirmDelete) {
+    const wrapClass = variant === 'drawer' || variant === 'sidebar'
+      ? `${variant === 'sidebar' ? 'px-2 py-2' : 'px-3 py-2'} border border-destructive/30 bg-surface/80`
+      : undefined
+    return (
+      <div className={wrapClass} style={wrapClass ? undefined : { padding: '8px 0', borderBottom: isLast ? 'none' : '0.5px solid var(--border)' }}>
+        <ResourceDeleteConfirm
+          label={displayName}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={handleDelete}
+          deleting={deleting}
+        />
+      </div>
+    )
   }
 
   const btnStyle: CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 26,
-    height: 26,
+    width: 28,
+    height: 28,
     borderRadius: 5,
     border: 'none',
     background: 'transparent',
@@ -216,16 +267,17 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
     transition: 'color 0.12s',
   }
 
-  if (variant === 'drawer') {
+  if (variant === 'drawer' || variant === 'sidebar') {
     const kind = (ext || 'file').slice(0, 4)
     const meta = [
       resource.author_username,
       fmtRelative(resource.created_at),
     ].filter(Boolean).join(' · ')
+    const compact = variant === 'sidebar'
 
     if (renaming) {
       return (
-        <div className="px-3 py-2 flex items-center gap-2">
+        <div className={`${compact ? 'px-2 py-2' : 'px-3 py-2'} flex flex-col gap-2`}>
           <input
             autoFocus
             type="text"
@@ -235,34 +287,61 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
               if (e.key === 'Enter') saveRename()
               if (e.key === 'Escape') setRenaming(false)
             }}
-            className="flex-1 min-w-0 bg-surface border border-ember px-2 py-1 text-xs outline-none"
+            className="w-full min-w-0 bg-surface border border-ember px-2 py-1 text-xs outline-none"
           />
-          <button type="button" onClick={saveRename} disabled={saving} className="text-ember text-xs bg-transparent border-0 cursor-pointer">Save</button>
-          <button type="button" onClick={() => setRenaming(false)} className="text-muted-foreground text-xs bg-transparent border-0 cursor-pointer">✕</button>
+          <ResourceContextControls
+            resource={resource}
+            projectId={projectId}
+            versions={versions}
+            compact={compact}
+            editing
+            draft={contextDraft}
+            onDraftChange={setContextDraft}
+          />
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={saveRename} disabled={saving} className="text-ember text-xs bg-transparent border-0 cursor-pointer">Save</button>
+            <button type="button" onClick={() => setRenaming(false)} className="text-muted-foreground text-xs bg-transparent border-0 cursor-pointer">✕</button>
+          </div>
         </div>
       )
     }
 
     return (
-      <div className="flex items-center gap-2 sm:gap-3 px-3 py-2 text-xs hover:bg-surface transition-colors min-w-0">
-        <span className="text-[9px] font-bold tracking-widest text-ember uppercase w-8 sm:w-10 shrink-0">{kind}</span>
-        <span className="flex-1 truncate min-w-0" title={displayName}>{displayName}</span>
-        <span className="text-muted-foreground shrink-0 tabular-nums hidden xs:inline">{size}</span>
-        {meta && <span className="text-muted-foreground shrink-0 truncate max-w-[88px] hidden md:inline">{meta}</span>}
-        <button type="button" onClick={handleDownload} title="Download" className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
-          <IconDownload size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={() => { setNameInput(resource.title ?? resource.original_filename ?? ''); setRenaming(true) }}
-          title="Rename"
-          className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5"
-        >
-          <IconPencil size={12} />
-        </button>
-        <button type="button" onClick={handleDelete} title="Delete" className="shrink-0 text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
-          <IconTrash size={12} />
-        </button>
+      <div
+        className={`resource-context-item ${compact ? 'px-2 py-2' : 'px-3 py-2'} text-xs hover:bg-surface transition-colors min-w-0 cursor-pointer touch-manipulation`}
+        data-expanded={expanded ? 'true' : undefined}
+        {...rowHandlers}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-7 shrink-0 flex items-center justify-center text-[10px] font-bold tracking-widest text-ember uppercase">{kind}</span>
+          <span className="flex-1 truncate min-w-0 text-sm font-medium text-foreground" title={displayName}>{displayName}</span>
+          <button type="button" onClick={e => { e.stopPropagation(); handleDownload() }} title="Download" className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
+            <IconDownload size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); startRename() }}
+            title="Rename"
+            className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5"
+          >
+            <IconPencil size={13} />
+          </button>
+          <button type="button" onClick={e => { e.stopPropagation(); setConfirmDelete(true) }} title="Delete" className="shrink-0 text-muted-foreground hover:text-destructive bg-transparent border-0 cursor-pointer p-0.5">
+            <IconTrash size={13} />
+          </button>
+        </div>
+        <div className="resource-context-chips-row space-y-2.5" data-stop-row-expand onClick={e => e.stopPropagation()}>
+          <ResourceContextControls
+            resource={resource}
+            projectId={projectId}
+            versions={versions}
+            compact={compact}
+            onUpdated={onUpdated}
+            onNavigateVersion={onNavigateVersion}
+            onNavigateTrack={onNavigateTrack}
+          />
+          {meta && !compact && <span className="text-muted-foreground truncate block text-xs">{meta}</span>}
+        </div>
       </div>
     )
   }
@@ -297,39 +376,49 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
       {/* Center: name + metadata */}
       <div style={{ flex: 1, minWidth: 0 }}>
         {renaming ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              autoFocus
-              type="text"
-              value={nameInput}
-              onChange={e => setNameInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') saveRename()
-                if (e.key === 'Escape') setRenaming(false)
-              }}
-              style={{
-                flex: 1,
-                fontSize: 12,
-                color: 'var(--text)',
-                background: 'var(--bg-card)',
-                border: '0.5px solid var(--accent)',
-                borderRadius: 5,
-                padding: '3px 7px',
-                outline: 'none',
-                minWidth: 0,
-              }}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                autoFocus
+                type="text"
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveRename()
+                  if (e.key === 'Escape') setRenaming(false)
+                }}
+                style={{
+                  flex: 1,
+                  fontSize: 12,
+                  color: 'var(--text)',
+                  background: 'var(--bg-card)',
+                  border: '0.5px solid var(--accent)',
+                  borderRadius: 5,
+                  padding: '3px 7px',
+                  outline: 'none',
+                  minWidth: 0,
+                }}
+              />
+              <button onClick={saveRename} disabled={saving} style={{ ...btnStyle, color: 'var(--accent)' }}>
+                <IconCheck size={12} />
+              </button>
+              <button onClick={() => setRenaming(false)} style={{ ...btnStyle, fontSize: 11, color: 'var(--text-dim)' }}>
+                ✕
+              </button>
+            </div>
+            <ResourceContextControls
+              resource={resource}
+              projectId={projectId}
+              versions={versions}
+              editing
+              draft={contextDraft}
+              onDraftChange={setContextDraft}
             />
-            <button onClick={saveRename} disabled={saving} style={{ ...btnStyle, color: 'var(--accent)' }}>
-              <IconCheck size={12} />
-            </button>
-            <button onClick={() => setRenaming(false)} style={{ ...btnStyle, fontSize: 11, color: 'var(--text-dim)' }}>
-              ✕
-            </button>
           </div>
         ) : (
           <p
             style={{
-              fontSize: 13,
+              fontSize: 14,
               color: 'var(--text)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -342,10 +431,22 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
           </p>
         )}
         {!renaming && (
-          <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {[ext, size, resource.author_username && `by ${resource.author_username}`, fmtRelative(resource.created_at)]
-              .filter(Boolean).join(' · ')}
-          </p>
+          <>
+            <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {[ext, size, resource.author_username && `by ${resource.author_username}`, fmtRelative(resource.created_at)]
+                .filter(Boolean).join(' · ')}
+            </p>
+            <div className="mt-3">
+              <ResourceContextControls
+                resource={resource}
+                projectId={projectId}
+                versions={versions}
+                onUpdated={onUpdated}
+                onNavigateVersion={onNavigateVersion}
+                onNavigateTrack={onNavigateTrack}
+              />
+            </div>
+          </>
         )}
       </div>
 
@@ -357,25 +458,25 @@ export function ResourcesFileRow({ resource, projectId, isLast, onUpdated, onDel
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconDownload size={14} />
+        <IconDownload size={15} />
       </button>
       <button
-        onClick={() => { setNameInput(resource.title ?? resource.original_filename ?? ''); setRenaming(true) }}
+        onClick={startRename}
         title="Rename"
         style={btnStyle}
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconPencil size={13} />
+        <IconPencil size={14} />
       </button>
       <button
-        onClick={handleDelete}
+        onClick={() => setConfirmDelete(true)}
         title="Delete"
         style={btnStyle}
         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = 'var(--danger)')}
         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = 'var(--text-dim)')}
       >
-        <IconTrash size={13} />
+        <IconTrash size={14} />
       </button>
     </div>
   )

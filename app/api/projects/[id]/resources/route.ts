@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
+import { enrichResources, validateResourceContext } from '@/lib/resource-context'
+import { presignResourceUpload } from '@/lib/resource-presign'
 import { requireBandMember } from '@/lib/supabase/server'
 
 // ── GET /api/projects/[id]/resources ──────────────────────────────────────────
@@ -46,12 +48,14 @@ export async function GET(
     author_username: r.created_by ? (usernameMap[r.created_by] ?? null) : null,
   }))
 
-  return NextResponse.json({ resources: enriched })
+  const withContext = await enrichResources(supabase, enriched)
+
+  return NextResponse.json({ resources: withContext })
 }
 
 // ── POST /api/projects/[id]/resources ─────────────────────────────────────────
-// Creates a new 'link' resource.
-// Body: { url: string, title?: string }
+// Link:  { url, title?, context_version_id?, context_track_id? }
+// Presign: { action: "presign", filename, fileSize, contentType? }
 
 export async function POST(
   req: NextRequest,
@@ -63,14 +67,45 @@ export async function POST(
   if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
   const { userId, project } = access
 
-  let body: { url?: string; title?: string }
+  let body: {
+    action?: string
+    url?: string
+    title?: string
+    filename?: string
+    fileSize?: number
+    contentType?: string
+    context_version_id?: string | null
+    context_track_id?: string | null
+  }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { url, title } = body
+  if (body.action === 'presign' || (body.filename && body.fileSize != null && !body.url)) {
+    try {
+      const result = await presignResourceUpload(
+        supabase,
+        project.band_id,
+        body.filename ?? '',
+        body.fileSize ?? 0,
+        body.contentType,
+      )
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error, ...(result.code ? { code: result.code } : {}) },
+          { status: result.status },
+        )
+      }
+      return NextResponse.json({ presignedUrl: result.presignedUrl, tempKey: result.tempKey })
+    } catch (err) {
+      console.error('[resources POST presign] unexpected error:', err)
+      return NextResponse.json({ error: 'Failed to generate upload URL' }, { status: 500 })
+    }
+  }
+
+  const { url, title, context_version_id, context_track_id } = body
   if (!url || typeof url !== 'string' || !url.trim()) {
     return NextResponse.json({ error: 'url is required' }, { status: 400 })
   }
@@ -80,6 +115,16 @@ export async function POST(
     new URL(url)
   } catch {
     return NextResponse.json({ error: 'Invalid URL' }, { status: 400 })
+  }
+
+  const ctx = await validateResourceContext(
+    supabase,
+    projectId,
+    context_version_id,
+    context_track_id,
+  )
+  if ('error' in ctx) {
+    return NextResponse.json({ error: ctx.error }, { status: 400 })
   }
 
   // Compute position (append at end)
@@ -98,6 +143,8 @@ export async function POST(
       title: title?.trim() || null,
       created_by: userId,
       position: count ?? 0,
+      context_version_id: ctx.context_version_id,
+      context_track_id: ctx.context_track_id,
     })
     .select()
     .single()
@@ -116,5 +163,5 @@ export async function POST(
     projectId,
   })
 
-  return NextResponse.json({ resource }, { status: 201 })
+  return NextResponse.json({ resource: (await enrichResources(supabase, [resource]))[0] }, { status: 201 })
 }
