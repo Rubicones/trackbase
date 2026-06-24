@@ -65,10 +65,23 @@ function PlaybackChip({
   )
 }
 
-function SectionBreak({ label, compact, past }: { label: string; compact?: boolean; past?: boolean }) {
+function SectionBreak({
+  label,
+  compact,
+  past,
+  showDivider = true,
+}: {
+  label: string
+  compact?: boolean
+  past?: boolean
+  /** Omit leading rule at the start of the chord row. */
+  showDivider?: boolean
+}) {
   return (
     <div className={`flex items-center shrink-0 gap-1 transition-opacity duration-200 ${past ? 'opacity-40' : 'opacity-100'}`}>
-      <div className={`w-px bg-border shrink-0 ${compact ? 'h-5' : 'h-6'}`} aria-hidden />
+      {showDivider && (
+        <div className={`w-px bg-border shrink-0 ${compact ? 'h-5' : 'h-6'}`} aria-hidden />
+      )}
       <span className={`uppercase tracking-widest text-muted-foreground shrink-0 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
         {label}
       </span>
@@ -342,7 +355,7 @@ export function ChordPlaybackRow({
           }
         >
           {timeline.map((item, idx) => {
-            const showSectionBreak = item.isSectionStart && idx > 0
+            const showSectionBreak = item.isSectionStart
             const isActive = item.globalIndex === activeGlobalIndex
             const isPast = activeGlobalIndex !== null && item.globalIndex < activeGlobalIndex
 
@@ -356,7 +369,12 @@ export function ChordPlaybackRow({
                 className="inline-flex items-center shrink-0 gap-1"
               >
                 {showSectionBreak && (
-                  <SectionBreak label={item.sectionLabel} compact={compact} past={isPast} />
+                  <SectionBreak
+                    label={item.sectionLabel}
+                    compact={compact}
+                    past={isPast}
+                    showDivider={idx > 0}
+                  />
                 )}
                 <PlaybackChip
                   name={item.name}

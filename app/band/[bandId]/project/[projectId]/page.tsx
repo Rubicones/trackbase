@@ -4890,13 +4890,53 @@ export default function ProjectPage() {
       alert(storageQuotaError(storageUsed, storageLimit))
       return
     }
+    if (!activeVersionId) return
     setUploading(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file); fd.append('name', track.name); fd.append('position', String(track.position))
-      const res = await fetch(`/api/versions/${activeVersionId}/tracks/upload`, { method: 'POST', body: fd })
-      if (!res.ok) throw new Error((await res.json()).error)
-      await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
+      const presignRes = await fetch(`/api/versions/${activeVersionId}/tracks/presign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          fileSize: file.size,
+          contentType: file.type || 'application/octet-stream',
+        }),
+      })
+      if (!presignRes.ok) {
+        const msg = (await presignRes.json().catch(() => ({}))).error ?? 'Failed to prepare upload'
+        throw new Error(msg)
+      }
+      const { presignedUrl, tempKey } = await presignRes.json()
+
+      await uploadToR2Direct(file, presignedUrl, () => {})
+
+      const isMidi = file.name.endsWith('.mid') || file.name.endsWith('.midi')
+      const startBar = track.start_bar ?? track.midi_start_bar ?? 0
+      const processRes = await fetch(`/api/versions/${activeVersionId}/tracks/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tempKey,
+          originalFilename: file.name,
+          fileSize: file.size,
+          mimetype: file.type || 'application/octet-stream',
+          name: track.name,
+          position: track.position,
+          iconColor: track.icon_color ?? undefined,
+          ...(track.display_name ? { displayName: track.display_name } : {}),
+          ...(isMidi ? { midiStartBar: startBar } : { startBar }),
+        }),
+      })
+      if (!processRes.ok) {
+        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        throw new Error(msg)
+      }
+
+      const delRes = await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
+      if (!delRes.ok) {
+        throw new Error((await delRes.json().catch(() => ({}))).error ?? 'Failed to remove old track')
+      }
+
       waveformBarsCache.delete(track.id)
       audioArrayBufferCache.delete(track.id)
       cache.invalidate(activeVersionId)

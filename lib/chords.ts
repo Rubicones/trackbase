@@ -16,7 +16,7 @@ export interface TimelineChord {
   globalIndex: number
   /** True when this is the first chord of a section (after a separator) */
   isSectionStart: boolean
-  /** Section label shown after separator at section start (except first section) */
+  /** Section label shown before the first chord of each section */
   sectionLabel: string
 }
 

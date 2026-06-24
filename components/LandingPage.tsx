@@ -14,6 +14,7 @@ import { ChordPlaybackRow } from "@/components/ChordPlaybackRow";
 import { sectionLabel } from "@/components/StructureEditor";
 import { MobileMixerVersionBar } from "@/components/MobileMixerVersionBar";
 import { formatChordsDisplay } from "@/lib/chords";
+import { findSectionRangeAtTime } from "@/lib/sectionPlayback";
 import type { Section, Version } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import {
@@ -687,7 +688,8 @@ function Philosophy() {
 
 const LANDING_BPM = 142;
 const LANDING_BAR_MS = (60 / LANDING_BPM) * 4 * 1000;
-const LANDING_PLAYHEAD_MS = 60_000;
+/** Bar 9 — verse (Am F C G), highlights F; matches section pill + chord row. */
+const LANDING_PLAYHEAD_MS = Math.round(9 * LANDING_BAR_MS);
 
 function landingMockSection(
   id: string,
@@ -791,25 +793,42 @@ function landingSectionStartTime(startBar: number, barDurationMs: number) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 }
 
+function landingActiveSectionIdx(
+  sections: Section[],
+  currentTimeMs: number,
+  barDurationMs: number,
+): number {
+  const sorted = [...sections].sort((a, b) => a.start_bar - b.start_bar);
+  const match = findSectionRangeAtTime(
+    sorted.map((s) => ({ id: s.id, start_bar: s.start_bar, end_bar: s.end_bar })),
+    currentTimeMs / 1000,
+    barDurationMs / 1000,
+  );
+  if (!match) return 0;
+  const idx = sections.findIndex((s) => s.id === match.id);
+  return idx >= 0 ? idx : 0;
+}
+
 function LandingMobileSectionChords({
   sections,
-  activeSectionIdx = 1,
   currentTimeMs = LANDING_PLAYHEAD_MS,
   flush = false,
 }: {
   sections: Section[];
-  activeSectionIdx?: number;
   currentTimeMs?: number;
-  /** Drop inner horizontal padding — use inside padded card mocks. */
+  /** Full-bleed strip inside a padded card mock (`-mx-3`, interior `px-3`). */
   flush?: boolean;
 }) {
+  const activeSectionIdx = landingActiveSectionIdx(sections, currentTimeMs, LANDING_BAR_MS);
   const active = sections[activeSectionIdx];
-  const insetX = flush ? "px-0" : "px-3";
+  const bleed = flush ? "-mx-3" : "";
+  const pad = "px-3";
+  const border = "border-[color-mix(in_oklab,var(--border)_80%,transparent)]";
 
   return (
-    <>
-      <div className="mb-3 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2">
-        <div className={`mb-1.5 flex items-center justify-between gap-2 ${insetX}`}>
+    <div className={`mb-3 min-w-0 overflow-hidden ${bleed}`}>
+      <div className={`bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2 shrink-0`}>
+        <div className={`mb-1.5 flex items-center justify-between gap-2 ${pad}`}>
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {active && (
             <span className="truncate font-mono text-[9px] tabular-nums text-ember">
@@ -817,7 +836,9 @@ function LandingMobileSectionChords({
             </span>
           )}
         </div>
-        <div className={`flex gap-1.5 overflow-x-auto pb-1 scrollbar-none ${insetX}`}>
+        <div
+          className={`flex gap-1.5 overflow-x-auto pb-1 scrollbar-none ${flush ? "-mx-3 px-3" : pad}`}
+        >
           {sections.map((s, i) => (
             <div
               key={s.id}
@@ -837,9 +858,13 @@ function LandingMobileSectionChords({
       </div>
 
       {sections.some((s) => s.chords?.trim()) && (
-        <div className="mb-3 min-w-0 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_20%,transparent)]">
+        <div
+          className={`border-t border-b ${border} bg-[color-mix(in_oklab,var(--card)_20%,transparent)] shrink-0 min-w-0`}
+        >
           <div className="flex min-h-[40px] min-w-0 items-stretch">
-            <div className={`flex shrink-0 items-center border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] ${flush ? "pl-0 pr-3" : "px-3"}`}>
+            <div
+              className={`flex shrink-0 items-center self-stretch border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] ${pad}`}
+            >
               <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
             </div>
             <ChordPlaybackRow
@@ -847,12 +872,12 @@ function LandingMobileSectionChords({
               currentTimeMs={currentTimeMs}
               barDurationMs={LANDING_BAR_MS}
               compact
-              className="min-w-0 flex-1"
+              className="min-w-0 flex-1 self-stretch"
             />
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -871,7 +896,6 @@ function LandingStructureStrip() {
       <div className="mb-3 sm:hidden">
         <LandingMobileSectionChords
           sections={LANDING_MOBILE_MIXER_SECTIONS}
-          activeSectionIdx={1}
         />
       </div>
       <div className="mb-3 hidden items-stretch border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:flex">
@@ -1575,8 +1599,8 @@ function LandingRehearsalMock() {
           </div>
           <Waveform seed={5.6} bars={42} color="var(--ember)" height={70} />
           <div className="mt-2 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
-            <span>1:00</span>
-            <span>2:59</span>
+            <span>{landingSectionStartTime(8, LANDING_BAR_MS)}</span>
+            <span>{landingSectionStartTime(24, LANDING_BAR_MS)}</span>
           </div>
 
           <div className="mt-3">
@@ -1590,7 +1614,6 @@ function LandingRehearsalMock() {
 
           <LandingMobileSectionChords
             sections={listSections}
-            activeSectionIdx={1}
             flush
           />
 

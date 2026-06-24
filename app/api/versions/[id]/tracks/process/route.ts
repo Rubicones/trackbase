@@ -79,6 +79,11 @@ export async function POST(
     startBar?: number
     /** Client-computed recording duration — used as fallback when ffprobe returns 0. */
     durationMs?: number
+    /** Preserve metadata when replacing an existing track. */
+    name?: string
+    position?: number
+    iconColor?: string
+    displayName?: string
   }
   try {
     body = await req.json()
@@ -94,6 +99,10 @@ export async function POST(
     midiStartBar = 0,
     startBar = 0,
     durationMs: clientDurationMs,
+    name: requestedName,
+    position: requestedPosition,
+    iconColor: requestedIconColor,
+    displayName: requestedDisplayName,
   } = body
 
   if (!tempKey || typeof tempKey !== 'string') {
@@ -107,18 +116,31 @@ export async function POST(
   }
 
   const filename = originalFilename
-  const trackName = filename.replace(/\.[^.]+$/, '')
+  const trackName =
+    typeof requestedName === 'string' && requestedName.trim()
+      ? requestedName.trim()
+      : filename.replace(/\.[^.]+$/, '')
 
-  // Determine position from existing track count (server-authoritative)
+  // Determine position from existing track count (server-authoritative) unless replacing.
   const { count: trackCount, data: siblingTracks } = await supabase
     .from('tracks')
     .select('icon_color', { count: 'exact' })
     .eq('version_id', versionId)
-  const position = trackCount ?? 0
-  const iconColor = pickTrackIconColor(
-    (siblingTracks ?? []).map(t => t.icon_color),
-    position,
-  )
+  const position =
+    typeof requestedPosition === 'number' && requestedPosition >= 0
+      ? requestedPosition
+      : (trackCount ?? 0)
+  const iconColor =
+    typeof requestedIconColor === 'string' && requestedIconColor.trim()
+      ? requestedIconColor.trim()
+      : pickTrackIconColor(
+          (siblingTracks ?? []).map(t => t.icon_color),
+          position,
+        )
+  const displayName =
+    typeof requestedDisplayName === 'string' && requestedDisplayName.trim()
+      ? requestedDisplayName.trim()
+      : null
 
   // Determine temp local path for streaming download
   const ext = filename.match(/\.[^.]+$/)?.[0] ?? '.tmp'
@@ -198,6 +220,7 @@ export async function POST(
         .insert({
           version_id: versionId,
           name: trackName,
+          ...(displayName ? { display_name: displayName } : {}),
           original_filename: filename,
           file_hash: fileHash,
           storage_path: storagePath,
@@ -291,6 +314,7 @@ export async function POST(
         .insert({
           version_id: versionId,
           name: trackName,
+          ...(displayName ? { display_name: displayName } : {}),
           original_filename: filename,
           file_hash: fileHash,
           storage_path: storagePath,
