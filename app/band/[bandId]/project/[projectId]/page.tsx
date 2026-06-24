@@ -4412,12 +4412,7 @@ export default function ProjectPage() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code !== 'Space') return
       const el = e.target as HTMLElement
-      if (
-        el.tagName === 'INPUT' ||
-        el.tagName === 'TEXTAREA' ||
-        el.tagName === 'SELECT' ||
-        el.isContentEditable
-      ) return
+      if (el.closest('input, textarea, select, [contenteditable="true"]')) return
 
       e.preventDefault()
 

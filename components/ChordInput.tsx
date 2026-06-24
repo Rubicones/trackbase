@@ -116,6 +116,7 @@ export function ChordInput({
   compact?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const skipNextInputRef = useRef(false)
   const [chords, setChords] = useState<ParsedChord[]>(() => parseChordsString(value))
   const [draft, setDraft] = useState('')
   const [cursorIndex, setCursorIndex] = useState(() => parseChordsString(value).length)
@@ -144,8 +145,8 @@ export function ChordInput({
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [])
 
-  function commitDraft() {
-    const name = draft.trim()
+  function commitDraft(nameOverride?: string) {
+    const name = (nameOverride ?? draft).trim()
     if (!name || !/^[A-Za-z0-9#]+$/.test(name)) return
     const next = [
       ...chords.slice(0, cursorIndex),
@@ -169,6 +170,7 @@ export function ChordInput({
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault()
+      skipNextInputRef.current = true
       commitDraft()
       return
     }
@@ -195,7 +197,19 @@ export function ChordInput({
   }
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const filtered = e.target.value.split('').map(filterChordInputChar).join('')
+    if (skipNextInputRef.current) {
+      skipNextInputRef.current = false
+      return
+    }
+    const raw = e.target.value
+    // Mobile soft keyboards insert space via onChange, not keydown.
+    if (/\s/.test(raw)) {
+      const name = raw.split(/\s/)[0].split('').map(filterChordInputChar).join('')
+      if (name) commitDraft(name)
+      else setDraft('')
+      return
+    }
+    const filtered = raw.split('').map(filterChordInputChar).join('')
     setDraft(filtered)
   }
 
