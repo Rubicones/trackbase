@@ -114,39 +114,80 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [supabase])
 
   useEffect(() => {
+    let cancelled = false
+
     async function syncSession() {
       const { data: { session: existing } } = await supabase.auth.getSession()
-      const { data: { session } } = existing
-        ? await supabase.auth.refreshSession()
-        : { data: { session: null as Session | null } }
 
-      if (session) {
-        await setAuthCookies(session)
-        await syncSupabaseRealtimeAuth(session.access_token)
-        const profile = await fetchProfile(session.user.id)
-        setState({ user: session.user, profile, session, loading: false })
-      } else {
-        setState(prev => ({ ...prev, loading: false }))
+      if (existing) {
+        if (cancelled) return
+        await setAuthCookies(existing)
+        await syncSupabaseRealtimeAuth(existing.access_token)
+        const profile = await fetchProfile(existing.user.id)
+        if (cancelled) return
+        setState({ user: existing.user, profile, session: existing, loading: false })
+        return
       }
+
+      // HttpOnly cookies may exist when localStorage was cleared — bootstrap once.
+      try {
+        const res = await fetch('/api/auth/session', { credentials: 'same-origin' })
+        if (res.ok) {
+          const tokens = (await res.json()) as { access_token: string; refresh_token: string }
+          const { data, error } = await supabase.auth.setSession({
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+          })
+          if (!error && data.session) {
+            if (cancelled) return
+            await setAuthCookies(data.session)
+            await syncSupabaseRealtimeAuth(data.session.access_token)
+            const profile = await fetchProfile(data.session.user.id)
+            if (cancelled) return
+            setState({ user: data.session.user, profile, session: data.session, loading: false })
+            return
+          }
+        }
+      } catch {
+        /* ignore network errors */
+      }
+
+      if (!cancelled) setState(prev => ({ ...prev, loading: false }))
     }
 
-    syncSession()
+    void syncSession()
 
+    const syncingRef = { current: false }
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (session) {
-          await setAuthCookies(session)
-          void syncSupabaseRealtimeAuth(session.access_token)
-          const profile = await fetchProfile(session.user.id)
-          setState({ user: session.user, profile, session, loading: false })
-        } else {
-          await clearAuthCookies()
-          setState({ user: null, profile: null, session: null, loading: false })
+      async (event, session) => {
+        // INITIAL_SESSION is handled by syncSession; avoid duplicate profile/cookie work.
+        if (event === 'INITIAL_SESSION') return
+        if (syncingRef.current) return
+        syncingRef.current = true
+        try {
+          if (session) {
+            await setAuthCookies(session)
+            void syncSupabaseRealtimeAuth(session.access_token)
+            const profile = await fetchProfile(session.user.id)
+            if (!cancelled) {
+              setState({ user: session.user, profile, session, loading: false })
+            }
+          } else {
+            await clearAuthCookies()
+            if (!cancelled) {
+              setState({ user: null, profile: null, session: null, loading: false })
+            }
+          }
+        } finally {
+          syncingRef.current = false
         }
-      }
+      },
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [supabase, fetchProfile])
 
   return (

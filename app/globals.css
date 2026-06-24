@@ -1937,7 +1937,10 @@ html:has(.landing-page) body {
   --color-ring: oklch(0.68 0.22 35);
   --color-ember: oklch(0.68 0.22 35);
   --color-ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --color-surface: oklch(0.16 0 0);
   --color-surface-2: oklch(0.19 0 0);
+  --surface: oklch(0.16 0 0);
+  --bg-surface: oklch(0.16 0 0);
   --color-grid: oklch(0.22 0 0);
   --color-online: oklch(0.78 0.18 145);
   color: oklch(0.93 0 0);

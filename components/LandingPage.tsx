@@ -15,6 +15,7 @@ import { sectionLabel } from "@/components/StructureEditor";
 import { MobileMixerVersionBar } from "@/components/MobileMixerVersionBar";
 import { formatChordsDisplay } from "@/lib/chords";
 import type { Section, Version } from "@/lib/types";
+import { useLandingAuth } from "@/hooks/useLandingAuth";
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History, Undo2,
@@ -317,9 +318,13 @@ function Waveform({
  * Top nav
  * ============================================================ */
 
-function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
-  const authHref = isAuthenticated ? "/dashboard" : "/auth";
-  const authLabel = isAuthenticated ? "DASHBOARD →" : "+ SIGN IN";
+function TopBar({
+  authHref = "/auth",
+  authLabel = "+ SIGN IN",
+}: {
+  authHref?: string;
+  authLabel?: string;
+}) {
   const [time, setTime] = useState("");
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -499,7 +504,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
       <div className="relative">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 landing-abs-bleed z-0 tb-grid-bg-landing"
+          className="pointer-events-none absolute inset-0 landing-abs-bleed z-0 tb-grid-bg-landing"
         />
         <div className="relative z-10">
           <div className="relative overflow-hidden">
@@ -581,10 +586,10 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
             ))}
           </div>
         </div>
+
+        <Marquee />
         </div>
       </div>
-
-      <Marquee />
     </section>
   );
 }
@@ -790,17 +795,21 @@ function LandingMobileSectionChords({
   sections,
   activeSectionIdx = 1,
   currentTimeMs = LANDING_PLAYHEAD_MS,
+  flush = false,
 }: {
   sections: Section[];
   activeSectionIdx?: number;
   currentTimeMs?: number;
+  /** Drop inner horizontal padding — use inside padded card mocks. */
+  flush?: boolean;
 }) {
   const active = sections[activeSectionIdx];
+  const insetX = flush ? "px-0" : "px-3";
 
   return (
     <>
       <div className="mb-3 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2">
-        <div className="mb-1.5 flex items-center justify-between gap-2 px-3">
+        <div className={`mb-1.5 flex items-center justify-between gap-2 ${insetX}`}>
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {active && (
             <span className="truncate font-mono text-[9px] tabular-nums text-ember">
@@ -808,7 +817,7 @@ function LandingMobileSectionChords({
             </span>
           )}
         </div>
-        <div className="flex gap-1.5 overflow-x-auto px-3 pb-1 scrollbar-none">
+        <div className={`flex gap-1.5 overflow-x-auto pb-1 scrollbar-none ${insetX}`}>
           {sections.map((s, i) => (
             <div
               key={s.id}
@@ -830,7 +839,7 @@ function LandingMobileSectionChords({
       {sections.some((s) => s.chords?.trim()) && (
         <div className="mb-3 min-w-0 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_20%,transparent)]">
           <div className="flex min-h-[40px] min-w-0 items-stretch">
-            <div className="flex shrink-0 items-center border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] px-3">
+            <div className={`flex shrink-0 items-center border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] ${flush ? "pl-0 pr-3" : "px-3"}`}>
               <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
             </div>
             <ChordPlaybackRow
@@ -1582,6 +1591,7 @@ function LandingRehearsalMock() {
           <LandingMobileSectionChords
             sections={listSections}
             activeSectionIdx={1}
+            flush
           />
 
           <div className="mt-3 border border-border">
@@ -2797,19 +2807,15 @@ function Footer() {
  * Page root
  * ============================================================ */
 
-export default function LandingPage({
-  isAuthenticated = false,
-  signInHref = "/auth",
-}: {
-  isAuthenticated?: boolean;
-  signInHref?: string;
-}) {
+export default function LandingPage() {
+  const { authHref, authLabel } = useLandingAuth()
+
   return (
     <div className="landing-page min-h-screen" data-theme="ember-dark">
       <div className="mx-auto w-full max-w-[1920px]">
         <main className="min-h-screen bg-background text-foreground">
-          <TopBar isAuthenticated={isAuthenticated} />
-          <Hero signInHref={signInHref} />
+          <TopBar authHref={authHref} authLabel={authLabel} />
+          <Hero signInHref={authHref} />
           <Philosophy />
           <BranchShowcase />
           <ProcessShowcase />
@@ -2818,7 +2824,7 @@ export default function LandingPage({
           <ForStudios />
           <FeatureIndex />
           <ThemingSection />
-          <CTA signInHref={signInHref} />
+          <CTA signInHref={authHref} />
           <Footer />
         </main>
       </div>
