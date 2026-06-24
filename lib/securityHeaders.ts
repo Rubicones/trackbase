@@ -2,7 +2,8 @@
  * Security response headers (CSP, clickjacking, MIME sniffing, etc.).
  *
  * CSP is tuned for Trackbase: inline boot scripts in layout, Vercel Analytics,
- * Supabase Auth/Realtime, direct R2 presigned uploads, and the push SW.
+ * Supabase Auth/Realtime, direct R2 presigned uploads, the push SW, and the
+ * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM).
  */
 
 function supabaseConnectOrigins(): string[] {
@@ -24,7 +25,9 @@ export function buildContentSecurityPolicy(): string {
   const scriptSrc = [
     "'self'",
     "'unsafe-inline'",
-    ...(isDev ? ["'unsafe-eval'"] : []),
+    // Essentia.js (chord detection worker) uses Emscripten's Function() at runtime.
+    "'unsafe-eval'",
+    "'wasm-unsafe-eval'",
     'https://va.vercel-scripts.com',
   ]
 
