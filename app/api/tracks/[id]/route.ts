@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, trackActivityLabel } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
+import { sanitizeTrackStartBarForServer } from '@/lib/trackMerge'
 
 /** Returns true if the given version_id belongs to the main version of its project. */
 async function isMainVersion(versionId: string): Promise<boolean> {
@@ -76,10 +77,10 @@ export async function PATCH(
       if (key in body) updates[key] = body[key]
     }
     if ('start_bar' in updates) {
-      updates.start_bar = Math.max(0, Math.floor(Number(updates.start_bar) || 0))
+      updates.start_bar = sanitizeTrackStartBarForServer(Number(updates.start_bar) || 0)
       updates.midi_start_bar = updates.start_bar
     } else if ('midi_start_bar' in updates) {
-      const bar = Math.max(0, Math.floor(Number(updates.midi_start_bar) || 0))
+      const bar = sanitizeTrackStartBarForServer(Number(updates.midi_start_bar) || 0)
       updates.midi_start_bar = bar
       updates.start_bar = bar
     }

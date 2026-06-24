@@ -102,7 +102,7 @@ export interface Track {
   file_type: 'audio' | 'midi'  // defaults to 'audio'
   midi_data: MidiTrackData | null  // populated on first MIDI load
   midi_start_bar: number           // bar offset in project timeline (0 = starts at bar 1) — legacy, use start_bar
-  start_bar: number                // bar offset for all track types (0 = starts at project bar 1)
+  start_bar: number                // bar offset (0 = bar 1; negative = pre-roll before bar 1)
   comments: TrackComment[]
 }
 

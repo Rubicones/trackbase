@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
+import { formatTrackStartBar } from '@/lib/trackMerge'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { updateSectionChordDuration } from '@/lib/chords'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -525,7 +526,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             </div>
             <div className="text-[9px] font-mono text-muted-foreground truncate">
               {isMidi ? 'MIDI track' : (track.original_filename ?? track.name)}
-              {startBar > 0 ? ` · bar ${startBar + 1}` : ''}
+              {startBar !== 0 ? ` · ${formatTrackStartBar(startBar)}` : ''}
             </div>
           </div>
           <button

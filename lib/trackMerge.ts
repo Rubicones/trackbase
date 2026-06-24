@@ -1,4 +1,4 @@
-/** Bar offset on the project timeline (0 = starts at bar 1). */
+/** Bar offset on the project timeline (0 = starts at bar 1; negative = pre-roll). */
 export function trackStartBar(
   t: { start_bar?: number | null; midi_start_bar?: number | null } | null | undefined,
 ): number {
@@ -6,9 +6,27 @@ export function trackStartBar(
   return t.start_bar ?? t.midi_start_bar ?? 0
 }
 
-/** Human-readable bar label (1-indexed). */
+/** Lowest allowed start_bar — track may begin up to its full length before bar 1. */
+export function minTrackStartBar(trackDurationBars: number): number {
+  return -Math.max(1, trackDurationBars)
+}
+
+export function clampTrackStartBar(startBar: number, trackDurationBars: number): number {
+  return Math.max(minTrackStartBar(trackDurationBars), Math.floor(startBar))
+}
+
+/** Server-side sanity floor for start_bar (client clamps per track duration). */
+export const TRACK_START_BAR_SERVER_MIN = -512
+
+export function sanitizeTrackStartBarForServer(startBar: number): number {
+  return Math.max(TRACK_START_BAR_SERVER_MIN, Math.floor(startBar))
+}
+
+/** Human-readable bar label (1-indexed for bar 1+; "Pre N" before bar 1). */
 export function formatTrackStartBar(startBar: number): string {
-  return startBar === 0 ? 'Bar 1' : `Bar ${startBar + 1}`
+  if (startBar === 0) return 'Bar 1'
+  if (startBar > 0) return `Bar ${startBar + 1}`
+  return `Pre ${Math.abs(startBar)}`
 }
 
 /** Minimal track fields needed for timeline duration. */

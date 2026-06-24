@@ -176,6 +176,10 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
     // If a track starts at bar 0 we still apply adelay=0|0 for consistency.
     const delayFilters: string[] = audioTracks.map((t, i) => {
       const delayMs = startBarToMs(t.start_bar ?? 0, bpm, project.time_signature)
+      if (delayMs < 0) {
+        const trimSec = (-delayMs / 1000).toFixed(6)
+        return `[${i}:a]atrim=start=${trimSec},asetpts=PTS-STARTPTS[d${i}]`
+      }
       return `[${i}:a]adelay=delays=${delayMs}|${delayMs}[d${i}]`
     })
 

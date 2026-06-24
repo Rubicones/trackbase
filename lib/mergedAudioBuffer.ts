@@ -54,8 +54,10 @@ export async function getMergedToneBuffer(
     const samples = await decodeTrackMono(ctx, track)
     if (!samples) continue
     const offsetSamples = Math.round((track.start_bar ?? 0) * barDurSec * sampleRate)
-    for (let i = 0; i < samples.length && offsetSamples + i < length; i++) {
-      mix[offsetSamples + i] += samples[i]
+    for (let i = 0; i < samples.length; i++) {
+      const destIdx = offsetSamples + i
+      if (destIdx < 0 || destIdx >= length) continue
+      mix[destIdx] += samples[i]
     }
   }
 

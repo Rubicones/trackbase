@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
@@ -31,6 +31,7 @@ import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
 import { BrandSpinner } from '@/components/BrandSpinner'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
+import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChatDock } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { useResourcesSidebarOpen } from '@/lib/useResourcesSidebarOpen'
@@ -724,6 +725,36 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
 const TRACK_LABEL_W = 192
 const TRACK_ROW_H = 80
 const COMPACT_TRACK_ROW_H = 48
+
+/** Position a clip on the full track row — bar 0 aligns with the waveform column left edge. */
+function trackClipRowStyle(
+  labelW: number,
+  totalBars: number,
+  startBar: number,
+  widthTimelinePercent: number,
+): { left: string; width: string } {
+  const barFrac = totalBars > 0 ? startBar / totalBars : 0
+  const widthFrac = widthTimelinePercent / 100
+  return {
+    left: `calc(${labelW}px + (100% - ${labelW}px) * ${barFrac})`,
+    width: `calc((100% - ${labelW}px) * ${widthFrac})`,
+  }
+}
+
+function trackClipRowLeft(labelW: number, totalBars: number, startBar: number): string {
+  const barFrac = totalBars > 0 ? startBar / totalBars : 0
+  return `calc(${labelW}px + (100% - ${labelW}px) * ${barFrac})`
+}
+
+function trackClipLeftPx(
+  labelW: number,
+  totalBars: number,
+  startBar: number,
+  rowWidth: number,
+): number {
+  const barFrac = totalBars > 0 ? startBar / totalBars : 0
+  return labelW + (rowWidth - labelW) * barFrac
+}
 
 // ─── Waveform ─────────────────────────────────────────────────────────────────
 
@@ -2428,6 +2459,8 @@ const TrackRow = React.memo(function TrackRow({
   const snapIndicatorRef = useRef<HTMLDivElement>(null)
   /** Ref to the bar-number label inside the snap indicator — updated DOM-directly during drag. */
   const snapBarLabelRef = useRef<HTMLSpanElement>(null)
+  const trackLabelColRef = useRef<HTMLDivElement>(null)
+  const trackRowRef = useRef<HTMLDivElement>(null)
   /** Pending clientX for rAF-throttled drag move. */
   const pendingDragXRef = useRef<number | null>(null)
   const dragRafRef = useRef<number | null>(null)
@@ -2440,12 +2473,25 @@ const TrackRow = React.memo(function TrackRow({
     commentUiActiveRef.current = activeCommentInteractionsRef.current.size > 0
   }, [])
 
+  function syncLabelColOpacity(bar: number) {
+    if (trackLabelColRef.current) {
+      trackLabelColRef.current.style.opacity = bar < 0 ? '0.45' : ''
+    }
+  }
+
+  function resetLabelColOpacity() {
+    if (trackLabelColRef.current) {
+      trackLabelColRef.current.style.opacity = ''
+    }
+  }
+
   function cancelOffsetDrag() {
     setIsOffsetDragging(false)
     onDragEndOffset()
     dragPreviewBarRef.current = null
     setDragPreviewBar(null)
     dragMovedRef.current = false
+    resetLabelColOpacity()
   }
 
   // Cancel track-offset drag when the user interacts with portaled comment UI
@@ -2489,6 +2535,9 @@ const TrackRow = React.memo(function TrackRow({
     ? Math.max(widthPercent, 100 - startPercent)
     : widthPercent
 
+  const labelColW = compact ? 140 : TRACK_LABEL_W
+  const clipLayout = trackClipRowStyle(labelColW, totalBars, effectiveStartBar, layoutWidthPercent)
+
   function barFromClientX(clientX: number): number {
     const colEl = waveformColRef.current
     if (!colEl || totalBars <= 0) return 0
@@ -2504,6 +2553,31 @@ const TrackRow = React.memo(function TrackRow({
     } catch { /* ignore */ }
   }
 
+  function syncSnapIndicator(newBar: number) {
+    const rowEl = trackRowRef.current
+    const lineEl = snapIndicatorRef.current
+    const labelEl = snapBarLabelRef.current
+    if (!rowEl || !lineEl || !labelEl) return
+
+    const rowWidth = rowEl.offsetWidth
+    const clipLeft = trackClipRowLeft(labelColW, totalBars, newBar)
+    const clipLeftPx = trackClipLeftPx(labelColW, totalBars, newBar, rowWidth)
+
+    lineEl.style.left = clipLeft
+    labelEl.textContent = formatTrackStartBar(newBar)
+
+    // Snap line under the thumb — show bar count at the visible waveform edge instead.
+    const underThumb = clipLeftPx < labelColW
+    labelEl.style.left = underThumb ? `${labelColW + 6}px` : `${clipLeftPx + 6}px`
+  }
+
+  useLayoutEffect(() => {
+    if (!isOffsetDragging) return
+    const bar = dragPreviewBarRef.current ?? dragPreviewBar ?? track.start_bar ?? 0
+    syncSnapIndicator(bar)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOffsetDragging])
+
   // Drag-to-offset handlers (mouse + touch)
   function startOffsetDrag(clientX: number) {
     if (commentMode || commentUiActiveRef.current) return
@@ -2514,6 +2588,10 @@ const TrackRow = React.memo(function TrackRow({
     setIsOffsetDragging(true)
     dragPreviewBarRef.current = initialBar
     setDragPreviewBar(initialBar)
+    syncLabelColOpacity(initialBar)
+    const clipLeft = trackClipRowLeft(labelColW, totalBars, initialBar)
+    if (waveformClipRef.current) waveformClipRef.current.style.left = clipLeft
+    syncSnapIndicator(initialBar)
     onDragStartOffset()
   }
 
@@ -2542,19 +2620,17 @@ const TrackRow = React.memo(function TrackRow({
     function applyDragPosition(clientX: number) {
       const deltaX = clientX - dragStartXRef.current
       if (Math.abs(deltaX) > 3) dragMovedRef.current = true
-      const newBar = Math.max(0, Math.round(origStartBarRef.current + deltaX * barsPerPixel))
+      const newBar = clampTrackStartBar(
+        origStartBarRef.current + deltaX * barsPerPixel,
+        trackDurationBars,
+      )
       dragPreviewBarRef.current = newBar
       // DOM-direct update — no React state, no re-render per frame.
-      const startPct = totalBars > 0 ? (newBar / totalBars) * 100 : 0
       if (waveformClipRef.current) {
-        waveformClipRef.current.style.left = `${startPct}%`
+        waveformClipRef.current.style.left = trackClipRowLeft(labelColW, totalBars, newBar)
       }
-      if (snapIndicatorRef.current) {
-        snapIndicatorRef.current.style.left = `${startPct}%`
-      }
-      if (snapBarLabelRef.current) {
-        snapBarLabelRef.current.textContent = `bar ${newBar + 1}`
-      }
+      syncSnapIndicator(newBar)
+      syncLabelColOpacity(newBar)
     }
 
     function onMouseMove(e: MouseEvent) {
@@ -2597,6 +2673,9 @@ const TrackRow = React.memo(function TrackRow({
           ? e.changedTouches[0]?.clientX ?? dragStartXRef.current
           : e.clientX)
         dragPreviewBarRef.current = newBar
+      } else if (newBar !== null) {
+        newBar = clampTrackStartBar(newBar, trackDurationBars)
+        dragPreviewBarRef.current = newBar
       }
       dragPreviewBarRef.current = null
       // Commit final position as React state (one re-render at drag end).
@@ -2605,6 +2684,7 @@ const TrackRow = React.memo(function TrackRow({
         await snapStartBar(newBar)
       }
       setDragPreviewBar(null)
+      resetLabelColOpacity()
     }
     function onMouseUp(e: MouseEvent) { void onDragEnd(e) }
     function onTouchEnd(e: TouchEvent) { void onDragEnd(e) }
@@ -2620,7 +2700,7 @@ const TrackRow = React.memo(function TrackRow({
       window.removeEventListener('touchend', onTouchEnd)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOffsetDragging, totalBars])
+  }, [isOffsetDragging, totalBars, trackDurationBars, labelColW])
 
   // ── Inline rename ──────────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false)
@@ -2679,8 +2759,9 @@ const TrackRow = React.memo(function TrackRow({
   return (
     <>
     <div
+      ref={trackRowRef}
       data-track-row={track.id}
-      className={`flex group/track hover:bg-surface/30 overflow-visible border-b border-border ${
+      className={`relative flex group/track hover:bg-surface/30 overflow-visible border-b border-border ${
         resourceFilterActive ? 'bg-ember-soft/40 ring-1 ring-inset ring-ember/40' : ''
       }`}
       style={{
@@ -2703,10 +2784,14 @@ const TrackRow = React.memo(function TrackRow({
         onResourceFilter?.(track.id)
       }}
     >
-      {/* Label column */}
+      {/* Label column — dimmed when track pre-roll extends before bar 1 */}
       <div
-        className={`shrink-0 border-r border-border flex flex-col justify-between ${compact ? 'p-2' : 'p-3'} cursor-pointer`}
-        style={{ width: compact ? 140 : TRACK_LABEL_W }}
+        ref={trackLabelColRef}
+        className={`relative z-10 shrink-0 border-r border-border bg-background flex flex-col justify-between ${compact ? 'p-2' : 'p-3'} cursor-pointer`}
+        style={{
+          width: labelColW,
+          transition: 'opacity 0.15s',
+        }}
       >
         <div className="flex items-start gap-2 min-w-0">
           <div className="relative shrink-0">
@@ -2766,7 +2851,9 @@ const TrackRow = React.memo(function TrackRow({
                   {midiRendering
                     ? 'Rendering audio…'
                     : `${track.midi_data.notes.length} notes · ${trackDurationBars} bars`}
-                  {!midiRendering && (track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
+                  {!midiRendering && (track.start_bar ?? 0) !== 0
+                    ? ` · ${formatTrackStartBar(track.start_bar ?? 0)}`
+                    : ''}
                 </span>
               ) : isMidi ? (
                 <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Loading…</span>
@@ -2774,7 +2861,9 @@ const TrackRow = React.memo(function TrackRow({
                 <span className="text-[9px] text-muted-foreground truncate block font-mono">
                   {track.original_filename ?? '—'}
                   {track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
-                  {(track.start_bar ?? 0) > 0 ? ` · bar ${(track.start_bar ?? 0) + 1}` : ''}
+                  {(track.start_bar ?? 0) !== 0
+                    ? ` · ${formatTrackStartBar(track.start_bar ?? 0)}`
+                    : ''}
                 </span>
               )}
             </div>
@@ -2861,23 +2950,27 @@ const TrackRow = React.memo(function TrackRow({
             onTactClick={bar => { void snapStartBar(bar) }}
           />
         )}
+      </div>
 
-        <div
-          ref={waveformClipRef}
-          style={{
-            position: 'absolute',
-            left: `${startPercent}%`,
-            width: `${layoutWidthPercent}%`,
-            height: '100%',
-            cursor: isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
-            borderLeft: effectiveStartBar > 0 ? '1px solid var(--border)' : 'none',
-            zIndex: 1,
-            transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
-            touchAction: commentMode ? 'auto' : 'none',
-          }}
-          onMouseDown={commentMode ? undefined : handleOffsetMouseDown}
-          onTouchStart={commentMode ? undefined : handleOffsetTouchStart}
-        >
+      {/* Waveform clip — row-relative so pre-roll extends under the label column */}
+      <div
+        ref={waveformClipRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: clipLayout.left,
+          width: clipLayout.width,
+          height: '100%',
+          minHeight: rowH,
+          cursor: isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
+          borderLeft: effectiveStartBar !== 0 ? '1px solid var(--border)' : 'none',
+          zIndex: 1,
+          transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
+          touchAction: commentMode ? 'auto' : 'none',
+        }}
+        onMouseDown={commentMode ? undefined : handleOffsetMouseDown}
+        onTouchStart={commentMode ? undefined : handleOffsetTouchStart}
+      >
           {isMidi ? (
             track.midi_data ? (
               <div className="relative w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
@@ -2931,26 +3024,28 @@ const TrackRow = React.memo(function TrackRow({
                 compact={compact}
               />
           )}
-        </div>
+      </div>
 
-        {/* Snap indicator — positioned via ref during drag (no React state per frame). */}
-        {isOffsetDragging && (
+      {isOffsetDragging && (
+        <>
           <div
             ref={snapIndicatorRef}
-            className="absolute top-0 h-full pointer-events-none z-10"
-            style={{ left: `${startPercent}%`, width: 0 }}
+            className="absolute top-0 h-full pointer-events-none z-20"
+            style={{ left: clipLayout.left, width: 0, minHeight: rowH }}
           >
-            {/* 1px vertical line */}
             <div className="absolute top-0 bottom-0 w-px bg-ember" />
-            {/* Bar number label — textContent updated DOM-directly in applyDragPosition */}
-            <span
-              ref={snapBarLabelRef}
-              className="absolute top-1 left-1.5 text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px"
-              style={{ background: 'var(--ember)', color: '#fff', lineHeight: '1.3' }}
-            />
           </div>
-        )}
-      </div>
+          <span
+            ref={snapBarLabelRef}
+            className="absolute top-1 z-20 pointer-events-none text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px"
+            style={{
+              background: 'var(--ember)',
+              color: '#fff',
+              lineHeight: '1.3',
+            }}
+          />
+        </>
+      )}
 
       <input ref={fileRef} type="file"
         accept=".wav,.mp3,.mid,.midi,audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/midi,audio/x-midi"
