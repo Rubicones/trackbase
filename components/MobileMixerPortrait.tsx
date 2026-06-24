@@ -2,6 +2,8 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
+import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
+import { updateSectionChordDuration } from '@/lib/chords'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { MobileTrackColorPicker } from '@/components/MobileTrackColorPicker'
@@ -643,11 +645,13 @@ export type MobileMixerPlayer = {
   playing: boolean
   isCounting: boolean
   currentTime: number
+  currentTimeRef?: React.RefObject<number>
   duration: number
   playbackReady: boolean
   play: () => void
   pause: () => void
   seek: (t: number) => void
+  seekEpoch?: number
   sectionLoopOn: boolean
   sectionLoopEnabled: boolean
   onToggleSectionLoop: () => void
@@ -980,6 +984,33 @@ function MobileMixerPortraitInner({
           })}
         </div>
       </div>
+
+      {sections.some(s => s.chords?.trim()) && (
+        <div className="border-b border-border bg-surface/20 shrink-0 min-w-0">
+          <div className="flex items-stretch min-h-[40px] min-w-0">
+            <div className="shrink-0 px-3 flex items-center border-r border-border/50">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
+            </div>
+            <ChordPlaybackRow
+              sections={sections}
+              currentTimeMs={player.currentTime * 1000}
+              barDurationMs={barDurationMs}
+              compact
+              className="flex-1 min-w-0"
+              currentTimeRef={player.currentTimeRef}
+              playing={player.playing || player.isCounting}
+              seekEpoch={player.seekEpoch}
+              onChordDurationChange={(sectionId, sectionChordIndex, duration) => {
+                const section = sections.find(s => s.id === sectionId)
+                if (!section) return
+                const next = updateSectionChordDuration(section.chords, sectionChordIndex, duration)
+                sectionActions.handleChordsLocalChange(sectionId, next)
+                void sectionActions.handleChordsAutoSave(sectionId, next)
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Tracks list */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background min-h-0" data-tour="mobile-mixer-tracks">

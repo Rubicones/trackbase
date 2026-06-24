@@ -2,16 +2,16 @@
 /**
  * Essentia.js chord detection worker.
  * Uses essentia-wasm.umd.js (worker-safe). The .web.js build requires `document`.
+ * Assets are served locally — CSP blocks CDN importScripts.
  */
-const ESSENTIA_VERSION = '0.1.3'
-const CDN = `https://cdn.jsdelivr.net/npm/essentia.js@${ESSENTIA_VERSION}/dist`
+const ESSENTIA_BASE = '/vendor/essentia'
 
 // UMD WASM build assigns to `exports`; workers have no CommonJS globals.
 const exports = {}
 
 importScripts(
-  `${CDN}/essentia-wasm.umd.js`,
-  `${CDN}/essentia.js-extractor.umd.js`,
+  `${ESSENTIA_BASE}/essentia-wasm.umd.js`,
+  `${ESSENTIA_BASE}/essentia.js-extractor.umd.js`,
 )
 
 let extractor = null
@@ -57,19 +57,22 @@ function modeChord(frames) {
 
 /**
  * Group frame-by-frame labels into bar chunks; one chord per bar via mode vote.
+ * Aligns bar boundaries to sample time, not a fixed frame index stride.
  * Returns an array with length exactly equal to barCount.
  */
-function quantizeChordsByBar(rawChords, barDurationSec, barCount, sampleRate) {
+function quantizeChordsByBar(rawChords, audioSampleCount, barDurationSec, barCount, sampleRate) {
   if (!barCount || barCount <= 0) return []
 
   const sr = sampleRate || 44100
-  const framesPerBar = Math.max(1, Math.round((barDurationSec * sr) / HOP_SIZE))
+  const samplesPerBar = barDurationSec * sr
   const barChords = []
 
   for (let bar = 0; bar < barCount; bar += 1) {
-    const start = bar * framesPerBar
-    const end = Math.min((bar + 1) * framesPerBar, rawChords.length)
-    const chunk = start < rawChords.length ? rawChords.slice(start, end) : []
+    const barStartSample = bar * samplesPerBar
+    const barEndSample = Math.min((bar + 1) * samplesPerBar, audioSampleCount)
+    const startFrame = Math.floor(barStartSample / HOP_SIZE)
+    const endFrame = Math.min(Math.ceil(barEndSample / HOP_SIZE), rawChords.length)
+    const chunk = startFrame < endFrame ? rawChords.slice(startFrame, endFrame) : []
     const mode = modeChord(chunk)
     barChords.push(mode ?? 'N')
   }
@@ -78,42 +81,42 @@ function quantizeChordsByBar(rawChords, barDurationSec, barCount, sampleRate) {
 }
 
 /**
- * True if `chords` equals `pattern` repeated (final repetition may be truncated).
+ * Collapse consecutive identical chords into "Name:duration" tokens.
+ * Single occurrences omit ":1" for cleaner output.
  */
-function patternMatches(chords, pattern) {
-  const len = pattern.length
-  if (len === 0) return false
-  for (let i = 0; i < chords.length; i += 1) {
-    if (chords[i] !== pattern[i % len]) return false
-  }
-  return true
-}
-
-/**
- * Fold a bar-quantized progression to its smallest repeating cycle.
- * Keeps the full array when no clean repeat is found.
- */
-function foldPattern(chords) {
-  if (!chords || chords.length <= 1) return chords ? chords.slice() : []
-
-  const n = chords.length
-  for (let len = 1; len <= Math.floor(n / 2); len += 1) {
-    const pattern = chords.slice(0, len)
-    if (n > len && patternMatches(chords, pattern)) {
-      return pattern
+function collapseConsecutiveChords(barChords) {
+  const result = []
+  let i = 0
+  while (i < barChords.length) {
+    const chord = normalizeChordLabel(barChords[i])
+    if (isNoChord(chord)) {
+      i += 1
+      continue
     }
+    let count = 1
+    while (i + count < barChords.length && normalizeChordLabel(barChords[i + count]) === chord) {
+      count += 1
+    }
+    if (count === 1) {
+      result.push(chord)
+    } else {
+      result.push(`${chord}:${count}`)
+    }
+    i += count
   }
-
-  return chords.slice()
+  return result.join(' ')
 }
 
 function formatBarChords(barChords) {
-  return foldPattern(barChords).join(' ')
+  return collapseConsecutiveChords(barChords)
 }
 
 function detectChords(audioData, sampleRate, barDurationSec, barCount) {
-  if (!extractor || !audioData || audioData.length < FRAME_SIZE) {
-    return formatBarChords(quantizeChordsByBar([], barDurationSec, barCount, sampleRate))
+  const audioSampleCount = audioData?.length ?? 0
+  if (!extractor || !audioData || audioSampleCount < FRAME_SIZE) {
+    return formatBarChords(
+      quantizeChordsByBar([], audioSampleCount, barDurationSec, barCount, sampleRate),
+    )
   }
 
   const sr = sampleRate || 44100
@@ -134,7 +137,13 @@ function detectChords(audioData, sampleRate, barDurationSec, barCount) {
 
   const result = extractor.ChordsDetection(pcpSequence, HOP_SIZE, sr, CHORD_WINDOW_SEC)
   const rawChords = vectorStringToArray(result.chords)
-  const barChords = quantizeChordsByBar(rawChords, barDurationSec, barCount, sampleRate)
+  const barChords = quantizeChordsByBar(
+    rawChords,
+    audioSampleCount,
+    barDurationSec,
+    barCount,
+    sampleRate,
+  )
   return formatBarChords(barChords)
 }
 

@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { Project, Section, SectionType, Track } from '@/lib/types'
+import { ChordInput } from '@/components/ChordInput'
+import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { detectChordsInAudio } from '@/lib/chordDetection'
+import { alignSectionsChords, normalizeChordsToBarCount, sectionBarCount, totalChordBarSpan, updateSectionChordDuration } from '@/lib/chords'
 import {
   barDurationSec,
   getMergedToneBuffer,
@@ -246,9 +249,10 @@ function NamePickerPortal({
 
         <div>
           <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Chords</div>
-          <input value={chords} onChange={e => setChords(e.target.value)}
-            placeholder="Ebm7 — Ab9 — Dbmaj9"
-            className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
+          <ChordInput
+            value={chords}
+            onChange={setChords}
+            placeholder="Type chords, space to add"
           />
         </div>
 
@@ -382,6 +386,8 @@ export function SectionEditPopover({
       if (popoverRef.current?.contains(target)) return
       // Strip section clicks open/switch the popover on the same mousedown — don't close.
       if (target instanceof Element && target.closest('[data-structure-section]')) return
+      // Duration picker is portaled to document.body — keep popover open while editing.
+      if (target instanceof Element && target.closest('[data-chord-duration-picker]')) return
       onClose()
     }
     document.addEventListener('mousedown', onDown)
@@ -434,7 +440,7 @@ export function SectionEditPopover({
   const flippedEdit = cellPos.top < POPOVER_H + 8
   const pTop = flippedEdit ? cellPos.top + cellPos.height + 8 : cellPos.top - 8
 
-  const barCount = section.end_bar - section.start_bar
+  const barCount = sectionBarCount(section, totalBars)
 
   const panel = (
     <div
@@ -517,12 +523,14 @@ export function SectionEditPopover({
                 </button>
               )}
             </div>
-            <input value={chords} disabled={detectingChords}
-              onChange={e => handleChordsChange(e.target.value)}
-              placeholder={detectingChords ? 'Analyzing audio…' : 'Ebm7 — Ab9 — Dbmaj9'}
-              className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40"
-              style={{ borderColor: isDirty && saveStatus === 'idle' ? '#F59E0B' : undefined }}
-            />
+            <div style={{ borderColor: isDirty && saveStatus === 'idle' ? '#F59E0B' : undefined }}>
+              <ChordInput
+                value={chords}
+                disabled={detectingChords}
+                onChange={handleChordsChange}
+                placeholder={detectingChords ? 'Analyzing audio…' : 'Type chords, space to add'}
+              />
+            </div>
             {trackPickerOpen && (
               <div className="mt-2 p-2 border border-border bg-surface space-y-2">
                 <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Tracks to analyze</p>
@@ -629,10 +637,15 @@ export function useSectionEditActions({
       const timeSig = project.time_signature ?? '4/4'
       const totalSec = totalDurationMs / 1000
       const barDurSec = barDurationSec(bpm, timeSig)
-      const barCount = section.end_bar - section.start_bar
+      const barCount = sectionBarCount(section, totalBars)
       const buffer = await getMergedToneBuffer(tracks, bpm, timeSig, totalSec, selectedTrackIds)
       if (!buffer) return
-      const { startTimeSec, endTimeSec } = sectionTimeRangeSec(section.start_bar, section.end_bar, bpm, timeSig)
+      const { startTimeSec, endTimeSec } = sectionTimeRangeSec(
+        section.start_bar,
+        section.start_bar + barCount,
+        bpm,
+        timeSig,
+      )
       const slice = sliceSectionFromToneBuffer(buffer, startTimeSec, endTimeSec)
       if (slice.length === 0) return
       const detected = await detectChordsInAudio(slice, {
@@ -673,9 +686,17 @@ export function useSectionEditActions({
     const start = Math.max(minStart, Math.min(startBar, endBar - 1))
     const end = Math.max(start + 1, Math.min(endBar, maxEnd))
     if (start === section.start_bar && end === section.end_bar) return
+    const updatedSection = { ...section, start_bar: start, end_bar: end }
+    const newBarCount = sectionBarCount(updatedSection, totalBars)
     onSectionsChange(prevSections =>
       prevSections
-        .map(s => s.id === id ? { ...s, start_bar: start, end_bar: end } : s)
+        .map(s => {
+          if (s.id !== id) return s
+          const chords = s.chords?.trim() && totalChordBarSpan(s.chords) > newBarCount
+            ? normalizeChordsToBarCount(s.chords, newBarCount)
+            : s.chords
+          return { ...s, start_bar: start, end_bar: end, chords }
+        })
         .sort((a, b) => a.start_bar - b.start_bar),
     )
     fetch(`/api/sections/${id}`, {
@@ -698,36 +719,6 @@ export function useSectionEditActions({
   }
 }
 
-// ─── Chords hover tooltip ─────────────────────────────────────────────────────
-
-function ChordsTooltip({ section, rect }: { section: Section; rect: DOMRect }) {
-  const W = 200
-  const cellCx = rect.left + rect.width / 2
-  const pLeft = typeof window !== 'undefined'
-    ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
-    : 8
-  const pTop = rect.bottom + 8
-
-  return createPortal(
-    <div
-      className="fixed z-[300] pointer-events-none border border-border bg-popover shadow-2xl px-3 py-2 animate-slide-in"
-      style={{
-        top: pTop,
-        left: pLeft,
-        width: W,
-      }}
-    >
-      <div className="text-[9px] font-bold uppercase tracking-widest text-ember mb-1">
-        {sectionLabel(section)}
-      </div>
-      <div className="text-[10px] font-mono text-foreground/80 whitespace-pre-wrap leading-relaxed">
-        {section.chords}
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
 // ─── Structure overlay ────────────────────────────────────────────────────────
 
 type SelMode = 'idle' | 'start_set' | 'naming'
@@ -748,6 +739,7 @@ export default function StructureOverlay({
   sections, onSectionsChange,
   editMode, onEditModeChange,
   waveformBounds, currentTimeMs = 0,
+  currentTimeRef, playing = false,
   onSeek, compact = false,
 }: {
   project: Project
@@ -760,6 +752,8 @@ export default function StructureOverlay({
   onEditModeChange: (v: boolean) => void
   waveformBounds: { left: number; right: number } | null
   currentTimeMs?: number
+  currentTimeRef?: React.RefObject<number>
+  playing?: boolean
   onSeek: (t: number) => void
   /** Mobile landscape — shorter rows, sparse tact labels, no chords/edit UI */
   compact?: boolean
@@ -770,8 +764,6 @@ export default function StructureOverlay({
   const [selEnd, setSelEnd] = useState<number | null>(null)
   const [hint, setHint] = useState<{ text: string; isError: boolean } | null>(null)
   const [activeEdit, setActiveEdit] = useState<ActiveEdit | null>(null)
-  const [hoveredChords, setHoveredChords] = useState<{ section: Section; rect: DOMRect } | null>(null)
-
   const stripRef = useRef<HTMLDivElement>(null)
   const sectionsRef = useRef(sections)
   const activeEditRef = useRef(activeEdit)
@@ -792,7 +784,6 @@ export default function StructureOverlay({
       setSelEnd(null)
       setHint(null)
       setActiveEdit(null)
-      setHoveredChords(null)
     }
   }, [editMode])
 
@@ -814,6 +805,25 @@ export default function StructureOverlay({
     : project
   const { barDurationMs, totalBars } = getBarMath(effectiveProject, totalDurationMs)
 
+  // Keep stored chords aligned to each section's bar span (e.g. after timeline shrinks).
+  useEffect(() => {
+    if (totalBars <= 0 || sections.length === 0) return
+    const aligned = alignSectionsChords(sections, totalBars)
+    if (aligned === sections) return
+    onSectionsChange(aligned)
+    for (const s of aligned) {
+      const prev = sections.find(p => p.id === s.id)
+      if (prev && s.chords !== prev.chords && s.chords) {
+        pendingChordSavesRef.current.set(s.id, s.chords)
+        fetch(`/api/sections/${s.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chords: s.chords }),
+        }).catch(console.error)
+      }
+    }
+  }, [sections, totalBars, onSectionsChange])
+
   // Time-based position: maps bar → 0..1 fraction, matching waveform scale
   const tp = (bar: number) =>
     totalDurationMs > 0 ? (bar * barDurationMs) / totalDurationMs : bar / Math.max(1, totalBars)
@@ -822,7 +832,21 @@ export default function StructureOverlay({
   const wr = waveformBounds?.right ?? 68
 
   const RULER_H = compact ? 22 : 40
-  const RIBBON_H = compact ? 24 : 56
+  const RIBBON_H = compact ? 22 : 32
+  const CHORDS_H = compact ? 40 : 44
+  const hasChords = sections.some(s => s.chords?.trim())
+
+  function handlePlaybackChordDurationChange(
+    sectionId: string,
+    sectionChordIndex: number,
+    duration: number,
+  ) {
+    const section = sections.find(s => s.id === sectionId)
+    if (!section) return
+    const next = updateSectionChordDuration(section.chords, sectionChordIndex, duration)
+    handleChordsLocalChange(sectionId, next)
+    void handleChordsAutoSave(sectionId, next)
+  }
   const tactCount = Math.ceil(totalBars / BARS_PER_TACT)
   // Grid step: how many bars between each rendered tick/line.
   // Thins progressively so the grid stays visible at all bar counts
@@ -1031,7 +1055,6 @@ export default function StructureOverlay({
         sectionId: hit.id,
         cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
       })
-      setHoveredChords(null)
       return
     }
 
@@ -1083,7 +1106,7 @@ export default function StructureOverlay({
       const timeSig = project.time_signature ?? '4/4'
       const totalSec = totalDurationMs / 1000
       const barDurSec = barDurationSec(bpm, timeSig)
-      const barCount = section.end_bar - section.start_bar
+      const barCount = sectionBarCount(section, totalBars)
 
       const buffer = await getMergedToneBuffer(
         tracks, bpm, timeSig, totalSec, selectedTrackIds,
@@ -1092,7 +1115,7 @@ export default function StructureOverlay({
 
       const { startTimeSec, endTimeSec } = sectionTimeRangeSec(
         section.start_bar,
-        section.end_bar,
+        section.start_bar + barCount,
         bpm,
         timeSig,
       )
@@ -1233,9 +1256,18 @@ export default function StructureOverlay({
     const end = Math.max(start + 1, Math.min(endBar, maxEnd))
     if (start === section.start_bar && end === section.end_bar) return
 
+    const updatedSection = { ...section, start_bar: start, end_bar: end }
+    const newBarCount = sectionBarCount(updatedSection, totalBars)
+
     onSectionsChange(prevSections =>
       prevSections
-        .map(s => s.id === id ? { ...s, start_bar: start, end_bar: end } : s)
+        .map(s => {
+          if (s.id !== id) return s
+          const chords = s.chords?.trim() && totalChordBarSpan(s.chords) > newBarCount
+            ? normalizeChordsToBarCount(s.chords, newBarCount)
+            : s.chords
+          return { ...s, start_bar: start, end_bar: end, chords }
+        })
         .sort((a, b) => a.start_bar - b.start_bar),
     )
     updateActiveEditPos(id, start, end)
@@ -1336,14 +1368,22 @@ export default function StructureOverlay({
                 </span>
               )}
             </div>
+            {hasChords && (
+              <div
+                className="px-3 flex items-center justify-center bg-surface/40 border-t border-border"
+                style={{ height: CHORDS_H }}
+              >
+                <span className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground">Chords</span>
+              </div>
+            )}
           </div>
 
           {/* Timeline column — ruler + structure grid */}
           <div className="flex-1 min-w-0 relative flex flex-col bg-surface">
             {totalDurationMs > 0 && (
               <div
-                className="absolute top-0 bottom-0 w-px -ml-px bg-foreground/70 pointer-events-none z-[15]"
-                style={{ left: `${playheadPct}%` }}
+                className="absolute top-0 w-px -ml-px bg-foreground/70 pointer-events-none z-[15]"
+                style={{ left: `${playheadPct}%`, height: RULER_H + RIBBON_H }}
               />
             )}
 
@@ -1424,15 +1464,9 @@ export default function StructureOverlay({
                   <div
                     key={s.id}
                     data-structure-section
-                    onMouseEnter={compact ? undefined : e => {
-                      if (s.chords?.trim() && !isActive) {
-                        setHoveredChords({ section: s, rect: e.currentTarget.getBoundingClientRect() })
-                      }
-                    }}
-                    onMouseLeave={compact ? undefined : () => setHoveredChords(null)}
-                    className={`absolute inset-y-0 flex flex-col items-start justify-center px-2 overflow-hidden transition-[filter] ${
-                      compact ? 'py-0' : 'justify-start pt-1.5'
-                    } ${editMode && !compact ? 'cursor-pointer hover:brightness-[1.03]' : 'cursor-inherit'} ${isActive ? 'z-[8]' : 'z-[6]'}`}
+                    className={`absolute inset-y-0 flex items-center px-2 overflow-hidden transition-[filter] ${
+                      editMode && !compact ? 'cursor-pointer hover:brightness-[1.03]' : 'cursor-inherit'
+                    } ${isActive ? 'z-[8]' : 'z-[6]'}`}
                     style={{
                       left: `${tp(s.start_bar) * 100}%`,
                       width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
@@ -1446,11 +1480,6 @@ export default function StructureOverlay({
                     <span className={`font-bold uppercase tracking-widest text-ember truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
                       {sectionLabel(s)}
                     </span>
-                    {!compact && (
-                      <span className="text-[9px] font-mono text-foreground/75 truncate leading-tight pointer-events-none w-full mt-0.5">
-                        {s.chords?.replace(/\n/g, ' ').slice(0, 48) || (editMode ? '+ chords' : '\u00a0')}
-                      </span>
-                    )}
                     {editMode && !compact && (
                       <>
                         <div
@@ -1487,6 +1516,24 @@ export default function StructureOverlay({
                 </div>
               )}
             </div>
+
+            {hasChords && (
+              <div
+                className="relative shrink-0 border-t border-border bg-surface/30 flex items-stretch"
+                style={{ minHeight: CHORDS_H }}
+              >
+                <ChordPlaybackRow
+                  sections={sections}
+                  currentTimeMs={currentTimeMs}
+                  barDurationMs={barDurationMs}
+                  compact={compact}
+                  className="h-full w-full min-w-0"
+                  currentTimeRef={currentTimeRef}
+                  playing={playing}
+                  onChordDurationChange={handlePlaybackChordDurationChange}
+                />
+              </div>
+            )}
           </div>
 
           <div style={{ width: wr }} className="shrink-0 bg-surface/40 border-l border-border" />
@@ -1527,10 +1574,6 @@ export default function StructureOverlay({
         />
       )}
 
-      {/* Chords hover tooltip */}
-      {!compact && hoveredChords && (
-        <ChordsTooltip section={hoveredChords.section} rect={hoveredChords.rect} />
-      )}
     </>
   )
 }

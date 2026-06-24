@@ -54,20 +54,23 @@ export function CommentToggleBtn({
 export function MobileMixerVersionBar({
   versions, activeId, onSelect, onNewBranch,
   commentMode, commentCount, onToggleCommentMode,
+  switchOnly = false,
 }: {
   versions: Version[]
   activeId: string
   onSelect: (id: string) => void
-  onNewBranch: () => void
-  commentMode: boolean
-  commentCount: number
-  onToggleCommentMode: () => void
+  onNewBranch?: () => void
+  commentMode?: boolean
+  commentCount?: number
+  onToggleCommentMode?: () => void
+  /** Rehearsal — scrollable version switcher only, no branch/comment actions. */
+  switchOnly?: boolean
 }) {
   const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
 
   return (
-    <div className="flex items-stretch border-b border-border bg-surface/40 shrink-0 h-10">
-      <div className="flex-1 min-w-0 overflow-x-auto flex flex-nowrap items-center gap-1.5 px-2 scrollbar-none [&::-webkit-scrollbar]:hidden">
+    <div className={`flex items-stretch shrink-0 h-10 ${switchOnly ? 'bg-background' : 'border-b border-border bg-surface/40'}`}>
+      <div className={`flex-1 min-w-0 overflow-x-auto flex flex-nowrap items-center gap-1.5 scrollbar-none [&::-webkit-scrollbar]:hidden ${switchOnly ? 'px-0' : 'px-2'}`}>
         {sortedVersions.map(v => {
           const isActive = v.id === activeId
           return (
@@ -91,22 +94,26 @@ export function MobileMixerVersionBar({
           )
         })}
       </div>
-      <button
-        type="button"
-        onClick={onNewBranch}
-        className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
-      >
-        + Version
-      </button>
-      <CommentToggleBtn
-        active={commentMode}
-        count={commentCount}
-        onClick={onToggleCommentMode}
-        variant="bar"
-        showCount={false}
-        tourId="mobile-mixer-comments"
-        className="shrink-0 self-stretch w-10"
-      />
+      {!switchOnly && onNewBranch && (
+        <button
+          type="button"
+          onClick={onNewBranch}
+          className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
+        >
+          + Version
+        </button>
+      )}
+      {!switchOnly && onToggleCommentMode && (
+        <CommentToggleBtn
+          active={commentMode ?? false}
+          count={commentCount ?? 0}
+          onClick={onToggleCommentMode}
+          variant="bar"
+          showCount={false}
+          tourId="mobile-mixer-comments"
+          className="shrink-0 self-stretch w-10"
+        />
+      )}
     </div>
   )
 }

@@ -5,11 +5,9 @@ import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
-import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { ChatLauncherButton } from '@/components/chat/ChatDock'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { buildMobileProjectTourSteps } from '@/components/onboarding/mobileProjectTourSteps'
-import { sortMobileVersions } from '@/lib/versionSort'
 import type { Project, Section, Track, Version } from '@/lib/types'
 
 // ─── Mobile experience shell ──────────────────────────────────────────────────
@@ -81,7 +79,6 @@ export function MobileExperience({
 }: MobileExperienceProps) {
   const [mode, setMode] = useState<'rehearse' | 'mixer'>('rehearse')
   const [localTourOpen, setLocalTourOpen] = useState(false)
-  const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -174,19 +171,7 @@ export function MobileExperience({
 
       <div className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
         {mode === 'rehearse' ? (
-          <>
-            <div data-tour="mobile-mixer-version-bar">
-              <MobileMixerVersionBar
-                versions={sortedVersions}
-                activeId={activeVersionId}
-                onSelect={onVersionChange}
-                onNewBranch={onNewBranch}
-                commentMode={commentMode}
-                commentCount={commentCount}
-                onToggleCommentMode={onToggleCommentMode}
-              />
-            </div>
-            <ReadingMode
+          <ReadingMode
             embedded
             visible
             project={project}
@@ -210,7 +195,6 @@ export function MobileExperience({
             onToggleCountdown={onToggleCountdown}
             storageFull={storageFull}
           />
-          </>
         ) : (
           <MobileMixerPortrait {...mixer} />
         )}

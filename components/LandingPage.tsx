@@ -10,6 +10,11 @@ import {
 import { useEffect, useRef, useState, useCallback, Fragment, type ReactNode, type ComponentType, type ComponentProps } from "react";
 import { UserAvatar } from "@/components/ui/avatar";
 import { MetronomeIcon } from "@/components/design/TransportIcons";
+import { ChordPlaybackRow } from "@/components/ChordPlaybackRow";
+import { sectionLabel } from "@/components/StructureEditor";
+import { MobileMixerVersionBar } from "@/components/MobileMixerVersionBar";
+import { formatChordsDisplay } from "@/lib/chords";
+import type { Section, Version } from "@/lib/types";
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History, Undo2,
@@ -282,7 +287,7 @@ function Waveform({
     return Math.max(0.12, Math.min(1, r * 0.9 * env + 0.1)) * density;
   });
   return (
-    <div className="flex h-full items-end gap-[2px]" style={{ height }}>
+    <div className="flex h-full min-w-0 w-full items-end gap-px overflow-hidden" style={{ height }}>
       {values.map((v, i) => (
         <motion.span
           key={i}
@@ -300,10 +305,8 @@ function Waveform({
               ? color
               : "color-mix(in oklab, var(--foreground) 12%, transparent)",
             transformOrigin: "bottom",
-            width: `${100 / bars}%`,
-            minWidth: 4,
           }}
-          className="block"
+          className="block min-w-0 flex-1"
         />
       ))}
     </div>
@@ -677,6 +680,97 @@ function Philosophy() {
  * Branch / version showcase
  * ============================================================ */
 
+const LANDING_BPM = 142;
+const LANDING_BAR_MS = (60 / LANDING_BPM) * 4 * 1000;
+const LANDING_PLAYHEAD_MS = 60_000;
+
+function landingMockSection(
+  id: string,
+  type: Section["type"],
+  start_bar: number,
+  end_bar: number,
+  chords: string,
+  position: number,
+): Section {
+  return {
+    id,
+    version_id: "landing",
+    project_id: "landing",
+    type,
+    custom_name: null,
+    start_bar,
+    end_bar,
+    chords,
+    color: "",
+    position,
+    created_at: "",
+  };
+}
+
+const LANDING_MOCK_SECTIONS: Section[] = [
+  landingMockSection("s-intro", "intro", 0, 8, "Am F C G", 0),
+  landingMockSection("s-verse", "verse", 8, 24, "Am F C G", 1),
+  landingMockSection("s-pre", "pre-chorus", 24, 32, "F G Am", 2),
+  landingMockSection("s-chorus", "chorus", 32, 48, "C G Am F", 3),
+  landingMockSection("s-bridge", "bridge", 48, 60, "Dm Am Em G", 4),
+  landingMockSection("s-chorus2", "chorus", 60, 72, "C G Am F", 5),
+];
+
+const LANDING_MOBILE_MIXER_SECTIONS = LANDING_MOCK_SECTIONS.filter(
+  (s) => s.id !== "s-pre" && s.id !== "s-chorus2",
+);
+
+const LANDING_MOCK_VERSIONS: Version[] = [
+  {
+    id: "v-main",
+    project_id: "landing",
+    parent_id: null,
+    name: "MAIN",
+    type: "main",
+    created_at: "",
+    merged_at: null,
+    merged_into_id: null,
+    tag: null,
+    tracks: [],
+  },
+  {
+    id: "v-alt",
+    project_id: "landing",
+    parent_id: "v-main",
+    name: "ALT-BRIDGE",
+    type: "branch",
+    created_at: "",
+    merged_at: null,
+    merged_into_id: null,
+    tag: null,
+    tracks: [],
+  },
+  {
+    id: "v-dark",
+    project_id: "landing",
+    parent_id: "v-main",
+    name: "DARKER-MIX",
+    type: "branch",
+    created_at: "",
+    merged_at: "2024-06-14T00:00:00Z",
+    merged_into_id: "v-main",
+    tag: null,
+    tracks: [],
+  },
+  {
+    id: "v-new",
+    project_id: "landing",
+    parent_id: "v-main",
+    name: "NEW",
+    type: "branch",
+    created_at: "",
+    merged_at: null,
+    merged_into_id: null,
+    tag: null,
+    tracks: [],
+  },
+];
+
 function landingSectionTimeRange(startBar: number, endBar: number, barDurationMs: number) {
   const fmt = (secs: number) => {
     const s = Math.floor(secs);
@@ -687,73 +781,96 @@ function landingSectionTimeRange(startBar: number, endBar: number, barDurationMs
   return `${start}–${end}`;
 }
 
-function LandingMobileStructureStrip() {
-  const bpm = 142;
-  const barDurationMs = (60 / bpm) * 4 * 1000;
-  const activeIdx = 1;
-  const sections = [
-    { label: "Intro", start: 0, end: 8 },
-    { label: "Verse", start: 8, end: 24 },
-    { label: "Chorus", start: 32, end: 48 },
-    { label: "Bridge", start: 48, end: 60 },
-  ];
-  const active = sections[activeIdx];
+function landingSectionStartTime(startBar: number, barDurationMs: number) {
+  const s = Math.floor((startBar * barDurationMs) / 1000);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
+function LandingMobileSectionChords({
+  sections,
+  activeSectionIdx = 1,
+  currentTimeMs = LANDING_PLAYHEAD_MS,
+}: {
+  sections: Section[];
+  activeSectionIdx?: number;
+  currentTimeMs?: number;
+}) {
+  const active = sections[activeSectionIdx];
 
   return (
-    <div className="mb-3 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2 sm:hidden">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
-        <span className="truncate font-mono text-[9px] tabular-nums text-ember">
-          ● {active.label} · {landingSectionTimeRange(active.start, active.end, barDurationMs)}
-        </span>
-      </div>
-      <div className="grid grid-cols-4 gap-1.5 pb-1">
-        {sections.map((s, i) => {
-          const activePill = i === activeIdx;
-          return (
+    <>
+      <div className="mb-3 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2">
+        <div className="mb-1.5 flex items-center justify-between gap-2 px-3">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
+          {active && (
+            <span className="truncate font-mono text-[9px] tabular-nums text-ember">
+              ● {sectionLabel(active)} · {landingSectionTimeRange(active.start_bar, active.end_bar, LANDING_BAR_MS)}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto px-3 pb-1 scrollbar-none">
+          {sections.map((s, i) => (
             <div
-              key={s.label}
-              className={`min-w-0 border px-1.5 py-1.5 text-center text-[10px] uppercase tracking-widest sm:px-2 ${
-                activePill
+              key={s.id}
+              className={`shrink-0 border px-2.5 py-1.5 text-[10px] uppercase tracking-widest ${
+                i === activeSectionIdx
                   ? "border-ember bg-ember text-primary-foreground"
                   : "border-border bg-background text-muted-foreground"
               }`}
             >
-              <div className="truncate font-bold">{s.label}</div>
+              <div className="font-bold">{sectionLabel(s)}</div>
               <div className="truncate font-mono text-[8px] tabular-nums opacity-80">
-                {landingSectionTimeRange(s.start, s.end, barDurationMs)}
+                {landingSectionTimeRange(s.start_bar, s.end_bar, LANDING_BAR_MS)}
               </div>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
-    </div>
+
+      {sections.some((s) => s.chords?.trim()) && (
+        <div className="mb-3 min-w-0 overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_20%,transparent)]">
+          <div className="flex min-h-[40px] min-w-0 items-stretch">
+            <div className="flex shrink-0 items-center border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] px-3">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
+            </div>
+            <ChordPlaybackRow
+              sections={sections}
+              currentTimeMs={currentTimeMs}
+              barDurationMs={LANDING_BAR_MS}
+              compact
+              className="min-w-0 flex-1"
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
 function LandingStructureStrip() {
   const totalBars = 72;
   const barGridStep = 4;
+  const RULER_H = 40;
+  const RIBBON_H = 32;
+  const CHORDS_H = 44;
   const tp = (bar: number) => bar / totalBars;
   const sectionBorder = "1px solid color-mix(in oklab, var(--border) 85%, var(--ember) 15%)";
-  const sections = [
-    { label: "INTRO", start: 0, end: 8, chords: "Am · F · C · G" },
-    { label: "VERSE", start: 8, end: 24, chords: "Am · F · C · G" },
-    { label: "PRE-CHORUS", start: 24, end: 32, chords: "F · G · Am" },
-    { label: "CHORUS", start: 32, end: 48, chords: "C · G · Am · F" },
-    { label: "BRIDGE", start: 48, end: 60, chords: "Dm · Am · Em · G" },
-    { label: "CHORUS", start: 60, end: 72, chords: "C · G · Am · F" },
-  ];
+  const playheadPct = (LANDING_PLAYHEAD_MS / LANDING_BAR_MS / totalBars) * 100;
 
   return (
     <>
-      <LandingMobileStructureStrip />
+      <div className="mb-3 sm:hidden">
+        <LandingMobileSectionChords
+          sections={LANDING_MOBILE_MIXER_SECTIONS}
+          activeSectionIdx={1}
+        />
+      </div>
       <div className="mb-3 hidden items-stretch border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:flex">
         {/* Label column — aligned with track rows below */}
         <div className="hidden w-[160px] shrink-0 flex-col border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] sm:flex">
           <div
             className="flex flex-col justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3"
-            style={{ height: 40 }}
+            style={{ height: RULER_H }}
           >
             <span className="pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               CHANNEL
@@ -764,19 +881,32 @@ function LandingStructureStrip() {
           </div>
           <div
             className="flex flex-col justify-center bg-ember-soft/40 px-3"
-            style={{ height: 56 }}
+            style={{ height: RIBBON_H }}
           >
             <span className="text-[9px] font-bold uppercase tracking-widest text-ember">
               STRUCTURE
             </span>
           </div>
+          <div
+            className="flex items-center justify-center border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] px-3"
+            style={{ height: CHORDS_H }}
+          >
+            <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+              Chords
+            </span>
+          </div>
         </div>
 
-        {/* Timeline — bar ruler + structure strip */}
-        <div className="min-w-0 flex-1 bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+        {/* Timeline — bar ruler + structure + chords */}
+        <div className="relative min-w-0 flex-1 bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+          <div
+            className="absolute top-0 z-[15] w-px -ml-px bg-foreground/70 pointer-events-none"
+            style={{ left: `${playheadPct}%`, height: RULER_H + RIBBON_H }}
+          />
+
           <div
             className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]"
-            style={{ height: 40 }}
+            style={{ height: RULER_H }}
           >
             {[0, 16, 32, 48, 64].map((bar) => (
               <span
@@ -808,7 +938,7 @@ function LandingStructureStrip() {
             })}
           </div>
 
-          <div className="relative overflow-hidden bg-ember-soft/40" style={{ height: 56 }}>
+          <div className="relative overflow-hidden bg-ember-soft/40" style={{ height: RIBBON_H }}>
             {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
               const bar = idx * barGridStep;
               const isTact = bar % 4 === 0;
@@ -825,26 +955,35 @@ function LandingStructureStrip() {
               );
             })}
 
-            {sections.map((s) => (
+            {LANDING_MOCK_SECTIONS.map((s) => (
               <div
-                key={`${s.label}-${s.start}`}
-                className="absolute inset-y-0 flex flex-col items-start justify-start overflow-hidden px-2 pt-1.5"
+                key={s.id}
+                className="absolute inset-y-0 flex items-center overflow-hidden px-2"
                 style={{
-                  left: `${tp(s.start) * 100}%`,
-                  width: `${(tp(s.end) - tp(s.start)) * 100}%`,
+                  left: `${tp(s.start_bar) * 100}%`,
+                  width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
                   borderLeft: sectionBorder,
                   borderRight: sectionBorder,
                   background: "color-mix(in oklab, var(--ember) 12%, transparent)",
                 }}
               >
                 <span className="pointer-events-none w-full truncate text-[9px] font-bold uppercase tracking-widest leading-tight text-ember">
-                  {s.label}
-                </span>
-                <span className="pointer-events-none mt-0.5 w-full truncate font-mono text-[9px] leading-tight text-foreground/75">
-                  {s.chords}
+                  {sectionLabel(s)}
                 </span>
               </div>
             ))}
+          </div>
+
+          <div
+            className="relative overflow-hidden border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)]"
+            style={{ minHeight: CHORDS_H }}
+          >
+            <ChordPlaybackRow
+              sections={LANDING_MOCK_SECTIONS}
+              currentTimeMs={LANDING_PLAYHEAD_MS}
+              barDurationMs={LANDING_BAR_MS}
+              className="h-full w-full min-w-0"
+            />
           </div>
         </div>
       </div>
@@ -882,7 +1021,7 @@ function BranchShowcase() {
         description="Try the bolder bridge without breaking what already works. Every version is a real artifact with date, author and status — not another file called final_v3_FINAL.wav."
       />
 
-      <div className="mt-12 grid gap-6 lg:grid-cols-[280px_1fr]">
+      <div className="mt-12 grid min-w-0 gap-6 lg:grid-cols-[280px_1fr]">
         {/* Version rail */}
         <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-4">
           <div className="mb-4 flex items-center justify-between">
@@ -920,23 +1059,16 @@ function BranchShowcase() {
         </div>
 
         {/* Mixer board */}
-        <div className="relative flex flex-col border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-4 md:p-6">
+        <div className="relative flex min-w-0 flex-col overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <MonoLabel>PROJECT · NORTHERN ROOM</MonoLabel>
-            <div className="-mx-1 flex gap-1 overflow-x-auto px-1 sm:ml-auto sm:mx-0 sm:overflow-visible sm:px-0">
-              {["MAIN", "ALT-BRIDGE", "DARKER-MIX", "NEW"].map((t, i) => (
-                <span
-                  key={t}
-                  className={`shrink-0 border px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] ${
-                    i === 0
-                      ? "border-ember bg-ember text-primary-foreground"
-                      : "border-border text-muted-foreground"
-                  }`}
-                >
-                  {i === 0 ? "● " : "✓ "}
-                  {t}
-                </span>
-              ))}
+            <div className="min-w-0 sm:ml-auto sm:max-w-md sm:flex-1">
+              <MobileMixerVersionBar
+                versions={LANDING_MOCK_VERSIONS}
+                activeId="v-main"
+                onSelect={() => {}}
+                switchOnly
+              />
             </div>
           </div>
 
@@ -955,9 +1087,9 @@ function BranchShowcase() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.2 }}
               transition={{ delay: i * 0.08 }}
-              className="group grid grid-cols-1 items-center gap-2 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] py-3 first:border-t-0 sm:grid-cols-[160px_1fr] sm:gap-3"
+              className="group grid min-w-0 grid-cols-1 items-center gap-2 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] py-3 first:border-t-0 sm:grid-cols-[160px_1fr] sm:gap-3"
             >
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span
                     className="grid size-7 place-items-center font-mono-tb text-[11px] font-bold text-primary-foreground"
@@ -988,7 +1120,9 @@ function BranchShowcase() {
                   ))}
                 </div>
               </div>
-              <Waveform seed={t.seed} bars={48} color={t.color} height={56} />
+              <div className="min-w-0 overflow-hidden">
+                <Waveform seed={t.seed} bars={48} color={t.color} height={56} />
+              </div>
             </motion.div>
           ))}
 
@@ -1412,11 +1546,7 @@ function LandingMobileTransportBtn({
 }
 
 function LandingRehearsalMock() {
-  const sections = [
-    { label: "INTRO", chords: "Bb · G · F", time: "0:00" },
-    { label: "VERSE", chords: "Bb · Gm · Cm · Gm", time: "0:12" },
-    { label: "CHORUS", chords: "Eb · F · Bb · Gm", time: "0:42" },
-  ];
+  const listSections = LANDING_MOBILE_MIXER_SECTIONS;
 
   return (
     <LandingWorkflowCard
@@ -1432,46 +1562,50 @@ function LandingRehearsalMock() {
                 <span className="size-1.5 bg-ember tb-blink" /> REHEARSAL
               </span>
             </MonoLabel>
-            <MonoLabel>142 BPM · A#m</MonoLabel>
+            <MonoLabel>142 BPM · Am</MonoLabel>
           </div>
           <Waveform seed={5.6} bars={42} color="var(--ember)" height={70} />
           <div className="mt-2 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
-            <span>0:12</span>
+            <span>1:00</span>
             <span>2:59</span>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-1">
-            {["INTRO", "VERSE", "CHORUS"].map((s, i) => (
-              <span
-                key={s}
-                className={`px-1 py-1.5 text-center text-[10px] font-bold uppercase tracking-widest ${
-                  i === 1
-                    ? "border border-ember bg-ember text-white"
-                    : "border border-border bg-background text-muted-foreground"
-                }`}
-              >
-                {s}
-              </span>
-            ))}
+          <div className="mt-3">
+            <MobileMixerVersionBar
+              versions={LANDING_MOCK_VERSIONS}
+              activeId="v-main"
+              onSelect={() => {}}
+              switchOnly
+            />
           </div>
 
-          <div className="mt-3 border border-border divide-y divide-border">
-            {sections.map((section) => (
-              <div
-                key={section.label}
-                className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
-              >
-                <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-ember">
-                  {section.label}
+          <LandingMobileSectionChords
+            sections={listSections}
+            activeSectionIdx={1}
+          />
+
+          <div className="mt-3 border border-border">
+            <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Structure & chords
+            </div>
+            <div className="divide-y divide-border">
+              {listSections.map((section) => (
+                <div
+                  key={section.id}
+                  className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
+                >
+                  <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-ember">
+                    {sectionLabel(section)}
+                  </div>
+                  <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">
+                    {formatChordsDisplay(section.chords)}
+                  </div>
+                  <div className="shrink-0 pt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+                    {landingSectionStartTime(section.start_bar, LANDING_BAR_MS)}
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">
-                  {section.chords}
-                </div>
-                <div className="shrink-0 pt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-                  {section.time}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
 

@@ -1,7 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import Link from 'next/link'
+import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
+import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { sectionLabel } from '@/components/StructureEditor'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { ResourcesCard } from '@/components/ResourcesCard'
@@ -26,6 +28,10 @@ export type ReadingModePlayer = {
   play: () => void
   pause: () => void
   seek: (t: number) => void
+  /** Bumps on every seek — resyncs chord row scroll after section jumps. */
+  seekEpoch?: number
+  /** Ref updated every rAF frame — used for smooth chord highlighting during playback. */
+  currentTimeRef?: RefObject<number>
 }
 
 const REHEARSAL_BAR_COUNT = 48
@@ -52,11 +58,7 @@ function fmt(secs: number): string {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 }
 
-function formatChords(chords: string | null | undefined): string {
-  if (!chords?.trim()) return '—'
-  return chords.trim().split(/\s+/).filter(Boolean).join(' · ')
-}
-
+import { formatChordsDisplay } from '@/lib/chords'
 // ─── Master waveform (uikit bar style) ────────────────────────────────────────
 
 function MasterWaveform({
@@ -564,8 +566,8 @@ export function ReadingMode({
             <span>{fmt(player.duration)}</span>
           </div>
 
-          {/* Version pills */}
-          {versions.length > 1 && (
+          {/* Version pills — standalone rehearsal only; embedded mode uses MobileMixerVersionBar */}
+          {!embedded && versions.length > 1 && (
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1 scrollbar-none">
               {versions.map(v => {
                 const isActive = v.id === activeVersionId
@@ -587,6 +589,37 @@ export function ReadingMode({
             </div>
           )}
         </div>
+
+        {embedded && versions.length > 0 && (
+          <div className="mt-3 px-5" data-tour="mobile-mixer-version-bar">
+            <MobileMixerVersionBar
+              versions={versions}
+              activeId={activeVersionId}
+              onSelect={onVersionChange}
+              switchOnly
+            />
+          </div>
+        )}
+
+        {sections.some(s => s.chords?.trim()) && (
+          <div className={`border-y border-border bg-surface/20 shrink-0 min-w-0 ${embedded ? 'mt-3' : ''}`}>
+            <div className="flex items-stretch min-h-[40px] min-w-0">
+              <div className="shrink-0 px-3 flex items-center justify-center border-r border-border/50">
+                <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
+              </div>
+              <ChordPlaybackRow
+                sections={sections}
+                currentTimeMs={player.currentTime * 1000}
+                barDurationMs={barDurationMs}
+                compact
+                className="flex-1 min-w-0"
+                currentTimeRef={player.currentTimeRef}
+                playing={player.playing || isCounting}
+                seekEpoch={player.seekEpoch}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Structure & chords */}
         <div className="px-5 pt-6">
@@ -610,7 +643,7 @@ export function ReadingMode({
                     {sectionLabel(section)}
                   </div>
                   <div className="text-xs flex-1 min-w-0 text-left text-foreground whitespace-normal break-words leading-relaxed">
-                    {formatChords(section.chords)}
+                    {formatChordsDisplay(section.chords)}
                   </div>
                   <div className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 pt-0.5">
                     {sectionStartTime(section.start_bar)}

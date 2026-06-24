@@ -5079,6 +5079,8 @@ export default function ProjectPage() {
             play: player.play,
             pause: player.pause,
             seek: player.seek,
+            seekEpoch: player.seekEpoch,
+            currentTimeRef: player.currentTimeRef,
           }}
           sections={sections}
           projectId={projectId}
@@ -5115,11 +5117,13 @@ export default function ProjectPage() {
               playing: player.playing,
               isCounting: player.isCounting,
               currentTime: player.currentTime,
+              currentTimeRef: player.currentTimeRef,
               duration: player.duration,
               playbackReady: player.playbackReady,
               play: player.play,
               pause: player.pause,
               seek: player.seek,
+              seekEpoch: player.seekEpoch,
               sectionLoopOn: player.sectionLoopOn,
               sectionLoopEnabled: sectionLoopButtonEnabled,
               onToggleSectionLoop: handleToggleSectionLoop,
@@ -5555,6 +5559,8 @@ export default function ProjectPage() {
               onEditModeChange={setEditStructure}
               waveformBounds={waveformBounds}
               currentTimeMs={player.currentTime * 1000}
+              currentTimeRef={player.currentTimeRef}
+              playing={player.playing}
               onSeek={player.seek}
               compact={isMobileLandscape}
             />

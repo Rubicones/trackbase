@@ -46,11 +46,7 @@ function formatDuration(ms: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-function formatChords(raw: string | null | undefined): string {
-  if (!raw?.trim()) return '—'
-  return raw.trim().split(/\s+/).filter(Boolean).join(' - ')
-}
-
+import { formatChordsDisplay } from '@/lib/chords'
 interface PreviewProject {
   id: string
   name: string
@@ -601,7 +597,7 @@ export function StructurePreviewPanel({
                           {sectionLabel(section).toUpperCase()}
                         </span>
                         <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed min-w-0">
-                          {formatChords(section.chords)}
+                          {formatChordsDisplay(section.chords)}
                         </span>
                         <span className="text-muted-foreground tabular-nums font-mono whitespace-nowrap shrink-0 pt-0.5 text-right">
                           {startBar}–{endBar} · {startTime}

@@ -1066,47 +1066,57 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         </button>
       )}
       {isPreview && (
-        <>
-          <button
-            type="button"
-            onClick={() => setPreviewMuted(m => !m)}
-            className="text-[9px] uppercase tracking-widest"
-            style={{ color: previewMuted ? 'var(--ember)' : 'var(--muted-foreground)' }}
-          >
-            {previewMuted ? 'Muted' : 'Mute'}
-          </button>
-          <button type="button" onClick={() => void handleSave()}
-            className="text-[9px] uppercase tracking-widest font-semibold text-ember">
-            Save
-          </button>
-          <button type="button" onClick={handleDiscard}
-            className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground">
-            Discard
-          </button>
-          <button
-            type="button"
-            title="-10ms"
-            onClick={() => setNudgeOffsetMs(ms => ms - 10)}
-            className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
-            aria-label="Nudge 10ms earlier"
-          >
-            <NudgeArrowIcon direction="left" />
-          </button>
-          <button
-            type="button"
-            title="+10ms"
-            onClick={() => setNudgeOffsetMs(ms => ms + 10)}
-            className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
-            aria-label="Nudge 10ms later"
-          >
-            <NudgeArrowIcon direction="right" />
-          </button>
-          {nudgeOffsetMs !== 0 && (
-            <span className="text-[9px] tabular-nums text-muted-foreground">
-              {nudgeOffsetMs > 0 ? `+${nudgeOffsetMs}` : nudgeOffsetMs}ms
-            </span>
-          )}
-        </>
+        <div className="flex flex-col gap-1.5 w-full min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setPreviewMuted(m => !m)}
+              className="text-[9px] uppercase tracking-widest"
+              style={{ color: previewMuted ? 'var(--ember)' : 'var(--muted-foreground)' }}
+            >
+              {previewMuted ? 'Muted' : 'Mute'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              className="text-[9px] uppercase tracking-widest font-semibold text-ember"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscard}
+              className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+            >
+              Discard
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="-10ms"
+              onClick={() => setNudgeOffsetMs(ms => ms - 10)}
+              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+              aria-label="Nudge 10ms earlier"
+            >
+              <NudgeArrowIcon direction="left" />
+            </button>
+            <button
+              type="button"
+              title="+10ms"
+              onClick={() => setNudgeOffsetMs(ms => ms + 10)}
+              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+              aria-label="Nudge 10ms later"
+            >
+              <NudgeArrowIcon direction="right" />
+            </button>
+            {nudgeOffsetMs !== 0 && (
+              <span className="text-[9px] tabular-nums text-muted-foreground">
+                {nudgeOffsetMs > 0 ? `+${nudgeOffsetMs}` : nudgeOffsetMs}ms
+              </span>
+            )}
+          </div>
+        </div>
       )}
       {isSaving && (
         <span className="text-[9px] uppercase tracking-widest text-ember">

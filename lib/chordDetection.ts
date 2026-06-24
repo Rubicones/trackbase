@@ -1,3 +1,24 @@
+import { normalizeChordsToBarCount } from '@/lib/chords'
+
+export interface ChordDetectionOptions {
+  sampleRate: number
+  barDurationSec: number
+  barCount: number
+}
+
+/** Trim audio to at most `barCount` bars so the worker cannot analyze extra timeline. */
+export function truncateAudioToBarCount(
+  audio: Float32Array,
+  barCount: number,
+  sampleRate: number,
+  barDurationSec: number,
+): Float32Array {
+  if (barCount <= 0 || barDurationSec <= 0 || sampleRate <= 0) return audio
+  const maxSamples = Math.ceil(barCount * barDurationSec * sampleRate)
+  if (audio.length <= maxSamples) return audio
+  return audio.subarray(0, maxSamples)
+}
+
 type WorkerOut =
   | { type: 'ready' }
   | { type: 'init-error'; message: string }
@@ -17,13 +38,21 @@ function ensureWorker(): Worker {
       const onMessage = (event: MessageEvent<WorkerOut>) => {
         if (event.data.type === 'ready') {
           worker!.removeEventListener('message', onMessage)
+          worker!.removeEventListener('error', onError)
           resolve()
         } else if (event.data.type === 'init-error') {
           worker!.removeEventListener('message', onMessage)
+          worker!.removeEventListener('error', onError)
           reject(new Error(event.data.message))
         }
       }
+      const onError = (event: ErrorEvent) => {
+        worker!.removeEventListener('message', onMessage)
+        worker!.removeEventListener('error', onError)
+        reject(new Error(event.message || 'Chord detection worker failed to load'))
+      }
       worker!.addEventListener('message', onMessage)
+      worker!.addEventListener('error', onError)
     })
   }
   return worker
@@ -52,7 +81,8 @@ export async function detectChordsInAudio(
   await ensureWorkerReady()
   const w = worker!
   const requestId = crypto.randomUUID()
-  const payload = audio.slice()
+  const trimmed = truncateAudioToBarCount(audio, barCount, sampleRate, barDurationSec)
+  const payload = trimmed.slice()
 
   return new Promise((resolve, reject) => {
     const onMessage = (event: MessageEvent<WorkerOut>) => {
@@ -60,7 +90,7 @@ export async function detectChordsInAudio(
       if (!data || !('requestId' in data) || data.requestId !== requestId) return
       w.removeEventListener('message', onMessage)
       if (data.type === 'error') reject(new Error(data.message))
-      else resolve(data.chords)
+      else resolve(normalizeChordsToBarCount(data.chords, barCount))
     }
     w.addEventListener('message', onMessage)
     w.postMessage(
