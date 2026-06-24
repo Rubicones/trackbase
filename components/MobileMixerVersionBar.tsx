@@ -67,7 +67,7 @@ export function MobileMixerVersionBar({
 
   return (
     <div className="flex items-stretch border-b border-border bg-surface/40 shrink-0 h-10">
-      <div className="flex-1 min-w-0 overflow-x-auto flex items-center gap-1.5 px-2 scrollbar-none">
+      <div className="flex-1 min-w-0 overflow-x-auto flex flex-nowrap items-center gap-1.5 px-2 scrollbar-none [&::-webkit-scrollbar]:hidden">
         {sortedVersions.map(v => {
           const isActive = v.id === activeId
           return (
@@ -75,7 +75,7 @@ export function MobileMixerVersionBar({
               key={v.id}
               type="button"
               onClick={() => onSelect(v.id)}
-              className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition ${
+              className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition overflow-hidden text-ellipsis whitespace-nowrap max-w-[160px] ${
                 isActive
                   ? 'bg-ember text-white border-ember'
                   : v.merged_at
@@ -96,7 +96,7 @@ export function MobileMixerVersionBar({
         onClick={onNewBranch}
         className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
       >
-        + Branch
+        + Version
       </button>
       <CommentToggleBtn
         active={commentMode}

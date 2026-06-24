@@ -156,7 +156,7 @@ export function VersionChipSelector({
               <span className="text-ember shrink-0"><IconBranch /></span>
               <span className="truncate">{v.name}</span>
               {v.type === 'main' && (
-                <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">main</span>
+                <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
               )}
             </button>
           ))}

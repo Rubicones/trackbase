@@ -482,7 +482,7 @@ const ProjectRow = memo(function ProjectRow({
             {project.total_duration_ms > 0 && <span>{formatDuration(project.total_duration_ms)}</span>}
             {project.bpm != null && <span className="text-ember">{project.bpm} BPM</span>}
             {project.key && <span>{project.key.toUpperCase()}</span>}
-            <span>{project.version_count} BRANCH{project.version_count !== 1 ? 'ES' : ''}</span>
+            <span>{project.version_count} VERSION{project.version_count !== 1 ? 'S' : ''}</span>
             <span>{project.comment_count} COMMENTS</span>
             <span className="text-muted-foreground/70">{formatLastEdited(project.last_updated_at).toUpperCase()}</span>
           </div>
@@ -1174,8 +1174,8 @@ export default function BandPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-border border border-border text-center w-full lg:w-auto">
             {[
-              [stats.branches, 'BRANCHES'],
-              [stats.merges, 'MERGES'],
+              [stats.branches, 'VERSIONS'],
+              [stats.merges, 'APPLIED'],
               [stats.comments, 'COMMENTS'],
               [stats.tracks, 'TRACKS'],
             ].map(([n, l]) => (

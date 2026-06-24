@@ -177,15 +177,15 @@ function ContextPopover({
       onClick={e => e.stopPropagation()}
     >
       <div className="px-2 py-1.5 border-b border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-        {mode === 'branch' ? 'Attach branch' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
+        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
       </div>
       {versionsLoading && (
-        <div className="flex justify-center py-3" role="status" aria-label="Loading branches and tracks">
+        <div className="flex justify-center py-3" role="status" aria-label="Loading versions and tracks">
           <SpinnerBars />
         </div>
       )}
       {!versionsLoading && mode === 'branch' && versions.length === 0 && (
-        <div className="px-2 py-3 text-[10px] text-muted-foreground text-center">No branches</div>
+        <div className="px-2 py-3 text-[10px] text-muted-foreground text-center">No versions</div>
       )}
       {!versionsLoading && mode === 'branch' && versions.map(v => (
         <button
@@ -197,7 +197,7 @@ function ContextPopover({
           <span className="text-ember shrink-0"><IconBranch size={12} /></span>
           <span className="truncate">{v.name}</span>
           {v.type === 'main' && (
-            <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">main</span>
+            <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
           )}
         </button>
       ))}
@@ -347,7 +347,7 @@ export function ResourceContextControls({
 
   const showBranch = !!contextIds.context_version_id
   const showTrack = !!contextIds.context_track_id
-  const branchLabel = versionName ?? 'Branch'
+  const branchLabel = versionName ?? 'Version'
   const trackLabel = trackName ?? 'Track'
 
   async function applyContext(next: ResourceContextDraft) {
@@ -419,7 +419,7 @@ export function ResourceContextControls({
         <ComposerChip
           chipRef={branchChipRef}
           icon={<span className="text-ember"><IconBranch size={12} /></span>}
-          label="branch"
+          label="version"
           onClick={() => setPicker(p => (p === 'branch' ? null : 'branch'))}
         />
       )}

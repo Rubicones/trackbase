@@ -74,14 +74,14 @@ function autoMergeDescription(item: AutoMergeItem): string {
     const to = formatTrackStartBar(item.newStartBar ?? 0)
     return `starts at ${from} → ${to}`
   }
-  return 'replaced with branch version'
+  return 'replaced with version content'
 }
 
 function autoMergeBadge(item: AutoMergeItem): string {
   if (item.action === 'add_new') return 'AUTO · NEW'
   if (item.action === 'apply_rename') return 'AUTO · RENAMED'
   if (item.action === 'apply_offset') return 'AUTO · OFFSET'
-  return 'AUTO · FROM BRANCH'
+  return 'AUTO · FROM VERSION'
 }
 
 function MergeShell({ children, wide }: { children: ReactNode; wide?: boolean }) {
@@ -97,7 +97,7 @@ function MergeShell({ children, wide }: { children: ReactNode; wide?: boolean })
 function MergeTitle({ branchName, targetName }: { branchName: string; targetName: string }) {
   return (
     <h2 className="font-display text-lg uppercase tracking-tight text-foreground m-0">
-      Merge &ldquo;{branchName}&rdquo; → &ldquo;{targetName}&rdquo;
+      Apply &ldquo;{branchName}&rdquo; → &ldquo;{targetName}&rdquo;
     </h2>
   )
 }
@@ -244,7 +244,7 @@ function MiniWaveform({ trackId, color }: { trackId: string; color: string }) {
 function FileConflictCard({
   label, track, chosen, onChoose,
 }: {
-  label: 'MAIN' | 'BRANCH'
+  label: 'MASTER' | 'VERSION'
   track: TrackSnapshot
   chosen: boolean
   onChoose: () => void
@@ -294,7 +294,7 @@ function RenameConflictPills({
   return (
     <div className="flex gap-3">
       {(['main', 'branch'] as const).map(side => {
-        const label = side === 'main' ? 'FROM MAIN' : 'FROM BRANCH'
+        const label = side === 'main' ? 'FROM MASTER' : 'FROM VERSION'
         const name  = side === 'main' ? mainName   : branchName
         const sel   = chosen === side
         return (
@@ -329,7 +329,7 @@ function OffsetConflictPills({
   return (
     <div className="flex gap-3">
       {(['main', 'branch'] as const).map(side => {
-        const label = side === 'main' ? 'FROM MAIN' : 'FROM BRANCH'
+        const label = side === 'main' ? 'FROM MASTER' : 'FROM VERSION'
         const bar = side === 'main' ? mainStartBar : branchStartBar
         const sel = chosen === side
         return (
@@ -356,7 +356,7 @@ function OffsetConflictPills({
 function SectionStatePill({
   label, state, chosen, onChoose,
 }: {
-  label: 'MAIN' | 'BRANCH'
+  label: 'MASTER' | 'VERSION'
   state: BarState | null
   chosen: boolean
   onChoose: () => void
@@ -453,7 +453,7 @@ function CommentChangesSection({
           <div className="flex items-center gap-2 bg-ember-soft/40 border border-ember/30 px-3 py-2">
             <AutoCheckIcon />
             <span className="text-xs text-foreground flex-1">
-              {added.length} comment{added.length !== 1 ? 's' : ''} from branch will be added to main
+              {added.length} comment{added.length !== 1 ? 's' : ''} from version will be added to Master
             </span>
             <button
               type="button"
@@ -483,7 +483,7 @@ function CommentChangesSection({
               <circle cx="6" cy="9.5" r="0.75" fill="currentColor" />
             </svg>
             <span className="text-xs text-foreground flex-1">
-              {deleted.length} comment{deleted.length !== 1 ? 's were' : ' was'} deleted in branch
+              {deleted.length} comment{deleted.length !== 1 ? 's were' : ' was'} deleted in version
             </span>
             <button
               type="button"
@@ -498,7 +498,7 @@ function CommentChangesSection({
               variant={commentDeletionChoice === 'keep' ? 'selected' : 'ghost'}
               onClick={() => onDeletionChoiceChange('keep')}
             >
-              Keep in main
+              Keep in Master
             </MergeBtn>
             <MergeBtn
               variant={commentDeletionChoice === 'apply' ? 'selected' : 'ghost'}
@@ -670,7 +670,7 @@ export function MergeModal({
       })
       if (!res.ok) {
         const e = await res.json().catch(() => ({}))
-        setMergeErr(e.error ?? 'Merge failed')
+        setMergeErr(e.error ?? 'Apply failed')
         return
       }
       const data = await res.json()
@@ -695,7 +695,7 @@ export function MergeModal({
             <MergePreviewLoading label="Updating comparison…" />
           ) : (
           <>
-          <p className="text-xs text-muted-foreground mt-1 mb-5 m-0">No conflicts — ready to merge</p>
+          <p className="text-xs text-muted-foreground mt-1 mb-5 m-0">No overlapping changes — ready to apply</p>
 
           {preview.autoMerge.length > 0 && (
             <>
@@ -737,7 +737,7 @@ export function MergeModal({
           {preview.autoMerge.length === 0 && sectionAutoItems.length === 0 &&
             !(preview.commentChanges?.added.length || preview.commentChanges?.deleted.length) && (
             <div className="border border-border px-4 py-3 text-xs text-muted-foreground mb-4">
-              No changes — branch is identical to main
+              No changes — version is identical to Master
             </div>
           )}
 
@@ -763,7 +763,7 @@ export function MergeModal({
           <div className="flex gap-2 justify-end pt-2 border-t border-border">
             <MergeBtn onClick={onClose}>Cancel</MergeBtn>
             <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
-              {merging ? 'Merging…' : 'Merge →'}
+              {merging ? 'Applying…' : 'Apply →'}
             </MergeBtn>
           </div>
         </div>
@@ -781,8 +781,8 @@ export function MergeModal({
           {previewLoading
             ? 'Updating comparison…'
             : unresolvedCount > 0
-            ? `Resolve ${unresolvedCount} conflict${unresolvedCount > 1 ? 's' : ''} before merging`
-            : 'All conflicts resolved — ready to merge'}
+            ? `Review ${unresolvedCount} overlapping change${unresolvedCount > 1 ? 's' : ''} before applying`
+            : 'All overlapping changes reviewed — ready to apply'}
         </p>
       </div>
 
@@ -802,8 +802,8 @@ export function MergeModal({
               const fullyResolved  = fileResolved && renameResolved && offsetResolved
               const kinds = trackConflictKinds(conflict)
               const badgeLabel = fullyResolved
-                ? 'RESOLVED'
-                : kinds.length ? `${kinds.join(' + ')} CONFLICT` : 'CONFLICT'
+                ? 'CHOSEN'
+                : kinds.length ? `${kinds.join(' + ')} OVERLAP` : 'OVERLAP'
 
               const mainDisplayName   = conflict.mainTrack.display_name   ?? conflict.mainTrack.name
               const branchDisplayName = conflict.branchTrack.display_name ?? conflict.branchTrack.name
@@ -818,15 +818,15 @@ export function MergeModal({
                         ? 'border-ember/40 text-ember bg-ember-soft'
                         : 'border-destructive/40 text-destructive bg-destructive/10'
                     }`}>
-                      {fullyResolved ? 'RESOLVED' : badgeLabel}
+                      {fullyResolved ? 'CHOSEN' : badgeLabel}
                     </span>
                   </div>
 
                   {conflict.fileConflict && (
                     <div className="flex gap-3">
-                      <FileConflictCard label="MAIN" track={conflict.mainTrack}
+                      <FileConflictCard label="MASTER" track={conflict.mainTrack}
                         chosen={res.fileChoice === 'main'} onChoose={() => setFileChoice(conflict.trackName, 'main')} />
-                      <FileConflictCard label="BRANCH" track={conflict.branchTrack}
+                      <FileConflictCard label="VERSION" track={conflict.branchTrack}
                         chosen={res.fileChoice === 'branch'} onChoose={() => setFileChoice(conflict.trackName, 'branch')} />
                     </div>
                   )}
@@ -891,13 +891,13 @@ export function MergeModal({
                     <span className={`text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 ml-auto border ${
                       resolved ? 'border-ember/40 text-ember bg-ember-soft' : 'border-destructive/40 text-destructive bg-destructive/10'
                     }`}>
-                      {resolved ? 'RESOLVED' : 'STRUCTURE CONFLICT'}
+                      {resolved ? 'CHOSEN' : 'STRUCTURE OVERLAP'}
                     </span>
                   </div>
                   <div className="flex gap-3">
-                    <SectionStatePill label="MAIN" state={conflict.mainState}
+                    <SectionStatePill label="MASTER" state={conflict.mainState}
                       chosen={chosen === 'main'} onChoose={() => setSectionChoice(key, 'main')} />
-                    <SectionStatePill label="BRANCH" state={conflict.branchState}
+                    <SectionStatePill label="VERSION" state={conflict.branchState}
                       chosen={chosen === 'branch'} onChoose={() => setSectionChoice(key, 'branch')} />
                   </div>
                 </div>
@@ -970,10 +970,10 @@ export function MergeModal({
           <MergeBtn onClick={onClose}>Cancel</MergeBtn>
           <MergeBtn variant="primary" disabled={!canMerge || merging} onClick={handleMerge}>
             {merging
-              ? 'Merging…'
+              ? 'Applying…'
               : unresolvedCount > 0
-                ? `Merge (${unresolvedCount} left)`
-                : 'Merge →'}
+                ? `Apply (${unresolvedCount} left)`
+                : 'Apply →'}
           </MergeBtn>
         </div>
       </div>

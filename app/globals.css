@@ -1890,6 +1890,11 @@ html.dark[data-palette="green"] .theme-avatar {
 html:has(.landing-page) {
   scroll-behavior: smooth;
   scroll-padding-top: 3.5rem;
+  overflow-x: clip;
+}
+
+html:has(.landing-page) body {
+  overflow-x: clip;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1938,20 +1943,30 @@ html:has(.landing-page) {
   overflow-x: clip;
 }
 
-/* Full-bleed: break selected chrome out of the centered content column */
+/* Full-bleed: break selected chrome out of the centered content column.
+ * Uses scrollbar-aware bleed so 100vw does not cause horizontal page scroll. */
 .landing-full-bleed {
-  width: 100vw;
-  max-width: 100vw;
-  margin-inline: calc(50% - 50vw);
+  --landing-bleed: max(0px, calc((100vw - 100%) / 2));
+  width: calc(100% + 2 * var(--landing-bleed));
+  max-width: none;
+  margin-inline: calc(-1 * var(--landing-bleed));
+}
+
+/* Absolute full-bleed layers inside the centered column */
+.landing-abs-bleed {
+  --landing-bleed: max(0px, calc((100vw - 100%) / 2));
+  left: calc(-1 * var(--landing-bleed));
+  right: calc(-1 * var(--landing-bleed));
+  width: auto;
 }
 
 /* Ultra-wide: absolute full-bleed layers */
 @media (min-width: 1921px) {
   .landing-full-bleed-abs {
-    width: 100vw;
-    max-width: 100vw;
-    left: calc(50% - 50vw) !important;
-    right: auto !important;
+    --landing-bleed: max(0px, calc((100vw - 100%) / 2));
+    left: calc(-1 * var(--landing-bleed)) !important;
+    right: calc(-1 * var(--landing-bleed)) !important;
+    width: auto !important;
   }
 }
 
@@ -1972,9 +1987,11 @@ html:has(.landing-page) {
 
 @media (min-width: 1921px) {
   .landing-section-border::after {
-    left: 50%;
-    width: 100vw;
-    transform: translateX(-50%);
+    --landing-bleed: max(0px, calc((100vw - 100%) / 2));
+    left: calc(-1 * var(--landing-bleed));
+    right: calc(-1 * var(--landing-bleed));
+    width: auto;
+    transform: none;
   }
 }
 
@@ -2111,4 +2128,30 @@ html:has(.landing-page) {
 }
 .tb-marquee {
   animation: tb-marquee 40s linear infinite;
+}
+
+/* Collapsible panels (sidebar resources, etc.) */
+.tb-accordion-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.tb-accordion-panel[data-state="open"] {
+  grid-template-rows: 1fr;
+}
+
+.tb-accordion-panel[data-state="closed"] {
+  pointer-events: none;
+}
+
+.tb-accordion-panel-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.tb-accordion-panel-body {
+  min-height: 0;
 }

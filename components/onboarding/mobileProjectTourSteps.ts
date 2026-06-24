@@ -31,8 +31,8 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
     },
     {
       target: 'mobile-mixer-version-bar',
-      title: 'Versions & branches',
-      body: 'Switch between main and branches, create a new branch, or toggle comment mode on a waveform.',
+      title: 'Versions',
+      body: 'Switch between Master and versions, create a new version, or toggle comment mode on a waveform.',
     },
     {
       target: 'mobile-mixer-tracks',
@@ -62,7 +62,7 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
     {
       target: 'mobile-chat',
       title: 'Band chat',
-      body: 'Tap Chat above the mode switch to message the band, @mention teammates, and link branches or time ranges on a track — from rehearsal or mixer.',
+      body: 'Tap Chat above the mode switch to message the band, @mention teammates, and link versions or time ranges on a track — from rehearsal or mixer.',
     },
   ]
 }

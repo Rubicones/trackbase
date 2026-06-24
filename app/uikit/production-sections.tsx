@@ -52,6 +52,7 @@ const DEMO_VERSIONS_FULL: Version[] = [
     created_at: new Date().toISOString(),
     merged_at: null,
     merged_into_id: null,
+    tag: null,
     tracks: [],
   },
   {
@@ -63,6 +64,7 @@ const DEMO_VERSIONS_FULL: Version[] = [
     created_at: new Date().toISOString(),
     merged_at: null,
     merged_into_id: null,
+    tag: null,
     tracks: [],
   },
   {
@@ -74,6 +76,7 @@ const DEMO_VERSIONS_FULL: Version[] = [
     created_at: new Date().toISOString(),
     merged_at: new Date().toISOString(),
     merged_into_id: 'v-main',
+    tag: null,
     tracks: [],
   },
 ]
@@ -230,7 +233,7 @@ export function ProductionOverlaysSection() {
           <TbButton
             variant="ghost"
             onClick={() => {
-              setToast('Branch merged. 3 conflicts resolved.')
+              setToast('Version applied. 3 overlapping changes reviewed.')
               setTimeout(() => setToast(null), 3200)
             }}
           >
@@ -239,8 +242,8 @@ export function ProductionOverlaysSection() {
         </div>
         {modalOpen && (
           <TbModal onClose={() => setModalOpen(false)}>
-            <SectionLabel>New branch</SectionLabel>
-            <p className="text-sm text-muted-foreground mt-2 mb-4">Branch from main. You can merge back later.</p>
+            <SectionLabel>New version</SectionLabel>
+            <p className="text-sm text-muted-foreground mt-2 mb-4">Version from Master. You can apply back later.</p>
             <TbInput placeholder="feature/dirty-synth" autoFocus />
             <div className="flex justify-end gap-2 mt-4">
               <TbButton variant="ghost" onClick={() => setModalOpen(false)}>Cancel</TbButton>

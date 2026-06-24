@@ -26,7 +26,7 @@ export function MergeTargetSelector({
       selectedId={targetId}
       onChange={onTargetChange}
       disabled={disabled}
-      popoverLabel="Merge into"
+      popoverLabel="Apply to"
       showPlus
     />
   )

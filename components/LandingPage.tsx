@@ -116,6 +116,12 @@ function useScrollHoverTarget<T extends HTMLElement>() {
   return ref;
 }
 
+function useMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted;
+}
+
 type LandingHoverCardProps = {
   children: ReactNode;
   className?: string;
@@ -388,7 +394,10 @@ function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
           </nav>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          <span className="hidden items-center gap-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground lg:inline-flex">
+          <span
+            suppressHydrationWarning
+            className="hidden items-center gap-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground lg:inline-flex"
+          >
             <span className="size-1.5 rounded-full bg-(--signal) tb-blink" />
             SYS OK · {time || "00:00"}
           </span>
@@ -409,14 +418,17 @@ function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
             </span>
             <span className="relative flex h-3 w-5 flex-col justify-between" aria-hidden>
               <motion.span
+                initial={false}
                 animate={{ rotate: open ? 45 : 0, y: open ? 6 : 0 }}
                 className="block h-px w-full origin-left bg-ember transition-colors"
               />
               <motion.span
+                initial={false}
                 animate={{ opacity: open ? 0 : 1, scaleX: open ? 0 : 1 }}
                 className="block h-px w-3 self-end bg-muted-foreground transition-colors group-hover:bg-ember/70"
               />
               <motion.span
+                initial={false}
                 animate={{ rotate: open ? -45 : 0, y: open ? -6 : 0 }}
                 className="block h-px w-full origin-left bg-ember transition-colors"
               />
@@ -472,22 +484,24 @@ function TopBar({ isAuthenticated = false }: { isAuthenticated?: boolean }) {
 
 function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const mounted = useMounted();
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
   const y = useTransform(scrollYProgress, [0, 1], [0, -120]);
   const opacity = useTransform(scrollYProgress, [0, 1], [1, 0.3]);
   const reduce = useReducedMotion();
+  const parallaxStyle = mounted && !reduce ? { y, opacity } : undefined;
 
   return (
     <section ref={ref} id="top" className="relative">
       <div className="relative">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 bottom-0 left-1/2 z-0 w-screen -translate-x-1/2 tb-grid-bg-landing"
+          className="pointer-events-none absolute inset-y-0 landing-abs-bleed z-0 tb-grid-bg-landing"
         />
         <div className="relative z-10">
           <div className="relative overflow-hidden">
-            <motion.div style={{ y, opacity }} className="relative px-4 pt-16 pb-10 md:px-8 md:pt-24 md:pb-14">
-        {!reduce && (
+            <motion.div style={parallaxStyle} className="relative px-4 pt-16 pb-10 md:px-8 md:pt-24 md:pb-14">
+        {mounted && !reduce && (
           <motion.div
             className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--ember)_60%,transparent)] to-transparent"
             initial={{ y: -200 }}
@@ -901,7 +915,7 @@ function BranchShowcase() {
             ))}
           </ul>
           <div className="landing-new-branch-btn mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] transition-colors">
-            <span className="landing-new-branch-btn-icon opacity-60">⌥</span> + NEW BRANCH
+            <span className="landing-new-branch-btn-icon opacity-60">⌥</span> + NEW VERSION
           </div>
         </div>
 
@@ -1306,7 +1320,7 @@ function LandingChatMock() {
   return (
     <LandingWorkflowCard
       kicker="CHAT"
-      caption="Project chat with @mentions, branch links, track refs, and timecodes — decisions stay where the song lives."
+      caption="Project chat with @mentions, version links, track refs, and timecodes — decisions stay where the song lives."
     >
       <div className="mx-auto w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background">
         <div className="bg-background">
@@ -1579,7 +1593,7 @@ function ForBands() {
       title: "The indie band",
       who: "3–5 musicians · 18–35 · different DAWs",
       reality: "Demos scattered across Telegram. 'I thought you fixed that.' Chord disputes the night before recording.",
-      trackbase: "One room with branches, comments on the bar, and a structure everybody opens at rehearsal.",
+      trackbase: "One room with versions, comments on the bar, and a structure everybody opens at rehearsal.",
       metric: "01 · STAY IN SYNC",
       color: "var(--wave-violet)",
     },
@@ -1695,14 +1709,14 @@ function FeatureIndex() {
         { label: "Bands & invite codes", icon: Users },
         { label: "Custom role tags · guitarist, vocalist, producer", icon: Tag },
         { label: "Real-time activity feed", icon: Activity },
-        { label: "Group statistics — branches, merges, comments", icon: BarChart3 },
+        { label: "Group statistics — versions, applies, comments", icon: BarChart3 },
       ],
     },
     {
       n: "05.2", t: "VERSIONING", accent: "var(--ember)",
       items: [
-        { label: "Branches for safe experiments", icon: GitBranch },
-        { label: "Merge with conflict resolution", icon: GitMerge },
+        { label: "Versions for safe experiments", icon: GitBranch },
+        { label: "Apply with change review", icon: GitMerge },
         { label: "Full version history · author, status, date", icon: History },
         { label: "Restore any version, any time", icon: Undo2 },
       ],
@@ -1758,7 +1772,7 @@ function FeatureIndex() {
         { label: "WAV export", icon: FileAudio },
         { label: "Member-only project share links", icon: Share2 },
         { label: "Quick Peek — preview-mix from band page", icon: Eye },
-        { label: "Per-project & per-band chat with @mentions, branch & track refs", icon: Hash },
+        { label: "Per-project & per-band chat with @mentions, version & track refs", icon: Hash },
       ],
     },
   ];
@@ -1850,7 +1864,7 @@ function RehearsalDeepDive() {
       icon: Lightbulb,
       kicker: "ON THE SPOT",
       title: "Decide together, instantly.",
-      body: "Drop a range comment on bar 32 from the rehearsal room. By soundcheck, the bassist has already replied — with an alt take pushed to a branch.",
+      body: "Drop a range comment on bar 32 from the rehearsal room. By soundcheck, the bassist has already replied — with an alt take pushed to a new version.",
     },
   ];
 
@@ -2362,7 +2376,7 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
       features: [
         "Up to 3 active projects",
         "1 GB per project",
-        "Unlimited branches & versions",
+        "Unlimited versions",
         "Mixer, structure, chords",
         "Mobile Rehearsal View",
         "WAV export",
@@ -2380,10 +2394,10 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
       features: [
         "Unlimited projects",
         "10 GB per project",
-        "Branches, merges, version history",
+        "Versions, applies, version history",
         "MIDI · piano roll · GM bank",
         "Range comments & threads",
-        "Chat with branch & track refs",
+        "Chat with version & track refs",
         "Roadmap, checklist, lyrics",
         "Priority Quick Peek rendering",
       ],

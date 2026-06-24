@@ -657,7 +657,7 @@ export function ChatDock({
               <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5">
                 <span className="text-ember"><IconBranch /></span>
                 {attach.versionName}
-                <button onClick={() => setAttach(a => ({ ...a, versionId: undefined, versionName: undefined }))} aria-label="Remove branch" className="ml-0.5 text-muted-foreground hover:text-foreground">
+                <button onClick={() => setAttach(a => ({ ...a, versionId: undefined, versionName: undefined }))} aria-label="Remove version" className="ml-0.5 text-muted-foreground hover:text-foreground">
                   <IconClose size={10} />
                 </button>
               </span>
@@ -686,7 +686,7 @@ export function ChatDock({
             <div className="relative flex items-center gap-1 px-6 pt-2">
               <ComposerChip
                 icon={<IconBranch />}
-                label="branch"
+                label="version"
                 active={!!attach.versionId}
                 onClick={() => setOpenPopover(p => (p === 'branch' ? null : 'branch'))}
               />
@@ -905,7 +905,7 @@ function ContextPopover({
       className="absolute bottom-full left-2 mb-1 z-50 w-56 max-h-64 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl"
     >
       <div className="px-2 py-1.5 border-b border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-        {mode === 'branch' ? 'Attach branch' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
+        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
       </div>
       {versions === null && (
         <div className="flex justify-center py-3" role="status" aria-label="Loading branches and tracks">
@@ -921,7 +921,7 @@ function ContextPopover({
         >
           <span className="text-ember"><IconBranch /></span>
           <span className="truncate">{v.name}</span>
-          {v.type === 'main' && <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground">main</span>}
+          {v.type === 'main' && <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground">Master</span>}
         </button>
       ))}
       {mode === 'track' && versions !== null && tracks.length === 0 && (

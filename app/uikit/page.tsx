@@ -636,12 +636,12 @@ function UikitContent() {
                 </Card>
                 <div className="space-y-3">
                   <Alert>
-                    <AlertTitle>Auto-merge ready</AlertTitle>
-                    <AlertDescription>3 branches can be merged without conflict.</AlertDescription>
+                    <AlertTitle>Ready to apply</AlertTitle>
+                    <AlertDescription>3 versions can be applied without overlapping changes.</AlertDescription>
                   </Alert>
                   <Alert variant="destructive">
-                    <AlertTitle>Merge conflict</AlertTitle>
-                    <AlertDescription>Lead Vocal differs between main and feature/dirty-synth.</AlertDescription>
+                    <AlertTitle>Overlapping changes</AlertTitle>
+                    <AlertDescription>Lead Vocal differs between Master and feature/dirty-synth.</AlertDescription>
                   </Alert>
                 </div>
               </div>
@@ -703,7 +703,7 @@ function UikitContent() {
                 <Tile className="space-y-5">
                   <div className="flex items-center gap-3">
                     <Checkbox id="cb" defaultChecked />
-                    <Label htmlFor="cb">Auto-merge non-conflicting branches</Label>
+                    <Label htmlFor="cb">Auto-apply non-overlapping versions</Label>
                   </div>
                   <RadioGroup defaultValue="audio" className="space-y-1">
                     <div className="flex items-center gap-2"><RadioGroupItem value="audio" id="r1" /><Label htmlFor="r1">Audio (WAV)</Label></div>
@@ -889,7 +889,7 @@ function UikitContent() {
                     <li>– Direct, never decorative</li>
                     <li>– Built by musicians, for musicians</li>
                     <li>– Mechanical-confident, like good studio gear</li>
-                    <li>– Specific: bars, takes, branches — not "items"</li>
+                    <li>– Specific: bars, takes, versions — not "items"</li>
                   </ul>
                 </Tile>
                 <Tile>

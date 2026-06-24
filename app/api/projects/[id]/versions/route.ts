@@ -19,13 +19,18 @@ export async function POST(
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project } = access
 
-    const { name, parent_id } = await req.json()
+    const { name, parent_id, tag } = await req.json()
 
     if (!name || !parent_id) {
       return NextResponse.json(
         { error: 'name and parent_id are required' },
         { status: 400 }
       )
+    }
+
+    // Validate tag length if provided
+    if (tag != null && (typeof tag !== 'string' || tag.length > 20)) {
+      return NextResponse.json({ error: 'tag must be a string of max 20 characters' }, { status: 400 })
     }
 
     // Verify parent belongs to this project
@@ -41,7 +46,7 @@ export async function POST(
     // Create branch version
     const { data: version, error: verErr } = await supabase
       .from('versions')
-      .insert({ project_id: projectId, parent_id, name, type: 'branch' })
+      .insert({ project_id: projectId, parent_id, name, type: 'branch', tag: tag ?? null })
       .select()
       .single()
     if (verErr) throw verErr

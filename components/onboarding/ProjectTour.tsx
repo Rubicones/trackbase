@@ -51,18 +51,18 @@ const ALL_STEPS: TourStep[] = [
   },
   {
     target: 'versions-sidebar',
-    title: 'Versions are like save points',
-    body: "'main' is your primary version. Want to try re-recording a part without affecting main? Create a new branch — it starts as an exact copy, and you can always merge your changes back later.",
+    title: 'Versions are your save points',
+    body: "'Master' is your main version. Want to try re-recording a part without affecting Master? Create a new version — it starts as an exact copy, and you can apply your changes back at any time.",
   },
   {
     target: 'new-branch-button',
-    title: 'Branch off to experiment',
-    body: 'Click here to create a new version. Replace a track, tweak the structure, add a comment — anything you do in a branch stays separate from main until you decide to merge it.',
+    title: 'Create a version to experiment',
+    body: 'Click here to create a new version. Change a track, update the structure, leave a comment — anything you do in a version stays separate from Master until you decide to apply it.',
   },
   {
     target: 'save-version-button',
-    title: 'Bring changes back together',
-    body: "When you're happy with a branch, merge it into main. If both versions changed the same thing, you'll get a clear side-by-side comparison to choose from — no surprises.",
+    title: 'Bring changes together',
+    body: "When you're happy with a version, apply it to Master. If both versions changed the same thing, you'll see a clear side-by-side comparison to choose from.",
   },
   {
     target: 'edit-structure-button',
@@ -82,7 +82,7 @@ const ALL_STEPS: TourStep[] = [
   {
     target: 'chat-launcher',
     title: 'Band chat',
-    body: 'Open chat from the edge tab to message the band, @mention teammates, and link branches or time ranges on a track — everyone stays in sync without leaving the project.',
+    body: 'Open chat from the edge tab to message the band, @mention teammates, and link versions or time ranges on a track — everyone stays in sync without leaving the project.',
   },
   {
     target: 'share-button',

@@ -65,6 +65,50 @@ function IconCheck({ size = 11 }: { size?: number }) {
   )
 }
 
+function IconChevronDown({ size = 12, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <polyline
+        points="6 9 12 15 18 9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function ResourcesCollapseToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? 'Expand resources' : 'Collapse resources'}
+      className="inline-flex size-6 shrink-0 items-center justify-center border border-border bg-transparent text-muted-foreground/70 transition-colors hover:border-ember hover:text-ember cursor-pointer"
+    >
+      <IconChevronDown
+        size={12}
+        className={`transition-transform duration-200 ease-out ${collapsed ? '' : 'rotate-180'}`}
+      />
+    </button>
+  )
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -88,6 +132,9 @@ interface Props {
   versions?: Version[]
   onNavigateVersion?: (versionId: string) => void
   onNavigateTrack?: (trackId: string, versionId: string) => void
+  /** Sidebar collapse toggle — if provided, shows a collapse arrow next to + Add */
+  collapsed?: boolean
+  onToggleCollapse?: () => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -117,6 +164,8 @@ export function ResourcesCard({
   versions: versionsProp = [],
   onNavigateVersion,
   onNavigateTrack,
+  collapsed = false,
+  onToggleCollapse,
 }: Props) {
   const isDrawer = variant === 'drawer'
   const isSidebar = variant === 'sidebar'
@@ -291,32 +340,37 @@ export function ResourcesCard({
       {isSidebar && (
         <div className="flex items-center justify-between gap-2">
           <SectionLabel>RESOURCES</SectionLabel>
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen(v => !v)}
-              className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition bg-transparent cursor-pointer"
-            >
-              <IconPlus size={10} />
-              Add
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-50 min-w-[130px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
-                {[
-                  { key: 'file', Icon: IconUpload, label: storageFull ? 'Storage full' : 'Add files', disabled: storageFull },
-                  { key: 'link', Icon: IconLink, label: 'Add link', disabled: false },
-                ].map(({ key, Icon, label, disabled }) => (
-                  <TbMenuButton
-                    key={key}
-                    className="gap-2 text-xs"
-                    disabled={disabled}
-                    onClick={() => openAddMenu(key as 'file' | 'link')}
-                  >
-                    <Icon size={12} />
-                    {label}
-                  </TbMenuButton>
-                ))}
-              </div>
+          <div className="flex items-center gap-1">
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen(v => !v)}
+                className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition bg-transparent cursor-pointer"
+              >
+                <IconPlus size={10} />
+                Add
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 min-w-[130px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+                  {[
+                    { key: 'file', Icon: IconUpload, label: storageFull ? 'Storage full' : 'Add files', disabled: storageFull },
+                    { key: 'link', Icon: IconLink, label: 'Add link', disabled: false },
+                  ].map(({ key, Icon, label, disabled }) => (
+                    <TbMenuButton
+                      key={key}
+                      className="gap-2 text-xs"
+                      disabled={disabled}
+                      onClick={() => openAddMenu(key as 'file' | 'link')}
+                    >
+                      <Icon size={12} />
+                      {label}
+                    </TbMenuButton>
+                  ))}
+                </div>
+              )}
+            </div>
+            {onToggleCollapse && (
+              <ResourcesCollapseToggle collapsed={collapsed} onToggle={onToggleCollapse} />
             )}
           </div>
         </div>
@@ -358,6 +412,9 @@ export function ResourcesCard({
       </div>
       )}
 
+      <div className="tb-accordion-panel" data-state={collapsed ? 'closed' : 'open'}>
+        <div className="tb-accordion-panel-inner">
+          <div className="tb-accordion-panel-body">
       {loading ? (
         <p style={{ fontSize: 12, color: 'var(--text-dim)', padding: '8px 0' }}>Loading…</p>
       ) : error ? (
@@ -576,6 +633,9 @@ export function ResourcesCard({
           />
         </>
       )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 

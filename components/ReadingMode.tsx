@@ -212,7 +212,7 @@ function VersionDrawer({
               <span className="flex-1 truncate">{v.name}</span>
               {v.type === 'main' && (
                 <span className="text-[9px] uppercase tracking-widest text-ember border border-ember/40 px-1.5 shrink-0">
-                  main
+                  Master
                 </span>
               )}
             </button>

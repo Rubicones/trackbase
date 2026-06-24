@@ -89,8 +89,8 @@ export function activityVerb(action: string): string {
   if (isDeleteAction(action)) return 'deleted'
 
   switch (action) {
-    case 'merge':     return 'merged'
-    case 'branch':    return 'opened branch'
+    case 'merge':     return 'applied'
+    case 'branch':    return 'created version'
     case 'comment':   return 'commented on'
     case 'upload':    return 'uploaded'
     case 'structure': return 'submitted'
@@ -159,9 +159,9 @@ export function formatActivityLine(
 
   switch (action) {
     case 'merge':
-      return subject.replace(' → ', ' merged into ') + proj
+      return subject.replace(' → ', ' applied to ') + proj
     case 'branch':
-      return `branch '${subject}' opened` + proj
+      return `version '${subject}' created` + proj
     case 'comment':
       return detail ? `comment in '${subject}' at ${detail}` : `comment in '${subject}'`
     case 'upload':

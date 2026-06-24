@@ -33,6 +33,7 @@ import { BrandSpinner } from '@/components/BrandSpinner'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
 import { ChatDock } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
+import { useResourcesSidebarOpen } from '@/lib/useResourcesSidebarOpen'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import PianoRollEditor from '@/components/PianoRollEditor'
 import { gmProgramLabel, sixteenthDuration, sixteenthsPerBar, gmInstrumentName } from '@/lib/midi'
@@ -3300,6 +3301,43 @@ function MasterPlayerBar({
   )
 }
 
+// ─── Version tag helpers ──────────────────────────────────────────────────────
+
+interface TagStyle { label: string; bg: string; darkBg: string }
+
+const PREDEFINED_TAGS: Record<string, TagStyle> = {
+  // violet — experimentation, unknown territory (reuses --dot-upload)
+  experiment: { label: 'EXP',  bg: '#7c3aed', darkBg: '#a78bfa' },
+  // red — corrective action, something to fix (reuses --danger)
+  fix:         { label: 'FIX',  bg: '#dc2626', darkBg: '#f87171' },
+  // cyan — structure, architecture (reuses --dot-structure)
+  arrangement: { label: 'ARR',  bg: '#0891b2', darkBg: '#22d3ee' },
+  // indigo — core production work, the app's own accent
+  mix:         { label: 'MIX',  bg: '#6366F1', darkBg: '#818cf8' },
+  // pink — additive, creative additions (reuses --dot-resource)
+  feature:     { label: 'FEAT', bg: '#db2777', darkBg: '#f472b6' },
+}
+
+// Amber for custom tags — flexible, user-defined (reuses --dot-branch)
+const CUSTOM_TAG_COLORS = { bg: '#D97706', darkBg: '#F59E0B' }
+
+/** Returns label + background color for a tag, or null if no tag. */
+function versionTagStyle(
+  tag: string | null | undefined,
+  dark: boolean,
+): { label: string; bg: string } | null {
+  if (!tag) return null
+  const preset = PREDEFINED_TAGS[tag]
+  if (preset) return { label: preset.label, bg: dark ? preset.darkBg : preset.bg }
+  return { label: tag, bg: dark ? CUSTOM_TAG_COLORS.darkBg : CUSTOM_TAG_COLORS.bg }
+}
+
+/** Backward-compat label-only helper (used in tag chip selector display). */
+function versionTagLabel(tag: string | null | undefined): string | null {
+  if (!tag) return null
+  return PREDEFINED_TAGS[tag]?.label ?? tag
+}
+
 // ─── Format bytes helper ──────────────────────────────────────────────────────
 
 function formatBytes(b: number): string {
@@ -3310,7 +3348,7 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   storageUsed: number
@@ -3321,6 +3359,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
   projectName: string
   isOpen?: boolean
   compact?: boolean
+  isDark?: boolean
   resourceFilterTrackId?: string | null
   resourceFilterTrackName?: string | null
   onClearResourceFilter?: () => void
@@ -3336,20 +3375,9 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
   const active = versions.find(v => v.id === activeId)
   const canMerge = active?.type === 'branch' && !active.merged_at
 
-  // Build a name lookup for merged_into_id display
-  const versionNameById = new Map(versions.map(v => [v.id, v.name]))
-
-  // Compute depth per version for indentation (max 2)
-  function getDepth(v: Version): number {
-    if (!v.parent_id || v.type === 'main') return 0
-    const parent = versions.find(p => p.id === v.parent_id)
-    if (!parent || parent.type === 'main') return 1
-    return Math.min(2, getDepth(parent) + 1)
-  }
-
   const staticActions: { label: string; icon: React.ReactNode; action: () => void }[] = [
     {
-      label: '+ New branch',
+      label: '+ New version',
       icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="9" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" /><circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" /><path d="M3 4.5V7.5M3 4.5C3 7 6 7 6 9H7.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
       action: onNewBranch,
     },
@@ -3358,79 +3386,87 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
   const isChecking = false
   const storagePct = Math.min(100, (storageUsed / storageLimit) * 100)
 
+  const { open: resourcesOpen, toggle: toggleResourcesOpen } = useResourcesSidebarOpen()
+
   return (
     <aside
       data-tour="versions-sidebar"
-      className={`project-mixer-sidebar w-[200px] shrink-0 flex flex-col overflow-hidden border-r border-border ${
+      className={`project-mixer-sidebar w-[200px] shrink-0 flex flex-col h-full overflow-hidden border-r border-border ${
         compact ? 'bg-surface' : 'bg-surface/30'
       }${isOpen ? ' sidebar-open' : ''}`}
     >
-      <div className="flex flex-col min-h-0 flex-1 basis-0">
-        <div className={`flex-1 overflow-y-auto scrollbar-none ${compact ? 'p-3' : 'px-4 pt-4 pb-2'}`}>
+      {/* ── Version history: flex half, scrolls internally, grows when Resources collapses ── */}
+      <div className="flex flex-col border-b border-border min-h-0" style={{ flex: '1 1 0' }}>
+        {/* Fixed header */}
+        <div className={compact ? 'px-3 pt-3 pb-1 shrink-0' : 'px-4 pt-4 pb-1 shrink-0'}>
           <SectionLabel>VERSION HISTORY</SectionLabel>
           <button
             type="button"
             onClick={() => setHideMerged(v => !v)}
-            className={`w-full text-left mt-2 mb-1 text-[9px] uppercase tracking-widest transition ${
+            className={`w-full text-left mt-1.5 text-[9px] uppercase tracking-widest transition ${
               hideMerged ? 'text-ember' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            {hideMerged ? 'Show merged' : 'Hide non-active'}
+            {hideMerged ? 'Show applied' : 'Hide non-active'}
           </button>
-          <div className={compact ? 'mt-2 space-y-1' : 'mt-4 space-y-3'}>
+        </div>
+
+        {/* Scrollable version list */}
+        <div className="overflow-y-auto scrollbar-none min-h-0 flex-1">
+          <div className={compact ? 'px-1 pb-1 space-y-px' : 'px-2 pb-2 space-y-px'}>
             {listedVersions.map(v => {
               const isActive = v!.id === activeId
               const comments = commentCounts[v!.id] ?? 0
-              const depth = getDepth(v!)
-              const indentPx = depth * 12
-              const mergedIntoName = v!.merged_at
-                ? (v!.merged_into_id
-                  ? (versionNameById.get(v!.merged_into_id) ?? 'main')
-                  : 'main')
-                : null
+              const tagStyle = versionTagStyle(v!.tag, isDark)
               return (
                 <button
                   key={v!.id}
                   type="button"
                   onClick={() => onSelect(v!.id)}
-                  className={`relative w-full text-left pl-4 border-l-2 transition-colors ${
-                    isActive ? 'border-ember' : 'border-border hover:border-muted-foreground'
+                  className={`group w-full text-left flex items-center gap-2 px-1.5 py-0.5 transition-colors ${
+                    isActive ? 'bg-ember/10' : 'hover:bg-surface-2'
                   }`}
-                  style={{ marginLeft: indentPx }}
                 >
-                  <div
-                    className={`absolute -left-[5px] size-2 ${
-                      compact ? 'top-1/2 -translate-y-1/2' : 'top-1'
-                    } ${isActive ? 'bg-ember' : v!.merged_at ? 'bg-online' : 'bg-muted-foreground'}`}
+                  {/* Square indicator */}
+                  <span
+                    className="shrink-0 inline-block"
+                    style={{
+                      width: 8, height: 8, borderRadius: 1,
+                      background: isActive
+                        ? 'var(--ember)'
+                        : v!.merged_at
+                          ? 'var(--color-online)'
+                          : 'var(--border)',
+                    }}
                   />
-                  {compact ? (
-                    <div className="text-[10px] leading-tight py-1">
-                      <div className="font-bold text-foreground truncate">{v!.name}</div>
-                      <div className="text-muted-foreground font-normal truncate">
-                        {fmtDate(v!.created_at)}
-                        {comments > 0 && ` · ${comments} comment${comments !== 1 ? 's' : ''}`}
-                      </div>
-                      {mergedIntoName && (
-                        <div className="truncate flex items-center gap-1 text-[9px] uppercase tracking-widest">
-                          <span className="text-ember font-bold shrink-0">M</span>
-                          <span className="text-muted-foreground truncate">{mergedIntoName}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-[11px] font-bold truncate text-foreground">{v!.name}</div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5">
-                        {fmtDate(v!.created_at)}
-                        {comments > 0 && ` · ${comments} COMMENTS`}
-                      </div>
-                      {mergedIntoName && (
-                        <div className="flex items-center gap-1 mt-0.5 text-[9px] uppercase tracking-widest">
-                          <span className="text-ember font-bold shrink-0">M</span>
-                          <span className="text-muted-foreground">{mergedIntoName}</span>
-                        </div>
-                      )}
-                    </>
+                  {/* Version name + sub-info */}
+                  <span className="flex-1 min-w-0">
+                    {compact ? (
+                      <span className="block text-[10px] font-bold text-foreground truncate leading-tight">{v!.name}</span>
+                    ) : (
+                      <>
+                        <span className="block text-[11px] font-bold text-foreground truncate">{v!.name}</span>
+                        <span className="block text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5 truncate">
+                          {fmtDate(v!.created_at)}{comments > 0 ? ` · ${comments} CMT` : ''}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                  {/* Tag pill — desktop only, not on Master */}
+                  {!compact && tagStyle && v!.type !== 'main' && (
+                    <span
+                      className="shrink-0 hidden sm:block font-bold tracking-widest whitespace-nowrap overflow-hidden text-ellipsis"
+                      style={{
+                        fontSize: 9,
+                        padding: '2px 5px',
+                        background: tagStyle.bg,
+                        color: '#fff',
+                        maxWidth: 80,
+                        borderRadius: 0,
+                      }}
+                    >
+                      {tagStyle.label}
+                    </span>
                   )}
                 </button>
               )
@@ -3438,38 +3474,40 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
           </div>
         </div>
 
-        <div className={`shrink-0 border-t border-border ${compact ? 'p-3' : 'px-4 py-3'}`}>
-          <SectionLabel>ACTIONS</SectionLabel>
-          <div className="mt-2 space-y-1">
-            {canMerge && (
-              <button
-                type="button"
-                onClick={() => !isChecking && onMerge(activeId)}
-                disabled={isChecking}
-                className="w-full text-left border border-ember/50 text-ember bg-ember-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-ember/20 transition disabled:opacity-50"
-              >
-                {isChecking ? 'Checking…' : 'Merge branch →'}
-              </button>
-            )}
-            {staticActions.map(({ label, icon, action }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={action}
-                data-tour="new-branch-button"
-                className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition flex items-center gap-2"
-              >
-                <span>{icon}</span>
-                {label}
-              </button>
-            ))}
-          </div>
+        {/* Fixed footer: apply + new version — always visible */}
+        <div className={`shrink-0 border-t border-border ${compact ? 'p-2' : 'px-3 py-2'} space-y-1`}>
+          {canMerge && (
+            <button
+              type="button"
+              onClick={() => !isChecking && onMerge(activeId)}
+              disabled={isChecking}
+              className="w-full text-left border border-ember/50 text-ember bg-ember-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-ember/20 transition disabled:opacity-50"
+            >
+              {isChecking ? 'Checking…' : 'Apply version →'}
+            </button>
+          )}
+          {staticActions.map(({ label, icon, action }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={action}
+              data-tour="new-branch-button"
+              className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition flex items-center gap-2"
+            >
+              <span>{icon}</span>
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* ── Resources: collapsible, fills remaining space ── */}
       {!compact && (
-        <div className="flex flex-col min-h-0 flex-1 basis-0 border-t border-border">
-          <div className="flex-1 overflow-y-auto scrollbar-none px-2 py-2 min-h-0">
+        <div
+          className="flex flex-col min-h-0 overflow-hidden border-b border-border"
+          style={{ flex: resourcesOpen ? '1 1 0' : '0 0 auto' }}
+        >
+          <div className={`px-2 pt-2${resourcesOpen ? ' pb-2 flex-1 overflow-y-auto scrollbar-none min-h-0' : ' pb-0 overflow-hidden'}`}>
             <ResourcesCard
               projectId={projectId}
               projectName={projectName}
@@ -3483,6 +3521,8 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
               versions={versions}
               onNavigateVersion={onNavigateResourceVersion}
               onNavigateTrack={onNavigateResourceTrack}
+              collapsed={!resourcesOpen}
+              onToggleCollapse={toggleResourcesOpen}
             />
           </div>
         </div>
@@ -3522,23 +3562,108 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
 
 // ─── New branch modal ─────────────────────────────────────────────────────────
 
-function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string) => void; onCancel: () => void }) {
+const NEW_VERSION_TAG_OPTIONS = [
+  { value: 'experiment',  label: 'EXPERIMENT',  hint: 'Trying a new idea'        },
+  { value: 'fix',         label: 'FIX',         hint: 'Re-recording / correcting' },
+  { value: 'arrangement', label: 'ARRANGEMENT', hint: 'Changing song structure'  },
+  { value: 'mix',         label: 'MIX',         hint: 'Levels, balance, processing' },
+  { value: 'feature',     label: 'FEATURE',     hint: 'Adding something new'     },
+  { value: 'custom',      label: 'CUSTOM',      hint: 'Enter your own label'     },
+] as const
+
+function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: string | null) => void; onCancel: () => void }) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
+  const [step, setStep] = useState<'name' | 'tag'>('name')
   const [name, setName] = useState('')
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [customTag, setCustomTag] = useState('')
+
+  function advanceToTag() {
+    if (!name.trim()) return
+    setStep('tag')
+  }
+
+  function handleCreate(skipTag = false) {
+    if (!name.trim()) return
+    let tag: string | null = null
+    if (!skipTag && selectedTag) {
+      tag = selectedTag === 'custom' ? (customTag.trim().slice(0, 20) || null) : selectedTag
+    }
+    onConfirm(name.trim(), tag)
+  }
+
   return (
     <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-sm border border-border bg-popover p-6 shadow-2xl">
-        <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New branch</p>
-        <input
-          autoFocus value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onConfirm(name.trim()); if (e.key === 'Escape') onCancel() }}
-          placeholder="feature/new-guitar"
-          className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
-        />
-        <div className="flex gap-2 justify-end">
-          <TbBtn onClick={onCancel}>Cancel</TbBtn>
-          <TbBtn variant="primary" onClick={() => name.trim() && onConfirm(name.trim())}>Create</TbBtn>
-        </div>
+        {step === 'name' ? (
+          <>
+            <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New version</p>
+            <input
+              autoFocus value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && name.trim()) advanceToTag(); if (e.key === 'Escape') onCancel() }}
+              placeholder="feature/new-guitar"
+              className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <TbBtn onClick={onCancel}>Cancel</TbBtn>
+              <TbBtn variant="primary" onClick={advanceToTag} disabled={!name.trim()}>Next →</TbBtn>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="font-display text-lg uppercase tracking-tight text-foreground m-0">{name}</p>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 mb-4">What&apos;s this version for? <span className="normal-case tracking-normal">(optional)</span></p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {NEW_VERSION_TAG_OPTIONS.map(opt => {
+                const ts = opt.value === 'custom'
+                  ? { label: 'CUSTOM', bg: isDark ? CUSTOM_TAG_COLORS.darkBg : CUSTOM_TAG_COLORS.bg }
+                  : versionTagStyle(opt.value, isDark)
+                const isSelected = selectedTag === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setSelectedTag(s => s === opt.value ? null : opt.value)}
+                    className={`text-left px-3 py-2 border text-[10px] uppercase tracking-widest transition ${
+                      isSelected
+                        ? 'border-transparent'
+                        : 'border-border text-muted-foreground hover:border-foreground/40'
+                    }`}
+                    style={isSelected ? { background: ts?.bg, color: '#fff', borderColor: 'transparent' } : {}}
+                  >
+                    <span className="flex items-center gap-2">
+                      {!isSelected && (
+                        <span className="shrink-0 inline-block" style={{ width: 8, height: 8, borderRadius: 0, background: ts?.bg }} />
+                      )}
+                      <span className="font-bold">{opt.label}</span>
+                    </span>
+                    <span className={`block normal-case tracking-normal text-[9px] mt-0.5 ${isSelected ? 'opacity-80' : 'opacity-60'}`}>{opt.hint}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {selectedTag === 'custom' && (
+              <input
+                autoFocus
+                value={customTag}
+                onChange={e => setCustomTag(e.target.value.slice(0, 20))}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setSelectedTag(null) }}
+                placeholder="e.g. vocals-rewrite"
+                maxLength={20}
+                className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
+              />
+            )}
+            <div className="flex gap-2 justify-between">
+              <TbBtn onClick={() => setStep('name')}>← Back</TbBtn>
+              <div className="flex gap-2">
+                <TbBtn onClick={() => handleCreate(true)}>Skip</TbBtn>
+                <TbBtn variant="primary" onClick={() => handleCreate()}>Create</TbBtn>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -4796,12 +4921,12 @@ export default function ProjectPage() {
     if (track && file) void handleReplaceTrack(track, file)
   }
 
-  async function handleNewBranch(name: string) {
+  async function handleNewBranch(name: string, tag: string | null) {
     setShowBranchModal(false)
     try {
       const res = await fetch(`/api/projects/${projectId}/versions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, parent_id: activeVersionId }),
+        body: JSON.stringify({ name, parent_id: activeVersionId, tag }),
       })
       const { version } = await res.json()
       cache.invalidate(activeVersionId)
@@ -4823,8 +4948,8 @@ export default function ProjectPage() {
     await loadProject(false)
     const main = versions.find(v => v.type === 'main')
     setActiveVersionId(main?.id ?? branchId ?? '')
-    const intoLabel = targetName ?? 'main'
-    const msg = `✓ "${branchName}" merged into ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
+    const intoLabel = targetName ?? 'Master'
+    const msg = `✓ "${branchName}" applied to ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
   }
@@ -4877,7 +5002,7 @@ export default function ProjectPage() {
         disabled={!canSaveVersion}
         onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
         data-tour="save-version-button"
-        title={canSaveVersion ? 'Merge this branch' : 'Switch to a branch to merge changes'}
+        title={canSaveVersion ? 'Apply this version' : 'Switch to a version to apply changes'}
       >
         Save Version
       </TbBtn>
@@ -5234,6 +5359,7 @@ export default function ProjectPage() {
           projectName={project.name}
           isOpen={sidebarOpen}
           compact={isMobileLandscape}
+          isDark={resolvedTheme === 'dark'}
           resourceFilterTrackId={resourceFilterTrackId}
           resourceFilterTrackName={resourceFilterTrackName}
           onClearResourceFilter={() => setResourceFilterTrackId(null)}
@@ -5280,113 +5406,114 @@ export default function ProjectPage() {
             </section>
           ) : (
           <section className="border-b border-border bg-surface/40 shrink-0">
-            <div className="px-4 sm:px-6 py-4 flex flex-wrap items-start gap-4 lg:gap-6">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-3">
-                  {projectNameEditing ? (
-                    <input
-                      ref={projectNameInputRef}
-                      value={projectNameValue}
-                      onChange={e => setProjectNameValue(e.target.value.slice(0, 80))}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') commitProjectRename()
-                        if (e.key === 'Escape') setProjectNameEditing(false)
-                      }}
-                      onBlur={commitProjectRename}
-                      className="font-display text-xl uppercase tracking-tight bg-background border border-ember px-2 py-1 outline-none max-w-full"
-                    />
-                  ) : (
-                    <div className="flex items-center gap-2 group min-w-0" onDoubleClick={startProjectRename}>
-                      <h1
-                        className={`font-display text-2xl sm:text-3xl uppercase tracking-tighter truncate m-0 transition-colors ${
-                          projectNameFlash ? 'text-ember' : 'text-foreground'
-                        }`}
-                      >
-                        {project.name}
-                      </h1>
-                      <button
-                        type="button"
-                        onClick={startProjectRename}
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
-                        title="Rename project"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                  {roadmap.configured && roadmap.stepIndex != null && (
-                    <RoadmapPreview
-                      steps={roadmap.steps}
-                      stepIndex={roadmap.stepIndex}
-                      stageSince={roadmap.stageSince}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setPlanOpen(o => !o)}
-                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
-                      planOpen
-                        ? 'bg-ember text-white border-ember'
-                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-                    }`}
-                  >
-                    {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditStructure(p => !p)}
-                    disabled={activeTracks.length === 0}
-                    data-tour="edit-structure-button"
-                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
-                      editStructure || sections.length > 0
-                        ? 'border-ember text-ember bg-ember-soft'
-                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
-                    }`}
-                  >
-                    {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
-                  </button>
-                </div>
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-                  {project.bpm != null && <span>{project.bpm} BPM</span>}
-                  {project.key && <span className="text-ember">{project.key}</span>}
-                  <span>{project.time_signature ?? '4/4'}</span>
-                  <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
-                  {totalProjectDurationMs > 0 && <span>{fmtTime(totalProjectDurationMs / 1000)}</span>}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap lg:ml-auto">
-                <SectionLabel>VERSION</SectionLabel>
-                {versions.map(v => {
-                  const isActive = v.id === activeVersionId
-                  return (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => selectVersion(v.id)}
-                      className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
-                        isActive
-                          ? 'bg-ember text-white border-ember'
-                          : v.merged_at
-                            ? 'border-border text-muted-foreground opacity-50'
-                            : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+            <div className="px-4 sm:px-6 py-3 flex flex-col gap-2">
+              <div className="flex items-center gap-3 flex-wrap min-w-0">
+                {projectNameEditing ? (
+                  <input
+                    ref={projectNameInputRef}
+                    value={projectNameValue}
+                    onChange={e => setProjectNameValue(e.target.value.slice(0, 80))}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitProjectRename()
+                      if (e.key === 'Escape') setProjectNameEditing(false)
+                    }}
+                    onBlur={commitProjectRename}
+                    className="font-display text-xl uppercase tracking-tight bg-background border border-ember px-2 py-1 outline-none max-w-full"
+                  />
+                ) : (
+                  <div className="flex items-center gap-2 group min-w-0" onDoubleClick={startProjectRename}>
+                    <h1
+                      className={`font-display text-2xl sm:text-3xl uppercase tracking-tighter truncate m-0 transition-colors ${
+                        projectNameFlash ? 'text-ember' : 'text-foreground'
                       }`}
                     >
-                      {v.type === 'main' && '● '}
-                      {v.merged_at && '✓ '}
-                      {v.type === 'branch' && !v.merged_at && '⌥ '}
-                      {v.name}
+                      {project.name}
+                    </h1>
+                    <button
+                      type="button"
+                      onClick={startProjectRename}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
+                      title="Rename project"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" stroke="currentColor" strokeWidth="0.9" strokeLinejoin="round" />
+                      </svg>
                     </button>
-                  )
-                })}
+                  </div>
+                )}
+                {roadmap.configured && roadmap.stepIndex != null && (
+                  <RoadmapPreview
+                    steps={roadmap.steps}
+                    stepIndex={roadmap.stepIndex}
+                    stageSince={roadmap.stageSince}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPlanOpen(o => !o)}
+                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
+                    planOpen
+                      ? 'bg-ember text-white border-ember'
+                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                  }`}
+                >
+                  {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditStructure(p => !p)}
+                  disabled={activeTracks.length === 0}
+                  data-tour="edit-structure-button"
+                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
+                    editStructure || sections.length > 0
+                      ? 'border-ember text-ember bg-ember-soft'
+                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                  }`}
+                >
+                  {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
+                </button>
+              </div>
+
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                {project.bpm != null && <span>{project.bpm} BPM</span>}
+                {project.key && <span className="text-ember">{project.key}</span>}
+                <span>{project.time_signature ?? '4/4'}</span>
+                <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
+                {totalProjectDurationMs > 0 && <span>{fmtTime(totalProjectDurationMs / 1000)}</span>}
+              </div>
+
+              <div className="flex min-w-0 items-stretch">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none flex-nowrap touch-pan-x overscroll-x-contain [&::-webkit-scrollbar]:hidden">
+                  {versions.map(v => {
+                    const isActive = v.id === activeVersionId
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => selectVersion(v.id)}
+                        className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition max-w-[160px] overflow-hidden text-ellipsis whitespace-nowrap ${
+                          isActive
+                            ? 'bg-ember text-white border-ember'
+                            : v.merged_at
+                              ? 'border-border text-muted-foreground opacity-50'
+                              : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+                        }`}
+                      >
+                        {v.type === 'main' && '● '}
+                        {v.merged_at && '✓ '}
+                        {v.type === 'branch' && !v.merged_at && '⌥ '}
+                        {v.name}
+                      </button>
+                    )
+                  })}
+                </div>
                 <button
                   type="button"
                   onClick={() => setShowBranchModal(true)}
-                  className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-ember hover:text-ember text-muted-foreground transition"
+                  data-tour="new-branch-button"
+                  className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-ember hover:text-ember text-muted-foreground transition"
                 >
-                  + Branch
+                  + New Version
                 </button>
               </div>
             </div>
