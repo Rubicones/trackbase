@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
+import { resolveTransportStatus, transportStatusClass } from '@/lib/transportStatus'
 import { formatTrackStartBar } from '@/lib/trackMerge'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { updateSectionChordDuration } from '@/lib/chords'
@@ -44,13 +45,6 @@ function sectionStartTime(startBar: number, barDurationMs: number): string {
 
 function sectionTimeRange(startBar: number, endBar: number, barDurationMs: number): string {
   return `${sectionStartTime(startBar, barDurationMs)}–${sectionStartTime(endBar, barDurationMs)}`
-}
-
-function transportBadge(state: RecordState | 'none'): string {
-  if (state === 'recording' || state === 'countdown') return '● REC'
-  if (state === 'armed') return 'ARMED'
-  if (state === 'permitting') return 'MIC…'
-  return 'READY'
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -649,6 +643,9 @@ export type MobileMixerPlayer = {
   currentTimeRef?: React.RefObject<number>
   duration: number
   playbackReady: boolean
+  playbackMix: 'preview' | 'full' | 'none'
+  tracksLoaded: number
+  tracksTotal: number
   play: () => void
   pause: () => void
   seek: (t: number) => void
@@ -689,7 +686,7 @@ export type MobileMixerPortraitProps = {
   onDeleteTrack: (id: string) => void
   onColorUpdate: (trackId: string, color: string) => void
   onRecordTransport: () => void
-  recordingTransportState: RecordState | 'none'
+  recordingTransportState: RecordState | 'none' | 'idle'
   scrollToRecordingId?: string | null
   onRecordingScrollDone?: () => void
   recordingSlot?: ReactNode
@@ -844,7 +841,20 @@ function MobileMixerPortraitInner({
   const isRecording = recordingTransportState === 'recording' || recordingTransportState === 'countdown'
   const isArmed = recordingTransportState === 'armed'
   const isPermitting = recordingTransportState === 'permitting'
-  const badge = transportBadge(recordingTransportState)
+  const transportStatus = resolveTransportStatus({
+    recordingState: recordingTransportState,
+    hasRecordingTrack: !!recordingSlot,
+    playing: player.playing,
+    isCounting: player.isCounting,
+    playbackReady: player.playbackReady,
+    playbackMix: player.playbackMix,
+    tracksLoaded: player.tracksLoaded,
+    tracksTotal: player.tracksTotal,
+    metronomeOn: player.metronomeOn,
+    sectionLoopOn: player.sectionLoopOn,
+    countdownOn: player.countdownOn,
+    activeSectionLabel: activeSection ? sectionLabel(activeSection) : undefined,
+  })
 
   useEffect(() => {
     if (activeSectionIdx < 0) return
@@ -1076,20 +1086,17 @@ function MobileMixerPortraitInner({
       {/* Bottom transport */}
       <div className="border-t border-border bg-surface/95 backdrop-blur shrink-0 pb-[env(safe-area-inset-bottom)]">
         <div className="px-4 pt-3 pb-1">
-          <div className="flex items-center justify-between text-[10px] font-mono tabular-nums mb-2">
-            <span className="text-foreground">{fmt(player.currentTime)}</span>
+          <div className="relative flex items-center justify-between text-[10px] font-mono tabular-nums mb-2 min-h-[1.125rem]">
+            <span className="text-foreground shrink-0">{fmt(player.currentTime)}</span>
             <span
-              className={`uppercase tracking-widest text-[8.5px] px-1.5 py-px border ${
-                isRecording
-                  ? 'border-destructive text-destructive font-bold animate-pulse'
-                  : isArmed
-                    ? 'border-destructive/60 text-destructive'
-                    : 'border-border text-muted-foreground'
-              }`}
+              className={`absolute left-1/2 -translate-x-1/2 ${transportStatusClass(transportStatus)}`}
             >
-              {badge}
+              {transportStatus.recordDot && (
+                <span className="inline-block size-1.5 rounded-full bg-destructive shrink-0" aria-hidden />
+              )}
+              {transportStatus.label}
             </span>
-            <span className="text-muted-foreground">{fmt(player.duration)}</span>
+            <span className="text-muted-foreground shrink-0">{fmt(player.duration)}</span>
           </div>
           <div
             className="relative py-3 -my-1 touch-none"

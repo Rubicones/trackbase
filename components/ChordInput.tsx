@@ -56,15 +56,20 @@ function InactiveInsertSlot({
   compact,
   disabled,
   onActivate,
+  style,
 }: {
   compact?: boolean
   disabled?: boolean
   onActivate: () => void
+  style?: React.CSSProperties
 }) {
   const rowH = compact ? 'h-7' : 'h-8'
 
   return (
-    <span className={`relative inline-block w-0 ${rowH} shrink-0 overflow-visible align-middle`}>
+    <span
+      className={`relative inline-block w-0 ${rowH} shrink-0 overflow-visible align-middle`}
+      style={style}
+    >
       <button
         type="button"
         tabIndex={-1}
@@ -92,6 +97,7 @@ export function ChordInput({
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const skipNextInputRef = useRef(false)
+  const committingRef = useRef(false)
   const touchInputRef = useRef(false)
   const chordsRef = useRef<ParsedChord[]>([])
   const cursorIndexRef = useRef(0)
@@ -144,10 +150,15 @@ export function ChordInput({
     ]
 
     if (touchInputRef.current) {
-      // Move caret first so the focused input stays mounted; chip follows on next tick.
-      setDraft('')
+      // Keep draft text until after emit so the input width stays stable (avoids keyboard dismiss).
+      committingRef.current = true
       setCursorIndex(insertAt + 1)
-      queueMicrotask(() => emit(next))
+      queueMicrotask(() => {
+        emit(next)
+        setDraft('')
+        committingRef.current = false
+        inputRef.current?.focus({ preventScroll: true })
+      })
       return
     }
 
@@ -162,10 +173,13 @@ export function ChordInput({
     const next = chordsRef.current.filter((_, i) => i !== index)
 
     if (touchInputRef.current) {
+      committingRef.current = true
       setCursorIndex(index)
       queueMicrotask(() => {
         emit(next)
         setDraft(pulled.name)
+        committingRef.current = false
+        inputRef.current?.focus({ preventScroll: true })
       })
       return
     }
@@ -240,14 +254,21 @@ export function ChordInput({
   const widthCh = Math.max(2, draft.length + 1, showPlaceholder ? placeholder.length : 0)
 
   const inputEl = (
-    <span key={CHORD_INPUT_KEY} className={`inline-flex ${rowH} items-center shrink-0 align-middle`}>
+    <span
+      key={CHORD_INPUT_KEY}
+      className={`inline-flex ${rowH} items-center shrink-0 align-middle`}
+      style={{ order: cursorIndex * 2 }}
+    >
       <input
         ref={inputRef}
         value={draft}
         disabled={disabled}
         onChange={handleInputChange}
         onKeyDown={handleKeyDown}
-        onBlur={() => { if (draftRef.current.trim()) commitDraft() }}
+        onBlur={() => {
+          if (committingRef.current) return
+          if (draftRef.current.trim()) commitDraft()
+        }}
         placeholder={showPlaceholder ? placeholder : undefined}
         size={widthCh}
         className={`${rowH} p-0 m-0 bg-transparent focus:outline-none font-mono leading-none ${
@@ -260,21 +281,20 @@ export function ChordInput({
 
   const slotNodes: ReactNode[] = []
   for (let slot = 0; slot <= chords.length; slot++) {
-    if (slot === cursorIndex) {
-      slotNodes.push(inputEl)
-    } else {
+    if (slot !== cursorIndex) {
       slotNodes.push(
         <InactiveInsertSlot
           key={`slot-${slot}`}
           compact={compact}
           disabled={disabled}
           onActivate={() => focusCursor(slot)}
+          style={{ order: slot * 2 }}
         />,
       )
     }
     if (slot < chords.length) {
       slotNodes.push(
-        <span key={`chip-${slot}`} className={`inline-flex ${chipGap}`}>
+        <span key={`chip-${slot}`} className={`inline-flex ${chipGap}`} style={{ order: slot * 2 + 1 }}>
           <ChordChip
             chord={chords[slot]}
             compact={compact}
@@ -284,6 +304,7 @@ export function ChordInput({
       )
     }
   }
+  slotNodes.push(inputEl)
 
   return (
     <div
