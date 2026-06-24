@@ -545,8 +545,8 @@ export function ChatDock({
         <>
           {/* Scrim — mobile opaque, desktop transparent (outside-click to close) */}
           <div
-            className="chat-dock-scrim fixed inset-0 z-[29] lg:z-[305] bg-background lg:bg-transparent"
-            style={keyboardInset > 0 ? { bottom: keyboardInset, top: 'var(--shell-header-h)' } : { top: 'var(--shell-header-h)', bottom: 'var(--shell-footer-h)' }}
+            className="chat-dock-scrim fixed inset-0 z-[250] bg-background lg:z-[305] lg:bg-transparent"
+            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
             onClick={onClose}
             aria-hidden
           />

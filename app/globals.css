@@ -1838,16 +1838,14 @@ html.dark[data-palette="green"] .theme-avatar {
   .chat-dock-scrim {
     left: 0;
     right: 0;
+    z-index: 250;
   }
 
   .chat-dock-aside {
     position: fixed;
-    left: 0;
-    right: 0;
-    top: var(--shell-header-h);
-    bottom: var(--shell-footer-h);
+    inset: 0;
     width: 100%;
-    z-index: 30;
+    z-index: 251;
     overflow: hidden;
     background: var(--background);
   }
@@ -1855,6 +1853,11 @@ html.dark[data-palette="green"] .theme-avatar {
 
 /* Chat dock — desktop column sits flush between shell header + footer */
 @media (width >= 1024px) {
+  .chat-dock-scrim {
+    top: var(--shell-header-h);
+    bottom: var(--shell-footer-h);
+  }
+
   @keyframes chat-dock-slide-in {
     from { transform: translateX(100%); }
     to { transform: translateX(0); }
