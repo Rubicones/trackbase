@@ -2,8 +2,9 @@
  * Security response headers (CSP, clickjacking, MIME sniffing, etc.).
  *
  * CSP is tuned for Trackbase: inline boot scripts in layout, Vercel Analytics,
- * Supabase Auth/Realtime, direct R2 presigned uploads, the push SW, and the
- * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM).
+ * Supabase Auth/Realtime, direct R2 presigned uploads, the push SW, the
+ * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM),
+ * and soundfont-player MIDI samples (gleitz.github.io).
  */
 
 function supabaseConnectOrigins(): string[] {
@@ -39,6 +40,8 @@ export function buildContentSecurityPolicy(): string {
     // Web Push (browser → push service)
     'https://fcm.googleapis.com',
     'https://updates.push.services.mozilla.com',
+    // soundfont-player (MIDI preview + piano roll)
+    'https://gleitz.github.io',
   ]
 
   return [

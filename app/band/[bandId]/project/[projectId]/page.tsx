@@ -5628,7 +5628,7 @@ export default function ProjectPage() {
                         key={v.id}
                         type="button"
                         onClick={() => selectVersion(v.id)}
-                        className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition max-w-[160px] overflow-hidden text-ellipsis whitespace-nowrap ${
+                        className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition whitespace-nowrap ${
                           isActive
                             ? 'bg-ember text-white border-ember'
                             : v.merged_at

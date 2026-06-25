@@ -40,6 +40,11 @@ const NOTE_HEIGHT = 30
 const MIN_PITCH = 21  // A0
 const MAX_PITCH = 108 // C8
 const PITCH_RANGE = MAX_PITCH - MIN_PITCH + 1  // 88
+const BASE_SIXTEENTH_W = 12
+const ZOOM_STEP = 0.25
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 4
+const BAR_RULER_H = 20
 
 const SNAP_DIVISIONS: Record<string, number> = {
   '1/4': 4,
@@ -125,6 +130,50 @@ function MidiIconBtn({
   )
 }
 
+function PianoKeyColumn({
+  isDark,
+  onPreviewPitch,
+}: {
+  isDark: boolean
+  onPreviewPitch: (pitch: number) => void
+}) {
+  const rowBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)'
+
+  return (
+    <div style={{ width: NOTE_HEIGHT, flexShrink: 0 }}>
+      {Array.from({ length: PITCH_RANGE }, (_, rowIndex) => {
+        const pitch = MAX_PITCH - rowIndex
+        const isBlack = BLACK_SEMITONES_SET.has(pitch % 12)
+        return (
+          <button
+            key={pitch}
+            type="button"
+            onClick={() => onPreviewPitch(pitch)}
+            aria-label={`Preview ${pitch}`}
+            style={{
+              display: 'block',
+              width: NOTE_HEIGHT,
+              height: NOTE_HEIGHT,
+              padding: 0,
+              margin: 0,
+              boxSizing: 'border-box',
+              border: 'none',
+              borderBottom: `0.5px solid ${rowBorder}`,
+              borderRight: `0.5px solid ${rowBorder}`,
+              background: isBlack ? '#000000' : '#ffffff',
+              outline: isBlack
+                ? 'none'
+                : `1px solid ${isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)'}`,
+              outlineOffset: -1,
+              cursor: 'pointer',
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Main PianoRollEditor ─────────────────────────────────────────────────────
 
 interface Props {
@@ -184,10 +233,10 @@ export default function PianoRollEditor({
   const [selectionCount, setSelectionCount] = useState(0)
   const [canvasW, setCanvasW] = useState(800)
   const [canvasH] = useState(PITCH_RANGE * NOTE_HEIGHT)
-  const [scrollLeft, setScrollLeft] = useState(0)
 
-  const sixteenthW = Math.max(8, Math.min(32, (canvasW / totalSixteenths) * zoom))
+  const sixteenthW = BASE_SIXTEENTH_W * zoom
   const totalCanvasW = totalSixteenths * sixteenthW
+  const gridCanvasW = Math.max(totalCanvasW, canvasW)
 
   // Live refs — drag path avoids React state per frame
   const notesRef = useRef<MidiNote[]>(notes)
@@ -195,8 +244,6 @@ export default function PianoRollEditor({
   const snapRef = useRef(snap)
   const sixteenthWRef = useRef(sixteenthW)
   const modeRef = useRef(mode)
-  const scrollLeftRef = useRef(0)
-  const barRulerInnerRef = useRef<HTMLDivElement>(null)
   const marqueeDivRef = useRef<HTMLDivElement>(null)
   const dragStartContainerRectRef = useRef<DOMRect | null>(null)
   const rafDrawRef = useRef(0)
@@ -247,6 +294,7 @@ export default function PianoRollEditor({
   const gridCanvasRef = useRef<HTMLCanvasElement>(null)
   const notesCanvasRef = useRef<HTMLCanvasElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const gridAreaRef = useRef<HTMLDivElement>(null)
 
   // Drag state
   const dragRef = useRef<{
@@ -309,6 +357,19 @@ export default function PianoRollEditor({
     loadInstrument(instrument).then(inst => { instrumentRef.current = inst }).catch(console.warn)
   }, [instrument])
 
+  const previewPitch = useCallback(async (pitch: number) => {
+    try {
+      const actx = getAudioContext()
+      if (actx.state === 'suspended') await actx.resume()
+      if (!instrumentRef.current) {
+        instrumentRef.current = await loadInstrument(instrument)
+      }
+      instrumentRef.current.play(pitch.toString(), actx.currentTime, { duration: 0.35, gain: 0.85 })
+    } catch (err) {
+      console.warn('[PianoRollEditor] preview pitch failed:', err)
+    }
+  }, [instrument])
+
   // ── Measure canvas width ───────────────────────────────────────────────────
   useLayoutEffect(() => {
     const el = scrollContainerRef.current
@@ -366,7 +427,7 @@ export default function PianoRollEditor({
     const canvas = gridCanvasRef.current
     if (!canvas) return
     const dpr = window.devicePixelRatio || 1
-    const w = Math.max(totalCanvasW, canvasW)
+    const w = gridCanvasW
     const h = canvasH
     canvas.width = w * dpr
     canvas.height = h * dpr
@@ -412,7 +473,7 @@ export default function PianoRollEditor({
       ctx.lineTo(x, h)
       ctx.stroke()
     }
-  }, [totalCanvasW, canvasW, canvasH, sixteenthW, totalSixteenths, timeSigN, timeSigD, isDark])
+  }, [totalCanvasW, canvasW, canvasH, sixteenthW, totalSixteenths, timeSigN, timeSigD, isDark, gridCanvasW])
 
   // Resolve --ember to rgb() for canvas — redraw after theme change
   useEffect(() => {
@@ -515,17 +576,13 @@ export default function PianoRollEditor({
     setSelectionCount(selectedIds.size)
   }, [notes, selectedIds, sixteenthW, totalCanvasW, canvasW, canvasH, isDark])
 
-  // ── Bar number header ──────────────────────────────────────────────────────
-  // Drawn as a fixed 20px strip above the scroll area, via CSS absolutely positioned div
-  // We derive bar labels from sixteenthW
-
   // ── Mouse coordinate helpers ───────────────────────────────────────────────
   function rawCanvasCoords(clientX: number, clientY: number) {
-    const container = scrollContainerRef.current
-    if (!container) return { sx: 0, sy: 0, rawSixth: 0, pitch: 60 }
-    const rect = container.getBoundingClientRect()
-    const sx = clientX - rect.left + container.scrollLeft
-    const sy = clientY - rect.top + container.scrollTop
+    const grid = gridAreaRef.current
+    if (!grid) return { sx: 0, sy: 0, rawSixth: 0, pitch: 60 }
+    const rect = grid.getBoundingClientRect()
+    const sx = clientX - rect.left
+    const sy = clientY - rect.top
     const rawSixth = sx / sixteenthWRef.current
     const pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, MAX_PITCH - Math.floor(sy / NOTE_HEIGHT)))
     return { sx, sy, rawSixth, pitch }
@@ -614,7 +671,7 @@ export default function PianoRollEditor({
         selectedIdsRef.current = new Set()
         isDraggingRef.current = true
         // Cache container rect at drag start so mousemove never calls getBoundingClientRect
-        dragStartContainerRectRef.current = scrollContainerRef.current?.getBoundingClientRect() ?? null
+        dragStartContainerRectRef.current = gridAreaRef.current?.getBoundingClientRect() ?? null
         dragRef.current = {
           type: 'select', startX: sx, startY: sy,
           selectRect: { x1: sx, y1: sy, x2: sx, y2: sy },
@@ -750,12 +807,11 @@ export default function PianoRollEditor({
     // Note hit-testing (which is O(n)) stays deferred to the RAF in flushDraw.
     const dr = dragRef.current
     if (dr?.type === 'select') {
-      const container = scrollContainerRef.current
       const cachedRect = dragStartContainerRectRef.current
       const div = marqueeDivRef.current
-      if (container && cachedRect && div) {
-        const sx = e.clientX - cachedRect.left + container.scrollLeft
-        const sy = e.clientY - cachedRect.top + container.scrollTop
+      if (cachedRect && div) {
+        const sx = e.clientX - cachedRect.left
+        const sy = e.clientY - cachedRect.top
         const x = Math.min(dr.startX, sx)
         const y = Math.min(dr.startY, sy)
         div.style.left = `${x}px`
@@ -838,10 +894,11 @@ export default function PianoRollEditor({
     const cursorX = (editorTimeSec / sixteenthSec) * sixteenthW
     const container = scrollContainerRef.current
     if (container) {
+      const cursorContentX = NOTE_HEIGHT + cursorX
       const visibleLeft = container.scrollLeft
       const visibleRight = visibleLeft + container.clientWidth
-      if (cursorX < visibleLeft || cursorX > visibleRight - 50) {
-        container.scrollLeft = cursorX
+      if (cursorContentX < visibleLeft + 50 || cursorContentX > visibleRight - 50) {
+        container.scrollLeft = Math.max(0, cursorContentX - container.clientWidth * 0.35)
       }
     }
   }, [playing, currentTimeSec, sixteenthW, trackBpm, midiStartBar, bpm, timeSigN, timeSigD])
@@ -1046,71 +1103,107 @@ export default function PianoRollEditor({
       </div>
 
       {/* ── Piano roll area ── */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {/* Bar ruler header (fixed, scrolls horizontally with canvas) */}
-        <div style={{ height: 20, background: 'var(--bg-card)', borderBottom: '0.5px solid var(--border)', display: 'flex', flexShrink: 0, overflow: 'hidden' }}>
-          <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-            <div
-              ref={barRulerInnerRef}
-              style={{ position: 'absolute', left: -scrollLeft, top: 0, height: '100%', minWidth: Math.max(totalCanvasW, canvasW) }}
-            >
-              {barLabels.map(({ x, label }) => (
-                <div key={label} style={{ position: 'absolute', left: x, top: 0, height: '100%', paddingLeft: 3, display: 'flex', alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Main scroll container — also owns all mouse events so coords use its stable rect */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div
           ref={scrollContainerRef}
-          style={{ flex: 1, overflow: 'scroll', display: 'flex', cursor: mode === 'draw' ? 'crosshair' : 'default' }}
-          onScroll={e => {
-            const el = e.target as HTMLDivElement
-            scrollLeftRef.current = el.scrollLeft
-            if (barRulerInnerRef.current) {
-              barRulerInnerRef.current.style.left = `${-el.scrollLeft}px`
-            }
-            if (!isDraggingRef.current) setScrollLeft(el.scrollLeft)
-          }}
-          onMouseDown={handleMouseDown}
+          style={{ flex: 1, overflow: 'scroll', minHeight: 0, minWidth: 0 }}
         >
-          {/* Canvas area */}
-          <div style={{ position: 'relative', flexShrink: 0, width: Math.max(totalCanvasW, canvasW), height: canvasH }}>
-            {/* Grid canvas (static layer) */}
-            <canvas
-              ref={gridCanvasRef}
-              style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
-            />
-            {/* Notes canvas (display layer — interaction handled by scroll container) */}
-            <canvas
-              ref={notesCanvasRef}
-              style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
-            />
-            {/* Marquee selection rectangle — DOM div updated directly in onWindowMouseMove */}
-            <div
-              ref={marqueeDivRef}
-              style={{
-                display: 'none',
-                position: 'absolute',
-                pointerEvents: 'none',
-                zIndex: 5,
-                background: 'rgba(232, 93, 58, 0.12)',
-                border: '2px solid var(--ember)',
-                boxSizing: 'border-box',
-              }}
-            />
-            {/* Playback cursor */}
-            {showCursor && (
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: cursorX, width: 1.5,
-                background: 'rgba(255,255,255,0.8)',
-                pointerEvents: 'none', zIndex: 10,
-              }} />
-            )}
+          <div style={{ display: 'flex', flexShrink: 0, width: NOTE_HEIGHT + gridCanvasW }}>
+            {/* Key column + corner */}
+            <div style={{ width: NOTE_HEIGHT, flexShrink: 0 }}>
+              <div
+                style={{
+                  height: BAR_RULER_H,
+                  borderBottom: '0.5px solid var(--border)',
+                  borderRight: '0.5px solid var(--border)',
+                  background: 'var(--bg-card)',
+                }}
+              />
+              <PianoKeyColumn isDark={isDark} onPreviewPitch={previewPitch} />
+            </div>
+
+            {/* Bar ruler + grid — scrolls horizontally with keys */}
+            <div style={{ width: gridCanvasW, flexShrink: 0 }}>
+              <div
+                style={{
+                  height: BAR_RULER_H,
+                  position: 'relative',
+                  borderBottom: '0.5px solid var(--border)',
+                  background: 'var(--bg-card)',
+                }}
+              >
+                {barLabels.map(({ x, label }) => (
+                  <div
+                    key={`bar-line-${label}-${x}`}
+                    style={{
+                      position: 'absolute',
+                      left: x,
+                      top: 0,
+                      bottom: 0,
+                      width: 1,
+                      background: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(128,128,128,0.55)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                ))}
+                {barLabels.map(({ x, label }) => (
+                  <div
+                    key={`bar-label-${label}-${x}`}
+                    style={{
+                      position: 'absolute',
+                      left: x,
+                      top: 0,
+                      height: '100%',
+                      paddingLeft: 3,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                ref={gridAreaRef}
+                style={{
+                  position: 'relative',
+                  width: gridCanvasW,
+                  height: canvasH,
+                  cursor: mode === 'draw' ? 'crosshair' : 'default',
+                }}
+                onMouseDown={handleMouseDown}
+              >
+                <canvas
+                  ref={gridCanvasRef}
+                  style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+                />
+                <canvas
+                  ref={notesCanvasRef}
+                  style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+                />
+                <div
+                  ref={marqueeDivRef}
+                  style={{
+                    display: 'none',
+                    position: 'absolute',
+                    pointerEvents: 'none',
+                    zIndex: 5,
+                    background: 'rgba(232, 93, 58, 0.12)',
+                    border: '2px solid var(--ember)',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                {showCursor && (
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0,
+                    left: cursorX, width: 1.5,
+                    background: 'rgba(255,255,255,0.8)',
+                    pointerEvents: 'none', zIndex: 10,
+                  }} />
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1129,7 +1222,7 @@ export default function PianoRollEditor({
         {/* Zoom controls */}
         <div className="flex items-center gap-2">
           <MidiIconBtn
-            onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
+            onClick={() => setZoom(z => Math.max(MIN_ZOOM, +(z - ZOOM_STEP).toFixed(2)))}
             aria-label="Zoom out"
             className="size-6 text-base"
           >
@@ -1139,7 +1232,7 @@ export default function PianoRollEditor({
             {Math.round(zoom * 100)}%
           </span>
           <MidiIconBtn
-            onClick={() => setZoom(z => Math.min(4, z + 0.25))}
+            onClick={() => setZoom(z => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))}
             aria-label="Zoom in"
             className="size-6 text-base"
           >
