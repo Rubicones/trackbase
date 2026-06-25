@@ -16,7 +16,7 @@ import {
   type ChannelKey,
 } from '@/lib/chat'
 import { useBandChat, type ChatMember } from '@/components/chat/useBandChat'
-import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
+import { pinToVisualViewport, useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 
 // ─── Inline icons (match the app's lightweight SVG convention) ─────────────────
@@ -231,7 +231,8 @@ export function ChatDock({
   const prevScrollHeightRef = useRef(0)
   const savedPageScrollRef = useRef(0)
   const [showNewIndicator, setShowNewIndicator] = useState(false)
-  const { keyboardInset } = useMobileKeyboardInset(open)
+  const { viewport, keyboardOpen } = useMobileKeyboardInset(open)
+  const keyboardPinStyle = pinToVisualViewport(viewport)
 
   const isBandChannel = channelKey === BAND_CHANNEL
   const activeProject = useMemo(
@@ -522,7 +523,7 @@ export function ChatDock({
           {/* Scrim — mobile opaque, desktop transparent (outside-click to close) */}
           <div
             className="chat-dock-scrim fixed inset-0 z-[250] bg-background lg:z-[305] lg:bg-transparent"
-            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+            style={keyboardOpen ? keyboardPinStyle : undefined}
             onClick={onClose}
             aria-hidden
           />
@@ -530,7 +531,7 @@ export function ChatDock({
           <aside
             ref={asideRef}
             className="chat-dock-aside flex flex-col bg-background border-border overscroll-none lg:fixed lg:border-l"
-            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+            style={keyboardOpen ? keyboardPinStyle : undefined}
             role="dialog"
             aria-label="Band chat"
           >
@@ -655,7 +656,7 @@ export function ChatDock({
           onSubmit={e => { e.preventDefault(); submit() }}
           className="border-t border-border bg-surface/40 shrink-0"
           style={{
-            paddingBottom: keyboardInset === 0 ? 'max(0.5rem, env(safe-area-inset-bottom))' : undefined,
+            paddingBottom: !keyboardOpen ? 'max(0.5rem, env(safe-area-inset-bottom))' : undefined,
           }}
         >
           {!isBandChannel && (

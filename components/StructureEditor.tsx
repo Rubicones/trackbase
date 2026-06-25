@@ -13,7 +13,7 @@ import {
   sectionTimeRangeSec,
   sliceSectionFromToneBuffer,
 } from '@/lib/mergedAudioBuffer'
-import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
+import { pinToVisualViewport, useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { TbButton } from '@/components/design/TbButton'
 
 /** Stored on section rows for merge/API; UI uses ember tokens, not this value. */
@@ -450,17 +450,8 @@ export function SectionEditPopover({
 
   const barCount = sectionBarCount(section, totalBars)
   const isSheet = layout === 'sheet'
-  const { keyboardInset, viewportHeight } = useMobileKeyboardInset(isSheet)
-
-  const sheetPanelStyle = isSheet
-    ? {
-        bottom: keyboardInset > 0 ? keyboardInset : 0,
-        maxHeight:
-          keyboardInset > 0 && viewportHeight
-            ? `${viewportHeight}px`
-            : undefined,
-      }
-    : undefined
+  const { viewport, keyboardOpen } = useMobileKeyboardInset(isSheet)
+  const keyboardPinStyle = pinToVisualViewport(viewport)
 
   useEffect(() => {
     if (!isSheet) return
@@ -485,7 +476,7 @@ export function SectionEditPopover({
           ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto overscroll-contain border-t border-border bg-popover shadow-2xl animate-slide-in'
           : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in'
       }
-      style={isSheet ? sheetPanelStyle : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
+      style={isSheet ? (keyboardOpen ? keyboardPinStyle : undefined) : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -612,7 +603,7 @@ export function SectionEditPopover({
       <>
         <div
           className="fixed inset-0 z-[219] bg-black/50"
-          style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+          style={keyboardOpen ? keyboardPinStyle : undefined}
           onClick={onClose}
         />
         {panel}
