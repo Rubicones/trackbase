@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
 import { resolveTransportStatus, transportStatusClass } from '@/lib/transportStatus'
-import { formatTrackStartBar } from '@/lib/trackMerge'
+import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { updateSectionChordDuration } from '@/lib/chords'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -137,17 +137,18 @@ const WAVEFORM_BAR_COUNT = 96
 const WAVEFORM_PLACEHOLDER_BARS = Array.from({ length: WAVEFORM_BAR_COUNT }, () => 0.12)
 
 const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
-  track, color, totalBars, barDurationMs, projectBpm,
+  track, color, totalBars, barDurationMs, projectBpm, startBarOverride,
 }: {
   track: Track
   color: string
   totalBars: number
   barDurationMs: number
   projectBpm?: number
+  startBarOverride?: number
 }) {
   const [bars, setBars] = useState<number[] | null>(() => waveformBarsCache.get(track.id) ?? null)
   const isMidi = track.file_type === 'midi'
-  const startBar = track.start_bar ?? 0
+  const startBar = startBarOverride ?? (track.start_bar ?? 0)
   const startPct = totalBars > 0 ? (startBar / totalBars) * 100 : 0
   const timelineMs = Math.max(totalBars * barDurationMs, 1)
 
@@ -263,11 +264,13 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
   )
 })
 
+const LONG_PRESS_MS = 500
+
 function TrackWaveformLane({
   track, color, waveformDimmed, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
-  onReplyCreate, currentUserId, isOwner, currentUser,
+  onReplyCreate, currentUserId, isOwner, currentUser, onStartBarUpdate,
 }: {
   track: Track
   color: string
@@ -287,21 +290,135 @@ function TrackWaveformLane({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  onStartBarUpdate?: (trackId: string, startBar: number) => Promise<void>
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   useRegisterTimelineScroll(scrollRef)
   const timelineWidthPct = Math.max(TIMELINE_WIDTH_PCT, totalBars * TIMELINE_PCT_PER_BAR)
 
+  // ── Offset drag state ──────────────────────────────────────────────────────
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragPreviewBar, setDragPreviewBar] = useState<number | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dragActiveRef = useRef(false)
+  const dragStartXRef = useRef(0)
+  const origStartBarRef = useRef(0)
+  const dragPreviewBarRef = useRef<number | null>(null)
+  const pendingDragXRef = useRef<number | null>(null)
+  const dragRafRef = useRef<number | null>(null)
+  const barLabelRef = useRef<HTMLDivElement>(null)
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  function barsPerPixel(): number {
+    const timelineEl = timelineRef.current
+    if (!timelineEl || totalBars <= 0) return 0
+    return totalBars / timelineEl.offsetWidth
+  }
+
+  function activateDrag(touchX: number) {
+    if (commentMode || !onStartBarUpdate) return
+    dragActiveRef.current = true
+    dragStartXRef.current = touchX
+    origStartBarRef.current = track.start_bar ?? 0
+    dragPreviewBarRef.current = track.start_bar ?? 0
+    setIsDragging(true)
+    setDragPreviewBar(track.start_bar ?? 0)
+  }
+
+  function applyDragPosition(clientX: number) {
+    if (!dragActiveRef.current) return
+    const deltaX = clientX - dragStartXRef.current
+    const bpp = barsPerPixel()
+    if (bpp <= 0) return
+    const trackDurBars = barDurationMs > 0
+      ? Math.max(1, Math.round((track.duration_ms ?? barDurationMs) / barDurationMs))
+      : 1
+    const newBar = clampTrackStartBar(origStartBarRef.current + deltaX * bpp, trackDurBars)
+    dragPreviewBarRef.current = newBar
+    // DOM-direct label update — no React re-render per frame for the label
+    if (barLabelRef.current) barLabelRef.current.textContent = formatTrackStartBar(newBar)
+    setDragPreviewBar(newBar)
+  }
+
+  // Global touch listeners while dragging
+  useEffect(() => {
+    if (!isDragging) return
+
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault()
+      pendingDragXRef.current = e.touches[0].clientX
+      if (dragRafRef.current !== null) return
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null
+        if (pendingDragXRef.current !== null) applyDragPosition(pendingDragXRef.current)
+      })
+    }
+
+    async function onTouchEnd() {
+      cancelLongPress()
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
+      const bar = dragPreviewBarRef.current ?? (track.start_bar ?? 0)
+      dragActiveRef.current = false
+      setIsDragging(false)
+      dragPreviewBarRef.current = null
+      setDragPreviewBar(null)
+      if (bar !== (track.start_bar ?? 0) && onStartBarUpdate) {
+        try { await onStartBarUpdate(track.id, bar) } catch { /* ignore */ }
+      }
+    }
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    window.addEventListener('touchend', onTouchEnd)
+    window.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      window.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('touchcancel', onTouchEnd)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDragging, track.id, track.start_bar, totalBars, barDurationMs, onStartBarUpdate, commentMode])
+
+  const effectiveStartBar = dragPreviewBar ?? (track.start_bar ?? 0)
+
   return (
-    <div ref={scrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1">
+    <div
+      ref={scrollRef}
+      className="overflow-x-auto scrollbar-none -mx-1 px-1"
+      style={isDragging ? { overflowX: 'hidden' } : undefined}
+    >
       <div
         ref={timelineRef}
-        className="relative h-14 bg-surface/40 border border-border"
+        className="relative h-14 bg-surface/40 border border-border select-none"
         style={{
           width: `${timelineWidthPct}%`,
           opacity: waveformDimmed ? 0.5 : 1,
-          transition: 'opacity 0.15s',
+          transition: isDragging ? 'none' : 'opacity 0.15s',
+          touchAction: isDragging ? 'none' : 'pan-x',
+        }}
+        onTouchStart={e => {
+          if (commentMode || !onStartBarUpdate) return
+          const touch = e.touches[0]
+          cancelLongPress()
+          longPressTimerRef.current = setTimeout(() => {
+            activateDrag(touch.clientX)
+          }, LONG_PRESS_MS)
+        }}
+        onTouchEnd={() => {
+          if (!isDragging) cancelLongPress()
+        }}
+        onTouchMove={() => {
+          // Cancel long-press if finger moved before threshold
+          if (!isDragging) cancelLongPress()
         }}
       >
         <TrackMiniWaveformBars
@@ -310,6 +427,7 @@ function TrackWaveformLane({
           totalBars={totalBars}
           barDurationMs={barDurationMs}
           projectBpm={projectBpm}
+          startBarOverride={isDragging ? effectiveStartBar : undefined}
         />
         <MobileWaveformComments
           trackId={track.id}
@@ -332,6 +450,17 @@ function TrackWaveformLane({
           className="absolute top-0 bottom-0 w-px bg-foreground/80 pointer-events-none z-10"
           style={{ left: 'var(--played-pct, 0%)' }}
         />
+        {/* Drag overlay — shown during offset drag */}
+        {isDragging && (
+          <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center bg-background/30 border border-ember">
+            <div
+              ref={barLabelRef}
+              className="bg-ember text-white text-[9px] font-mono font-bold px-1.5 py-0.5"
+            >
+              {formatTrackStartBar(effectiveStartBar)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -343,7 +472,7 @@ function TrackMiniWaveform({
   track, color, waveformDimmed, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
-  onReplyCreate, currentUserId, isOwner, currentUser,
+  onReplyCreate, currentUserId, isOwner, currentUser, onStartBarUpdate,
 }: {
   track: Track
   color: string
@@ -363,6 +492,7 @@ function TrackMiniWaveform({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  onStartBarUpdate?: (trackId: string, startBar: number) => Promise<void>
 }) {
   return (
     <TrackWaveformLane
@@ -384,6 +514,7 @@ function TrackMiniWaveform({
       currentUserId={currentUserId}
       isOwner={isOwner}
       currentUser={currentUser}
+      onStartBarUpdate={onStartBarUpdate}
     />
   )
 }
@@ -421,6 +552,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onCloseColorPicker,
   onReplace,
   onDelete,
+  onStartBarUpdate,
 }: {
   track: Track
   color: string
@@ -452,6 +584,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onCloseColorPicker: () => void
   onReplace: (track: Track) => void
   onDelete: (id: string) => void
+  onStartBarUpdate?: (trackId: string, startBar: number) => Promise<void>
 }) {
   const isMidi = track.file_type === 'midi'
   const badgeLetter = (track.name?.[0] ?? 'T').toUpperCase()
@@ -574,6 +707,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             currentUserId={currentUserId}
             isOwner={isOwner}
             currentUser={currentUser}
+            onStartBarUpdate={onStartBarUpdate}
           />
         </div>
       </div>
@@ -703,6 +837,7 @@ export type MobileMixerPortraitProps = {
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  onStartBarUpdate?: (trackId: string, startBar: number) => Promise<void>
 }
 
 export function MobileMixerPortrait(props: MobileMixerPortraitProps) {
@@ -756,6 +891,7 @@ function MobileMixerPortraitInner({
   currentUserId,
   isOwner,
   currentUser,
+  onStartBarUpdate,
 }: MobileMixerPortraitProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [colorPickerTrackId, setColorPickerTrackId] = useState<string | null>(null)
@@ -1054,6 +1190,7 @@ function MobileMixerPortraitInner({
               onCloseColorPicker={handleCloseColorPicker}
               onReplace={onReplaceTrack}
               onDelete={onDeleteTrack}
+              onStartBarUpdate={onStartBarUpdate}
             />
           )
         })}
