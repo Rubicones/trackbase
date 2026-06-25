@@ -137,11 +137,10 @@ const WAVEFORM_BAR_COUNT = 96
 const WAVEFORM_PLACEHOLDER_BARS = Array.from({ length: WAVEFORM_BAR_COUNT }, () => 0.12)
 
 const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
-  track, color, muted, totalBars, barDurationMs, projectBpm,
+  track, color, totalBars, barDurationMs, projectBpm,
 }: {
   track: Track
   color: string
-  muted: boolean
   totalBars: number
   barDurationMs: number
   projectBpm?: number
@@ -169,8 +168,8 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
   const barsPerTact = 4
   const tactCount = Math.max(1, Math.ceil(totalBars / barsPerTact))
   // Played (left of playhead) vs unplayed (dark) opacities — matches uikit reference.
-  const dimOpacity = muted ? 0.18 : 0.4
-  const playedOpacity = muted ? 0.32 : 0.95
+  const dimOpacity = 0.4
+  const playedOpacity = 0.95
   // While loading: flat placeholder bars. Once decoded: real heights that animate in
   // (same draw-in effect as the desktop mixer).
   const audioReady = bars !== null
@@ -196,10 +195,7 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
       )}
       {isMidi ? (
         track.midi_data ? (
-          <div
-            className="absolute inset-0"
-            style={{ opacity: muted ? 0.35 : 0.85 }}
-          >
+          <div className="absolute inset-0">
             <MiniPianoRoll
               midiData={track.midi_data}
               color={color}
@@ -228,7 +224,7 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
                 style={{
                   height: `${Math.max(10, h * 100)}%`,
                   background: color,
-                  opacity: audioReady ? dimOpacity : (muted ? 0.12 : 0.2),
+                  opacity: audioReady ? dimOpacity : 0.2,
                   animationDelay: audioReady ? `${i * 4}ms` : undefined,
                 }}
               />
@@ -268,14 +264,14 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
 })
 
 function TrackWaveformLane({
-  track, color, muted, totalBars, barDurationMs, projectBpm,
+  track, color, waveformDimmed, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
 }: {
   track: Track
   color: string
-  muted: boolean
+  waveformDimmed: boolean
   totalBars: number
   barDurationMs: number
   projectBpm?: number
@@ -302,12 +298,15 @@ function TrackWaveformLane({
       <div
         ref={timelineRef}
         className="relative h-14 bg-surface/40 border border-border"
-        style={{ width: `${timelineWidthPct}%` }}
+        style={{
+          width: `${timelineWidthPct}%`,
+          opacity: waveformDimmed ? 0.5 : 1,
+          transition: 'opacity 0.15s',
+        }}
       >
         <TrackMiniWaveformBars
           track={track}
           color={color}
-          muted={muted}
           totalBars={totalBars}
           barDurationMs={barDurationMs}
           projectBpm={projectBpm}
@@ -341,14 +340,14 @@ function TrackWaveformLane({
 // ─── Track mini waveform (legacy export name kept for row usage) ──────────────
 
 function TrackMiniWaveform({
-  track, color, muted, totalBars, barDurationMs, projectBpm,
+  track, color, waveformDimmed, totalBars, barDurationMs, projectBpm,
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
 }: {
   track: Track
   color: string
-  muted: boolean
+  waveformDimmed: boolean
   totalBars: number
   barDurationMs: number
   projectBpm?: number
@@ -369,7 +368,7 @@ function TrackMiniWaveform({
     <TrackWaveformLane
       track={track}
       color={color}
-      muted={muted}
+      waveformDimmed={waveformDimmed}
       totalBars={totalBars}
       barDurationMs={barDurationMs}
       projectBpm={projectBpm}
@@ -396,6 +395,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   color,
   muted,
   soloed,
+  waveformDimmed,
   totalBars,
   barDurationMs,
   projectBpm,
@@ -426,6 +426,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   color: string
   muted: boolean
   soloed: boolean
+  waveformDimmed: boolean
   totalBars: number
   barDurationMs: number
   projectBpm?: number
@@ -557,7 +558,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           <TrackMiniWaveform
             track={track}
             color={color}
-            muted={muted}
+            waveformDimmed={waveformDimmed}
             totalBars={totalBars}
             barDurationMs={barDurationMs}
             projectBpm={projectBpm}
@@ -1029,6 +1030,7 @@ function MobileMixerPortraitInner({
           const color = trackAccentColor(t.icon_color, i)
           const muted = mutedTracks.has(t.id) || midiRenderingTracks.has(t.id)
           const soloed = soloedTracks.has(t.id)
+          const waveformDimmed = muted || (soloedTracks.size > 0 && !soloed)
           return (
             <MobileMixerTrackRow
               key={t.id}
@@ -1036,6 +1038,7 @@ function MobileMixerPortraitInner({
               color={color}
               muted={muted}
               soloed={soloed}
+              waveformDimmed={waveformDimmed}
               totalBars={mobileTimelineBars}
               barDurationMs={barDurationMs}
               projectBpm={project.bpm ?? undefined}

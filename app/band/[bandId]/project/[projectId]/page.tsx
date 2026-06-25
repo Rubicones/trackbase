@@ -759,13 +759,13 @@ function trackClipLeftPx(
 // ─── Waveform ─────────────────────────────────────────────────────────────────
 
 function Waveform({
-  trackId, muted, color, durationMs,
+  trackId, color, durationMs,
   commentMode, comments, activeInput, audioReady,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
   currentUserId, isOwner, onReplyCreate, currentUser, onCommentInteractionChange,
   compact = false, barCount = 96,
 }: {
-  trackId: string; muted: boolean; color: string; durationMs: number
+  trackId: string; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
@@ -972,7 +972,7 @@ function Waveform({
             style={{
               height: `${Math.max(8, h * 100)}%`,
               background: color,
-              opacity: muted ? 0.12 : 0.4,
+              opacity: 0.4,
               animationDelay: ready ? `${i * 4}ms` : undefined,
             }}
           />
@@ -2389,7 +2389,7 @@ const TrackRow = React.memo(function TrackRow({
   onToggleMute, onToggleSolo, onReplace,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
-  onDragStartOffset, onDragEndOffset, otherTrackDragging,
+  onDragStartOffset, onDragEndOffset, otherTrackDragging, waveformDimmed,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
   timelineDurationMs, onTrackDuration, waitForMidiRender,
@@ -2415,6 +2415,8 @@ const TrackRow = React.memo(function TrackRow({
   onDragStartOffset: () => void
   onDragEndOffset: () => void
   otherTrackDragging: boolean
+  /** Dim waveform row like offset-drag when muted or ducked by solo. */
+  waveformDimmed: boolean
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
@@ -2740,7 +2742,7 @@ const TrackRow = React.memo(function TrackRow({
     : rowHovered && !commentMode
     ? 'var(--bg-surface)'
     : 'transparent'
-  const rowOpacity = otherTrackDragging ? 0.5 : 1
+  const waveformOpacity = otherTrackDragging || waveformDimmed ? 0.5 : 1
 
   async function handleConfirmDelete() {
     setDeleting(true)
@@ -2773,8 +2775,7 @@ const TrackRow = React.memo(function TrackRow({
           ? 'inset 0 0 0 0.5px rgba(239,68,68,0.2)'
           : 'none',
         borderBottom: pianoRollOpen ? 'none' : undefined,
-        transition: 'background 0.15s, box-shadow 0.15s, opacity 0.15s',
-        opacity: rowOpacity,
+        transition: 'background 0.15s, box-shadow 0.15s',
       }}
       onMouseEnter={() => setRowHovered(true)}
       onMouseLeave={() => setRowHovered(false)}
@@ -2939,7 +2940,7 @@ const TrackRow = React.memo(function TrackRow({
         ref={waveformColRef}
         data-waveform-col
         className="relative flex-1 min-w-0 overflow-hidden border-l border-border/0"
-        style={{ minHeight: rowH }}
+        style={{ minHeight: rowH, opacity: waveformOpacity, transition: 'opacity 0.15s' }}
       >
         {!commentMode && (
           <TactGrid
@@ -2962,10 +2963,11 @@ const TrackRow = React.memo(function TrackRow({
           width: clipLayout.width,
           height: '100%',
           minHeight: rowH,
+          opacity: waveformOpacity,
           cursor: isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
           borderLeft: effectiveStartBar !== 0 ? '1px solid var(--border)' : 'none',
           zIndex: 1,
-          transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out',
+          transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out, opacity 0.15s',
           touchAction: commentMode ? 'auto' : 'none',
         }}
         onMouseDown={commentMode ? undefined : handleOffsetMouseDown}
@@ -2973,7 +2975,7 @@ const TrackRow = React.memo(function TrackRow({
       >
           {isMidi ? (
             track.midi_data ? (
-              <div className="relative w-full h-full" style={{ opacity: muted ? 0.35 : 1 }}>
+              <div className="relative w-full h-full">
                 <MiniPianoRoll
                   midiData={track.midi_data}
                   color={accentColor}
@@ -2995,7 +2997,7 @@ const TrackRow = React.memo(function TrackRow({
             )
           ) : (
             <Waveform
-                trackId={track.id} muted={muted} color={accentColor}
+                trackId={track.id} color={accentColor}
                 durationMs={trackOwnDurationMs} commentMode={commentMode}
                 barCount={displayBarCount}
                 comments={(track.comments ?? []).map(c => ({
@@ -5116,7 +5118,9 @@ export default function ProjectPage() {
   }
 
   async function handleShare() {
-    await navigator.clipboard.writeText(window.location.href)
+    const url = new URL(`/band/${bandId}/project/${projectId}`, window.location.origin)
+    if (activeVersionId) url.searchParams.set('v', activeVersionId)
+    await navigator.clipboard.writeText(url.toString())
     setShareCopied(true)
     setTimeout(() => setShareCopied(false), 2000)
   }
@@ -5534,8 +5538,13 @@ export default function ProjectPage() {
           {isMobileLandscape ? (
             <section className="border-b border-border bg-surface/40 shrink-0 px-4 py-1.5">
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums flex items-center gap-x-3 overflow-x-auto whitespace-nowrap scrollbar-none">
-                {project.bpm != null && <span>{project.bpm} BPM</span>}
-                {project.key && <span className="text-ember">{project.key}</span>}
+                <ProjectMetaFields
+                  projectId={projectId}
+                  bpm={project.bpm}
+                  keySig={project.key}
+                  onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
+                  variant="header"
+                />
                 <span>{project.time_signature ?? '4/4'}</span>
                 <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
                 {player.duration > 0 && <span>{fmtTime(player.duration)}</span>}
@@ -5585,6 +5594,7 @@ export default function ProjectPage() {
                     stageSince={roadmap.stageSince}
                   />
                 )}
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0 ml-auto">
                 <button
                   type="button"
                   onClick={() => setPlanOpen(o => !o)}
@@ -5609,11 +5619,29 @@ export default function ProjectPage() {
                 >
                   {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+                  data-tour="comments-toggle"
+                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
+                    commentMode
+                      ? 'bg-ember text-white border-ember'
+                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                  }`}
+                >
+                  {commentMode ? '● Comment mode' : `Comment mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
+                </button>
+                </div>
               </div>
 
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-                {project.bpm != null && <span>{project.bpm} BPM</span>}
-                {project.key && <span className="text-ember">{project.key}</span>}
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 tabular-nums">
+                <ProjectMetaFields
+                  projectId={projectId}
+                  bpm={project.bpm}
+                  keySig={project.key}
+                  onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
+                  variant="header"
+                />
                 <span>{project.time_signature ?? '4/4'}</span>
                 <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
                 {totalProjectDurationMs > 0 && <span>{fmtTime(totalProjectDurationMs / 1000)}</span>}
@@ -5780,6 +5808,11 @@ export default function ProjectPage() {
                   onDragStartOffset={() => setDraggingTrackId(t.id)}
                   onDragEndOffset={() => setDraggingTrackId(null)}
                   otherTrackDragging={draggingTrackId !== null && draggingTrackId !== t.id}
+                  waveformDimmed={
+                    player.mutedTracks.has(t.id)
+                    || player.midiRenderingTracks.has(t.id)
+                    || (player.soloedTracks.size > 0 && !player.soloedTracks.has(t.id))
+                  }
                   currentUserId={user?.id}
                   isOwner={isOwner}
                   onReplyCreate={handleReplyCreate}
@@ -5902,32 +5935,6 @@ export default function ProjectPage() {
               )}
             </div>
           </div>
-
-          {/* Footer toolbar — BPM meta + comment mode (desktop only) */}
-          {!isMobileLandscape && (
-          <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 shrink-0 flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-4 flex-wrap min-w-0">
-              {project && (
-                <ProjectMetaFields
-                  projectId={projectId}
-                  bpm={project.bpm}
-                  keySig={project.key}
-                  onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
-                />
-              )}
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums">
-                {activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}
-              </span>
-            </div>
-            <TbBtn
-              variant={commentMode ? 'primary' : 'ghost'}
-              onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
-              data-tour="comments-toggle"
-            >
-              {commentMode ? '● COMMENT MODE' : `Comment Mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
-            </TbBtn>
-          </div>
-          )}
 
           </div>{/* end content dim wrapper */}
         </main>

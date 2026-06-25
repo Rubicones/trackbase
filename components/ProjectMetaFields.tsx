@@ -20,8 +20,8 @@ export function ProjectMetaFields({
   bpm: number | null
   keySig: string | null
   onUpdated: (patch: Pick<Project, 'bpm' | 'key'>) => void
-  /** inline — click-to-edit on card; menu — always-visible fields for dropdown */
-  variant?: 'inline' | 'menu'
+  /** inline — click-to-edit on card; menu — always-visible fields for dropdown; header — project page meta row */
+  variant?: 'inline' | 'menu' | 'header'
 }) {
   const [editingBpm, setEditingBpm] = useState(false)
   const [editingKey, setEditingKey] = useState(false)
@@ -52,6 +52,14 @@ export function ProjectMetaFields({
       // ignore
     }
   }, [projectId, onUpdated])
+
+  useEffect(() => {
+    if (editingBpm) bpmRef.current?.focus()
+  }, [editingBpm])
+
+  useEffect(() => {
+    if (editingKey) keyRef.current?.focus()
+  }, [editingKey])
 
   async function commitBpm() {
     setEditingBpm(false)
@@ -105,6 +113,60 @@ export function ProjectMetaFields({
           />
         </label>
       </div>
+    )
+  }
+
+  if (variant === 'header') {
+    return (
+      <>
+        {editingBpm ? (
+          <input
+            ref={bpmRef}
+            value={bpmVal}
+            onChange={e => setBpmVal(e.target.value.replace(/\D/g, '').slice(0, 3))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void commitBpm()
+              if (e.key === 'Escape') { setEditingBpm(false); setBpmVal(bpm?.toString() ?? '') }
+            }}
+            onBlur={() => void commitBpm()}
+            type="text"
+            inputMode="numeric"
+            className={`${inlineInputCls} w-10`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setEditingBpm(true); setTimeout(() => bpmRef.current?.select(), 0) }}
+            className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums hover:text-ember transition-colors"
+          >
+            {bpm != null ? `${bpm} BPM` : 'Set BPM'}
+          </button>
+        )}
+        {editingKey ? (
+          <input
+            ref={keyRef}
+            value={keyVal}
+            onChange={e => setKeyVal(e.target.value.slice(0, 40))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void commitKey()
+              if (e.key === 'Escape') { setEditingKey(false); setKeyVal(keySig ?? '') }
+            }}
+            onBlur={() => void commitKey()}
+            placeholder="C"
+            className={`${inlineInputCls} w-[4.5rem]`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => { setEditingKey(true); setTimeout(() => keyRef.current?.select(), 0) }}
+            className={`text-[10px] uppercase tracking-widest tabular-nums hover:text-ember transition-colors ${
+              keySig ? 'text-ember' : 'text-muted-foreground italic normal-case'
+            }`}
+          >
+            {keySig ?? 'Set key'}
+          </button>
+        )}
+      </>
     )
   }
 
