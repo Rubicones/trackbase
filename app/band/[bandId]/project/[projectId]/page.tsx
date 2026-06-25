@@ -5299,7 +5299,6 @@ export default function ProjectPage() {
             currentUserId: user?.id,
             isOwner,
             currentUser,
-            onStartBarUpdate: handleStartBarUpdate,
             recordingSlot: recordingSessions.map(session => (
               <RecordingTrackRow
                 key={session.id}
