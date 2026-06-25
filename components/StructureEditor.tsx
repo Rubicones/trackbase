@@ -6,13 +6,14 @@ import type { Project, Section, SectionType, Track } from '@/lib/types'
 import { ChordInput } from '@/components/ChordInput'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { detectChordsInAudio } from '@/lib/chordDetection'
-import { alignSectionsChords, normalizeChordsToBarCount, sectionBarCount, totalChordBarSpan, updateSectionChordDuration } from '@/lib/chords'
+import { sectionBarCount, updateSectionChordDuration } from '@/lib/chords'
 import {
   barDurationSec,
   getMergedToneBuffer,
   sectionTimeRangeSec,
   sliceSectionFromToneBuffer,
 } from '@/lib/mergedAudioBuffer'
+import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { TbButton } from '@/components/design/TbButton'
 
 /** Stored on section rows for merge/API; UI uses ember tokens, not this value. */
@@ -327,9 +328,10 @@ export function SectionEditPopover({
     setSaveStatus('idle')
   }, [section.id])
 
+  // Sync from parent only when not editing.
   useEffect(() => {
-    if (!isDirty) setChords(section.chords ?? '')
-  }, [section.chords, isDirty])
+    if (!isDirty && saveStatus !== 'saving') setChords(section.chords ?? '')
+  }, [section.chords, isDirty, saveStatus])
 
   // When detection finishes, push chords into the textarea without closing the popover.
   useEffect(() => {
@@ -364,15 +366,21 @@ export function SectionEditPopover({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
       saveTimerRef.current = null
+      const pending = pendingRef.current
       pendingRef.current = null
+      if (!pending || pending.id !== section.id) return
+      const val = pending.chords
       setSaveStatus('saving')
       try {
         await onChordsAutoSave(section.id, val)
+        setChords(val)
         setIsDirty(false)
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus('idle'), 1500)
       } catch {
         setSaveStatus('error')
+        pendingRef.current = { id: section.id, chords: val }
+        setIsDirty(true)
       }
     }, 800)
   }
@@ -441,16 +449,43 @@ export function SectionEditPopover({
   const pTop = flippedEdit ? cellPos.top + cellPos.height + 8 : cellPos.top - 8
 
   const barCount = sectionBarCount(section, totalBars)
+  const isSheet = layout === 'sheet'
+  const { keyboardInset, viewportHeight } = useMobileKeyboardInset(isSheet)
+
+  const sheetPanelStyle = isSheet
+    ? {
+        bottom: keyboardInset > 0 ? keyboardInset : 0,
+        maxHeight:
+          keyboardInset > 0 && viewportHeight
+            ? `${viewportHeight}px`
+            : undefined,
+      }
+    : undefined
+
+  useEffect(() => {
+    if (!isSheet) return
+    const root = popoverRef.current
+    if (!root) return
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target
+      if (!(target instanceof HTMLInputElement)) return
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
+    }
+    root.addEventListener('focusin', onFocusIn)
+    return () => root.removeEventListener('focusin', onFocusIn)
+  }, [isSheet])
 
   const panel = (
     <div
       ref={popoverRef}
       className={
-        layout === 'sheet'
-          ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto border-t border-border bg-popover shadow-2xl animate-slide-in'
+        isSheet
+          ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto overscroll-contain border-t border-border bg-popover shadow-2xl animate-slide-in'
           : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in'
       }
-      style={layout === 'sheet' ? undefined : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
+      style={isSheet ? sheetPanelStyle : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -572,10 +607,14 @@ export function SectionEditPopover({
     </div>
   )
 
-  if (layout === 'sheet') {
+  if (isSheet) {
     return createPortal(
       <>
-        <div className="fixed inset-0 z-[219] bg-black/50" onClick={onClose} />
+        <div
+          className="fixed inset-0 z-[219] bg-black/50"
+          style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+          onClick={onClose}
+        />
         {panel}
       </>,
       document.body,
@@ -620,12 +659,19 @@ export function useSectionEditActions({
     pendingChordSavesRef.current.set(id, chords)
   }
 
+  const chordSaveGenRef = useRef<Map<string, number>>(new Map())
+
   async function handleChordsAutoSave(id: string, chords: string): Promise<void> {
-    await fetch(`/api/sections/${id}`, {
+    const gen = (chordSaveGenRef.current.get(id) ?? 0) + 1
+    chordSaveGenRef.current.set(id, gen)
+    const res = await fetch(`/api/sections/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chords }),
     })
+    if (!res.ok) throw new Error('Failed to save chords')
+    if (chordSaveGenRef.current.get(id) !== gen) return
+    onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, chords } : s)))
     pendingChordSavesRef.current.delete(id)
   }
 
@@ -686,17 +732,9 @@ export function useSectionEditActions({
     const start = Math.max(minStart, Math.min(startBar, endBar - 1))
     const end = Math.max(start + 1, Math.min(endBar, maxEnd))
     if (start === section.start_bar && end === section.end_bar) return
-    const updatedSection = { ...section, start_bar: start, end_bar: end }
-    const newBarCount = sectionBarCount(updatedSection, totalBars)
     onSectionsChange(prevSections =>
       prevSections
-        .map(s => {
-          if (s.id !== id) return s
-          const chords = s.chords?.trim() && totalChordBarSpan(s.chords) > newBarCount
-            ? normalizeChordsToBarCount(s.chords, newBarCount)
-            : s.chords
-          return { ...s, start_bar: start, end_bar: end, chords }
-        })
+        .map(s => (s.id === id ? { ...s, start_bar: start, end_bar: end } : s))
         .sort((a, b) => a.start_bar - b.start_bar),
     )
     fetch(`/api/sections/${id}`, {
@@ -769,6 +807,7 @@ export default function StructureOverlay({
   const activeEditRef = useRef(activeEdit)
   const resizeDragRef = useRef<ResizeDrag | null>(null)
   const pendingChordSavesRef = useRef<Map<string, string>>(new Map())
+  const chordSaveGenRef = useRef<Map<string, number>>(new Map())
   const [pendingChordIds, setPendingChordIds] = useState<Set<string>>(new Set())
   const [detectingChordsFor, setDetectingChordsFor] = useState<string | null>(null)
   sectionsRef.current = sections
@@ -804,25 +843,6 @@ export default function StructureOverlay({
     ? { ...project, time_signature: timeSignature }
     : project
   const { barDurationMs, totalBars } = getBarMath(effectiveProject, totalDurationMs)
-
-  // Keep stored chords aligned to each section's bar span (e.g. after timeline shrinks).
-  useEffect(() => {
-    if (totalBars <= 0 || sections.length === 0) return
-    const aligned = alignSectionsChords(sections, totalBars)
-    if (aligned === sections) return
-    onSectionsChange(aligned)
-    for (const s of aligned) {
-      const prev = sections.find(p => p.id === s.id)
-      if (prev && s.chords !== prev.chords && s.chords) {
-        pendingChordSavesRef.current.set(s.id, s.chords)
-        fetch(`/api/sections/${s.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chords: s.chords }),
-        }).catch(console.error)
-      }
-    }
-  }, [sections, totalBars, onSectionsChange])
 
   // Time-based position: maps bar → 0..1 fraction, matching waveform scale
   const tp = (bar: number) =>
@@ -1191,11 +1211,16 @@ export default function StructureOverlay({
   }
 
   async function handleChordsAutoSave(id: string, chords: string): Promise<void> {
-    await fetch(`/api/sections/${id}`, {
+    const gen = (chordSaveGenRef.current.get(id) ?? 0) + 1
+    chordSaveGenRef.current.set(id, gen)
+    const res = await fetch(`/api/sections/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chords }),
     })
+    if (!res.ok) throw new Error('Failed to save chords')
+    if (chordSaveGenRef.current.get(id) !== gen) return
+    onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, chords } : s)))
     pendingChordSavesRef.current.delete(id)
     setPendingChordIds(prev => {
       const next = new Set(prev)
@@ -1256,18 +1281,9 @@ export default function StructureOverlay({
     const end = Math.max(start + 1, Math.min(endBar, maxEnd))
     if (start === section.start_bar && end === section.end_bar) return
 
-    const updatedSection = { ...section, start_bar: start, end_bar: end }
-    const newBarCount = sectionBarCount(updatedSection, totalBars)
-
     onSectionsChange(prevSections =>
       prevSections
-        .map(s => {
-          if (s.id !== id) return s
-          const chords = s.chords?.trim() && totalChordBarSpan(s.chords) > newBarCount
-            ? normalizeChordsToBarCount(s.chords, newBarCount)
-            : s.chords
-          return { ...s, start_bar: start, end_bar: end, chords }
-        })
+        .map(s => (s.id === id ? { ...s, start_bar: start, end_bar: end } : s))
         .sort((a, b) => a.start_bar - b.start_bar),
     )
     updateActiveEditPos(id, start, end)

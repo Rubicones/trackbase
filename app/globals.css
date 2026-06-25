@@ -2020,8 +2020,17 @@ html:has(.landing-page) body {
   .landing-page .text-background { color: oklch(0.13 0 0); }
   .landing-page .bg-background { background-color: oklch(0.13 0 0); }
   .landing-page .bg-card { background-color: oklch(0.16 0 0); }
+  .landing-page .bg-surface { background-color: oklch(0.16 0 0); }
+  .landing-page .bg-surface\/50 { background-color: color-mix(in oklab, oklch(0.16 0 0) 50%, transparent); }
   .landing-page .bg-ember { background-color: oklch(0.68 0.22 35); }
+  .landing-page .bg-border { background-color: oklch(0.26 0 0); }
   .landing-page .border-border { border-color: oklch(0.26 0 0); }
+  .landing-page .border-border\/50 { border-color: color-mix(in oklab, oklch(0.26 0 0) 50%, transparent); }
+  .landing-page .border-border\/80 { border-color: color-mix(in oklab, oklch(0.26 0 0) 80%, transparent); }
+  .landing-page .text-foreground\/75 { color: color-mix(in oklab, oklch(0.93 0 0) 75%, transparent); }
+  .landing-page .text-foreground\/60 { color: color-mix(in oklab, oklch(0.93 0 0) 60%, transparent); }
+  .landing-page .text-muted-foreground\/50 { color: color-mix(in oklab, oklch(0.58 0 0) 50%, transparent); }
+  .landing-page .text-muted-foreground\/80 { color: color-mix(in oklab, oklch(0.58 0 0) 80%, transparent); }
   .landing-page .border-foreground { border-color: oklch(0.93 0 0); }
   .landing-page .border-ember { border-color: oklch(0.68 0.22 35); }
 

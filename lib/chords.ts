@@ -150,34 +150,6 @@ export function computeDetectionBarCount(
   return sectionBarCount({ start_bar: sectionStartBar, end_bar: sectionEndBar }, projectTotalBars)
 }
 
-/** Return normalized chords when stored span exceeds the section bar count. */
-export function alignSectionChords(
-  chords: string | null | undefined,
-  section: { start_bar: number; end_bar: number },
-  projectTotalBars: number,
-): string | null {
-  if (!chords?.trim()) return null
-  const expected = sectionBarCount(section, projectTotalBars)
-  const covered = totalChordBarSpan(chords)
-  if (covered <= expected) return null
-  return normalizeChordsToBarCount(chords, expected)
-}
-
-/** Align all section chord strings to their bar spans; returns a new array if anything changed. */
-export function alignSectionsChords<T extends { id: string; start_bar: number; end_bar: number; chords: string | null }>(
-  sections: T[],
-  projectTotalBars: number,
-): T[] {
-  let changed = false
-  const next = sections.map(s => {
-    const aligned = alignSectionChords(s.chords, s, projectTotalBars)
-    if (!aligned) return s
-    changed = true
-    return { ...s, chords: aligned }
-  })
-  return changed ? next : sections
-}
-
 /** Collapse consecutive identical chord names into duration counts (for auto-detection). */
 export function collapseConsecutiveChords(names: string[]): ParsedChord[] {
   const result: ParsedChord[] = []

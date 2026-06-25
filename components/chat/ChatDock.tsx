@@ -16,6 +16,7 @@ import {
   type ChannelKey,
 } from '@/lib/chat'
 import { useBandChat, type ChatMember } from '@/components/chat/useBandChat'
+import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 
 // ─── Inline icons (match the app's lightweight SVG convention) ─────────────────
@@ -230,32 +231,7 @@ export function ChatDock({
   const prevScrollHeightRef = useRef(0)
   const savedPageScrollRef = useRef(0)
   const [showNewIndicator, setShowNewIndicator] = useState(false)
-  const [keyboardInset, setKeyboardInset] = useState(0)
-
-  // Keep the dock fullscreen; lift the composer when the mobile keyboard opens.
-  useEffect(() => {
-    if (!open) {
-      setKeyboardInset(0)
-      return
-    }
-
-    const isMobile = window.matchMedia('(max-width: 1023px)').matches
-    if (!isMobile || !window.visualViewport) return
-
-    const vv = window.visualViewport
-    const sync = () => {
-      setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
-    }
-
-    sync()
-    vv.addEventListener('resize', sync)
-    vv.addEventListener('scroll', sync)
-    return () => {
-      vv.removeEventListener('resize', sync)
-      vv.removeEventListener('scroll', sync)
-      setKeyboardInset(0)
-    }
-  }, [open])
+  const { keyboardInset } = useMobileKeyboardInset(open)
 
   const isBandChannel = channelKey === BAND_CHANNEL
   const activeProject = useMemo(
