@@ -2575,18 +2575,45 @@ function Footer() {
           </p>
         </div>
         {[
-          ["PRODUCT", ["Mixer", "Branches", "Rehearsal View", "Roadmap", "Chat"]],
-          ["FOR", ["Bands", "Studios", "Schools", "Labels", "Producer centers"]],
-          ["CO", ["About", "Brandbook v0.1", "UI Kit", "Changelog", "Contact"]],
+          [
+            "PRODUCT",
+            [
+              { label: "Mixer", href: "#system" },
+              { label: "Branches", href: "#versioning" },
+              { label: "Rehearsal View", href: "#rehearsal" },
+              { label: "Roadmap", href: "#workflow" },
+              { label: "Chat", href: "#workflow" },
+            ],
+          ],
+          [
+            "FOR",
+            [
+              { label: "Bands", href: "#join" },
+              { label: "Studios", href: "#join" },
+              { label: "Schools", href: "#join" },
+              { label: "Labels", href: "#join" },
+              { label: "Producer centers", href: "#join" },
+            ],
+          ],
+          [
+            "CO",
+            [
+              { label: "About", href: "#philosophy" },
+              { label: "Brandbook v0.1", href: "/uikit" },
+              { label: "UI Kit", href: "/uikit" },
+              { label: "Pricing", href: "#pricing" },
+              { label: "Contact", href: "#join" },
+            ],
+          ],
         ].map(([t, items]) => (
           <div key={t as string}>
             <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
               {t as string}
             </div>
             <ul className="space-y-2">
-              {(items as string[]).map((item) => (
-                <li key={item} className="font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-                  <a href="#">{item}</a>
+              {(items as Array<{ label: string; href: string }>).map((item) => (
+                <li key={item.label} className="font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+                  <a href={item.href}>{item.label}</a>
                 </li>
               ))}
             </ul>
