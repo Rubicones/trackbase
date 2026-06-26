@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { ProjectResource, Version } from '@/lib/types'
 import {
   ResourceContextControls,
@@ -194,6 +195,7 @@ export function ResourcesFileRow({
   const size = fmtSize(resource.file_size_bytes)
 
   function handleDownload() {
+    trackEvent('resource_downloaded', { resource_type: 'file' })
     const a = document.createElement('a')
     a.href = `/api/projects/${projectId}/resources/${resource.id}/download`
     a.download = resource.original_filename ?? 'download'
@@ -229,7 +231,10 @@ export function ResourcesFileRow({
     setDeleting(true)
     try {
       const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
-      if (res.ok || res.status === 204) onDeleted(resource.id)
+      if (res.ok || res.status === 204) {
+        trackEvent('resource_deleted', { resource_type: 'file' })
+        onDeleted(resource.id)
+      }
     } finally {
       setDeleting(false)
       setConfirmDelete(false)

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Bell, BellOff, UserPlus, AtSign, Check } from 'lucide'
+import { trackEvent } from '@/lib/analytics'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { TbModal } from '@/components/design/TbModal'
 import { TbButton } from '@/components/design/TbButton'
@@ -37,11 +38,13 @@ export function PushPermissionModal({
       if (permission === 'granted') {
         await subscribeToPush()
         markPermissionGranted()
+        trackEvent('push_enabled')
         setPhase('success')
         onSubscribed?.()
         setTimeout(onClose, 1500)
       } else {
         markPermissionDenied()
+        trackEvent('push_declined', { reason: 'denied' })
         setPhase('denied')
       }
     } finally {
@@ -51,6 +54,7 @@ export function PushPermissionModal({
 
   const handleLater = useCallback(() => {
     markPermissionDeferred()
+    trackEvent('push_declined', { reason: 'deferred' })
     onClose()
   }, [onClose])
 

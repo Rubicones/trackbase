@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bell, BellOff } from 'lucide'
+import { trackEvent } from '@/lib/analytics'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { TbButton } from '@/components/design/TbButton'
 import { PushPermissionModal } from '@/components/push/PushPermissionModal'
@@ -65,11 +66,13 @@ export function PushBellButton() {
       setShowPopover(p => !p)
       return
     }
+    trackEvent('push_prompt_shown', { source: 'manual' })
     setShowModal(true)
   }
 
   async function handleTurnOff() {
     await unsubscribeFromPush()
+    trackEvent('push_disabled')
     setShowPopover(false)
     await refreshStatus()
   }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { trackEvent } from '@/lib/analytics'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { TbButton } from '@/components/design/TbButton'
 
@@ -182,11 +183,19 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
   const [transitioning, setTransitioning] = useState(false)
   const [gateOpen, setGateOpen] = useState(true)
   const cardRef = useRef<HTMLDivElement>(null)
+  const tourStartedRef = useRef(false)
 
   useEffect(() => setMounted(true), [])
 
   useEffect(() => {
-    if (!show) return
+    if (!show) {
+      tourStartedRef.current = false
+      return
+    }
+    if (!tourStartedRef.current) {
+      tourStartedRef.current = true
+      trackEvent('tour_started')
+    }
     setStepIndex(0)
   }, [show])
 
@@ -277,6 +286,7 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
     if (stepIndex < visibleSteps.length - 1) {
       setStepIndex(i => i + 1)
     } else {
+      trackEvent('tour_completed')
       onFinish()
     }
   }, [stepIndex, visibleSteps, onFinish])
@@ -286,8 +296,9 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
   }, [stepIndex])
 
   const handleSkip = useCallback(() => {
+    trackEvent('tour_skipped', { at_step: stepIndex + 1 })
     onSkip()
-  }, [onSkip])
+  }, [onSkip, stepIndex])
 
   if (!mounted || !show) return null
 

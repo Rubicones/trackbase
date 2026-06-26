@@ -1,6 +1,7 @@
 'use client'
 
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { ProjectResource } from '@/lib/types'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -132,6 +133,7 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
       }
       const { resource } = await procRes.json()
       patch(item.id, { status: 'done' })
+      trackEvent('resource_file_uploaded', { mime_type: item.file.type || 'application/octet-stream' })
       onUploadComplete(resource)
       setTimeout(() => remove(item.id), 1000)
     } catch (err) {

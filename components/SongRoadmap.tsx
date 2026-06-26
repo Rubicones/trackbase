@@ -15,6 +15,7 @@ import {
   type ProjectRoadmap,
   type RoadmapStep,
 } from '@/lib/roadmap'
+import { trackEvent } from '@/lib/analytics'
 
 function roadmapStepMetrics(count: number) {
   if (count <= 5) return { col: '4.5rem', box: 'size-7', labelClass: 'text-[9px]' }
@@ -267,6 +268,7 @@ export function SongRoadmap({
       if (res.ok) {
         const data = await res.json() as ProjectRoadmap
         onRoadmapChange(data)
+        trackEvent('roadmap_step_changed', { step: nextIndex })
       }
     } catch { /* keep optimistic */ }
   }

@@ -22,6 +22,7 @@ import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
+import { trackEvent } from '@/lib/analytics'
 
 // ─── Session-level band data cache ───────────────────────────────────────────
 // Prevents re-fetching band data when navigating back from a project.
@@ -227,6 +228,7 @@ function NewProjectModal({ bandId, onClose, onCreated }: {
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
       const { project } = await res.json()
+      trackEvent('project_created')
       onCreated(project.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -718,6 +720,7 @@ export default function BandPage() {
   }, []) // eslint-disable-line
 
   function switchTab(tab: 'projects' | 'activity') {
+    if (tab !== activeTab) trackEvent('band_tab_changed', { tab })
     setActiveTab(tab)
     const url = new URL(window.location.href)
     url.searchParams.set('tab', tab)
@@ -822,6 +825,7 @@ export default function BandPage() {
     setInviteCopying(true)
     try {
       await navigator.clipboard.writeText(inviteCode)
+      trackEvent('invite_link_copied')
       setInviteCopied(true)
       setTimeout(() => setInviteCopied(false), 2000)
     } catch { /* ignore */ }
@@ -852,6 +856,7 @@ export default function BandPage() {
         body: JSON.stringify({ action }),
       })
       if (!res.ok) return
+      trackEvent(action === 'approve' ? 'join_request_approved' : 'join_request_rejected')
       invalidateBandCache()
       await loadBand()
     } finally {
@@ -867,11 +872,12 @@ export default function BandPage() {
       m.user_id === memberId ? { ...m, role_label: label || null } : m
     ))
     invalidateBandCache()
-    await fetch(`/api/bands/${bandId}/members/${memberId}`, {
+    const res = await fetch(`/api/bands/${bandId}/members/${memberId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role_label: label || null, role_color: null }),
     })
+    if (res.ok) trackEvent('member_role_edited')
   }
 
   async function handleRemoveMember(memberId: string) {
@@ -1039,13 +1045,22 @@ export default function BandPage() {
   }, [])
 
   const openProject = useCallback((projectId: string) => {
+    trackEvent('project_opened')
     router.push(`/band/${bandId}/project/${projectId}`)
   }, [bandId, router])
+
+  const openNewProjectModal = useCallback(() => {
+    trackEvent('project_create_clicked')
+    setShowNewProject(true)
+  }, [])
 
   const openQuickPeek = useCallback((e: React.MouseEvent, projectId: string) => {
     e.stopPropagation()
     const p = projectsRef.current.find(x => x.id === projectId)
-    if (p) setPreviewProject(p)
+    if (p) {
+      trackEvent('quick_peek_opened')
+      setPreviewProject(p)
+    }
   }, [])
 
   const openDeleteProject = useCallback((projectId: string, name: string) => {
@@ -1195,7 +1210,7 @@ export default function BandPage() {
       <AppHeader
         crumbs={<span className="text-foreground truncate">{band?.name}</span>}
         right={
-          <TbButton variant="primary" className="hidden sm:inline-flex items-center gap-1.5" onClick={() => setShowNewProject(true)}>
+          <TbButton variant="primary" className="hidden sm:inline-flex items-center gap-1.5" onClick={openNewProjectModal}>
             <IconPlus size={12} />
             New Project
           </TbButton>
@@ -1333,7 +1348,7 @@ export default function BandPage() {
                     ? `${filteredProjects.length} OF ${projects.length} PROJECT${projects.length !== 1 ? 'S' : ''}`
                     : `${projects.length} PROJECT${projects.length !== 1 ? 'S' : ''}`}
                 </SectionLabel>
-                <TbButton variant="primary" className="sm:hidden" onClick={() => setShowNewProject(true)}>
+                <TbButton variant="primary" className="sm:hidden" onClick={openNewProjectModal}>
                   + New
                 </TbButton>
               </div>
@@ -1396,7 +1411,7 @@ export default function BandPage() {
                 {!loading && (
                   <button
                     type="button"
-                    onClick={() => setShowNewProject(true)}
+                    onClick={openNewProjectModal}
                     className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
                   >
                     <div className="size-8 border border-border grid place-items-center text-muted-foreground">
@@ -1690,7 +1705,10 @@ export default function BandPage() {
               {totalActivity > 5 && (
                 <button
                   type="button"
-                  onClick={() => switchTab('activity')}
+                  onClick={() => {
+                    trackEvent('activity_view_all_clicked')
+                    switchTab('activity')
+                  }}
                   className="mt-2 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
                 >
                   View all activity →

@@ -6,6 +6,9 @@ import { buildThemeBootstrapScript, DEFAULT_DESIGN_THEME } from '@/lib/design-th
 import { PALETTE_STORAGE_KEY } from '@/lib/palettes'
 import { PRODUCTION_SITE_URL } from '@/lib/site-url'
 import { Analytics } from "@vercel/analytics/next"
+import { GoogleAnalytics } from '@next/third-parties/google'
+
+const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? PRODUCTION_SITE_URL),
@@ -36,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ height: '100%' }}>
         <Providers>{children}</Providers>
         <Analytics />
+        {gaId ? <GoogleAnalytics gaId={gaId} /> : null}
       </body>
     </html>
   )

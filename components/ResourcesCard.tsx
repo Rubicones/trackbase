@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { ProjectResource, Version } from '@/lib/types'
 import { SectionLabel } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
@@ -282,6 +283,7 @@ export function ResourcesCard({
       })
       if (res.ok || res.status === 201) {
         const { resource } = await res.json()
+        trackEvent('resource_link_added')
         upsertResource(resource)
         setShowLinkForm(false)
         setLinkTitle('')

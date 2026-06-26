@@ -12,6 +12,7 @@ import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, fetchProjectRoadmap } from '@/components/SongRoadmap'
 import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
 import type { ProjectRoadmap } from '@/lib/roadmap'
+import { trackEvent } from '@/lib/analytics'
 import type { Project, Section } from '@/lib/types'
 
 type PanelTab = 'roadmap' | 'checklist' | 'resources' | 'structure' | 'notes'
@@ -275,6 +276,7 @@ export function StructurePreviewPanel({
   }
 
   function handleTabChange(tab: PanelTab) {
+    if (tab !== activeTab) trackEvent('quick_peek_tab_changed', { tab })
     setActiveTab(tab)
     if (!projectId) return
     if (tab === 'notes' && !notesLoaded) loadNotes(projectId)

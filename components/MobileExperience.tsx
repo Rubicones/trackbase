@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
@@ -88,6 +89,14 @@ export function MobileExperience({
     [],
   )
   const prevTourOpenRef = useRef(false)
+  const rehearsalEnteredRef = useRef(false)
+
+  useEffect(() => {
+    if (!rehearsalEnteredRef.current && mode === 'rehearse') {
+      rehearsalEnteredRef.current = true
+      trackEvent('rehearsal_mode_entered')
+    }
+  }, [mode])
 
   useEffect(() => {
     if (tourOpen && !prevTourOpenRef.current) setMode('rehearse')
@@ -156,7 +165,15 @@ export function MobileExperience({
               <button
                 key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => {
+                  if (mode === 'rehearse' && m === 'mixer') {
+                    trackEvent('mixer_opened_from_rehearsal')
+                  }
+                  if (mode === 'mixer' && m === 'rehearse') {
+                    trackEvent('rehearsal_mode_entered')
+                  }
+                  setMode(m)
+                }}
                 data-tour={m === 'rehearse' ? 'mobile-mode-rehearse' : 'mobile-mode-mixer'}
                 className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
                   active ? 'bg-ember text-white' : 'text-muted-foreground hover:text-foreground'

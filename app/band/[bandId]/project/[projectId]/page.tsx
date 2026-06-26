@@ -8,6 +8,7 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
+import { trackEvent } from '@/lib/analytics'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
@@ -1163,6 +1164,7 @@ function usePlayer(
   const sectionLoopRef = useRef<SectionLoopRange | null>(null)
   const [sectionLoopOn, setSectionLoopOn] = useState(false)
   const playFnRef = useRef<(offset?: number) => Promise<void>>(async () => {})
+  const skipPlaybackAnalyticsRef = useRef(false)
 
   /** Metronome ignores solo/mute sets — only the Metro toggle controls it. */
   const gainForTrack = useCallback((
@@ -1862,6 +1864,9 @@ function usePlayer(
     tracksOverride?: Track[],
     scheduledStartTime?: number,
   ) => {
+    const wasPlaying = playingRef.current
+    const trackPlayback = !skipPlaybackAnalyticsRef.current
+    skipPlaybackAnalyticsRef.current = false
     stopSources()
     const ctx = ensurePlaybackGraph()
     ensureMetronomeBuffer(ctx)
@@ -1918,6 +1923,7 @@ function usePlayer(
     startRef.current = audioCtxPlayTime - offset
     offsetRef.current = offset
     setPlaying(true)
+    if (trackPlayback && !wasPlaying) trackEvent('playback_started')
     // Track last tick bucket for 5 Hz state throttle (avoids 60fps React re-renders)
     let lastStateTick = -1
     const tick = () => {
@@ -1933,6 +1939,7 @@ function usePlayer(
         const loopBarDur = (60 / loopBpm) * loopBeats
         const loopEnd = loop.endBar * loopBarDur
         if (elapsed >= loopEnd - 0.002) {
+          skipPlaybackAnalyticsRef.current = true
           void playFnRef.current(loop.startBar * loopBarDur)
           return
         }
@@ -1981,15 +1988,18 @@ function usePlayer(
       countdownCancelRef.current = null
       return
     }
+    const wasPlaying = playingRef.current
     offsetRef.current = (actxRef.current?.currentTime ?? 0) - startRef.current
     currentTimeRef.current = offsetRef.current
     playingRef.current = false
     stopSources()
     setPlaying(false)
+    if (wasPlaying) trackEvent('playback_paused')
     trySwitchToFullMix()
   }, [stopSources, trySwitchToFullMix])
 
   const seek = useCallback((t: number, tracksOverride?: Track[]) => {
+    trackEvent('playback_seeked')
     offsetRef.current = t
     currentTimeRef.current = t
     const loop = sectionLoopRef.current
@@ -2007,10 +2017,12 @@ function usePlayer(
   const toggleMute = useCallback((id: string) => {
     if (midiRenderingTracksRef.current.has(id)) return
     const next = new Set(mutedTracksRef.current)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
+    const muting = !next.has(id)
+    if (muting) next.add(id)
+    else next.delete(id)
     mutedTracksRef.current = next
     setMutedTracks(next)
+    if (muting) trackEvent('track_muted')
 
     const g = gainsRef.current.get(id)
     if (g) {
@@ -2029,10 +2041,12 @@ function usePlayer(
 
   const toggleSolo = useCallback((id: string) => {
     const next = new Set(soloedTracksRef.current)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
+    const enabling = !next.has(id)
+    if (enabling) next.add(id)
+    else next.delete(id)
     soloedTracksRef.current = next
     setSoloedTracks(next)
+    trackEvent('track_solo_toggled', { enabled: enabling })
 
     // Soloing one track affects ALL gain nodes — update them all at once.
     const ctx = actxRef.current
@@ -2059,6 +2073,7 @@ function usePlayer(
     const next = !metronomeOnRef.current
     metronomeOnRef.current = next
     setMetronomeOn(next)
+    trackEvent('metronome_toggled', { enabled: next })
     const nextMuted = new Set(mutedTracksRef.current)
     if (next) nextMuted.delete(METRONOME_TRACK_ID)
     else nextMuted.add(METRONOME_TRACK_ID)
@@ -4195,6 +4210,7 @@ export default function ProjectPage() {
     if (res.ok) {
       const { item } = await res.json()
       setChecklist(prev => [...prev, item])
+      trackEvent('checklist_item_added')
     }
   }
 
@@ -4208,6 +4224,7 @@ export default function ProjectPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ done: newDone }),
     }).catch(() => {})
+    if (newDone) trackEvent('checklist_item_completed')
   }
 
   async function handleChecklistUpdate(id: string, text: string) {
@@ -4320,6 +4337,9 @@ export default function ProjectPage() {
   }, [projectId])
 
   const selectVersion = useCallback((id: string) => {
+    if (id !== activeVersionIdRef.current) {
+      trackEvent('version_switched')
+    }
     setActiveVersionId(id)
     setCommentMode(false)
     setActiveCommentInput(null)
@@ -4623,6 +4643,7 @@ export default function ProjectPage() {
     if (p.sectionLoopOn) {
       p.clearSectionLoop()
       setActiveLoopSectionId(null)
+      trackEvent('loop_toggled', { enabled: false })
       return
     }
     const range = findSectionRangeAtTime(
@@ -4633,6 +4654,7 @@ export default function ProjectPage() {
     if (!range) return
     p.setSectionLoop({ id: range.id, startBar: range.start_bar, endBar: range.end_bar })
     setActiveLoopSectionId(range.id)
+    trackEvent('loop_toggled', { enabled: true })
   }, [sectionRanges, projBarDurationSec])
 
   useEffect(() => {
@@ -4699,6 +4721,7 @@ export default function ProjectPage() {
       return
     }
     if (!activeVersionId) return
+    trackEvent('record_track_clicked')
     setRecordingSessions(prev => [...prev, { id: crypto.randomUUID(), name: 'New recording' }])
   }
 
@@ -4719,6 +4742,9 @@ export default function ProjectPage() {
   const handleRecordingStateChange = useCallback((id: string, state: RecordState) => {
     setRecordingRowStates(prev => {
       if (prev[id] === state) return prev
+      if (state === 'recording' && prev[id] !== 'recording') {
+        trackEvent('recording_started')
+      }
       return { ...prev, [id]: state }
     })
   }, [])
@@ -4775,6 +4801,7 @@ export default function ProjectPage() {
   }
 
   async function handleRecordingSaved(id: string, track: Track) {
+    trackEvent('recording_saved', { duration_ms: track.duration_ms ?? 0 })
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
     setVersions(prev => prev.map(v =>
@@ -4785,6 +4812,7 @@ export default function ProjectPage() {
   }
 
   function handleRecordingDelete(id: string) {
+    trackEvent('recording_discarded')
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
     setRecordingPreviewEnds(prev => {
@@ -4934,6 +4962,7 @@ export default function ProjectPage() {
       throw new Error(err.error ?? 'Failed to save comment')
     }
     const { comment } = await res.json()
+    trackEvent('comment_created')
 
     // Update versions state in-place
     setVersions(prev => prev.map(v => ({
@@ -4947,6 +4976,7 @@ export default function ProjectPage() {
 
   async function handleCommentDelete(commentId: string) {
     await fetch(`/api/comments/${commentId}`, { method: 'DELETE' })
+    trackEvent('comment_deleted')
 
     // Find which track the comment belonged to (for cache patching)
     let ownerTrackId = ''
@@ -4978,6 +5008,7 @@ export default function ProjectPage() {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error ?? 'Delete failed')
     }
+    trackEvent('track_deleted')
     setVersions(prev => prev.map(v => ({
       ...v,
       tracks: v.tracks.filter(t => t.id !== trackId),
@@ -5018,6 +5049,7 @@ export default function ProjectPage() {
       const err = await res.json().catch(() => ({}))
       throw new Error((err as { error?: string }).error ?? 'Failed to save track offset')
     }
+    trackEvent('track_offset_changed')
 
     const updatedTracks = activeTracks.map(t => t.id === trackId
       ? { ...t, start_bar: startBar, midi_start_bar: startBar }
@@ -5110,6 +5142,7 @@ export default function ProjectPage() {
       }
 
       updateUpload(upload.id, { status: 'done' })
+      trackEvent('track_uploaded', { file_type: uploadFileType(upload.file) })
       cache.invalidate(activeVersionId)
       await loadProject(true, true)
       setTimeout(() => removeUpload(upload.id), 1500)
@@ -5119,6 +5152,7 @@ export default function ProjectPage() {
         status: 'error',
         error: err instanceof Error ? err.message : 'Upload failed',
       })
+      trackEvent('track_upload_failed', { file_type: uploadFileType(upload.file) })
     } finally {
       // After this upload finishes/errors, start any queued uploads
       setTimeout(() => processUploadQueue(), 0)
@@ -5164,6 +5198,7 @@ export default function ProjectPage() {
         ))
       }
       updateUpload(upload.id, { status: 'done' })
+      trackEvent('track_uploaded', { file_type: uploadFileType(upload.file) })
       cache.invalidate(activeVersionId)
       await loadProject(true, true)
       setTimeout(() => removeUpload(upload.id), 1500)
@@ -5172,12 +5207,14 @@ export default function ProjectPage() {
         status: 'error',
         error: err instanceof Error ? err.message : 'Processing failed',
       })
+      trackEvent('track_upload_failed', { file_type: uploadFileType(upload.file) })
     }
   }
 
   function retryUpload(uploadId: string) {
     const upload = uploadsRef.current.find(u => u.id === uploadId)
     if (!upload) return
+    trackEvent('track_upload_retried', { file_type: uploadFileType(upload.file) })
 
     if (upload.tempKey) {
       // R2 upload succeeded — only processing failed; skip re-upload
@@ -5199,6 +5236,10 @@ export default function ProjectPage() {
   // ── Entry points ─────────────────────────────────────────────────────────────
 
   const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200 MB
+
+function uploadFileType(file: File): 'audio' | 'midi' {
+  return file.name.endsWith('.mid') || file.name.endsWith('.midi') ? 'midi' : 'audio'
+}
 
   function handleUploadFiles(files: File[]) {
     if (!files.length || !activeVersionId) return
@@ -5339,6 +5380,7 @@ export default function ProjectPage() {
       waveformBarsCache.delete(track.id)
       audioArrayBufferCache.delete(track.id)
       cache.invalidate(activeVersionId)
+      trackEvent('track_replaced', { file_type: isMidi ? 'midi' : 'audio' })
       await loadProject(true, true)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Replace failed')
@@ -5368,6 +5410,7 @@ export default function ProjectPage() {
         body: JSON.stringify({ name, parent_id: activeVersionId, tag }),
       })
       const { version } = await res.json()
+      trackEvent('version_created', { tag: tag || 'none' })
       cache.invalidate(activeVersionId)
       await loadProject()
       setActiveVersionId(version.id)
@@ -5375,10 +5418,12 @@ export default function ProjectPage() {
   }
 
   function handleMergeClick(branchId: string) {
+    trackEvent('merge_initiated')
     setMergeModal({ branchId })
   }
 
   async function handleMergeComplete({ tracksUpdated, branchName, targetName }: { tracksUpdated: number; branchName: string; targetName?: string }) {
+    trackEvent('version_saved')
     const branchId = mergeModal?.branchId
     setMergeModal(null)
     if (branchId) cache.invalidate(branchId)
@@ -5400,6 +5445,7 @@ export default function ProjectPage() {
     })
     if (!res.ok) throw new Error('Failed')
     const { reply } = await res.json()
+    trackEvent('comment_reply_added')
 
     setVersions(prev => prev.map(v => ({
       ...v,
@@ -5425,12 +5471,41 @@ export default function ProjectPage() {
   }
 
   async function handleShare() {
+    trackEvent('share_clicked')
     const url = new URL(`/band/${bandId}/project/${projectId}`, window.location.origin)
     if (activeVersionId) url.searchParams.set('v', activeVersionId)
     await navigator.clipboard.writeText(url.toString())
     setShareCopied(true)
     setTimeout(() => setShareCopied(false), 2000)
   }
+
+  const toggleCommentMode = useCallback(() => {
+    setCommentMode(m => {
+      const next = !m
+      trackEvent('comment_mode_toggled', { enabled: next })
+      return next
+    })
+    setActiveCommentInput(null)
+  }, [])
+
+  const toggleEditStructure = useCallback(() => {
+    setEditStructure(p => {
+      if (!p) trackEvent('structure_edit_opened')
+      return !p
+    })
+  }, [])
+
+  const togglePlanOpen = useCallback(() => {
+    setPlanOpen(o => {
+      if (!o) trackEvent('roadmap_opened')
+      return !o
+    })
+  }, [])
+
+  const openAddTrackPicker = useCallback(() => {
+    trackEvent('add_track_clicked')
+    fileInputRef.current?.click()
+  }, [])
 
   const headerActions = (
     <>
@@ -5449,6 +5524,7 @@ export default function ProjectPage() {
       </TbBtn>
       <a
         href={`/api/versions/${activeVersionId}/export`}
+        onClick={() => trackEvent('export_wav_clicked')}
         className="hidden sm:inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-ember hover:text-white transition no-underline items-center"
       >
         Export WAV
@@ -5457,7 +5533,7 @@ export default function ProjectPage() {
         <CommentToggleBtn
           active={commentMode}
           count={totalComments}
-          onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+          onClick={toggleCommentMode}
         />
       )}
       <TourHelpButton onClick={() => setShowTour(true)} />
@@ -5542,7 +5618,7 @@ export default function ProjectPage() {
           onNewBranch={() => setShowBranchModal(true)}
           commentMode={commentMode}
           commentCount={totalComments}
-          onToggleCommentMode={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+          onToggleCommentMode={toggleCommentMode}
           mixer={{
             project,
             versionId: activeVersionId,
@@ -5584,7 +5660,7 @@ export default function ProjectPage() {
             midiRenderingTracks: player.midiRenderingTracks,
             onToggleMute: player.toggleMute,
             onToggleSolo: player.toggleSolo,
-            onAddTrack: () => fileInputRef.current?.click(),
+            onAddTrack: openAddTrackPicker,
             onAddRecording: handleAddRecordingTrack,
             storageFull,
             onReplaceTrack: promptReplaceTrack,
@@ -5598,7 +5674,7 @@ export default function ProjectPage() {
             scrollToRecordingId,
             onRecordingScrollDone: () => setScrollToRecordingId(null),
             commentMode,
-            onToggleCommentMode: () => { setCommentMode(m => !m); setActiveCommentInput(null) },
+            onToggleCommentMode: toggleCommentMode,
             commentCount: totalComments,
             activeCommentInput,
             onCommentPlace: setActiveCommentInput,
@@ -5696,7 +5772,7 @@ export default function ProjectPage() {
           <CommentToggleBtn
             active={commentMode}
             count={totalComments}
-            onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+            onClick={toggleCommentMode}
             className="size-7"
           />
           <TourHelpButton onClick={() => setShowTour(true)} />
@@ -5746,7 +5822,7 @@ export default function ProjectPage() {
           onNewBranch={() => setShowBranchModal(true)}
           commentMode={commentMode}
           commentCount={totalComments}
-          onToggleCommentMode={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+          onToggleCommentMode={toggleCommentMode}
         />
       )}
 
@@ -5770,7 +5846,7 @@ export default function ProjectPage() {
               <svg width="16" height="16" viewBox="0 0 13 13" fill="none"><path d="M5.5 9a2.5 2.5 0 0 1 0-5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M7.5 4a2.5 2.5 0 0 1 0 5h-1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M4.5 6.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
               Share link
             </button>
-            <a href={`/api/versions/${activeVersionId}/export`} style={sheetBtnStyle} onClick={() => setTopbarSheetOpen(false)}>
+            <a href={`/api/versions/${activeVersionId}/export`} style={sheetBtnStyle} onClick={() => { trackEvent('export_wav_clicked'); setTopbarSheetOpen(false) }}>
               <svg width="16" height="16" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/><path d="M3.5 7l3 3 3-3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h9" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
               Export WAV
             </a>
@@ -5916,7 +5992,7 @@ export default function ProjectPage() {
                 <div className="flex items-center gap-1.5 flex-wrap shrink-0 ml-auto">
                 <button
                   type="button"
-                  onClick={() => setPlanOpen(o => !o)}
+                  onClick={togglePlanOpen}
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
                     planOpen
                       ? 'bg-ember text-white border-ember'
@@ -5927,7 +6003,7 @@ export default function ProjectPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditStructure(p => !p)}
+                  onClick={toggleEditStructure}
                   disabled={activeTracks.length === 0}
                   data-tour="edit-structure-button"
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
@@ -5940,7 +6016,7 @@ export default function ProjectPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setCommentMode(m => !m); setActiveCommentInput(null) }}
+                  onClick={toggleCommentMode}
                   data-tour="comments-toggle"
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
                     commentMode
@@ -6214,7 +6290,7 @@ export default function ProjectPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={openAddTrackPicker}
                     disabled={uploading || storageFull}
                     className={`w-full min-h-[60px] p-4 text-left text-[10px] uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isDraggingAddRow

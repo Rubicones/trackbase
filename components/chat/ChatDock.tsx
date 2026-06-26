@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useRouter } from 'next/navigation'
 import { UserAvatar } from '@/components/ui/avatar'
 import { SpinnerBars } from '@/components/ui/Spinner'
+import { trackEvent } from '@/lib/analytics'
 import {
   BAND_CHANNEL,
   findActiveMention,
@@ -228,6 +229,7 @@ export function ChatDock({
   const prevLastIdRef = useRef<string | null>(null)
   const prevFirstIdRef = useRef<string | null>(null)
   const prevChannelRef = useRef<ChannelKey | null>(null)
+  const prevOpenRef = useRef(false)
   const prevScrollHeightRef = useRef(0)
   const savedPageScrollRef = useRef(0)
   const [showNewIndicator, setShowNewIndicator] = useState(false)
@@ -261,6 +263,11 @@ export function ChatDock({
   useEffect(() => {
     onUnreadChange?.(totalUnread)
   }, [totalUnread, onUnreadChange])
+
+  useEffect(() => {
+    if (open && !prevOpenRef.current) trackEvent('chat_opened')
+    prevOpenRef.current = open
+  }, [open])
 
   // Vertical wheel → horizontal scroll on channel tabs (no shift needed).
   useEffect(() => {
@@ -446,6 +453,13 @@ export function ChatDock({
     }
   }, [hasMore, loadingOlder, loadOlder])
 
+  function switchChannel(next: ChannelKey) {
+    if (next !== channelKey) {
+      trackEvent('chat_channel_switched', { channel: next === BAND_CHANNEL ? 'band' : 'project' })
+    }
+    setChannelKey(next)
+  }
+
   function submit() {
     const text = draft.trim()
     if (!text) return
@@ -573,7 +587,7 @@ export function ChatDock({
               label="# band"
               hint={`${members.length} members · ${counts[BAND_CHANNEL] ?? 0}M`}
               unread={isBandChannel ? 0 : unread[BAND_CHANNEL] ?? 0}
-              onClick={() => setChannelKey(BAND_CHANNEL)}
+              onClick={() => switchChannel(BAND_CHANNEL)}
             />
             {projects.map(p => (
               <ChannelTab
@@ -582,7 +596,7 @@ export function ChatDock({
                 label={`# ${p.name.toLowerCase()}`}
                 hint={`${branchCounts[p.id] ?? p.version_count ?? 0}B · ${counts[p.id] ?? 0}M`}
                 unread={channelKey === p.id ? 0 : unread[p.id] ?? 0}
-                onClick={() => setChannelKey(p.id)}
+                onClick={() => switchChannel(p.id)}
               />
             ))}
           </div>

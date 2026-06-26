@@ -4,6 +4,7 @@ import {
   useEffect, useRef, useState, useCallback, useLayoutEffect,
   type ButtonHTMLAttributes,
 } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { MidiNote, MidiTrackData, Track } from '@/lib/types'
 import {
   serializeMidi, gmInstrumentName, gmProgramLabel, GM_PROGRAM_GROUPS,
@@ -326,6 +327,7 @@ export default function PianoRollEditor({
   // Show instrument dropdown
   const [showInstrumentMenu, setShowInstrumentMenu] = useState(false)
   const instrumentMenuRef = useRef<HTMLDivElement>(null)
+  const editorOpenedTrackedRef = useRef(false)
 
   // ── Load MIDI data if not cached ───────────────────────────────────────────
   useEffect(() => {
@@ -351,6 +353,12 @@ export default function PianoRollEditor({
       .catch(() => setLoadError('Network error'))
       .finally(() => setLoading(false))
   }, [track.id, track.midi_data])
+
+  useEffect(() => {
+    if (loading || loadError || editorOpenedTrackedRef.current) return
+    editorOpenedTrackedRef.current = true
+    trackEvent('midi_editor_opened')
+  }, [loading, loadError])
 
   // ── Load soundfont ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -617,8 +625,10 @@ export default function PianoRollEditor({
   }
 
   function commitDrag() {
+    const wasCreate = dragRef.current?.type === 'create'
     isDraggingRef.current = false
     hasPendingDragMoveRef.current = false  // discard any coords queued after mouseup
+    if (wasCreate) trackEvent('midi_note_drawn')
     setHistoryVersion(v => v + 1)
     setNotes([...notesRef.current])
     setSelectedIds(new Set(selectedIdsRef.current))
@@ -639,6 +649,7 @@ export default function PianoRollEditor({
       if (hit) {
         pushUndo(notesRef.current)
         notesRef.current = notesRef.current.filter(n => n.id !== hit.id)
+        trackEvent('midi_note_deleted')
         setNotes([...notesRef.current])
         const s = new Set(selectedIdsRef.current)
         s.delete(hit.id)
@@ -848,6 +859,7 @@ export default function PianoRollEditor({
         if (selectedIdsRef.current.size > 0) {
           pushUndo(notesRef.current)
           notesRef.current = notesRef.current.filter(n => !selectedIdsRef.current.has(n.id))
+          trackEvent('midi_note_deleted', { count: selectedIdsRef.current.size })
           selectedIdsRef.current = new Set()
           setNotes([...notesRef.current])
           setSelectedIds(new Set())
@@ -950,6 +962,7 @@ export default function PianoRollEditor({
       if (!patchRes.ok) throw new Error((await patchRes.json()).error ?? 'Save failed')
 
       await onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
+      trackEvent('midi_saved', { note_count: notes.length })
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -1010,7 +1023,10 @@ export default function PianoRollEditor({
             <button
               key={m}
               type="button"
-              onClick={() => setMode(m)}
+              onClick={() => {
+                if (mode !== m) trackEvent('midi_mode_switched', { mode: m })
+                setMode(m)
+              }}
               className={`text-[10px] uppercase tracking-widest px-3 py-1.5 transition border-r border-border last:border-r-0 ${
                 mode === m
                   ? 'bg-ember text-white'
@@ -1055,7 +1071,11 @@ export default function PianoRollEditor({
                     <button
                       key={p.num}
                       type="button"
-                      onClick={() => { setInstrument(p.num); setShowInstrumentMenu(false) }}
+                      onClick={() => {
+                        if (instrument !== p.num) trackEvent('midi_instrument_changed', { instrument: p.label })
+                        setInstrument(p.num)
+                        setShowInstrumentMenu(false)
+                      }}
                       className={`block w-full text-left px-4 py-1.5 text-xs transition ${
                         instrument === p.num
                           ? 'text-ember bg-ember-soft'
@@ -1091,7 +1111,15 @@ export default function PianoRollEditor({
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        <MidiBtn onClick={onClose} disabled={saving}>Cancel</MidiBtn>
+        <MidiBtn
+          onClick={() => {
+            trackEvent('midi_edit_cancelled')
+            onClose()
+          }}
+          disabled={saving}
+        >
+          Cancel
+        </MidiBtn>
         <MidiBtnPrimary onClick={handleSave} disabled={saving || isRenderingMidi}>
           {saving ? (isRenderingMidi ? 'Rendering…' : 'Saving…') : 'Done'}
         </MidiBtnPrimary>

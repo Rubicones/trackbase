@@ -24,6 +24,7 @@ import {
   AuthModeCard,
 } from '@/components/auth/AuthPrimitives'
 import { ThemePicker } from '@/components/design/ThemePicker'
+import { trackEvent } from '@/lib/analytics'
 
 type OnboardingStep = 1 | 2 | 3
 
@@ -190,6 +191,7 @@ function OnboardingContent() {
     try {
       await persistUsername(username)
       await refreshProfile()
+      trackEvent('onboarding_username_set')
       setStep(3)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not save username'
@@ -224,6 +226,7 @@ function OnboardingContent() {
         })
         if (!bandRes.ok) throw new Error((await bandRes.json()).error ?? 'Band creation failed')
         const { band } = await bandRes.json()
+        trackEvent('onboarding_band_created')
         await markOnboardingComplete()
         await refreshProfile()
         router.replace(`/band/${band.id}`)
@@ -236,6 +239,7 @@ function OnboardingContent() {
         body: JSON.stringify({ code: inviteCode.trim() }),
       })
       if (!joinRes.ok) throw new Error((await joinRes.json()).error ?? 'Failed to submit join request')
+      trackEvent('onboarding_join_submitted')
       await markOnboardingComplete()
       await refreshProfile()
       router.replace('/dashboard')

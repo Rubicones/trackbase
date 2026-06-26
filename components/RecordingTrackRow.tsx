@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback, memo, type MutableRefObject }
 import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
+import { trackEvent } from '@/lib/analytics'
 import { TactGrid } from '@/components/design/TactGrid'
 import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
@@ -817,6 +818,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   }
 
   function handleDiscard() {
+    trackEvent('recording_discarded')
     void handleReRecord()
   }
 

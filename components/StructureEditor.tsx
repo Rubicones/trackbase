@@ -6,6 +6,7 @@ import type { Project, Section, SectionType, Track } from '@/lib/types'
 import { ChordInput } from '@/components/ChordInput'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { detectChordsInAudio } from '@/lib/chordDetection'
+import { trackEvent } from '@/lib/analytics'
 import { sectionBarCount, updateSectionChordDuration } from '@/lib/chords'
 import {
   barDurationSec,
@@ -712,6 +713,7 @@ export function useSectionEditActions({
   function handleDetectChords(sectionId: string, selectedTrackIds: string[]) {
     const section = sections.find(s => s.id === sectionId)
     if (!section) return
+    trackEvent('chord_detect_clicked')
     void runChordDetection(section, selectedTrackIds)
   }
 
@@ -1161,6 +1163,7 @@ export default function StructureOverlay({
   function handleDetectChords(sectionId: string, selectedTrackIds: string[]) {
     const section = sections.find(s => s.id === sectionId)
     if (!section) return
+    trackEvent('chord_detect_clicked')
     void runChordDetection(section, selectedTrackIds)
   }
 
@@ -1253,6 +1256,7 @@ export default function StructureOverlay({
     }
     try {
       await fetch(`/api/versions/${versionId}/structure/submit`, { method: 'POST' })
+      trackEvent('structure_saved', { section_count: sections.length })
     } catch {
       // non-fatal
     }

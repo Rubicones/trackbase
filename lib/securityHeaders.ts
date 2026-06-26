@@ -4,7 +4,7 @@
  * CSP is tuned for Trackbase: inline boot scripts in layout, Vercel Analytics,
  * direct R2 presigned uploads/downloads (preview mix MP3 + track blobs), the push SW, the
  * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM),
- * and soundfont-player MIDI samples (gleitz.github.io).
+ * soundfont-player MIDI samples (gleitz.github.io), and Google Analytics 4.
  */
 
 function supabaseConnectOrigins(): string[] {
@@ -36,6 +36,7 @@ export function buildContentSecurityPolicy(): string {
     "'unsafe-eval'",
     "'wasm-unsafe-eval'",
     'https://va.vercel-scripts.com',
+    'https://www.googletagmanager.com',
   ]
 
   const connectSrc = [
@@ -48,6 +49,11 @@ export function buildContentSecurityPolicy(): string {
     'https://updates.push.services.mozilla.com',
     // soundfont-player (MIDI preview + piano roll)
     'https://gleitz.github.io',
+    // Google Analytics 4
+    'https://www.google-analytics.com',
+    'https://*.google-analytics.com',
+    'https://www.googletagmanager.com',
+    'https://analytics.google.com',
   ]
 
   return [

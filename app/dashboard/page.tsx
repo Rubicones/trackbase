@@ -13,6 +13,7 @@ import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
 import { Toast } from '@/components/design/Toast'
+import { trackEvent } from '@/lib/analytics'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,6 +154,7 @@ function JoinBandModal({ onClose, onSubmitted }: {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Failed')
+      trackEvent('band_join_submitted')
       onSubmitted(data.band_name ?? preview.band_name)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -210,6 +212,7 @@ function NewBandModal({ onClose, onCreated }: {
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
       const { band } = await res.json()
+      trackEvent('band_created')
       onCreated(band.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -592,6 +595,11 @@ export default function DashboardPage() {
     setToast(msg); setTimeout(() => setToast(null), 3000)
   }
 
+  function openNewBandModal() {
+    trackEvent('band_create_clicked')
+    setShowNewBand(true)
+  }
+
   const filteredBands = bands
     .filter(b => {
       if (b.isPending) return filter === 'all' || filter === 'recent'
@@ -682,7 +690,10 @@ export default function DashboardPage() {
                 <button
                   key={id}
                   type="button"
-                  onClick={() => setFilter(id)}
+                  onClick={() => {
+                    if (filter !== id) trackEvent('dashboard_filter_changed', { filter: id })
+                    setFilter(id)
+                  }}
                   className={`px-4 h-10 text-[10px] uppercase tracking-widest border border-border -ml-px first:ml-0 transition-colors whitespace-nowrap ${
                     filter === id
                       ? 'bg-ember text-white border-ember z-[1] relative'
@@ -693,7 +704,7 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="h-10 px-4 shrink-0">
+            <TbButton variant="primary" onClick={openNewBandModal} className="h-10 px-4 shrink-0">
               + New band
             </TbButton>
             <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
@@ -716,7 +727,7 @@ export default function DashboardPage() {
               Create your first band or request to join one with an invite code
             </p>
             <div className="flex flex-wrap gap-3 justify-center mt-2">
-              <TbButton variant="primary" onClick={() => setShowNewBand(true)} className="px-4 py-2">
+              <TbButton variant="primary" onClick={openNewBandModal} className="px-4 py-2">
                 Create a band
               </TbButton>
               <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
@@ -770,7 +781,12 @@ export default function DashboardPage() {
                     key={band.isPending ? `pending-${band.joinRequestId}` : band.id}
                     band={band}
                     index={i}
-                    onNavigate={() => { if (!band.isPending) router.push(`/band/${band.id}`) }}
+                    onNavigate={() => {
+                      if (!band.isPending) {
+                        trackEvent('band_opened')
+                        router.push(`/band/${band.id}`)
+                      }
+                    }}
                     onDelete={() => { if (!band.isPending) setDeletingBand(band) }}
                     onLeave={() => { if (!band.isPending) setLeavingBand(band) }}
                   />
@@ -779,7 +795,7 @@ export default function DashboardPage() {
                 {filter === 'all' && !search && (
                   <button
                     type="button"
-                    onClick={() => setShowNewBand(true)}
+                    onClick={openNewBandModal}
                     className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-ember hover:bg-surface transition-colors min-h-[200px]"
                   >
                     <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-ember">+</div>

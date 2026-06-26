@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import { useAuth } from '@/contexts/AuthContext'
 import { PushPermissionModal } from '@/components/push/PushPermissionModal'
 import {
@@ -29,7 +30,10 @@ export function PushNotificationProvider({ children }: { children: React.ReactNo
     if (Notification.permission === 'granted' || Notification.permission === 'denied') return
 
     promptedRef.current = true
-    const timer = window.setTimeout(() => setShowModal(true), 800)
+    const timer = window.setTimeout(() => {
+      setShowModal(true)
+      trackEvent('push_prompt_shown', { source: 'auto' })
+    }, 800)
     return () => window.clearTimeout(timer)
   }, [loading, user])
 

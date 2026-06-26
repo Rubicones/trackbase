@@ -6,6 +6,7 @@ import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
 import { sanitizeRedirectPath } from '@/lib/auth/safe-redirect'
 import { getAuthCallbackUrl } from '@/lib/site-url'
+import { trackEvent } from '@/lib/analytics'
 import {
   AuthShell,
   AuthCard,
@@ -80,6 +81,7 @@ function AuthPageContent() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim()) return
+    trackEvent('sign_in_clicked')
     setLoading(true)
     setError('')
     try {
@@ -98,6 +100,7 @@ function AuthPageContent() {
         },
       })
       if (otpErr) throw otpErr
+      trackEvent('magic_link_sent')
       setSent(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')

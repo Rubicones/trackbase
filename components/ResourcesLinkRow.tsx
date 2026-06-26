@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { ProjectResource, Version } from '@/lib/types'
 import {
   ResourceContextControls,
@@ -139,7 +140,10 @@ export function ResourcesLinkRow({
     setDeleting(true)
     try {
       const res = await fetch(`/api/projects/${projectId}/resources/${resource.id}`, { method: 'DELETE' })
-      if (res.ok || res.status === 204) onDeleted(resource.id)
+      if (res.ok || res.status === 204) {
+        trackEvent('resource_deleted', { resource_type: 'link' })
+        onDeleted(resource.id)
+      }
     } finally {
       setDeleting(false)
       setConfirmDelete(false)

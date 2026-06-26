@@ -2,6 +2,7 @@
 
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
+import { trackEvent } from '@/lib/analytics'
 import type { ProjectResource } from '@/lib/types'
 import { TbButton } from '@/components/design/TbButton'
 
@@ -63,6 +64,7 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
 
   useEffect(() => {
     textareaRef.current?.focus()
+    trackEvent('lyrics_editor_opened')
   }, [])
 
   // Close on Escape
@@ -88,6 +90,7 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
         throw new Error(msg ?? 'Save failed')
       }
       const { resource } = await res.json()
+      trackEvent('lyrics_saved')
       onSaved(resource)
       onClose()
     } catch (err) {

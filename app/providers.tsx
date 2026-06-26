@@ -7,6 +7,7 @@ import { PaletteProvider } from '@/contexts/PaletteContext'
 import { DesignThemeProvider, NEXT_THEMES_STORAGE_KEY } from '@/lib/design-theme'
 import { NavigationPlaybackCleanup } from '@/components/NavigationPlaybackCleanup'
 import { PushNotificationProvider } from '@/components/push/PushNotificationProvider'
+import { PageViewTracker } from '@/components/analytics/PageViewTracker'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -17,6 +18,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <PushNotificationProvider>
               <Suspense fallback={null}>
                 <NavigationPlaybackCleanup />
+                <PageViewTracker />
               </Suspense>
               {children}
             </PushNotificationProvider>

@@ -8,6 +8,7 @@ import { SectionLabel } from '@/components/design/AppShell'
 import { UserAvatar } from '@/components/ui/avatar'
 import type { MergePreview, MergeResolution, AutoMergeItem, ConflictTrack, TrackSnapshot, CommentPreview, CommentChanges } from '@/lib/mergePreview'
 import type { Version } from '@/lib/types'
+import { trackEvent } from '@/lib/analytics'
 import { MergePreviewLoading, MergeTargetSelector } from '@/components/merge/MergeTargetSelector'
 import { useMergePreview } from '@/components/merge/useMergePreview'
 import { mergeTargetVersions } from '@/lib/versionSort'
@@ -646,6 +647,7 @@ export function MergeModal({
   async function handleMerge() {
     if (!canMerge || !preview) return
     const p = preview
+    const hadConflicts = p.conflicts.length > 0 || (p.sectionBarConflicts ?? []).length > 0
     setMerging(true)
     setMergeErr('')
     try {
@@ -674,6 +676,7 @@ export function MergeModal({
         return
       }
       const data = await res.json()
+      trackEvent('merge_completed', { had_conflicts: hadConflicts })
       onMerged({ tracksUpdated: data.tracks_updated ?? 0, branchName: p.branchName, targetName: p.targetVersionName })
     } catch {
       setMergeErr('Network error')

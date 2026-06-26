@@ -5,6 +5,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 import { syncSupabaseRealtimeAuth } from '@/lib/supabase/realtime-auth'
+import { trackEvent } from '@/lib/analytics'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut({ scope: 'local' })
     await clearAuthCookies()
     setState({ user: null, profile: null, session: null, loading: false })
+    trackEvent('signed_out')
   }, [supabase])
 
   useEffect(() => {

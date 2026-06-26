@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import { trackEvent } from '@/lib/analytics'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { syncSupabaseRealtimeAuth } from '@/lib/supabase/realtime-auth'
 import {
   BAND_CHANNEL,
   channelIdOf,
   channelKeyOf,
+  extractMentions,
   type BandMessage,
   type ChannelKey,
 } from '@/lib/chat'
@@ -413,6 +415,12 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
       const data = await res.json()
       const message = data.message as BandMessage | undefined
       if (!message) return
+
+      trackEvent('chat_message_sent', {
+        has_mention: extractMentions(trimmed).length > 0,
+        has_version_chip: Boolean(opts.context_version_id),
+        has_track_chip: Boolean(opts.context_track_id),
+      })
 
       bumpCounts(message.channel_id)
       if (messageMatchesActiveChannel(activeKeyRef.current, channelKeyOf(message.channel_id))) {
