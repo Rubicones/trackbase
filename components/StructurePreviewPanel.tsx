@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { getBarMath, sectionLabel } from '@/components/StructureEditor'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { SectionLabel } from '@/components/design/AppShell'
 import { VersionChipSelector } from '@/components/VersionChipSelector'
@@ -523,7 +523,14 @@ export function StructurePreviewPanel({
           {/* Roadmap */}
           {activeTab === 'roadmap' && (
             !roadmapLoaded ? (
-              <BrandSpinner fullscreen={false} label="Loading roadmap" />
+              <div className="space-y-3 pt-2">
+                {[0, 1, 2, 3].map(i => (
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton width={24} height={24} borderRadius="50%" />
+                    <Skeleton width="60%" height={14} />
+                  </div>
+                ))}
+              </div>
             ) : (
               <SongRoadmap
                 projectId={projectId!}
@@ -536,7 +543,14 @@ export function StructurePreviewPanel({
           {/* Checklist */}
           {activeTab === 'checklist' && (
             !checklistLoaded ? (
-              <BrandSpinner fullscreen={false} label="Loading checklist" />
+              <div className="space-y-2 pt-2">
+                {[0, 1, 2, 3].map(i => (
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton width={18} height={18} />
+                    <Skeleton width="70%" height={14} />
+                  </div>
+                ))}
+              </div>
             ) : (
               <SongChecklist
                 items={checklist}
@@ -554,7 +568,19 @@ export function StructurePreviewPanel({
           {/* Structure */}
           {activeTab === 'structure' && (
             loading ? (
-              <BrandSpinner fullscreen={false} label="Reading structure" />
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between mb-3">
+                  <Skeleton width={100} height={10} />
+                  <Skeleton width={80} height={24} borderRadius={12} />
+                </div>
+                {[0, 1, 2, 3].map(i => (
+                  <div key={i} className="flex items-center gap-3 p-2 border border-border">
+                    <Skeleton width={64} height={12} />
+                    <Skeleton width="50%" height={24} className="flex-1" />
+                    <Skeleton width={40} height={12} />
+                  </div>
+                ))}
+              </div>
             ) : error ? (
               <p className="text-destructive text-sm m-0">{error}</p>
             ) : sections.length === 0 ? (

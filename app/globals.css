@@ -1818,6 +1818,18 @@ html.dark[data-palette="green"] .theme-avatar {
   to   { background-position:  200% 0; }
 }
 
+/* ── Skeleton shimmer ──────────────────────────────────────── */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface)   25%,
+    var(--surface-2) 50%,
+    var(--surface)   75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite linear;
+}
+
 /* Hide scrollbars in project workspace and chat — scroll still works */
 .project-page,
 .chat-dock-aside,
@@ -2169,4 +2181,35 @@ html:has(.landing-page) body {
 
 .tb-accordion-panel-body {
   min-height: 0;
+}
+
+/* ── Skeleton responsive visibility ─────────────────────────────────────────
+ * CSS-only breakpoints so the correct skeleton variant renders on first paint
+ * with no JS hydration flash.
+ * portrait mobile  = portrait orientation AND viewport-width < 768px
+ * landscape mobile = landscape orientation AND viewport-width < 1024px
+ * desktop          = everything else
+ * ─────────────────────────────────────────────────────────────────────────── */
+.skeleton-portrait-mobile {
+  display: none;
+}
+@media (orientation: portrait) and (max-width: 767px) {
+  .skeleton-portrait-mobile { display: block; }
+}
+
+.skeleton-landscape-mobile {
+  display: none;
+}
+@media (orientation: landscape) and (max-width: 1023px) {
+  .skeleton-landscape-mobile { display: block; }
+}
+
+.skeleton-desktop {
+  display: block;
+}
+@media (orientation: portrait) and (max-width: 767px) {
+  .skeleton-desktop { display: none; }
+}
+@media (orientation: landscape) and (max-width: 1023px) {
+  .skeleton-desktop { display: none; }
 }

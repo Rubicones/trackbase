@@ -5,7 +5,6 @@ import { ThemeProvider } from 'next-themes'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { PaletteProvider } from '@/contexts/PaletteContext'
 import { DesignThemeProvider, NEXT_THEMES_STORAGE_KEY } from '@/lib/design-theme'
-import { PageNavigationLoader } from '@/components/PageNavigationLoader'
 import { NavigationPlaybackCleanup } from '@/components/NavigationPlaybackCleanup'
 import { PushNotificationProvider } from '@/components/push/PushNotificationProvider'
 
@@ -17,7 +16,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <AuthProvider>
             <PushNotificationProvider>
               <Suspense fallback={null}>
-                <PageNavigationLoader />
                 <NavigationPlaybackCleanup />
               </Suspense>
               {children}

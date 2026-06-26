@@ -2,7 +2,7 @@
  * Security response headers (CSP, clickjacking, MIME sniffing, etc.).
  *
  * CSP is tuned for Trackbase: inline boot scripts in layout, Vercel Analytics,
- * Supabase Auth/Realtime, direct R2 presigned uploads, the push SW, the
+ * direct R2 presigned uploads/downloads (preview mix MP3 + track blobs), the push SW, the
  * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM),
  * and soundfont-player MIDI samples (gleitz.github.io).
  */
@@ -23,6 +23,12 @@ export function buildContentSecurityPolicy(): string {
   const isDev = process.env.NODE_ENV === 'development'
   const supabase = supabaseConnectOrigins()
 
+  const r2Origins = [
+    'https://*.r2.cloudflarestorage.com',
+    // Presigned URLs may be http:// in local dev (no upgrade-insecure-requests).
+    ...(isDev ? ['http://*.r2.cloudflarestorage.com'] : []),
+  ]
+
   const scriptSrc = [
     "'self'",
     "'unsafe-inline'",
@@ -35,7 +41,7 @@ export function buildContentSecurityPolicy(): string {
   const connectSrc = [
     "'self'",
     ...supabase,
-    'https://*.r2.cloudflarestorage.com',
+    ...r2Origins,
     'https://vitals.vercel-insights.com',
     // Web Push (browser → push service)
     'https://fcm.googleapis.com',
@@ -51,9 +57,9 @@ export function buildContentSecurityPolicy(): string {
     "font-src 'self' data:",
     "img-src 'self' data: blob:",
     `connect-src ${connectSrc.join(' ')}`,
-    "worker-src 'self'",
+    "worker-src 'self' blob:",
     "manifest-src 'self'",
-    "media-src 'self' blob:",
+    `media-src 'self' blob: ${r2Origins.join(' ')}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

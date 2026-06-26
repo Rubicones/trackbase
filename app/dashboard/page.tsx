@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { formatActivityLine } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
@@ -474,6 +474,31 @@ function DotsVIcon() {
   )
 }
 
+// ─── Skeletons ────────────────────────────────────────────────────────────────
+
+function BandCardSkeleton() {
+  return (
+    <div className="bg-background p-5">
+      <div className="flex items-start justify-between mb-5">
+        <Skeleton width={48} height={48} />
+        <Skeleton width={60} height={24} />
+      </div>
+      <Skeleton width="55%" height={20} className="mb-2" />
+      <Skeleton width="75%" height={12} className="mb-5" />
+      <div className="space-y-3">
+        <Skeleton width="80%" height={12} />
+        <div>
+          <div className="flex justify-between mb-1">
+            <Skeleton width={50} height={10} />
+            <Skeleton width={80} height={10} />
+          </div>
+          <Skeleton width="100%" height={4} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -511,15 +536,25 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (authLoading || !user) return
-    fetch('/api/dashboard')
+    setLoadingData(true)
+    const controller = new AbortController()
+    fetch('/api/dashboard', { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
         setBands(data.bands ?? [])
         setTotalBands(data.totalBands ?? 0)
         setTotalProjects(data.totalProjects ?? 0)
         setTotalCollaborators(data.totalCollaborators ?? 0)
+        setLoadingData(false)
       })
-      .finally(() => setLoadingData(false))
+      .catch(err => {
+        if (err.name !== 'AbortError') {
+          console.error(err)
+          setLoadingData(false)
+        }
+        // On abort: don't touch loadingData — next effect run resets it
+      })
+    return () => controller.abort()
   }, [authLoading, user])
 
   function reloadDashboard() {
@@ -575,7 +610,7 @@ export default function DashboardPage() {
 
   const pendingBandCount = bands.filter(b => b.isPending).length
 
-  if (authLoading) return <BrandSpinner />
+  const heroLoading = authLoading || loadingData
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
@@ -588,19 +623,25 @@ export default function DashboardPage() {
             <div className="text-[10px] uppercase tracking-[0.22em] text-ember font-bold mb-2">/ HOME BASE</div>
             <h1 className="font-display text-4xl sm:text-6xl uppercase tracking-tighter m-0 leading-none">
               {timeGreeting()},{' '}
-              <span className="text-ember">{displayName(profile?.username)}</span>
+              {heroLoading
+                ? <Skeleton width={220} height={44} className="inline-block align-middle" />
+                : <span className="text-ember">{displayName(profile?.username)}</span>}
             </h1>
-            <p className="text-sm text-muted-foreground mt-3 max-w-md m-0">
-              {totalBands} band{totalBands !== 1 ? 's' : ''}
-              {pendingBandCount > 0 && (
-                <>, {pendingBandCount} pending</>
-              )}
-              . {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
-              {totalCollaborators > 0 && (
-                <> {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''} across your roster.</>
-              )}
-              {' '}Open one to keep going, or spin up a new one.
-            </p>
+            {heroLoading ? (
+              <Skeleton width="60%" height={14} className="mt-3" />
+            ) : (
+              <p className="text-sm text-muted-foreground mt-3 max-w-md m-0">
+                {totalBands} band{totalBands !== 1 ? 's' : ''}
+                {pendingBandCount > 0 && (
+                  <>, {pendingBandCount} pending</>
+                )}
+                . {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
+                {totalCollaborators > 0 && (
+                  <> {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''} across your roster.</>
+                )}
+                {' '}Open one to keep going, or spin up a new one.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-px bg-border border border-border shrink-0">
             {[
@@ -609,7 +650,9 @@ export default function DashboardPage() {
               [totalCollaborators, 'COLLABORATORS'],
             ].map(([n, l]) => (
               <div key={l as string} className="bg-background px-6 py-4 min-w-[7rem]">
-                <div className="font-display text-3xl text-foreground tabular-nums leading-none">{n}</div>
+                {heroLoading
+                  ? <Skeleton width={48} height={32} className="mb-1" />
+                  : <div className="font-display text-3xl text-foreground tabular-nums leading-none">{n}</div>}
                 <div className="text-[9px] uppercase tracking-widest text-muted-foreground mt-1">{l}</div>
               </div>
             ))}
@@ -663,8 +706,8 @@ export default function DashboardPage() {
       {/* Band grid */}
       <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">
         {loadingData ? (
-          <div className="py-20 flex justify-center">
-            <BrandSpinner fullscreen={false} label="Fetching bands" />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border border border-border">
+            {[0, 1, 2].map(i => <BandCardSkeleton key={i} />)}
           </div>
         ) : bands.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center border border-border bg-surface/30 px-6">

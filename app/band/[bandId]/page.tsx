@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { activityCategoryLabel, activityColorClass, activityDescriptionParts, activityDotClass } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
@@ -22,6 +22,13 @@ import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
+
+// ─── Session-level band data cache ───────────────────────────────────────────
+// Prevents re-fetching band data when navigating back from a project.
+// Cache key = bandId. TTL = 30 seconds (short enough to catch new projects
+// after create-and-return; explicit invalidation on mutations).
+const BAND_CACHE_TTL_MS = 30_000
+const bandDataCache = new Map<string, { data: object; cachedAt: number }>()
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -542,8 +549,51 @@ const ProjectRow = memo(function ProjectRow({
   )
 })
 
+// ─── Skeletons ────────────────────────────────────────────────────────────────
+
+function ProjectRowSkeleton({ index }: { index: number }) {
+  return (
+    <div className="bg-background flex flex-col gap-3 sm:grid sm:grid-cols-[auto_1fr_auto] sm:gap-4 sm:items-center px-4 py-4">
+      <Skeleton width={40} height={40} className="shrink-0" />
+      <div className="min-w-0">
+        <Skeleton width="45%" height={20} className="mb-2" />
+        <Skeleton width="65%" height={12} />
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <Skeleton width={80} height={32} />
+        <Skeleton width={64} height={32} />
+        <Skeleton width={32} height={32} />
+      </div>
+    </div>
+  )
+}
+
+function MemberRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5">
+      <Skeleton width={32} height={32} className="shrink-0" />
+      <div className="flex-1 min-w-0">
+        <Skeleton width="60%" height={12} className="mb-1" />
+        <Skeleton width="40%" height={10} />
+      </div>
+    </div>
+  )
+}
+
+function ActivityRowSkeleton() {
+  return (
+    <div className="flex gap-3 px-3 py-2.5">
+      <Skeleton width={8} height={8} borderRadius="50%" className="mt-1.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <Skeleton width="80%" height={12} className="mb-1" />
+        <Skeleton width="30%" height={10} />
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
- 
+
 export default function BandPage() {
   const { bandId } = useParams<{ bandId: string }>()
   const router = useRouter()
@@ -679,9 +729,33 @@ export default function BandPage() {
   }
 
   // ── Load data ────────────────────────────────────────────────────────────────
-  async function loadBand() {
-    const res = await fetch(`/api/bands/${bandId}`)
+  function applyBandData(data: Record<string, unknown>) {
+    setBand(data.band as Band)
+    setProjects((data.projects ?? []) as EnhancedProject[])
+    setMembers((data.members ?? []) as BandMember[])
+    setMyRole((data.myRole ?? '') as string)
+    setStats((data.stats ?? { branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 }) as BandStats)
+    setRecentActivity((data.recentActivity ?? []) as ActivityItem[])
+    setTotalActivity((data.totalActivity ?? 0) as number)
+    setStorageLimitBytes((data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES) as number)
+    setInviteCode((data.inviteCode ?? null) as string | null)
+    setPendingJoinRequests((data.pendingJoinRequests ?? []) as JoinRequest[])
+    setLoading(false)
+  }
+
+  async function loadBand(signal?: AbortSignal) {
+    // Serve from cache on back-navigation — avoids refetch for data that hasn't changed.
+    // TTL prevents stale data after project creation or other cross-page mutations.
+    const entry = bandDataCache.get(bandId)
+    if (entry && Date.now() - entry.cachedAt < BAND_CACHE_TTL_MS) {
+      applyBandData(entry.data as Record<string, unknown>)
+      return
+    }
+
+    const res = await fetch(`/api/bands/${bandId}`, signal ? { signal } : undefined)
     if (!res.ok) {
+      if (signal?.aborted) return
+      if (res.status === 401) return  // auth redirect effect handles nav
       const body = await res.json().catch(() => ({}))
       if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
       else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
@@ -689,18 +763,16 @@ export default function BandPage() {
       setLoading(false)
       return
     }
+    if (signal?.aborted) return
     const data = await res.json()
-    setBand(data.band)
-    setProjects(data.projects ?? [])
-    setMembers(data.members ?? [])
-    setMyRole(data.myRole ?? '')
-    setStats(data.stats ?? { branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 })
-    setRecentActivity(data.recentActivity ?? [])
-    setTotalActivity(data.totalActivity ?? 0)
-    setStorageLimitBytes(data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES)
-    setInviteCode(data.inviteCode ?? null)
-    setPendingJoinRequests(data.pendingJoinRequests ?? [])
-    setLoading(false)
+    bandDataCache.set(bandId, { data, cachedAt: Date.now() })
+    applyBandData(data)
+  }
+
+  // Invalidates the cache entry for this band (call after any mutation that
+  // changes the band's shape — member changes, project create/delete, etc.)
+  function invalidateBandCache() {
+    bandDataCache.delete(bandId)
   }
 
   async function loadActivity() {
@@ -716,12 +788,18 @@ export default function BandPage() {
     }
   }
 
+  // Redirect effect (client-side guard only — API handles server-side auth)
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) { router.replace('/auth'); return }
-      loadBand()
-    }
-  }, [authLoading, user, bandId]) // eslint-disable-line
+    if (!authLoading && !user) router.replace('/auth')
+  }, [authLoading, user, router])
+
+  // Fire band fetch immediately on mount — API uses server-side cookie auth,
+  // so this runs in parallel with client-side auth resolution.
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadBand(controller.signal)
+    return () => controller.abort()
+  }, [bandId]) // eslint-disable-line
 
   // Show band welcome modal once
   const showBandWelcome =
@@ -774,6 +852,7 @@ export default function BandPage() {
         body: JSON.stringify({ action }),
       })
       if (!res.ok) return
+      invalidateBandCache()
       await loadBand()
     } finally {
       setResolvingRequestId(null)
@@ -783,18 +862,24 @@ export default function BandPage() {
   async function handleSaveRoleLabel(memberId: string) {
     const label = editRoleLabel.trim()
     setEditingMember(null)
+    // Optimistic update — no need to refetch the whole band just for a label change
+    setMembers(prev => prev.map(m =>
+      m.user_id === memberId ? { ...m, role_label: label || null } : m
+    ))
+    invalidateBandCache()
     await fetch(`/api/bands/${bandId}/members/${memberId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role_label: label || null, role_color: null }),
     })
-    loadBand()
   }
 
   async function handleRemoveMember(memberId: string) {
     setMemberMenu(null)
+    // Optimistic update — remove the member from state immediately
+    setMembers(prev => prev.filter(m => m.user_id !== memberId))
+    invalidateBandCache()
     await fetch(`/api/bands/${bandId}/members/${memberId}`, { method: 'DELETE' })
-    loadBand()
   }
 
   async function handleDeleteProject() {
@@ -803,6 +888,7 @@ export default function BandPage() {
     try {
       const res = await fetch(`/api/projects/${deleteModal.id}`, { method: 'DELETE' })
       if (!res.ok) { setDeleteError((await res.json().catch(() => ({}))).error ?? 'Delete failed'); return }
+      invalidateBandCache()
       setProjects(prev => prev.filter(p => p.id !== deleteModal.id))
       setDeleteModal(null); setDeleteConfirmName('')
     } catch { setDeleteError('Network error') }
@@ -829,6 +915,7 @@ export default function BandPage() {
       })
       if (res.ok) {
         const { band: updated } = await res.json()
+        invalidateBandCache()
         setBand(updated)
         setBandNameFlash(true)
         setTimeout(() => setBandNameFlash(false), 400)
@@ -1078,10 +1165,9 @@ export default function BandPage() {
   const bandColor = band ? avatarColor(band.name, palette) : 'var(--ember)'
   const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
+  const dataLoading = authLoading || loading
 
-  if (authLoading || loading) return <BrandSpinner />
-
-  if (error) {
+  if (!dataLoading && error) {
     const isAccessDenied = error === 'access_denied'
     return (
       <ResourceErrorScreen
@@ -1131,8 +1217,11 @@ export default function BandPage() {
                 ON TRACKBASE SINCE {formatFoundedHero(band.created_at)}
               </div>
             )}
+            {dataLoading && <Skeleton width={120} height={10} className="mb-1" />}
             <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter m-0 min-w-0">
-              {bandNameEditing ? (
+              {dataLoading ? (
+                <Skeleton width="60%" height={40} />
+              ) : bandNameEditing ? (
                 <input
                   ref={bandNameInputRef}
                   value={bandNameValue}
@@ -1168,9 +1257,13 @@ export default function BandPage() {
                 </span>
               )}
             </h1>
-            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
-              {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} · {members.length} MEMBER{members.length !== 1 ? 'S' : ''} · {roleLabel}
-            </div>
+            {dataLoading ? (
+              <Skeleton width="40%" height={10} className="mt-2" />
+            ) : (
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-2">
+                {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} · {members.length} MEMBER{members.length !== 1 ? 'S' : ''} · {roleLabel}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-border border border-border text-center w-full lg:w-auto">
             {[
@@ -1180,7 +1273,9 @@ export default function BandPage() {
               [stats.tracks, 'TRACKS'],
             ].map(([n, l]) => (
               <div key={l as string} className="bg-background px-3 sm:px-4 py-3">
-                <div className="font-display text-xl sm:text-2xl text-foreground tabular-nums">{n as number}</div>
+                {dataLoading
+                  ? <Skeleton width={40} height={28} className="mb-1 mx-auto" />
+                  : <div className="font-display text-xl sm:text-2xl text-foreground tabular-nums">{n as number}</div>}
                 <div className="text-[8px] uppercase tracking-widest text-muted-foreground mt-1">{l as string}</div>
               </div>
             ))}
@@ -1267,7 +1362,9 @@ export default function BandPage() {
                 )}
               </div>
               <div className="grid gap-px bg-border border border-border overflow-visible isolate">
-                {filteredProjects.length === 0 && projectSearch.trim() ? (
+                {loading ? (
+                  [0, 1, 2, 3].map(i => <ProjectRowSkeleton key={i} index={i} />)
+                ) : filteredProjects.length === 0 && projectSearch.trim() ? (
                   <div className="bg-background px-4 py-10 text-center">
                     <p className="text-sm text-muted-foreground m-0">
                       No projects matching &ldquo;{projectSearch.trim()}&rdquo;
@@ -1296,28 +1393,38 @@ export default function BandPage() {
                     />
                   ))
                 )}
-                <button
-                  type="button"
-                  onClick={() => setShowNewProject(true)}
-                  className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
-                >
-                  <div className="size-8 border border-border grid place-items-center text-muted-foreground">
-                    <IconPlus size={14} />
-                  </div>
-                  <span className="text-sm text-muted-foreground hover:text-ember transition-colors font-medium">
-                    Start a new project
-                  </span>
-                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
-                    Upload stems or start blank
-                  </span>
-                </button>
+                {!loading && (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewProject(true)}
+                    className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
+                  >
+                    <div className="size-8 border border-border grid place-items-center text-muted-foreground">
+                      <IconPlus size={14} />
+                    </div>
+                    <span className="text-sm text-muted-foreground hover:text-ember transition-colors font-medium">
+                      Start a new project
+                    </span>
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                      Upload stems or start blank
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <div>
               <SectionLabel>ALL ACTIVITY</SectionLabel>
               {activityLoading ? (
-                <p className="text-sm text-muted-foreground mt-4 m-0">Loading activity…</p>
+                <div className="mt-4 border border-border bg-surface divide-y divide-border">
+                  {[0, 1, 2, 3, 4].map(i => (
+                    <div key={i} className="grid grid-cols-1 sm:grid-cols-[80px_1fr_auto] sm:items-center gap-2 sm:gap-4 px-4 py-3">
+                      <Skeleton width={60} height={10} />
+                      <Skeleton width="70%" height={12} />
+                      <Skeleton width={40} height={10} />
+                    </div>
+                  ))}
+                </div>
               ) : activityItems.length === 0 ? (
                 <p className="text-sm text-muted-foreground/70 mt-4 m-0">No activity yet.</p>
               ) : (
@@ -1420,7 +1527,9 @@ export default function BandPage() {
             )}
 
             <div className="border border-border bg-surface divide-y divide-border">
-              {members.map(m => {
+              {loading ? (
+                [0, 1, 2].map(i => <MemberRowSkeleton key={i} />)
+              ) : members.map(m => {
                 const username = m.profiles?.username ?? 'user'
                 const displayName = m.profiles?.display_name ?? username
                 const isMe = m.user_id === user?.id
@@ -1545,7 +1654,9 @@ export default function BandPage() {
             <div>
               <SectionLabel>RECENT ACTIVITY</SectionLabel>
               <div className="mt-3 border border-border bg-surface divide-y divide-border">
-                {recentActivity.length === 0 ? (
+                {loading ? (
+                  [0, 1, 2].map(i => <ActivityRowSkeleton key={i} />)
+                ) : recentActivity.length === 0 ? (
                   <p className="text-xs text-muted-foreground/70 px-3 py-4 m-0">No activity yet.</p>
                 ) : (
                   recentActivity.map(item => (

@@ -29,7 +29,7 @@ import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from 
 import { MobileExperience } from '@/components/MobileExperience'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
-import { BrandSpinner } from '@/components/BrandSpinner'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
 import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChatDock } from '@/components/chat/ChatDock'
@@ -3766,6 +3766,313 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
   )
 }
 
+// ─── Project page skeleton ────────────────────────────────────────────────────
+
+function TrackRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2 border-b border-border">
+      <Skeleton width={32} height={32} className="shrink-0" />
+      <div className="flex flex-col gap-1 w-28 shrink-0">
+        <Skeleton width="80%" height={12} />
+        <Skeleton width="55%" height={10} />
+      </div>
+      {/* Waveform area */}
+      <Skeleton width="100%" height={48} className="flex-1" />
+    </div>
+  )
+}
+
+// ── Mobile portrait skeleton ──────────────────────────────────────────────────
+
+function MobilePortraitSkeleton() {
+  return (
+    <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
+      {/* Slim top bar — matches MobileExperience header */}
+      <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span className="font-display text-sm font-bold tracking-tight text-ember shrink-0">TRACKBASE</span>
+          <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
+            <span className="shrink-0">Bands</span>
+            <span className="text-border shrink-0">/</span>
+            <Skeleton width={60} height={10} className="shrink-0" />
+            <span className="text-border shrink-0">/</span>
+            <Skeleton width={80} height={10} />
+          </nav>
+        </div>
+        {/* Avatar placeholder */}
+        <Skeleton width={28} height={28} borderRadius="50%" className="shrink-0" />
+      </header>
+
+      {/* Mode switch bar — matches MobileExperience mode tabs */}
+      <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
+        <div className="grid grid-cols-2 border border-border bg-background">
+          <div className="py-2.5 bg-ember text-white text-[10px] font-bold uppercase tracking-widest flex items-center justify-center">
+            ● Rehearsal
+          </div>
+          <div className="py-2.5 text-muted-foreground text-[10px] font-bold uppercase tracking-widest flex items-center justify-center">
+            ≡ Mixer
+          </div>
+        </div>
+      </div>
+
+      {/* Rehearsal content skeleton */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* Project header */}
+        <div className="px-5 py-4 border-b border-border">
+          <Skeleton width={100} height={10} className="mb-2" />
+          <Skeleton width={220} height={30} className="mb-2" />
+          <div className="flex gap-3">
+            <Skeleton width={56} height={10} />
+            <Skeleton width={36} height={10} />
+            <Skeleton width={44} height={10} />
+          </div>
+        </div>
+
+        {/* Waveform / progress bar */}
+        <div className="px-5 py-4 border-b border-border">
+          <Skeleton width="100%" height={56} className="mb-2" />
+          <div className="flex justify-between">
+            <Skeleton width={30} height={9} />
+            <Skeleton width={30} height={9} />
+          </div>
+        </div>
+
+        {/* Section cards */}
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="px-5 py-3 border-b border-border flex flex-col gap-2">
+            <Skeleton width={80} height={10} />
+            <div className="flex flex-wrap gap-2">
+              {[40, 50, 45, 40].map((w, j) => (
+                <Skeleton key={j} width={w} height={28} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Fixed player at bottom */}
+      <div className="border-t border-border bg-surface/60 px-4 py-3 shrink-0 flex items-center gap-4">
+        <Skeleton width={40} height={40} />
+        <Skeleton width="100%" height={6} className="flex-1" />
+        <Skeleton width={48} height={12} />
+      </div>
+    </div>
+  )
+}
+
+// ── Mobile landscape skeleton ─────────────────────────────────────────────────
+
+function MobileLandscapeSkeleton() {
+  return (
+    <div className="project-page flex flex-col h-screen overflow-hidden bg-background">
+      {/* Compact header bar */}
+      <div className="flex items-center justify-between h-10 px-3 border-b border-border bg-background shrink-0">
+        <div className="flex items-center gap-2">
+          <Skeleton width={60} height={10} />
+          <span className="text-border text-[10px]">/</span>
+          <Skeleton width={100} height={12} />
+        </div>
+        <div className="flex items-center gap-2">
+          <Skeleton width={56} height={22} />
+          <Skeleton width={56} height={22} />
+        </div>
+      </div>
+
+      {/* Version tab bar */}
+      <div className="border-b border-border bg-surface/20 shrink-0 px-2 flex items-center gap-1 h-8">
+        {[48, 40, 40, 52, 44].map((w, i) => (
+          <Skeleton key={i} width={w} height={20} />
+        ))}
+      </div>
+
+      {/* Track list */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="flex items-center gap-2 px-3 py-1 border-b border-border">
+            <Skeleton width={24} height={24} className="shrink-0" />
+            <div className="flex flex-col gap-0.5 w-20 shrink-0">
+              <Skeleton width="80%" height={10} />
+              <Skeleton width="55%" height={8} />
+            </div>
+            <Skeleton width="100%" height={32} className="flex-1" />
+          </div>
+        ))}
+      </div>
+
+      {/* Compact transport */}
+      <div className="border-t border-border bg-surface/60 px-3 flex items-center gap-2 shrink-0 h-10">
+        <Skeleton width={38} height={16} />
+        <Skeleton width={52} height={16} />
+        <Skeleton width={36} height={32} />
+        <Skeleton width="100%" height={6} className="flex-1" />
+        <Skeleton width={44} height={10} />
+      </div>
+    </div>
+  )
+}
+
+// ── Desktop skeleton ──────────────────────────────────────────────────────────
+
+function DesktopPageSkeleton() {
+  return (
+    <div className="project-page flex flex-col h-screen overflow-hidden bg-background">
+      {/* Real AppHeader — chrome is identical to the loaded page */}
+      <AppHeader
+        crumbs={
+          <>
+            <Skeleton width={72} height={12} className="inline-block align-middle" />
+            <span className="text-border">/</span>
+            <Skeleton width={120} height={14} className="inline-block align-middle" />
+          </>
+        }
+        right={
+          <div className="flex items-center gap-2">
+            <Skeleton width={72} height={28} />
+            <Skeleton width={72} height={28} />
+            <Skeleton width={72} height={28} />
+          </div>
+        }
+      />
+
+      {/* Body — mirrors the real flex layout */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Version sidebar — matches project-mixer-sidebar w-[200px] */}
+        <aside className="w-[200px] shrink-0 flex flex-col h-full overflow-hidden border-r border-border bg-surface/30">
+          {/* Version history section */}
+          <div className="flex flex-col border-b border-border min-h-0" style={{ flex: '1 1 0' }}>
+            <div className="px-4 pt-4 pb-1 shrink-0">
+              <SectionLabel>VERSION HISTORY</SectionLabel>
+            </div>
+            <div className="overflow-y-auto scrollbar-none min-h-0 flex-1 px-2 pb-2 space-y-px">
+              {[80, 65, 90, 55, 75, 60, 45].map((w, i) => (
+                <div key={i} className="flex items-center gap-2 px-1.5 py-1">
+                  <span className="shrink-0 inline-block w-2 h-2 bg-border" style={{ borderRadius: 1 }} />
+                  <div className="flex-1 min-w-0">
+                    <Skeleton width={`${w}%`} height={11} className="mb-0.5" />
+                    <Skeleton width="50%" height={9} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* + NEW VERSION button */}
+            <div className="shrink-0 border-t border-border px-3 py-2 space-y-1">
+              <button
+                disabled
+                className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-2 opacity-50"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="3" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" />
+                  <circle cx="9" cy="3" r="1.5" stroke="currentColor" strokeWidth="0.9" />
+                  <circle cx="3" cy="9" r="1.5" stroke="currentColor" strokeWidth="0.9" />
+                  <path d="M3 4.5V7.5M3 4.5C3 7 6 7 6 9H7.5" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+                </svg>
+                + New version
+              </button>
+            </div>
+          </div>
+
+          {/* Resources section */}
+          <div className="shrink-0 border-b border-border px-2 pt-2 pb-2">
+            <div className="px-1 mb-2"><SectionLabel>RESOURCES</SectionLabel></div>
+            <Skeleton width="100%" height={14} />
+          </div>
+
+          {/* Storage */}
+          <div className="shrink-0 px-4 py-2">
+            <SectionLabel>STORAGE</SectionLabel>
+            <Skeleton width="65%" height={9} className="mt-1 mb-1" />
+            <div className="h-1 bg-surface-2 overflow-hidden mt-1">
+              <div className="h-full bg-ember/30" style={{ width: '40%' }} />
+            </div>
+          </div>
+        </aside>
+
+        {/* Main area */}
+        <main className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background">
+          {/* Project name / meta header */}
+          <section className="border-b border-border bg-surface/40 shrink-0">
+            <div className="px-4 sm:px-6 py-3 flex flex-col gap-2">
+              <Skeleton width={260} height={28} />
+              <div className="flex items-center gap-3">
+                <Skeleton width={64} height={12} />
+                <Skeleton width={36} height={12} />
+                <Skeleton width={44} height={12} />
+                <Skeleton width={72} height={12} />
+                <Skeleton width={48} height={12} />
+              </div>
+            </div>
+          </section>
+
+          {/* Version tabs bar */}
+          <div className="border-b border-border bg-surface/20 shrink-0 px-2 flex items-center gap-1 h-9 overflow-hidden">
+            {[48, 40, 40, 52, 62, 40, 44].map((w, i) => (
+              <Skeleton key={i} width={w} height={22} />
+            ))}
+          </div>
+
+          {/* Timeline / structure bar */}
+          <div className="h-10 border-b border-border bg-surface/40 shrink-0 px-4 flex items-center gap-3">
+            <Skeleton width={52} height={14} />
+            <Skeleton width={76} height={14} />
+            <Skeleton width={52} height={14} />
+            <Skeleton width={68} height={14} />
+          </div>
+
+          {/* Track list */}
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {[0, 1, 2, 3, 4].map(i => <TrackRowSkeleton key={i} />)}
+          </div>
+
+          {/* Transport bar — matches border-t border-border bg-surface/60 px-4 py-3 */}
+          <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 hidden sm:flex items-center gap-3 sm:gap-6 shrink-0">
+            <div className="flex items-center gap-3">
+              {/* METRO, COUNT-IN, LOOP toggles */}
+              <Skeleton width={42} height={18} />
+              <Skeleton width={58} height={18} />
+              <Skeleton width={38} height={18} />
+              {/* Play button */}
+              <Skeleton width={40} height={40} />
+              {/* Time display */}
+              <Skeleton width={68} height={13} />
+            </div>
+            {/* Timeline bar */}
+            <Skeleton width="100%" height={8} className="flex-1 min-w-[200px]" />
+            {/* Volume */}
+            <div className="flex items-center gap-3">
+              <Skeleton width={22} height={9} />
+              <Skeleton width={96} height={8} />
+              <Skeleton width={22} height={9} />
+            </div>
+          </div>
+
+          {/* Status footer */}
+          <div className="border-t border-border bg-surface/40 px-4 sm:px-6 py-1.5 hidden sm:flex items-center justify-between shrink-0">
+            <Skeleton width={300} height={9} />
+            <Skeleton width={130} height={9} />
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+function ProjectPageSkeleton() {
+  return (
+    <>
+      <div className="skeleton-portrait-mobile">
+        <MobilePortraitSkeleton />
+      </div>
+      <div className="skeleton-landscape-mobile">
+        <MobileLandscapeSkeleton />
+      </div>
+      <div className="skeleton-desktop">
+        <DesktopPageSkeleton />
+      </div>
+    </>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProjectPage() {
@@ -5157,9 +5464,7 @@ export default function ProjectPage() {
     </>
   )
 
-  if (loading && !project) return <BrandSpinner label="Loading project" />
-
-  if (error || !project) {
+  if (!loading && (error || !project)) {
     const isAccessDenied = error === 'access_denied'
     const isNotFound = error === 'not_found' || !project
 
@@ -5193,6 +5498,11 @@ export default function ProjectPage() {
 
   return (
     <div className="project-page flex flex-col h-screen overflow-hidden bg-background">
+
+      {/* Portrait mobile skeleton — CSS-class ensures it only shows on portrait mobile */}
+      {!project && (
+        <div className="skeleton-portrait-mobile"><MobilePortraitSkeleton /></div>
+      )}
 
       {/* Portrait mobile — Rehearsal ⇄ Mixer tabs */}
       {isMobilePortrait && project && (
@@ -5382,7 +5692,7 @@ export default function ProjectPage() {
               <rect x="2" y="11.25" width="12" height="1.25" rx="0.6" fill="currentColor"/>
             </svg>
           </button>
-          <span className="text-[11px] truncate flex-1 text-muted-foreground uppercase tracking-widest">{project.name}</span>
+          <span className="text-[11px] truncate flex-1 text-muted-foreground uppercase tracking-widest">{project?.name}</span>
           <CommentToggleBtn
             active={commentMode}
             count={totalComments}
@@ -5408,13 +5718,21 @@ export default function ProjectPage() {
             </button>
           }
           crumbs={
-            <>
-              <Link href={`/band/${bandId}`} className="hover:text-foreground no-underline text-muted-foreground">
-                {project.band_name ?? 'Band'}
-              </Link>
-              <span className="text-border">/</span>
-              <span className="text-foreground truncate">{project.name}</span>
-            </>
+            project ? (
+              <>
+                <Link href={`/band/${bandId}`} className="hover:text-foreground no-underline text-muted-foreground">
+                  {project.band_name ?? 'Band'}
+                </Link>
+                <span className="text-border">/</span>
+                <span className="text-foreground truncate">{project.name}</span>
+              </>
+            ) : (
+              <>
+                <Skeleton width={72} height={12} className="inline-block align-middle" />
+                <span className="text-border">/</span>
+                <Skeleton width={120} height={14} className="inline-block align-middle" />
+              </>
+            )
           }
           right={headerActions}
         />
@@ -5479,7 +5797,8 @@ export default function ProjectPage() {
         </>
       )}
 
-      {/* Body */}
+      {/* Body — only when project is loaded; header above always renders */}
+      {project ? (<>
       <div className="flex flex-1 overflow-hidden">
         {/* Backdrop — only visible on tablet/mobile when sidebar is open */}
         <div
@@ -5497,7 +5816,7 @@ export default function ProjectPage() {
           storageFull={storageFull}
           commentCounts={commentCounts}
           projectId={projectId}
-          projectName={project.name}
+          projectName={project?.name ?? ''}
           isOpen={sidebarOpen}
           compact={isMobileLandscape}
           isDark={resolvedTheme === 'dark'}
@@ -5974,6 +6293,41 @@ export default function ProjectPage() {
         }
         right={<span className="uppercase tracking-widest hidden sm:inline">{project.name.toUpperCase()}</span>}
       />
+      )}
+      </>) : (
+        /* Loading body — AppHeader above is always visible */
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar
+            versions={versions}
+            activeId={activeVersionId}
+            onSelect={selectVersion}
+            onNewBranch={() => setShowBranchModal(true)}
+            onMerge={handleMergeClick}
+            storageUsed={storageUsed}
+            storageLimit={storageLimit}
+            storageFull={storageFull}
+            commentCounts={commentCounts}
+            projectId={projectId}
+            projectName=""
+            isOpen={sidebarOpen}
+            compact={isMobileLandscape}
+            isDark={resolvedTheme === 'dark'}
+          />
+          <main className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background">
+            <div className="flex flex-col flex-1 overflow-hidden">
+              {[0, 1, 2, 3, 4].map(i => (
+                <div key={i} className="flex items-center gap-2 px-4 py-2 border-b border-border">
+                  <Skeleton width={24} height={24} className="shrink-0" />
+                  <div className="flex flex-col gap-0.5 w-24 shrink-0">
+                    <Skeleton width="80%" height={10} />
+                    <Skeleton width="55%" height={8} />
+                  </div>
+                  <Skeleton width="100%" height={36} className="flex-1" />
+                </div>
+              ))}
+            </div>
+          </main>
+        </div>
       )}
       </>
       )}

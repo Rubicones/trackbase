@@ -14,6 +14,7 @@ import {
 type BellStatus = 'default' | 'subscribed' | 'blocked'
 
 export function PushBellButton() {
+  const [mounted, setMounted] = useState(false)
   const [status, setStatus] = useState<BellStatus>('default')
   const [showModal, setShowModal] = useState(false)
   const [showPopover, setShowPopover] = useState(false)
@@ -33,6 +34,7 @@ export function PushBellButton() {
   }, [])
 
   useEffect(() => {
+    setMounted(true)
     void refreshStatus()
   }, [refreshStatus])
 
@@ -47,7 +49,8 @@ export function PushBellButton() {
     return () => document.removeEventListener('click', onDocClick)
   }, [showPopover])
 
-  if (!isPushSupported()) return null
+  // Return null until mounted so SSR and client first render match
+  if (!mounted || !isPushSupported()) return null
 
   const icon = status === 'subscribed' ? Bell : status === 'blocked' ? BellOff : Bell
   const iconClass =
