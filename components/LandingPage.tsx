@@ -368,11 +368,13 @@ function TopBar({
     };
   }, [open]);
   const navItems: Array<[string, string]> = [
-    ["#bands", "BANDS"],
-    ["#studios", "STUDIOS"],
-    ["#mixer", "MIXER"],
-    ["#system", "SYSTEM"],
+    ["#top", "HOME"],
+    ["#versioning", "VERSIONING"],
+    ["#workflow", "WORKFLOW"],
+    ["#philosophy", "PHILOSOPHY"],
     ["#themes", "THEMES"],
+    ["#rehearsal", "REHEARSAL"],
+    ["#system", "SYSTEM"],
   ];
 
   return (
@@ -523,18 +525,18 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <EmberTag>PRIVATE BETA · OPEN · V0.1</EmberTag>
         </div>
 
-        <h1
-          className="relative font-display-tb font-bold leading-[0.88] tracking-[-0.04em] text-foreground"
-          style={{
-            fontSize: "clamp(2.6rem, 9vw, 8.5rem)",
-            fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
-          }}
-        >
-          MUSIC IS A <br className="hidden sm:block" />
-          <span className="text-ember">PROCESS</span>
-          <span className="text-ember">.</span>{" "}
-          <span className="text-muted-foreground">NOT A FILE.</span>
+        <h1 className="relative font-display-tb font-bold leading-[0.82] tracking-[-0.045em]">
+          <span className="block text-[clamp(3.2rem,13vw,12rem)] text-ember">
+            TRACKBASE
+          </span>
+          <span className="mt-1 block text-[clamp(1.6rem,6vw,5rem)] tracking-[-0.03em] text-muted-foreground/70">
+            STUDIO
+          </span>
         </h1>
+
+        <p className="relative mt-8 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground">
+          Music is a <span className="text-ember">process</span>. Not a file.
+        </p>
 
         <div className="relative mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
           <p className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]">
@@ -563,29 +565,6 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <GhostButton variant="ember" href={signInHref}>+ Start a band</GhostButton>
         </div>
           </motion.div>
-        </div>
-
-        <div className="relative mb-28 px-4 md:mb-36 md:px-8">
-          <div className="grid w-full grid-cols-2 gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-4">
-            {[
-              ["1 PLACE", "files · chords · notes"],
-              ["∞ BRANCHES", "experiment without fear"],
-              ["ASYNC", "different cities, same track"],
-              ["EXPLICIT", "decisions instead of chaos"],
-            ].map(([k, v]) => (
-              <div key={k} className="min-w-0 bg-background px-5 py-5 sm:px-6">
-                <div
-                  className="font-bold tracking-tight text-foreground text-2xl"
-                  style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
-                >
-                  {k}
-                </div>
-                <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                  {v}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
 
         <Marquee />
@@ -645,7 +624,7 @@ function Philosophy() {
     },
   ];
   return (
-    <section className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <section id="philosophy" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="00"
         kicker="PHILOSOPHY"
@@ -1045,12 +1024,12 @@ function BranchShowcase() {
     { name: "new", color: "var(--wave-mint)", date: "JUN 14", note: "draft" },
   ];
   return (
-    <section id="mixer" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <section id="versioning" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="01"
         kicker="VERSIONING"
         title="BRANCH IT."
-        accent="MERGE IT. SHIP IT."
+        accent="MERGE IT. CHAT IT."
         description="Try the bolder bridge without breaking what already works. Every version is a real artifact with date, author and status — not another file called final_v3_FINAL.wav."
       />
 
@@ -1666,7 +1645,7 @@ function LandingRehearsalMock() {
 
 function ProcessShowcase() {
   return (
-    <section className="landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <section id="workflow" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="02"
         kicker="WORKFLOW"
@@ -1681,183 +1660,6 @@ function ProcessShowcase() {
         <LandingChatMock />
 
         <LandingRehearsalMock />
-      </div>
-    </section>
-  );
-}
-
-/* ============================================================
- * Persona cards
- * ============================================================ */
-
-type Persona = {
-  tag: string;
-  title: string;
-  who: string;
-  reality: string;
-  trackbase: string;
-  metric: string;
-  color: string;
-};
-
-function PersonaCard({ p, i }: { p: Persona; i: number }) {
-  return (
-    <LandingHoverCard
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.3 }}
-      transition={{ delay: i * 0.07, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className="group relative landing-hover-border flex flex-col border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-6 transition-colors hover:border-[color-mix(in_oklab,var(--ember)_60%,transparent)]"
-    >
-      <div className="mb-6 flex items-start justify-between">
-        <span
-          className="grid size-12 place-items-center font-bold text-lg text-primary-foreground"
-          style={{
-            background: p.color,
-            fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
-          }}
-        >
-          {p.tag.slice(0, 2)}
-        </span>
-        <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-          {p.tag}
-        </span>
-      </div>
-      <h3
-        className="font-bold leading-tight tracking-tight text-2xl"
-        style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
-      >
-        {p.title}
-      </h3>
-      <p className="mt-2 font-mono-tb text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-        {p.who}
-      </p>
-
-      <div className="mt-6 space-y-4 text-sm leading-relaxed">
-        <p className="font-mono-tb text-[12px] text-muted-foreground line-through decoration-[color-mix(in_oklab,var(--ember)_60%,transparent)]">
-          {p.reality}
-        </p>
-        <p className="font-mono-tb text-[12px] text-foreground">{p.trackbase}</p>
-      </div>
-
-      <div className="mt-auto pt-6">
-        <div className="landing-hover-divider h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
-        <div className="mt-3 flex items-center justify-between">
-          <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
-            {p.metric}
-          </span>
-          <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">→</span>
-        </div>
-      </div>
-    </LandingHoverCard>
-  );
-}
-
-function ForBands() {
-  const personas: Persona[] = [
-    {
-      tag: "INDIE-BAND",
-      title: "The indie band",
-      who: "3–5 musicians · 18–35 · different DAWs",
-      reality: "Demos scattered across Telegram. 'I thought you fixed that.' Chord disputes the night before recording.",
-      trackbase: "One room with versions, comments on the bar, and a structure everybody opens at rehearsal.",
-      metric: "01 · STAY IN SYNC",
-      color: "var(--wave-violet)",
-    },
-    {
-      tag: "HOME-PROD",
-      title: "Solo producer + collab",
-      who: "Producer · vocalist · different cities",
-      reality: "Reuploading _v3_FINAL. Asking 'where do I drop the vocal?' Wondering which mix is the latest.",
-      trackbase: "Give a collaborator a single link. They land on the right version, with full history and context.",
-      metric: "02 · WORK ASYNC",
-      color: "var(--ember)",
-    },
-    {
-      tag: "MUSIC-STUDENT",
-      title: "Music school student",
-      who: "14–25 · works with teacher & classmates",
-      reality: "Feedback only happens in the lesson. Iterations between weeks are invisible — and forgotten.",
-      trackbase: "Teacher leaves comments on the exact second. Version history becomes a portfolio of progress.",
-      metric: "03 · LEARN OUT LOUD",
-      color: "var(--wave-mint)",
-    },
-    {
-      tag: "COVER-BAND",
-      title: "Cover / tribute band",
-      who: "5–10 players · regular rehearsals",
-      reality: "Everyone has chords in their own notebook. New player joins — onboarding eats the first session.",
-      trackbase: "Structure with chords on every phone. New member is rehearsal-ready in an afternoon.",
-      metric: "04 · ONBOARD FAST",
-      color: "var(--wave-coral)",
-    },
-  ];
-  return (
-    <section id="bands" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
-      <SectionHeader
-        index="03"
-        kicker="FOR THE BAND"
-        title="WHO IT'S FOR,"
-        accent="ROOM BY ROOM."
-        description="Built first for the people closest to the song — the ones writing it, arguing about it, and showing up to rehearsal on Tuesday night."
-      />
-      <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-2 xl:grid-cols-4">
-        {personas.map((p, i) => <PersonaCard key={p.tag} p={p} i={i} />)}
-      </div>
-    </section>
-  );
-}
-
-function ForStudios() {
-  const personas: Persona[] = [
-    {
-      tag: "STUDIO",
-      title: "Recording studio",
-      who: "5–30 active artists · engineers · managers",
-      reality: "Every artist has their own Drive. Engineers swap — and the project loses its memory.",
-      trackbase: "One workspace per artist. Approval flow on the final mix. Notes attached to the second.",
-      metric: "01 · SCALE WITHOUT CHAOS",
-      color: "var(--wave-coral)",
-    },
-    {
-      tag: "MUSIC-SCHOOL",
-      title: "Music school / online platform",
-      who: "50–500 students · teachers · cohorts",
-      reality: "Teachers can't see the iterations between lessons. Group projects are organized in a chat.",
-      trackbase: "Assignments live as projects. Teachers comment on moments. Activity is visible — and gradeable.",
-      metric: "02 · BUILT INTO THE CURRICULUM",
-      color: "var(--wave-mint)",
-    },
-    {
-      tag: "LABEL",
-      title: "Independent label / incubator",
-      who: "5–20 artists · A&R · product managers",
-      reality: "A&R can't see progress without a call. Artists deliver 'not quite' — there was no brief.",
-      trackbase: "Roadmap per track. Review specific versions. Statistics per artist — without micromanagement.",
-      metric: "03 · A&R WITHOUT THE CALLS",
-      color: "var(--ember)",
-    },
-    {
-      tag: "PROD-HOUSE",
-      title: "Producer collective",
-      who: "Multi-producer teams · shared roster",
-      reality: "Tasks blur across producers. Versions mix between writers. Internal conflict about whose mix it is.",
-      trackbase: "Roles and tasks inside the team. Parallel branches. Clean export & share for clients.",
-      metric: "04 · LOOK PROFESSIONAL",
-      color: "var(--wave-violet)",
-    },
-  ];
-  return (
-    <section id="studios" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
-      <SectionHeader
-        index="04"
-        kicker="FOR THE STUDIO"
-        title="TEAMS THAT SHIP"
-        accent="MUSIC AT VOLUME."
-        description="Studios, schools and labels run dozens of projects in parallel. TrackBase gives them the surface to track every one — without becoming the bottleneck."
-      />
-      <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-2 xl:grid-cols-4">
-        {personas.map((p, i) => <PersonaCard key={p.tag} p={p} i={i} />)}
       </div>
     </section>
   );
@@ -1951,7 +1753,6 @@ function FeatureIndex() {
         kicker="SYSTEM"
         title="THE FULL"
         accent="STUDIO SURFACE."
-        description="From the first idea to the WAV export — TrackBase is one continuous environment. Nothing leaves the room."
       />
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-2 lg:grid-cols-4">
         {groups.map((g, gi) => (
@@ -2036,7 +1837,7 @@ function RehearsalDeepDive() {
   ];
 
   return (
-    <section className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <section id="rehearsal" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="02.5"
         kicker="REHEARSAL MODE"
@@ -2748,27 +2549,6 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
           <GhostButton variant="ember" href={signInHref}>+ Create my band</GhostButton>
           <GhostButton variant="outline" href={signInHref}>Talk to us (studios)</GhostButton>
         </div>
-
-        <div className="mt-16 grid grid-cols-2 gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-4">
-          {[
-            ["FREE", "during beta"],
-            ["1 GB", "per project"],
-            ["∞ MEMBERS", "per band"],
-            ["WAV", "lossless export"],
-          ].map(([k, v]) => (
-            <div key={k} className="bg-background p-5">
-              <div
-                className="font-bold tracking-tight text-foreground text-2xl"
-                style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
-              >
-                {k}
-              </div>
-              <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                {v}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
     </section>
   );
@@ -2839,14 +2619,12 @@ export default function LandingPage() {
         <main className="min-h-screen bg-background text-foreground">
           <TopBar authHref={authHref} authLabel={authLabel} />
           <Hero signInHref={authHref} />
-          <Philosophy />
           <BranchShowcase />
           <ProcessShowcase />
-          <RehearsalDeepDive />
-          <ForBands />
-          <ForStudios />
-          <FeatureIndex />
+          <Philosophy />
           <ThemingSection />
+          <RehearsalDeepDive />
+          <FeatureIndex />
           <CTA signInHref={authHref} />
           <Footer />
         </main>
