@@ -626,7 +626,7 @@ function Philosophy() {
   return (
     <section id="philosophy" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="00"
+        index="03"
         kicker="PHILOSOPHY"
         title="THREE THINGS"
         accent="WE BELIEVE."
@@ -1673,7 +1673,7 @@ function FeatureIndex() {
   type Item = { label: string; icon: ComponentType<{ size?: number; className?: string }> };
   const groups: Array<{ n: string; t: string; accent: string; items: Item[] }> = [
     {
-      n: "05.1", t: "ORGANIZATION", accent: "var(--wave-violet)",
+      n: "06.1", t: "ORGANIZATION", accent: "var(--wave-violet)",
       items: [
         { label: "Bands & invite codes", icon: Users },
         { label: "Custom role tags · guitarist, vocalist, producer", icon: Tag },
@@ -1682,7 +1682,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.2", t: "VERSIONING", accent: "var(--ember)",
+      n: "06.2", t: "VERSIONING", accent: "var(--ember)",
       items: [
         { label: "Versions for safe experiments", icon: GitBranch },
         { label: "Apply with change review", icon: GitMerge },
@@ -1691,7 +1691,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.3", t: "MIXER", accent: "var(--wave-mint)",
+      n: "06.3", t: "MIXER", accent: "var(--wave-mint)",
       items: [
         { label: "Multi-track waveforms", icon: AudioWaveform },
         { label: "Mute · Solo · Offset · Replace", icon: Volume2 },
@@ -1701,7 +1701,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.4", t: "STRUCTURE & CHORDS", accent: "var(--wave-amber)",
+      n: "06.4", t: "STRUCTURE & CHORDS", accent: "var(--wave-amber)",
       items: [
         { label: "Section editor over bars", icon: LayoutGrid },
         { label: "Chord-per-section · auto-detect", icon: Music2 },
@@ -1710,7 +1710,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.5", t: "MIDI", accent: "var(--wave-sky)",
+      n: "06.5", t: "MIDI", accent: "var(--wave-sky)",
       items: [
         { label: "Built-in piano roll · draw & select", icon: Piano },
         { label: "GM instrument bank", icon: Boxes },
@@ -1718,7 +1718,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.6", t: "RESOURCES", accent: "var(--wave-coral)",
+      n: "06.6", t: "RESOURCES", accent: "var(--wave-coral)",
       items: [
         { label: "Attach PDFs, DAW projects, anything", icon: Paperclip },
         { label: "External links", icon: Link2 },
@@ -1728,7 +1728,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.7", t: "REHEARSAL VIEW · MOBILE", accent: "var(--ember-bright)",
+      n: "06.7", t: "REHEARSAL VIEW · MOBILE", accent: "var(--ember-bright)",
       items: [
         { label: "Portrait · full mix + structure + chords", icon: Smartphone },
         { label: "Landscape · full mixer", icon: Maximize2 },
@@ -1736,7 +1736,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "05.8", t: "EXPORT & SHARE", accent: "var(--wave-violet)",
+      n: "06.8", t: "EXPORT & SHARE", accent: "var(--wave-violet)",
       items: [
         { label: "WAV export", icon: FileAudio },
         { label: "Member-only project share links", icon: Share2 },
@@ -1749,7 +1749,7 @@ function FeatureIndex() {
   return (
     <section id="system" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="05"
+        index="06"
         kicker="SYSTEM"
         title="THE FULL"
         accent="STUDIO SURFACE."
@@ -1839,7 +1839,7 @@ function RehearsalDeepDive() {
   return (
     <section id="rehearsal" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="02.5"
+        index="05"
         kicker="REHEARSAL MODE"
         title="THE PHONE IS"
         accent="THE STUDIO."
@@ -2168,7 +2168,7 @@ function ThemingSection() {
   return (
     <section id="themes" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="05.5"
+        index="04"
         kicker="THEMING"
         title="ONE STUDIO."
         accent="SEVEN ROOMS."
