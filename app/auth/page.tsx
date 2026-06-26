@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies } from '@/lib/auth/cookies'
 import { sanitizeRedirectPath } from '@/lib/auth/safe-redirect'
-import { getSiteUrl } from '@/lib/site-url'
+import { getAuthCallbackUrl } from '@/lib/site-url'
 import {
   AuthShell,
   AuthCard,
@@ -94,7 +94,7 @@ function AuthPageContent() {
         email,
         options: {
           shouldCreateUser: true,
-          emailRedirectTo: `${getSiteUrl()}/auth/callback`,
+          emailRedirectTo: getAuthCallbackUrl(),
         },
       })
       if (otpErr) throw otpErr

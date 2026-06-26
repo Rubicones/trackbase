@@ -73,7 +73,7 @@ export function r2Key(projectId: string, hash: string): string {
  * In Cloudflare Dashboard → R2 → [bucket] → Settings → CORS, add:
  * [
  *   {
- *     "AllowedOrigins": ["https://yourdomain.com", "http://localhost:3000"],
+ *     "AllowedOrigins": ["https://trackbase.studio", "http://localhost:3000"],
  *     "AllowedMethods": ["PUT", "GET"],
  *     "AllowedHeaders": ["Content-Type"],
  *     "MaxAgeSeconds": 3600

@@ -4,9 +4,11 @@ import { Providers } from './providers'
 import { fontVariables } from '@/lib/fonts'
 import { buildThemeBootstrapScript, DEFAULT_DESIGN_THEME } from '@/lib/design-theme-shared'
 import { PALETTE_STORAGE_KEY } from '@/lib/palettes'
+import { PRODUCTION_SITE_URL } from '@/lib/site-url'
 import { Analytics } from "@vercel/analytics/next"
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? PRODUCTION_SITE_URL),
   title: 'Trackbase',
   description: 'Git-like versioning for music demos',
   viewport: {
