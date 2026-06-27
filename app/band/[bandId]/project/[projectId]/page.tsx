@@ -8,6 +8,7 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
+import { useUpgrade } from '@/contexts/UpgradeContext'
 import { trackEvent } from '@/lib/analytics'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
@@ -3497,6 +3498,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
 
   const isChecking = false
   const storagePct = Math.min(100, (storageUsed / storageLimit) * 100)
+  const { openUpgradeModal } = useUpgrade()
 
   const { open: resourcesOpen, toggle: toggleResourcesOpen } = useResourcesSidebarOpen()
 
@@ -3661,9 +3663,24 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
               />
             </div>
             {storageFull ? (
-              <p className="text-[9px] text-destructive mt-1 m-0">Storage full — delete tracks or files to upload more</p>
-            ) : storageUsed / storageLimit > 0.95 ? (
-              <p className="text-[9px] text-destructive mt-1 m-0">Almost full</p>
+              <button
+                type="button"
+                onClick={() => openUpgradeModal('storage_limit')}
+                className="mt-1 text-[9px] text-ember hover:underline bg-transparent border-0 cursor-pointer p-0 text-left w-full"
+              >
+                ↑ Upgrade to add more tracks
+              </button>
+            ) : storagePct > 60 ? (
+              <p className="text-[9px] text-muted-foreground mt-1 m-0">
+                Running low?{' '}
+                <button
+                  type="button"
+                  onClick={() => openUpgradeModal('storage_bar')}
+                  className="text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+                >
+                  Get more storage ↗
+                </button>
+              </p>
             ) : null}
           </>
         )}

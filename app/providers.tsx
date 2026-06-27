@@ -8,6 +8,7 @@ import { DesignThemeProvider, NEXT_THEMES_STORAGE_KEY } from '@/lib/design-theme
 import { NavigationPlaybackCleanup } from '@/components/NavigationPlaybackCleanup'
 import { PushNotificationProvider } from '@/components/push/PushNotificationProvider'
 import { PageViewTracker } from '@/components/analytics/PageViewTracker'
+import { UpgradeProvider } from '@/contexts/UpgradeContext'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -16,11 +17,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <PaletteProvider>
           <AuthProvider>
             <PushNotificationProvider>
-              <Suspense fallback={null}>
-                <NavigationPlaybackCleanup />
-                <PageViewTracker />
-              </Suspense>
-              {children}
+              <UpgradeProvider>
+                <Suspense fallback={null}>
+                  <NavigationPlaybackCleanup />
+                  <PageViewTracker />
+                </Suspense>
+                {children}
+              </UpgradeProvider>
             </PushNotificationProvider>
           </AuthProvider>
         </PaletteProvider>

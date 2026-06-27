@@ -23,6 +23,7 @@ import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { trackEvent } from '@/lib/analytics'
+import { useUpgrade } from '@/contexts/UpgradeContext'
 
 // ─── Session-level band data cache ───────────────────────────────────────────
 // Prevents re-fetching band data when navigating back from a project.
@@ -601,6 +602,7 @@ export default function BandPage() {
   const router = useRouter()
   const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
   const { palette } = usePalette()
+  const { openUpgradeModal } = useUpgrade()
   const { open: chatOpen, openChat, closeChat } = useChatPanel()
   const [chatUnread, setChatUnread] = useState(0)
   const [chatInitialChannel, setChatInitialChannel] = useState<ChannelKey | undefined>(undefined)
@@ -1735,9 +1737,26 @@ export default function BandPage() {
                   style={{ width: `${storagePct}%` }}
                 />
               </div>
-              {storageFull && (
-                <p className="text-[9px] text-destructive mt-1 m-0">Storage full</p>
-              )}
+              {storageFull ? (
+                <button
+                  type="button"
+                  onClick={() => openUpgradeModal('storage_limit')}
+                  className="mt-1 text-[9px] text-ember hover:underline bg-transparent border-0 cursor-pointer p-0 text-left"
+                >
+                  ↑ Upgrade to add more tracks
+                </button>
+              ) : storagePct > 60 ? (
+                <p className="text-[9px] text-muted-foreground mt-1 m-0">
+                  Running low?{' '}
+                  <button
+                    type="button"
+                    onClick={() => openUpgradeModal('storage_bar')}
+                    className="text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+                  >
+                    Get more storage ↗
+                  </button>
+                </p>
+              ) : null}
             </div>
           </div>
 

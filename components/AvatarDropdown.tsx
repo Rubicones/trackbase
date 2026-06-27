@@ -11,6 +11,7 @@ import { UserAvatar } from '@/components/ui/avatar'
 import { ThemePicker } from '@/components/design/ThemePicker'
 import { TbMenuButton } from '@/components/design/TbButton'
 import { Spinner } from '@/components/ui/Spinner'
+import { useUpgrade } from '@/contexts/UpgradeContext'
 
 type ActiveSection = null | 'email' | 'username'
 
@@ -28,6 +29,7 @@ export function AvatarDropdown() {
   const [newEmail, setNewEmail] = useState('')
   const [emailStatus, setEmailStatus] = useState<'idle' | 'saving' | 'sent' | 'error'>('idle')
   const [emailError, setEmailError] = useState('')
+  const { openUpgradeModal } = useUpgrade()
 
   useEffect(() => {
     if (!open) return
@@ -244,6 +246,13 @@ export function AvatarDropdown() {
           <ThemePicker />
 
           <div className="border-t border-border flex flex-col overflow-hidden">
+            <TbMenuButton className="gap-2.5" onClick={() => { setOpen(false); openUpgradeModal('avatar_menu') }}>
+              <span className="text-ember shrink-0"><UpgradeIcon /></span>
+              Upgrade plan
+            </TbMenuButton>
+          </div>
+
+          <div className="border-t border-border flex flex-col overflow-hidden">
             <TbMenuButton danger className="gap-2.5" onClick={handleSignOut}>
               <span className="text-muted-foreground shrink-0"><LogoutIcon /></span>
               Sign out
@@ -289,6 +298,16 @@ function LogoutIcon() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
       <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
       <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function UpgradeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path d="M2 10.5l3-4 2.5 2 2.5-4 2 2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M1 12.5h12" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <circle cx="11.5" cy="3.5" r="1.5" fill="currentColor" />
     </svg>
   )
 }
