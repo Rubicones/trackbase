@@ -27,6 +27,7 @@ import {
   Smartphone, Maximize2, Repeat,
   FileAudio, Share2, Eye, Hash,
   Disc3, KeyRound, Zap, Lightbulb, Check, Sparkles,
+  Lock, Unlock, Plug,
 } from "lucide-react";
 
 /* ============================================================
@@ -375,6 +376,7 @@ function TopBar({
     ["#themes", "THEMES"],
     ["#rehearsal", "REHEARSAL"],
     ["#system", "SYSTEM"],
+    ["#roadmap", "ROADMAP"],
   ];
 
   return (
@@ -2519,6 +2521,292 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
 }
 
 /* ============================================================
+ * Roadmap
+ * ============================================================ */
+
+type RoadmapGridPos = { row: number; col: number };
+
+function roadmapSnakePosition(index: number, cols: number, total: number): RoadmapGridPos {
+  const rowIdx = Math.floor(index / cols);
+  const posInRow = index % cols;
+  const itemsInRow = Math.min(cols, total - rowIdx * cols);
+  const isRtlRow = rowIdx % 2 === 1;
+  const colIdx = isRtlRow ? itemsInRow - 1 - posInRow : posInRow;
+  return { row: rowIdx + 1, col: colIdx + 1 };
+}
+
+function roadmapGridColumns(container: HTMLElement): number {
+  const template = getComputedStyle(container).gridTemplateColumns;
+  const tracks = template.split(/\s+/).filter(Boolean);
+  return tracks.length || 1;
+}
+
+function roadmapNodeCenter(node: HTMLElement, container: HTMLElement) {
+  const cb = container.getBoundingClientRect();
+  const nb = node.getBoundingClientRect();
+  return {
+    x: nb.left + nb.width / 2 - cb.left,
+    y: nb.top + nb.height / 2 - cb.top,
+  };
+}
+
+function roadmapConnectorPath(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  fromPos: RoadmapGridPos,
+  toPos: RoadmapGridPos,
+): string {
+  if (fromPos.row === toPos.row) {
+    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+  }
+  if (fromPos.col === toPos.col) {
+    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+  }
+  const midY = (from.y + to.y) / 2;
+  return `M ${from.x} ${from.y} L ${from.x} ${midY} L ${to.x} ${midY} L ${to.x} ${to.y}`;
+}
+
+const ROADMAP_ITEMS = [
+  {
+    id: "private-beta",
+    label: "NOW",
+    title: "Private beta",
+    body: "Invite-only rooms are stress-testing the full workspace — branching, mixer, structure, chat and Rehearsal View — before the doors open wider.",
+    icon: Lock,
+    color: "var(--ember)",
+    active: true,
+  },
+  {
+    id: "open-beta",
+    label: "NEXT",
+    title: "Open beta",
+    body: "More projects, bigger rooms and no invite wall. Anyone can start a band, invite members and push their first commit.",
+    icon: Unlock,
+    color: "var(--wave-sky)",
+    active: false,
+  },
+  {
+    id: "android",
+    label: "LAUNCH",
+    title: "Android app",
+    body: "Chord charts, section loops and the quick recorder land on every Android phone in the band — the same context, pocket-sized.",
+    icon: Smartphone,
+    color: "var(--wave-mint)",
+    active: false,
+  },
+  {
+    id: "ios",
+    label: "LATER THIS YEAR",
+    title: "iOS app",
+    body: "The full Studio experience tuned for iPhone and iPad: rehearsal, review, and quick commits from the practice space or the tour van.",
+    icon: Smartphone,
+    color: "var(--wave-violet)",
+    active: false,
+  },
+  {
+    id: "vst3",
+    label: "COMING SOON",
+    title: "VST3 plugin",
+    body: "Sync changes, pull stems and push markers without leaving your DAW. Version control becomes part of the actual production flow.",
+    icon: Plug,
+    color: "var(--wave-amber)",
+    active: false,
+  },
+] as const;
+
+function roadmapItemPlacementClass(index: number): string {
+  switch (index) {
+    case 2:
+      return "sm:col-start-2 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
+    case 3:
+      return "sm:col-start-1 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
+    case 4:
+      return "sm:col-start-1 sm:row-start-3 xl:col-start-auto xl:row-start-auto";
+    default:
+      return "";
+  }
+}
+
+function Roadmap() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [connectors, setConnectors] = useState<string[]>([]);
+  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 });
+
+  const recalcConnectors = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const cols = roadmapGridColumns(container);
+    const total = ROADMAP_ITEMS.length;
+    const itemEls = container.querySelectorAll<HTMLElement>("[data-roadmap-item]");
+
+    setSvgSize({ w: container.offsetWidth, h: container.offsetHeight });
+
+    const paths: string[] = [];
+    for (let i = 0; i < total - 1; i++) {
+      const fromEl = itemEls[i];
+      const toEl = itemEls[i + 1];
+      const fromNode = fromEl?.querySelector<HTMLElement>("[data-roadmap-node]");
+      const toNode = toEl?.querySelector<HTMLElement>("[data-roadmap-node]");
+      if (!fromEl || !toEl || !fromNode || !toNode) continue;
+
+      const fromPos = roadmapSnakePosition(i, cols, total);
+      const toPos = roadmapSnakePosition(i + 1, cols, total);
+      const from = roadmapNodeCenter(fromNode, container);
+      const to = roadmapNodeCenter(toNode, container);
+      paths.push(roadmapConnectorPath(from, to, fromPos, toPos));
+    }
+    setConnectors(paths);
+  }, []);
+
+  useEffect(() => {
+    recalcConnectors();
+    const container = containerRef.current;
+    if (!container) return;
+
+    const ro = new ResizeObserver(() => recalcConnectors());
+    ro.observe(container);
+    window.addEventListener("resize", recalcConnectors);
+
+    const t1 = window.setTimeout(recalcConnectors, 100);
+    const t2 = window.setTimeout(recalcConnectors, 700);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", recalcConnectors);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [recalcConnectors]);
+
+  return (
+    <section id="roadmap" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+      <SectionHeader
+        index="07"
+        kicker="ROADMAP"
+        title="WHAT'S NEXT."
+        accent="SHIPPING SOON."
+        description="TrackBase Studio is built in public. Private beta is live now; every following release unlocks a new room in the studio."
+      />
+
+      <div
+        ref={containerRef}
+        className="relative mt-14 grid w-full min-w-0 grid-cols-1 gap-x-4 gap-y-10 sm:grid-cols-2 sm:gap-y-6 xl:grid-cols-5 xl:gap-x-3 xl:gap-y-6"
+      >
+        {svgSize.w > 0 && svgSize.h > 0 && connectors.length > 0 && (
+          <svg
+            aria-hidden
+            className="pointer-events-none absolute inset-0 overflow-visible"
+            width={svgSize.w}
+            height={svgSize.h}
+            viewBox={`0 0 ${svgSize.w} ${svgSize.h}`}
+          >
+            <defs>
+              <marker
+                id="roadmap-arrow"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto"
+              >
+                <path
+                  d="M0,0 L8,4 L0,8"
+                  fill="none"
+                  stroke="color-mix(in oklab, var(--border) 65%, transparent)"
+                  strokeWidth="1"
+                />
+              </marker>
+            </defs>
+            {connectors.map((d, i) => (
+              <path
+                key={i}
+                d={d}
+                fill="none"
+                stroke="color-mix(in oklab, var(--border) 65%, transparent)"
+                strokeWidth="1"
+                markerEnd="url(#roadmap-arrow)"
+              />
+            ))}
+          </svg>
+        )}
+
+        {ROADMAP_ITEMS.map((item, i) => {
+          const Icon = item.icon;
+          return (
+            <div
+              key={item.id}
+              data-roadmap-item={i}
+              className={`relative min-w-0 ${roadmapItemPlacementClass(i)}`}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.4 }}
+                transition={{ delay: i * 0.1, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                onAnimationComplete={i === ROADMAP_ITEMS.length - 1 ? recalcConnectors : undefined}
+                className="h-full"
+              >
+                <motion.article
+                  whileHover={{ y: -4 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  className="relative h-full w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-5 transition-colors duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:border-(--roadmap-accent) hover:bg-[color-mix(in_oklab,var(--card)_55%,transparent)]"
+                  style={{ ["--roadmap-accent" as string]: item.color }}
+                >
+                <div className="mb-5 flex items-center gap-3">
+                  <div
+                    data-roadmap-node
+                    className="relative z-10 grid size-4 place-items-center"
+                    style={{ background: item.color }}
+                  >
+                    {item.active && (
+                      <motion.span
+                        className="absolute inset-0 -m-1.5 border"
+                        style={{ borderColor: item.color }}
+                        animate={{ opacity: [0.6, 0, 0.6], scale: [1, 1.8, 1] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+                      />
+                    )}
+                  </div>
+                  {item.active && (
+                    <span className="inline-flex items-center gap-1.5 bg-ember px-2 py-1 font-mono-tb text-[9px] uppercase tracking-[0.2em] text-black">
+                      <span className="size-1.5 bg-black tb-blink" />
+                      LIVE
+                    </span>
+                  )}
+                </div>
+
+                <div className="mb-4 flex items-center gap-2">
+                  <span
+                    className="grid size-8 place-items-center border"
+                    style={{ borderColor: item.color, color: item.color }}
+                  >
+                    <Icon size={16} strokeWidth={2} />
+                  </span>
+                  <div>
+                    <h3
+                      className="text-lg font-bold tracking-tight"
+                      style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                    >
+                      {item.title}
+                    </h3>
+                    <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                      {item.label}
+                    </span>
+                  </div>
+                </div>
+                <p className="font-mono-tb text-[12px] leading-relaxed text-muted-foreground">{item.body}</p>
+                </motion.article>
+              </motion.div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
  * Final CTA
  * ============================================================ */
 
@@ -2581,7 +2869,7 @@ function Footer() {
               { label: "Mixer", href: "#system" },
               { label: "Branches", href: "#versioning" },
               { label: "Rehearsal View", href: "#rehearsal" },
-              { label: "Roadmap", href: "#workflow" },
+              { label: "Roadmap", href: "#roadmap" },
               { label: "Chat", href: "#workflow" },
             ],
           ],
@@ -2652,6 +2940,7 @@ export default function LandingPage() {
           <ThemingSection />
           <RehearsalDeepDive />
           <FeatureIndex />
+          <Roadmap />
           <CTA signInHref={authHref} />
           <Footer />
         </main>
