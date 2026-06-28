@@ -35,15 +35,14 @@ function PlaybackChip({
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
 }) {
   const showDuration = Math.abs(duration - 1) >= 0.001
+  const minSize = compact ? 'min-w-8 min-h-8' : 'min-w-9 min-h-9'
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`shrink-0 border flex flex-col items-center justify-center transition-all duration-200 px-1.5 ${
-        compact ? 'min-h-8 py-0.5' : 'min-h-9 py-0.5'
-      } ${
+      className={`inline-flex shrink-0 border flex-col items-center justify-center transition-all duration-200 px-1.5 ${minSize} ${
         active
           ? 'border-lime bg-lime text-primary-foreground opacity-100'
           : past

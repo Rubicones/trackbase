@@ -33,13 +33,13 @@ function ChordChip({
 }) {
   const showDuration = Math.abs(chord.duration - 1) >= 0.001
 
+  const minSize = compact ? 'min-w-7 min-h-7' : 'min-w-8 min-h-8'
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`shrink-0 border border-border bg-surface flex flex-col items-center justify-center hover:border-foreground/40 transition px-1.5 ${
-        compact ? 'min-h-7 py-0.5' : 'min-h-8 py-0.5'
-      }`}
+      className={`inline-flex shrink-0 border border-border bg-surface flex-col items-center justify-center hover:border-foreground/40 transition px-1.5 ${minSize}`}
       title={showDuration ? `${chord.name} · ${formatBarDuration(chord.duration)} bars` : chord.name}
     >
       <span className={`font-bold leading-none whitespace-nowrap ${compact ? 'text-[10px]' : 'text-[11px]'} text-foreground/90`}>
