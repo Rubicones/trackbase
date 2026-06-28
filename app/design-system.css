@@ -321,6 +321,14 @@ html[data-theme] a.tb-btn-accent {
   font-synthesis: none;
 }
 
+/* Structure section labels — Verse, Chorus, Bridge, etc. */
+.tb-section-name {
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  font-feature-settings: normal;
+  font-synthesis: none;
+}
+
 .font-mono,
 .tb-font-mono {
   font-family: var(--tb-font-mono);

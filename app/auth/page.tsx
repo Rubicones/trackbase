@@ -60,7 +60,7 @@ function AuthPageContent() {
               await supabase.auth.updateUser({ data: { onboarding_complete: true } })
               const { data: { session: refreshed } } = await supabase.auth.refreshSession()
               if (refreshed) {
-                void setAuthCookies(refreshed)
+                await setAuthCookies(refreshed)
               }
               router.replace(next)
             } else {

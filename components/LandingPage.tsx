@@ -366,8 +366,7 @@ function TopBar({
         <div className="flex min-w-0 items-center gap-6 md:gap-10">
           <a href="#top" className="flex shrink-0 items-center gap-2 text-foreground">
             <span
-              className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg"
-
+              className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl"
             >
               TRACKBASE
             </span>
@@ -792,8 +791,9 @@ function LandingMobileSectionChords({
         <div className={`mb-1.5 flex items-center justify-between gap-2 ${pad}`}>
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {active && (
-            <span className="truncate font-mono text-[9px] tabular-nums text-lime">
-              ● {sectionLabel(active)} · {landingSectionTimeRange(active.start_bar, active.end_bar, LANDING_BAR_MS)}
+            <span className="truncate text-[9px] tabular-nums text-lime">
+              ● <span className="tb-section-name uppercase tracking-widest">{sectionLabel(active)}</span>
+              <span className="font-mono"> · {landingSectionTimeRange(active.start_bar, active.end_bar, LANDING_BAR_MS)}</span>
             </span>
           )}
         </div>
@@ -809,7 +809,7 @@ function LandingMobileSectionChords({
                   : "border-border bg-background text-muted-foreground"
               }`}
             >
-              <div className="font-bold">{sectionLabel(s)}</div>
+              <div className="tb-section-name">{sectionLabel(s)}</div>
               <div className="truncate font-mono text-[8px] tabular-nums opacity-80">
                 {landingSectionTimeRange(s.start_bar, s.end_bar, LANDING_BAR_MS)}
               </div>
@@ -961,7 +961,7 @@ function LandingStructureStrip() {
                   background: "color-mix(in oklab, var(--lime) 12%, transparent)",
                 }}
               >
-                <span className="pointer-events-none w-full truncate text-[9px] font-bold uppercase tracking-widest leading-tight text-lime">
+                <span className="tb-section-name pointer-events-none w-full truncate text-[9px] uppercase tracking-widest leading-tight text-lime">
                   {sectionLabel(s)}
                 </span>
               </div>
@@ -1588,7 +1588,7 @@ function LandingRehearsalMock() {
                   key={section.id}
                   className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
                 >
-                  <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-lime">
+                  <div className="tb-section-name w-14 shrink-0 pt-0.5 text-[9px] uppercase tracking-widest text-lime">
                     {sectionLabel(section)}
                   </div>
                   <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">

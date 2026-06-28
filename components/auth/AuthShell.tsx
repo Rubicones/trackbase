@@ -7,7 +7,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col bg-background grid-bg-sm">
       <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md shrink-0">
-        <span className="font-display text-lg font-bold tracking-tight text-lime shrink-0">
+        <span className="font-display text-lg md:text-xl lg:text-2xl font-bold tracking-tight text-lime shrink-0">
           TRACKBASE
         </span>
         <span className="hidden sm:inline text-[10px] uppercase tracking-[0.18em] text-muted-foreground">

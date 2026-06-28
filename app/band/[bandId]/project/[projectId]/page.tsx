@@ -2646,7 +2646,7 @@ const TrackRow = React.memo(function TrackRow({
       })
     }
 
-    async function onDragEnd(e: MouseEvent | TouchEvent) {
+    function onDragEnd(e: MouseEvent | TouchEvent) {
       if (dragRafRef.current !== null) {
         cancelAnimationFrame(dragRafRef.current)
         dragRafRef.current = null
@@ -2676,16 +2676,18 @@ const TrackRow = React.memo(function TrackRow({
         dragPreviewBarRef.current = newBar
       }
       dragPreviewBarRef.current = null
-      // Commit final position as React state (one re-render at drag end).
-      setDragPreviewBar(newBar)
-      if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
-        await snapStartBar(newBar)
-      }
+      // Optimistic: clear the preview immediately — handleStartBarUpdate updates
+      // track.start_bar in state before the request, so effectiveStartBar
+      // (dragPreviewBar ?? track.start_bar) will reflect the new position at once.
+      // On request failure, handleStartBarUpdate reverts track.start_bar automatically.
       setDragPreviewBar(null)
       resetLabelColOpacity()
+      if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
+        void snapStartBar(newBar)
+      }
     }
-    function onMouseUp(e: MouseEvent) { void onDragEnd(e) }
-    function onTouchEnd(e: TouchEvent) { void onDragEnd(e) }
+    function onMouseUp(e: MouseEvent) { onDragEnd(e) }
+    function onTouchEnd(e: TouchEvent) { onDragEnd(e) }
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('touchmove', onTouchMove, { passive: false })
@@ -3775,14 +3777,35 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
 
 function TrackRowSkeleton() {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-border">
-      <Skeleton width={32} height={32} className="shrink-0" />
-      <div className="flex flex-col gap-1 w-28 shrink-0">
-        <Skeleton width="80%" height={12} />
-        <Skeleton width="55%" height={10} />
+    <div className="flex border-b border-border" style={{ minHeight: TRACK_ROW_H }}>
+      {/* Label column — mirrors the real TRACK_LABEL_W panel */}
+      <div
+        className="shrink-0 border-r border-border p-3 flex flex-col justify-between"
+        style={{ width: TRACK_LABEL_W }}
+      >
+        <div className="flex items-center gap-2">
+          <Skeleton width={20} height={20} borderRadius={2} className="shrink-0" />
+          <div className="flex-1 min-w-0 space-y-1">
+            <Skeleton width="75%" height={11} />
+            <Skeleton width="50%" height={9} />
+          </div>
+        </div>
+        {/* Real M / S buttons — disabled until loaded */}
+        <div className="flex items-center gap-1 mt-2">
+          <button
+            disabled
+            className="size-5 border border-border text-[9px] font-medium grid place-items-center text-muted-foreground opacity-40 cursor-not-allowed uppercase tracking-widest"
+          >M</button>
+          <button
+            disabled
+            className="size-5 border border-border text-[9px] font-medium grid place-items-center text-muted-foreground opacity-40 cursor-not-allowed uppercase tracking-widest"
+          >S</button>
+        </div>
       </div>
       {/* Waveform area */}
-      <Skeleton width="100%" height={48} className="flex-1" />
+      <div className="flex-1 flex items-center px-3 min-w-0">
+        <Skeleton width="100%" height={48} className="flex-1" />
+      </div>
     </div>
   )
 }
@@ -4016,12 +4039,32 @@ function DesktopPageSkeleton() {
             ))}
           </div>
 
-          {/* Timeline / structure bar */}
-          <div className="h-10 border-b border-border bg-surface/40 shrink-0 px-4 flex items-center gap-3">
-            <Skeleton width={52} height={14} />
-            <Skeleton width={76} height={14} />
-            <Skeleton width={52} height={14} />
-            <Skeleton width={68} height={14} />
+          {/* CHANNEL + STRUCTURE rows — real labels, dynamic data stays empty */}
+          <div className="flex items-stretch border-b border-border shrink-0">
+            {/* Label column — same width as track label column */}
+            <div
+              className="shrink-0 border-r border-border flex flex-col bg-surface/40"
+              style={{ width: TRACK_LABEL_W }}
+            >
+              <div
+                className="border-b border-border px-3 flex flex-col justify-between"
+                style={{ height: 40 }}
+              >
+                <span className="pt-2 text-[9px] uppercase font-bold tracking-widest text-muted-foreground">CHANNEL</span>
+                <span className="pb-1.5 font-mono text-foreground/60 font-normal text-[9px]">— · —</span>
+              </div>
+              <div
+                className="px-3 flex items-center bg-lime-soft/40"
+                style={{ height: 32 }}
+              >
+                <span className="text-[9px] uppercase font-bold tracking-widest text-lime">STRUCTURE</span>
+              </div>
+            </div>
+            {/* Timeline column — empty until data loads */}
+            <div className="flex-1 min-w-0 flex flex-col bg-surface">
+              <div className="border-b border-border bg-surface/40" style={{ height: 40 }} />
+              <div className="bg-lime-soft/10" style={{ height: 32 }} />
+            </div>
           </div>
 
           {/* Track list */}
@@ -4029,35 +4072,37 @@ function DesktopPageSkeleton() {
             {[0, 1, 2, 3, 4].map(i => <TrackRowSkeleton key={i} />)}
           </div>
 
-          {/* Transport bar — matches border-t border-border bg-surface/60 px-4 py-3 */}
+          {/* Transport bar — real disabled controls, no data needed */}
           <div className="border-t border-border bg-surface/60 px-4 sm:px-6 py-3 hidden sm:flex items-center gap-3 sm:gap-6 shrink-0">
             <div className="flex items-center gap-3">
-              {/* METRO, COUNT-IN, LOOP toggles */}
-              <Skeleton width={42} height={18} />
-              <Skeleton width={58} height={18} />
-              <Skeleton width={38} height={18} />
+              {/* Metro / Count-in / Loop — real buttons, disabled until loaded */}
+              <button disabled className="h-7 px-2 border border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground opacity-30 cursor-not-allowed">Metro</button>
+              <button disabled className="h-7 px-2 border border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground opacity-30 cursor-not-allowed">Count-in</button>
+              <button disabled className="h-7 px-2 border border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground opacity-30 cursor-not-allowed">Loop</button>
               {/* Play button */}
-              <Skeleton width={40} height={40} />
+              <button disabled className="size-10 bg-lime text-primary-foreground grid place-items-center opacity-40 cursor-not-allowed">
+                <span className="text-sm translate-x-px">▶</span>
+              </button>
               {/* Time display */}
-              <Skeleton width={68} height={13} />
+              <div className="font-mono text-xs tabular-nums">
+                <span className="text-foreground">0:00</span>
+                <span className="text-muted-foreground"> / 0:00</span>
+              </div>
             </div>
-            {/* Timeline bar */}
-            <Skeleton width="100%" height={8} className="flex-1 min-w-[200px]" />
+            {/* Timeline bar — empty until audio loads */}
+            <div className="flex-1 min-w-[200px] h-2 bg-surface-2" />
             {/* Volume */}
             <div className="flex items-center gap-3">
-              <Skeleton width={22} height={9} />
-              <Skeleton width={96} height={8} />
-              <Skeleton width={22} height={9} />
+              <SectionLabel>Vol</SectionLabel>
+              <div className="w-24 h-2 bg-surface-2" />
+              <span className="text-[10px] text-muted-foreground tabular-nums w-8">100</span>
             </div>
           </div>
 
-          {/* Status footer */}
-          <div className="border-t border-border bg-surface/40 px-4 sm:px-6 py-1.5 hidden sm:flex items-center justify-between shrink-0">
-            <Skeleton width={300} height={9} />
-            <Skeleton width={130} height={9} />
-          </div>
         </main>
       </div>
+      {/* Status footer — real component; dynamic left/right slots are empty until data loads */}
+      <StatusFooter />
     </div>
   )
 }
@@ -5029,18 +5074,14 @@ export default function ProjectPage() {
     cache.invalidate(activeVersionId)
   }
 
-  async function handleStartBarUpdate(trackId: string, startBar: number) {
-    const res = await fetch(`/api/tracks/${trackId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start_bar: startBar }),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error((err as { error?: string }).error ?? 'Failed to save track offset')
-    }
-    trackEvent('track_offset_changed')
+  // Per-track debounce timers and abort controllers for start_bar PATCH requests.
+  const startBarDebounceRef = useRef<Map<string, { timer: ReturnType<typeof setTimeout>, reject: () => void }>>(new Map())
+  const startBarAbortRef = useRef<Map<string, AbortController>>(new Map())
 
+  async function handleStartBarUpdate(trackId: string, startBar: number) {
+    const originalStartBar = activeTracks.find(t => t.id === trackId)?.start_bar ?? 0
+
+    // Optimistic update — reflect the new position immediately before the request lands.
     const updatedTracks = activeTracks.map(t => t.id === trackId
       ? { ...t, start_bar: startBar, midi_start_bar: startBar }
       : t)
@@ -5052,6 +5093,68 @@ export default function ProjectPage() {
     })))
     cache.invalidate(activeVersionId)
     if (player.playing) player.seek(player.currentTime, updatedTracks)
+
+    // Cancel any pending debounced PATCH for this track (superseded by this call).
+    const existing = startBarDebounceRef.current.get(trackId)
+    if (existing) {
+      clearTimeout(existing.timer)
+      existing.reject()
+      startBarDebounceRef.current.delete(trackId)
+    }
+    // Abort any in-flight PATCH for this track.
+    startBarAbortRef.current.get(trackId)?.abort()
+    startBarAbortRef.current.delete(trackId)
+
+    // Debounce: wait 1s before sending the PATCH. A newer call will reject this promise.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          startBarDebounceRef.current.delete(trackId)
+          resolve()
+        }, 1000)
+        startBarDebounceRef.current.set(trackId, { timer, reject })
+      })
+    } catch {
+      // Superseded by a newer drag — bail without reverting (newer call owns the state).
+      return
+    }
+
+    const abort = new AbortController()
+    startBarAbortRef.current.set(trackId, abort)
+    try {
+      const res = await fetch(`/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_bar: startBar }),
+        signal: abort.signal,
+      })
+      startBarAbortRef.current.delete(trackId)
+
+      if (!res.ok) {
+        // Revert to original position on failure.
+        const revertedTracks = activeTracks.map(t => t.id === trackId
+          ? { ...t, start_bar: originalStartBar, midi_start_bar: originalStartBar }
+          : t)
+        setVersions(prev => prev.map(v => ({
+          ...v,
+          tracks: v.tracks.map(t => t.id === trackId
+            ? { ...t, start_bar: originalStartBar, midi_start_bar: originalStartBar }
+            : t),
+        })))
+        cache.invalidate(activeVersionId)
+        if (player.playing) player.seek(player.currentTime, revertedTracks)
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as { error?: string }).error ?? 'Failed to save track offset')
+      }
+      trackEvent('track_offset_changed')
+    } catch (err) {
+      startBarAbortRef.current.delete(trackId)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // Aborted by a newer call — no revert needed.
+        return
+      }
+      throw err
+    }
   }
 
   // ── Upload state helpers ────────────────────────────────────────────────────
@@ -6374,6 +6477,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
       )}
       </>) : (
         /* Loading body — AppHeader above is always visible */
+        <>
         <div className="flex flex-1 overflow-hidden">
           <Sidebar
             versions={versions}
@@ -6392,20 +6496,93 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             isDark={resolvedTheme === 'dark'}
           />
           <main className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background">
-            <div className="flex flex-col flex-1 overflow-hidden">
-              {[0, 1, 2, 3, 4].map(i => (
-                <div key={i} className="flex items-center gap-2 px-4 py-2 border-b border-border">
-                  <Skeleton width={24} height={24} className="shrink-0" />
-                  <div className="flex flex-col gap-0.5 w-24 shrink-0">
-                    <Skeleton width="80%" height={10} />
-                    <Skeleton width="55%" height={8} />
+            {/* Project name / meta header — name + meta skeletons; action buttons are real */}
+            <section className="border-b border-border bg-surface/40 shrink-0">
+              <div className="px-4 sm:px-6 py-3 flex flex-col gap-2">
+                <div className="flex items-center gap-3 flex-wrap min-w-0">
+                  <Skeleton width={260} height={28} />
+                  {/* Roadmap, Edit structure, Comment mode — state-independent buttons */}
+                  <div className="flex items-center gap-1.5 flex-wrap shrink-0 ml-auto">
+                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed inline-flex items-center">
+                      Roadmap &amp; checklist
+                    </button>
+                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed">
+                      Edit structure
+                    </button>
+                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed">
+                      Comment mode
+                    </button>
                   </div>
-                  <Skeleton width="100%" height={36} className="flex-1" />
                 </div>
+                <div className="flex items-center gap-3">
+                  <Skeleton width={64} height={12} />
+                  <Skeleton width={36} height={12} />
+                  <Skeleton width={44} height={12} />
+                  <Skeleton width={72} height={12} />
+                </div>
+              </div>
+            </section>
+            {/* Version tabs bar — tab skeletons + real + New Version */}
+            <div className="border-b border-border bg-surface/20 shrink-0 px-2 flex items-center gap-1 h-9 overflow-x-hidden">
+              {[48, 40, 40, 52, 62, 40, 44].map((w, i) => (
+                <Skeleton key={i} width={w} height={22} />
               ))}
+              <button disabled className="shrink-0 self-stretch ml-auto bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 border-l border-border text-muted-foreground opacity-40 cursor-not-allowed whitespace-nowrap">
+                + New Version
+              </button>
+            </div>
+            {/* CHANNEL + STRUCTURE rows — real labels, matching StructureEditor layout */}
+            <div className="flex items-stretch border-b border-border shrink-0">
+              <div
+                className="shrink-0 border-r border-border flex flex-col bg-surface/40"
+                style={{ width: TRACK_LABEL_W }}
+              >
+                {/* CHANNEL cell — mirrors StructureEditor RULER_H=40 row */}
+                <div className="border-b border-border px-3 flex items-center flex-col justify-between" style={{ height: 40 }}>
+                  <span className="pt-2 text-[9px] uppercase font-bold tracking-widest text-muted-foreground">CHANNEL</span>
+                  <span className="pb-1.5 font-mono text-foreground/60 font-normal text-[9px]">— · —</span>
+                </div>
+                {/* STRUCTURE cell — mirrors StructureEditor RIBBON_H=32 row */}
+                <div className="px-3 flex flex-col items-center justify-center gap-0.5 bg-lime-soft/40" style={{ height: 32 }}>
+                  <span className="text-[9px] uppercase font-bold tracking-widest text-lime">STRUCTURE</span>
+                </div>
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col bg-surface">
+                <div className="border-b border-border bg-surface/40" style={{ height: 40 }} />
+                <div className="bg-lime-soft/10" style={{ height: 32 }} />
+              </div>
+            </div>
+            {/* Track list */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {[0, 1, 2, 3, 4].map(i => <TrackRowSkeleton key={i} />)}
             </div>
           </main>
         </div>
+        {/* Transport bar — outside the sidebar+main row so it spans full width */}
+        <MasterPlayerBar
+          playing={false}
+          currentTime={0}
+          currentTimeRef={player.currentTimeRef}
+          duration={0}
+          loaded={0}
+          total={0}
+          volume={player.volume}
+          onPlay={() => {}}
+          onPause={() => {}}
+          onSeek={() => {}}
+          onVolume={player.setVolume}
+          metronomeOn={player.metronomeOn}
+          countdownOn={player.countdownOn}
+          isCounting={false}
+          onToggleMetronome={player.toggleMetronome}
+          onToggleCountdown={player.toggleCountdown}
+          sectionLoopOn={false}
+          sectionLoopEnabled={false}
+          onToggleSectionLoop={() => {}}
+          compact={isMobileLandscape}
+        />
+        <StatusFooter />
+        </>
       )}
       </>
       )}

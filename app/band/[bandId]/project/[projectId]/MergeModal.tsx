@@ -122,7 +122,7 @@ function AutoCheckIcon() {
 function SectionTag({ state }: { state: BarState | null }) {
   if (!state) return <span className="text-[11px] text-muted-foreground">cleared</span>
   return (
-    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 border border-lime/40 text-lime bg-lime/10">
+    <span className="tb-section-name text-[9px] uppercase tracking-widest px-2 py-0.5 border border-lime/40 text-lime bg-lime/10">
       {sectionLabel(state)}
     </span>
   )

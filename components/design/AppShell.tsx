@@ -12,7 +12,7 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
         {left}
         <Link
           href="/dashboard"
-          className="font-display text-lg font-bold tracking-tight text-lime shrink-0 no-underline"
+          className="font-display text-lg md:text-xl lg:text-2xl font-bold tracking-tight text-lime shrink-0 no-underline"
         >
           TRACKBASE
         </Link>

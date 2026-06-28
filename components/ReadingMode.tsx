@@ -589,7 +589,7 @@ export function ReadingMode({
                   onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
                   className="w-full flex items-start gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
                 >
-                  <div className="text-[9px] font-bold uppercase tracking-widest text-lime w-16 shrink-0 pt-0.5">
+                  <div className="tb-section-name text-[9px] uppercase tracking-widest text-lime w-16 shrink-0 pt-0.5">
                     {sectionLabel(section)}
                   </div>
                   <div className="text-xs flex-1 min-w-0 text-left text-foreground whitespace-normal break-words leading-relaxed">

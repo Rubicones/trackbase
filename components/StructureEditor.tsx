@@ -1523,7 +1523,7 @@ export default function StructureOverlay({
                       background: `color-mix(in oklab, ${accent} 12%, transparent)`,
                     }}
                   >
-                    <span className={`font-bold uppercase tracking-widest text-lime truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
+                    <span className={`tb-section-name uppercase tracking-widest text-lime truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
                       {sectionLabel(s)}
                     </span>
                     {editMode && !compact && (

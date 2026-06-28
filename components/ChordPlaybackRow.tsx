@@ -82,7 +82,7 @@ function SectionBreak({
       {showDivider && (
         <div className={`w-px bg-border shrink-0 ${compact ? 'h-5' : 'h-6'}`} aria-hidden />
       )}
-      <span className={`uppercase tracking-widest text-muted-foreground shrink-0 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
+      <span className={`tb-section-name uppercase tracking-widest text-muted-foreground shrink-0 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
         {label}
       </span>
     </div>

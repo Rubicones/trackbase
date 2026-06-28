@@ -85,8 +85,9 @@ export default function AuthCallbackPage() {
       refresh_token: string
       expires_in?: number
     }) {
+      if (settled) return
       settled = true
-      void setAuthCookies(session)
+      await setAuthCookies(session)
 
       const meta = session.user.user_metadata
       if (!meta?.username) {

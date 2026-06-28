@@ -934,8 +934,9 @@ function MobileMixerPortraitInner({
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {activeSection && (
-            <span className="text-[9px] font-mono tabular-nums text-lime">
-              ● {sectionLabel(activeSection)} · {sectionTimeRange(activeSection.start_bar, activeSection.end_bar, barDurationMs)}
+            <span className="truncate text-[9px] tabular-nums text-lime">
+              ● <span className="tb-section-name uppercase tracking-widest">{sectionLabel(activeSection)}</span>
+              <span className="font-mono"> · {sectionTimeRange(activeSection.start_bar, activeSection.end_bar, barDurationMs)}</span>
             </span>
           )}
         </div>
@@ -958,7 +959,7 @@ function MobileMixerPortraitInner({
                 }`}
                 title={`Bars ${s.start_bar + 1}–${s.end_bar}`}
               >
-                <div className="font-bold">{sectionLabel(s)}</div>
+                <div className="tb-section-name">{sectionLabel(s)}</div>
                 <div className="text-[8px] font-mono tabular-nums opacity-80">
                   {sectionTimeRange(s.start_bar, s.end_bar, barDurationMs)}
                 </div>
