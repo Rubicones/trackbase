@@ -5,7 +5,7 @@ import { flacToWav } from '@/lib/ffmpeg'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 
 // GET /api/tracks/[id]/download
-// Fetches the FLAC from R2, converts to WAV, returns as a downloadable attachment.
+// Audio: fetches FLAC from R2, converts to WAV. MIDI: returns raw .mid from R2.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -18,15 +18,29 @@ export async function GET(
 
     const { data: track, error } = await supabase
       .from('tracks')
-      .select('storage_path, original_filename, name')
+      .select('storage_path, original_filename, name, file_type')
       .eq('id', trackId)
       .single()
     if (error) return NextResponse.json({ error: 'Track not found' }, { status: 404 })
 
+    const baseName = (track.original_filename ?? track.name).replace(/\.[^/.]+$/, '')
+
+    if (track.file_type === 'midi') {
+      const midiBuffer = await downloadFromR2(track.storage_path)
+      const filename = `${baseName}.mid`
+
+      return new NextResponse(new Uint8Array(midiBuffer), {
+        headers: {
+          'Content-Type': 'audio/midi',
+          'Content-Length': String(midiBuffer.byteLength),
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+      })
+    }
+
     const flacBuffer = await downloadFromR2(track.storage_path)
     const wavBuffer = await flacToWav(flacBuffer)
 
-    const baseName = (track.original_filename ?? track.name).replace(/\.[^/.]+$/, '')
     const filename = `${baseName}.wav`
 
     return new NextResponse(new Uint8Array(wavBuffer), {

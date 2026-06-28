@@ -446,11 +446,13 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
         received += value.length
         if (total > 0) setDownloadPct(Math.min(99, Math.round((received / total) * 100)))
       }
-      const blob = new Blob(chunks as BlobPart[], { type: 'audio/wav' })
+      const ext = isMidi ? 'mid' : 'wav'
+      const mime = isMidi ? 'audio/midi' : 'audio/wav'
+      const blob = new Blob(chunks as BlobPart[], { type: mime })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(track.original_filename ?? track.name).replace(/\.[^/.]+$/, '')}.wav`
+      a.download = `${(track.original_filename ?? track.name).replace(/\.[^/.]+$/, '')}.${ext}`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -570,7 +572,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             <button
               type="button"
               onClick={handleDownload}
-              disabled={isMidi}
+              disabled={downloading}
               className="block w-full text-left px-3 py-2 hover:bg-surface text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Download

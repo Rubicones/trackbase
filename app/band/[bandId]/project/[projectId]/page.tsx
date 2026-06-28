@@ -2264,9 +2264,9 @@ function TrackIconBtn({
   )
 }
 
-function ReplaceIcon() {
+function ReplaceIcon({ size = 12 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M3 11v-1a4 4 0 0 1 4-4h14" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -2275,9 +2275,9 @@ function ReplaceIcon() {
   )
 }
 
-function DownloadIcon() {
+function DownloadIcon({ size = 12 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M12 3v12" strokeLinecap="round" />
       <path d="m7 10 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M5 21h14" strokeLinecap="round" />
@@ -2285,12 +2285,20 @@ function DownloadIcon() {
   )
 }
 
-function TrashIcon() {
+function TrashIcon({ size = 12 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M3 6h18" strokeLinecap="round" />
       <path d="M8 6V4h8v2" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M6 6l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg width="7" height="10" viewBox="0 0 7 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M1.5 1.5L5 5l-3.5 3.5" />
     </svg>
   )
 }
@@ -2444,6 +2452,7 @@ const TrackRow = React.memo(function TrackRow({
   useEffect(() => { setWaveformReady(false) }, [track.id])
   const [showColorPicker, setShowColorPicker] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showTools, setShowTools] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
   const [rowHovered, setRowHovered] = useState(false)
@@ -2788,7 +2797,7 @@ const TrackRow = React.memo(function TrackRow({
       {/* Label column — dimmed when track pre-roll extends before bar 1 */}
       <div
         ref={trackLabelColRef}
-        className={`relative z-10 shrink-0 border-r border-border bg-background flex flex-col justify-between ${compact ? 'p-2' : 'p-3'} cursor-pointer`}
+        className={`relative z-10 shrink-0 border-r border-border bg-background flex flex-col justify-between ${compact ? 'p-2 pr-5' : 'p-3 pr-5'} cursor-pointer`}
         style={{
           width: labelColW,
           transition: 'opacity 0.15s',
@@ -2837,7 +2846,7 @@ const TrackRow = React.memo(function TrackRow({
                   {displayName}
                 </div>
                 {isMidi && (
-                  <span className="text-[8px] uppercase tracking-widest text-lime border border-lime/40 px-1 shrink-0">
+                  <span className="text-[8px] uppercase tracking-widest text-lime border border-lime/40 px-1 mr-1 shrink-0">
                     MIDI
                   </span>
                 )}
@@ -2861,7 +2870,6 @@ const TrackRow = React.memo(function TrackRow({
               ) : (
                 <span className="text-[9px] text-muted-foreground truncate block font-mono">
                   {track.original_filename ?? '—'}
-                  {track.file_size_bytes ? ` · ${fmtSize(track.file_size_bytes)}` : ''}
                   {(track.start_bar ?? 0) !== 0
                     ? ` · ${formatTrackStartBar(track.start_bar ?? 0)}`
                     : ''}
@@ -2896,44 +2904,99 @@ const TrackRow = React.memo(function TrackRow({
               {pianoRollOpen ? 'Close' : 'Edit'}
             </button>
           )}
-          <div className="ml-auto flex items-center gap-0.5">
-            {confirmDelete ? (
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(false)}
-                  className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition"
-                >
-                  No
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmDelete}
-                  disabled={deleting}
-                  className="h-5 px-1.5 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
-                >
-                  {deleting ? '…' : 'Yes'}
-                </button>
-              </div>
-            ) : (
-              <>
-                <TrackIconBtn tooltip="Replace track" onClick={() => fileRef.current?.click()}>
-                  <ReplaceIcon />
-                </TrackIconBtn>
-                {!isMidi && (
-                  <TrackIconBtn tooltip="Download as WAV" href={`/api/tracks/${track.id}/download`}>
-                    <DownloadIcon />
-                  </TrackIconBtn>
-                )}
-                <TrackIconBtn tooltip="Delete track" danger onClick={() => setConfirmDelete(true)}>
-                  <TrashIcon />
-                </TrackIconBtn>
-              </>
-            )}
-          </div>
+          {!isMidi && !compact && !confirmDelete && track.file_size_bytes ? (
+            <span className="ml-auto text-[8px] font-mono text-muted-foreground tabular-nums pr-2">
+              {fmtSize(track.file_size_bytes)}
+            </span>
+          ) : null}
+          {confirmDelete && (
+            <div className="ml-auto flex items-center gap-1">
+              <span className="text-[9px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="h-5 px-1.5 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
+              >
+                {deleting ? '…' : 'Yes'}
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Full-height chevron strip — right border of label column */}
+        {!confirmDelete && (
+          <button
+            type="button"
+            data-no-resource-filter
+            onClick={(e) => { e.stopPropagation(); setShowTools(p => !p) }}
+            className={`absolute right-0 top-0 bottom-0 w-5 flex items-center justify-center border-l transition-colors ${
+              showTools
+                ? 'border-lime/40 bg-surface text-lime'
+                : 'border-border text-muted-foreground hover:bg-surface/60 hover:text-lime'
+            }`}
+            aria-label={showTools ? 'Close track actions' : 'Track actions'}
+          >
+            <svg
+              width="6" height="10" viewBox="0 0 6 10"
+              fill="none" stroke="currentColor" strokeWidth="1.5"
+              strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: showTools ? 'rotate(180deg)' : 'none', transition: 'transform 0.22s ease' }}
+              aria-hidden
+            >
+              <path d="M1 1.5L4.5 5 1 8.5" />
+            </svg>
+          </button>
+        )}
       </div>
+
+      {/* Track action drawer — overlays the waveform */}
+      {showTools && !confirmDelete && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setShowTools(false)} />
+          <div
+            className="track-drawer absolute z-20 flex bg-background border-r border-border"
+            style={{ left: labelColW, top: 0, bottom: 0, minHeight: rowH }}
+            data-no-resource-filter
+          >
+            <button
+              type="button"
+              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors"
+              style={{ animationDelay: '0ms' }}
+              onClick={() => { fileRef.current?.click(); setShowTools(false) }}
+            >
+              <ReplaceIcon size={16} />
+              <span className="text-[8px] uppercase tracking-[0.08em]">Replace</span>
+            </button>
+            <a
+              href={`/api/tracks/${track.id}/download`}
+              download
+              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors no-underline"
+              style={{ animationDelay: '60ms' }}
+              onClick={() => setShowTools(false)}
+            >
+              <DownloadIcon size={16} />
+              <span className="text-[8px] uppercase tracking-[0.08em]">Download</span>
+            </a>
+            <button
+              type="button"
+              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors"
+              style={{ animationDelay: '120ms' }}
+              onClick={() => { setShowTools(false); setConfirmDelete(true) }}
+            >
+              <TrashIcon size={16} />
+              <span className="text-[8px] uppercase tracking-[0.08em]">Delete</span>
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Waveform column */}
       <div

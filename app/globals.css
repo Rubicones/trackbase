@@ -278,6 +278,22 @@ html.dark[data-palette="green"] {
   --badge-merged-bg:  #101810;
 }
 
+/* ── Track action drawer ─────────────────────────────────────── */
+@keyframes trackDrawerIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.track-drawer {
+  animation: trackDrawerIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes trackDrawerItemIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.track-drawer-item {
+  animation: trackDrawerItemIn 0.18s ease both;
+}
+
 /* Monochrome avatars — greyscale only */
 html:not(.dark)[data-palette="mono"] .theme-avatar {
   background: linear-gradient(
