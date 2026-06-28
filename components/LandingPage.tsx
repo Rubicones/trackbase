@@ -17,6 +17,7 @@ import { formatChordsDisplay } from "@/lib/chords";
 import { findSectionRangeAtTime } from "@/lib/sectionPlayback";
 import type { Section, Version } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
+import { SeededWaveform } from "@/components/WaveformBars";
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History, Undo2,
@@ -185,12 +186,12 @@ function MonoLabel({ children, className = "" }: { children: ReactNode; classNam
   );
 }
 
-function EmberTag({ children, className = "" }: { children: ReactNode; className?: string }) {
+function LimeTag({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember ${className}`}
+      className={`inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime ${className}`}
     >
-      <span className="size-1.5 bg-ember tb-blink" />
+      <span className="size-1.5 bg-lime tb-blink" />
       {children}
     </span>
   );
@@ -213,16 +214,16 @@ function SectionHeader({
     <div className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] pb-8">
       <div className="mb-6 flex items-center justify-between">
         <MonoLabel>
-          <span className="text-ember">{index}</span> · {kicker}
+          <span className="text-lime">{index}</span> · {kicker}
         </MonoLabel>
         <MonoLabel className="hidden md:inline">#{kicker.toLowerCase().replace(/\s+/g, "-")}</MonoLabel>
       </div>
       <h2
         className="font-display-tb text-[2.6rem] font-bold leading-[0.95] tracking-[-0.02em] text-foreground md:text-[3.75rem] lg:text-[4.5rem]"
-        style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+
       >
         {title}{" "}
-        {accent && <span className="text-ember">{accent}</span>}
+        {accent && <span className="text-lime">{accent}</span>}
       </h2>
       {description && (
         <p className="mt-6 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
@@ -241,18 +242,21 @@ function GhostButton({
   ...rest
 }: {
   children: ReactNode;
-  variant?: "ghost" | "ember" | "outline";
+  variant?: "ghost" | "lime" | "outline";
   className?: string;
   href?: string;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const fontClass = variant === "lime" ? "tb-btn-accent" : "font-mono-tb";
+  const trackingClass = variant === "lime" ? "" : "tracking-[0.22em]";
   const styles =
-    variant === "ember"
-      ? "bg-ember text-primary-foreground hover:bg-(--ember-bright)"
+    variant === "lime"
+      ? "bg-lime text-primary-foreground"
       : variant === "outline"
-        ? "border border-[color-mix(in_oklab,var(--foreground)_30%,transparent)] text-foreground hover:border-ember hover:text-ember"
-        : "border border-border text-foreground hover:border-[color-mix(in_oklab,var(--ember)_60%,transparent)] hover:text-ember";
+        ? "border border-[color-mix(in_oklab,var(--foreground)_30%,transparent)] text-foreground hover:border-lime hover:text-lime"
+        : "border border-border text-foreground hover:border-[color-mix(in_oklab,var(--lime)_60%,transparent)] hover:text-lime";
 
-  const cls = `group relative inline-flex items-center gap-2 px-5 py-3 font-mono-tb text-[11px] uppercase tracking-[0.22em] transition-colors ${styles} ${className}`;
+  const transitionClass = variant === "lime" ? "transition-[transform,colors]" : "transition-colors";
+  const cls = `group relative inline-flex items-center gap-2 px-5 py-3 ${fontClass} text-[11px] uppercase ${trackingClass} ${transitionClass} ${styles} ${className}`;
 
   if (href) {
     return <a href={href} className={cls}>{children}</a>;
@@ -265,16 +269,15 @@ function GhostButton({
 }
 
 /* ============================================================
- * Rectangular waveform
+ * Pill waveform (design-system bars)
  * ============================================================ */
 
 function Waveform({
   seed = 1,
   bars = 64,
-  color = "var(--wave-violet)",
+  color = "var(--lime)",
   height = 88,
   active = true,
-  density = 1,
 }: {
   seed?: number;
   bars?: number;
@@ -283,36 +286,14 @@ function Waveform({
   active?: boolean;
   density?: number;
 }) {
-  const values = Array.from({ length: bars }, (_, i) => {
-    const x = Math.sin((i + 1) * seed * 12.9898) * 43758.5453;
-    const r = x - Math.floor(x);
-    const env = Math.sin((i / bars) * Math.PI) * 0.65 + 0.35;
-    return Math.max(0.12, Math.min(1, r * 0.9 * env + 0.1)) * density;
-  });
   return (
-    <div className="flex h-full min-w-0 w-full items-end gap-px overflow-hidden" style={{ height }}>
-      {values.map((v, i) => (
-        <motion.span
-          key={i}
-          initial={{ scaleY: 0.2, opacity: 0.4 }}
-          whileInView={{ scaleY: 1, opacity: 1 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{
-            delay: i * 0.008,
-            duration: 0.5,
-            ease: [0.22, 1, 0.36, 1],
-          }}
-          style={{
-            height: `${v * 100}%`,
-            background: active
-              ? color
-              : "color-mix(in oklab, var(--foreground) 12%, transparent)",
-            transformOrigin: "bottom",
-          }}
-          className="block min-w-0 flex-1"
-        />
-      ))}
-    </div>
+    <SeededWaveform
+      seed={seed}
+      bars={bars}
+      color={color}
+      height={height}
+      progress={active ? 1 : 0}
+    />
   );
 }
 
@@ -385,8 +366,8 @@ function TopBar({
         <div className="flex min-w-0 items-center gap-6 md:gap-10">
           <a href="#top" className="flex shrink-0 items-center gap-2 text-foreground">
             <span
-              className="font-display-tb text-base font-bold tracking-tight text-ember sm:text-lg"
-              style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+              className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg"
+
             >
               TRACKBASE
             </span>
@@ -399,7 +380,7 @@ function TopBar({
               <a
                 key={href}
                 href={href}
-                className="font-mono-tb text-[11px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-ember"
+                className="font-mono-tb text-[11px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-lime"
               >
                 {label}
               </a>
@@ -416,7 +397,7 @@ function TopBar({
           </span>
           <a
             href={authHref}
-            className="hidden items-center gap-2 bg-ember px-3 py-2 font-mono-tb text-[11px] uppercase tracking-[0.22em] text-primary-foreground transition-colors hover:bg-(--ember-bright) sm:inline-flex"
+            className="tb-btn-accent hidden items-center gap-2 bg-lime px-3 py-2 text-[11px] uppercase text-primary-foreground transition-colors sm:inline-flex"
           >
             {authLabel}
           </a>
@@ -426,24 +407,24 @@ function TopBar({
             aria-expanded={open}
             className="group inline-flex items-center gap-2.5 py-1 md:hidden"
           >
-            <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors group-hover:text-ember">
+            <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors group-hover:text-lime">
               {open ? "Close" : "Menu"}
             </span>
             <span className="relative flex h-3 w-5 flex-col justify-between" aria-hidden>
               <motion.span
                 initial={false}
                 animate={{ rotate: open ? 45 : 0, y: open ? 6 : 0 }}
-                className="block h-px w-full origin-left bg-ember transition-colors"
+                className="block h-px w-full origin-left bg-lime transition-colors"
               />
               <motion.span
                 initial={false}
                 animate={{ opacity: open ? 0 : 1, scaleX: open ? 0 : 1 }}
-                className="block h-px w-3 self-end bg-muted-foreground transition-colors group-hover:bg-ember/70"
+                className="block h-px w-3 self-end bg-muted-foreground transition-colors group-hover:bg-lime/70"
               />
               <motion.span
                 initial={false}
                 animate={{ rotate: open ? -45 : 0, y: open ? -6 : 0 }}
-                className="block h-px w-full origin-left bg-ember transition-colors"
+                className="block h-px w-full origin-left bg-lime transition-colors"
               />
             </span>
           </button>
@@ -467,19 +448,19 @@ function TopBar({
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.04 * i }}
-                  className="group flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_40%,transparent)] py-3 font-mono-tb text-[12px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-ember"
+                  className="group flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_40%,transparent)] py-3 font-mono-tb text-[12px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-lime"
                 >
                   <span className="flex items-center gap-3">
-                    <span className="size-1.5 bg-ember opacity-50 transition-opacity group-hover:opacity-100" />
+                    <span className="size-1.5 bg-lime opacity-50 transition-opacity group-hover:opacity-100" />
                     {label}
                   </span>
-                  <span className="text-ember opacity-0 transition-opacity group-hover:opacity-100">→</span>
+                  <span className="text-lime opacity-0 transition-opacity group-hover:opacity-100">→</span>
                 </motion.a>
               ))}
               <a
                 href={authHref}
                 onClick={() => setOpen(false)}
-                className="mt-3 mb-2 flex items-center justify-center gap-2 bg-ember px-4 py-3 font-mono-tb text-[11px] uppercase tracking-[0.22em] text-primary-foreground"
+                className="tb-btn-accent mt-3 mb-2 flex items-center justify-center gap-2 bg-lime px-4 py-3 text-[11px] uppercase text-primary-foreground"
               >
                 {authLabel}
               </a>
@@ -516,7 +497,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
             <motion.div style={parallaxStyle} className="relative px-4 pt-16 pb-10 md:px-8 md:pt-24 md:pb-14">
         {mounted && !reduce && (
           <motion.div
-            className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--ember)_60%,transparent)] to-transparent"
+            className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--lime)_60%,transparent)] to-transparent"
             initial={{ y: -200 }}
             animate={{ y: 900 }}
             transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
@@ -524,11 +505,11 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
         )}
 
         <div className="relative mb-10 flex flex-wrap items-center gap-4">
-          <EmberTag>PRIVATE BETA · OPEN · V0.1</EmberTag>
+          <LimeTag>PRIVATE BETA · OPEN · V0.1</LimeTag>
         </div>
 
         <h1 className="relative font-display-tb font-bold leading-[0.82] tracking-[-0.045em]">
-          <span className="block text-[clamp(3.2rem,13vw,12rem)] text-ember">
+          <span className="block text-[clamp(3.2rem,13vw,12rem)] text-lime">
             TRACKBASE
           </span>
           <span className="mt-1 block text-[clamp(1.6rem,6vw,5rem)] tracking-[-0.03em] text-muted-foreground/70">
@@ -537,7 +518,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
         </h1>
 
         <p className="relative mt-8 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground">
-          Music is a <span className="text-ember">process</span>. Not a file.
+          Music is a <span className="text-lime">process</span>. Not a file.
         </p>
 
         <div className="relative mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
@@ -550,9 +531,9 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <MonoLabel>ACTIVE PROJECT · MAIN</MonoLabel>
-              <MonoLabel className="text-ember">142 BPM · A#m</MonoLabel>
+              <MonoLabel className="text-lime">142 BPM · A#m</MonoLabel>
             </div>
-            <Waveform seed={3.1} bars={56} color="var(--ember)" height={64} />
+            <Waveform seed={3.1} bars={56} color="var(--lime)" height={64} />
             <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               <span>0:00</span>
               <span className="truncate text-foreground">
@@ -564,7 +545,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
         </div>
 
         <div className="relative mt-10">
-          <GhostButton variant="ember" href={signInHref}>+ Start a band</GhostButton>
+          <GhostButton variant="lime" href={signInHref}>+ Start a band</GhostButton>
         </div>
           </motion.div>
         </div>
@@ -594,7 +575,7 @@ function Marquee() {
             key={i}
             className="mx-8 inline-flex items-center gap-3 font-mono-tb text-[11px] uppercase tracking-[0.3em] text-muted-foreground"
           >
-            <span className="size-1 bg-ember" />
+            <span className="size-1 bg-lime" />
             {it}
           </span>
         ))}
@@ -645,17 +626,16 @@ function Philosophy() {
             className="group relative landing-hover-surface bg-background p-8 transition-colors hover:bg-card"
           >
             <div className="mb-6 flex items-center justify-between">
-              <span className="font-mono-tb text-xs uppercase tracking-[0.22em] text-ember">{p.n}</span>
-              <span className="size-2 bg-ember tb-blink" />
+              <span className="font-mono-tb text-xs uppercase tracking-[0.22em] text-lime">{p.n}</span>
+              <span className="size-2 bg-lime tb-blink" />
             </div>
             <h3
-              className="font-bold leading-tight tracking-tight text-2xl md:text-3xl"
-              style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+              className="font-display-tb font-bold leading-tight tracking-tight text-2xl md:text-3xl"
             >
               {p.t}
             </h3>
             <p className="mt-4 font-mono-tb text-sm leading-relaxed text-muted-foreground">{p.d}</p>
-            <div className="landing-hover-divider mt-8 h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--ember)_60%,transparent)]" />
+            <div className="landing-hover-divider mt-8 h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--lime)_60%,transparent)]" />
           </LandingHoverCard>
         ))}
       </div>
@@ -812,7 +792,7 @@ function LandingMobileSectionChords({
         <div className={`mb-1.5 flex items-center justify-between gap-2 ${pad}`}>
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {active && (
-            <span className="truncate font-mono text-[9px] tabular-nums text-ember">
+            <span className="truncate font-mono text-[9px] tabular-nums text-lime">
               ● {sectionLabel(active)} · {landingSectionTimeRange(active.start_bar, active.end_bar, LANDING_BAR_MS)}
             </span>
           )}
@@ -825,7 +805,7 @@ function LandingMobileSectionChords({
               key={s.id}
               className={`shrink-0 border px-2.5 py-1.5 text-[10px] uppercase tracking-widest ${
                 i === activeSectionIdx
-                  ? "border-ember bg-ember text-primary-foreground"
+                  ? "border-lime bg-lime text-primary-foreground"
                   : "border-border bg-background text-muted-foreground"
               }`}
             >
@@ -869,7 +849,7 @@ function LandingStructureStrip() {
   const RIBBON_H = 32;
   const CHORDS_H = 44;
   const tp = (bar: number) => bar / totalBars;
-  const sectionBorder = "1px solid color-mix(in oklab, var(--border) 85%, var(--ember) 15%)";
+  const sectionBorder = "1px solid color-mix(in oklab, var(--border) 85%, var(--lime) 15%)";
   const playheadPct = (LANDING_PLAYHEAD_MS / LANDING_BAR_MS / totalBars) * 100;
 
   return (
@@ -894,10 +874,10 @@ function LandingStructureStrip() {
             </span>
           </div>
           <div
-            className="flex flex-col justify-center bg-ember-soft/40 px-3"
+            className="flex flex-col justify-center bg-lime-soft/40 px-3"
             style={{ height: RIBBON_H }}
           >
-            <span className="text-[9px] font-bold uppercase tracking-widest text-ember">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-lime">
               STRUCTURE
             </span>
           </div>
@@ -952,7 +932,7 @@ function LandingStructureStrip() {
             })}
           </div>
 
-          <div className="relative overflow-hidden bg-ember-soft/40" style={{ height: RIBBON_H }}>
+          <div className="relative overflow-hidden bg-lime-soft/40" style={{ height: RIBBON_H }}>
             {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
               const bar = idx * barGridStep;
               const isTact = bar % 4 === 0;
@@ -978,10 +958,10 @@ function LandingStructureStrip() {
                   width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
                   borderLeft: sectionBorder,
                   borderRight: sectionBorder,
-                  background: "color-mix(in oklab, var(--ember) 12%, transparent)",
+                  background: "color-mix(in oklab, var(--lime) 12%, transparent)",
                 }}
               >
-                <span className="pointer-events-none w-full truncate text-[9px] font-bold uppercase tracking-widest leading-tight text-ember">
+                <span className="pointer-events-none w-full truncate text-[9px] font-bold uppercase tracking-widest leading-tight text-lime">
                   {sectionLabel(s)}
                 </span>
               </div>
@@ -1009,7 +989,7 @@ function LandingMixerScrubBar({ progress = 0, className = "" }: { progress?: num
   const pct = Math.max(0, Math.min(100, progress));
   return (
     <div className={`relative h-2 w-full bg-[color-mix(in_oklab,var(--card)_70%,transparent)] ${className}`}>
-      <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${pct}%` }} />
+      <div className="absolute inset-y-0 left-0 bg-lime" style={{ width: `${pct}%` }} />
       <div
         className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-foreground"
         style={{ left: `${pct}%` }}
@@ -1020,7 +1000,7 @@ function LandingMixerScrubBar({ progress = 0, className = "" }: { progress?: num
 
 function BranchShowcase() {
   const branches = [
-    { name: "main", color: "var(--ember)", date: "JUN 11", note: "live · 4 tracks · 2:59" },
+    { name: "main", color: "var(--lime)", date: "JUN 11", note: "live · 4 tracks · 2:59" },
     { name: "alt-bridge", color: "var(--wave-violet)", date: "JUN 12", note: "experiment · solo rewrite" },
     { name: "darker-mix", color: "var(--wave-coral)", date: "JUN 14", note: "ready for review" },
     { name: "new", color: "var(--wave-mint)", date: "JUN 14", note: "draft" },
@@ -1040,7 +1020,7 @@ function BranchShowcase() {
         <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-4">
           <div className="mb-4 flex items-center justify-between">
             <MonoLabel>VERSION HISTORY</MonoLabel>
-            <MonoLabel className="text-ember">4</MonoLabel>
+            <MonoLabel className="text-lime">4</MonoLabel>
           </div>
           <ul className="space-y-2">
             {branches.map((b, i) => (
@@ -1055,8 +1035,8 @@ function BranchShowcase() {
                 <span className="mt-1 size-2.5 shrink-0" style={{ background: b.color }} />
                 <div className="min-w-0 flex-1">
                   <div
-                    className="text-sm font-semibold text-foreground"
-                    style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                    className="font-display-tb text-sm font-semibold text-foreground"
+
                   >
                     {b.name}
                   </div>
@@ -1067,7 +1047,7 @@ function BranchShowcase() {
               </motion.li>
             ))}
           </ul>
-          <div className="landing-new-branch-btn mt-4 w-full border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] transition-colors">
+          <div className="landing-new-branch-btn mt-4 w-full border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] transition-colors">
             <span className="landing-new-branch-btn-icon opacity-60">⌥</span> + NEW VERSION
           </div>
         </div>
@@ -1113,8 +1093,8 @@ function BranchShowcase() {
                   </span>
                   <div className="min-w-0">
                     <div
-                      className="text-xs font-semibold tracking-tight"
-                      style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                      className="font-display-tb text-xs font-semibold tracking-tight"
+
                     >
                       {t.name}
                     </div>
@@ -1142,7 +1122,7 @@ function BranchShowcase() {
 
           <div className="mt-4 flex items-center justify-between border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
             <div className="flex items-center gap-3">
-              <span className="grid size-9 place-items-center bg-ember text-primary-foreground">▶</span>
+              <span className="grid size-9 place-items-center bg-lime text-primary-foreground">▶</span>
               <span className="font-mono-tb text-[11px] text-muted-foreground">1:00 / 2:59</span>
             </div>
             <div className="hidden gap-2 md:flex">
@@ -1185,7 +1165,7 @@ function LandingRoadmapCheck({ size = 12 }: { size?: number }) {
 function LandingRoadmapConnector({ filled }: { filled: boolean }) {
   return (
     <div className="h-px w-full bg-border" aria-hidden>
-      <div className={`h-full bg-ember transition-all duration-300 ${filled ? "w-full" : "w-0"}`} />
+      <div className={`h-full bg-lime transition-all duration-300 ${filled ? "w-full" : "w-0"}`} />
     </div>
   );
 }
@@ -1222,7 +1202,7 @@ function LandingWorkflowCard({
   return (
     <LandingHoverCard
       lift={2}
-      className="flex h-full flex-col landing-hover-surface landing-hover-border-soft border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5 transition-colors hover:border-[color-mix(in_oklab,var(--ember)_40%,transparent)]"
+      className="flex h-full flex-col landing-hover-surface landing-hover-border-soft border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5 transition-colors hover:border-[color-mix(in_oklab,var(--lime)_40%,transparent)]"
     >
       <header className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -1233,7 +1213,7 @@ function LandingWorkflowCard({
             </span>
           )}
         </div>
-        {badge && <MonoLabel className="shrink-0 text-ember">{badge}</MonoLabel>}
+        {badge && <MonoLabel className="shrink-0 text-lime">{badge}</MonoLabel>}
       </header>
 
       <div className="flex flex-1 flex-col justify-center">{children}</div>
@@ -1263,14 +1243,14 @@ function LandingRoadmapMock() {
           <button
             type="button"
             aria-label="Move back one stage"
-            className="grid size-7 place-items-center border border-border text-muted-foreground transition hover:border-ember hover:text-ember"
+            className="grid size-7 place-items-center border border-border text-muted-foreground transition hover:border-lime hover:text-lime"
           >
             <LandingRoadmapChevronLeft />
           </button>
           <button
             type="button"
             aria-label="Advance to next stage"
-            className="inline-flex h-7 items-center gap-1 border border-ember bg-ember px-2.5 text-[10px] font-bold uppercase tracking-widest text-primary-foreground transition hover:brightness-110"
+            className="tb-btn-accent inline-flex h-7 items-center gap-1 border border-lime bg-lime px-2.5 text-[10px] font-bold uppercase text-primary-foreground transition"
           >
             Advance <LandingRoadmapChevronRight />
           </button>
@@ -1291,9 +1271,9 @@ function LandingRoadmapMock() {
                   <div
                     className={`relative z-10 grid size-7 place-items-center border text-[10px] font-bold ${
                       state === "done"
-                        ? "border-ember bg-ember text-primary-foreground"
+                        ? "border-lime bg-lime text-primary-foreground"
                         : state === "current"
-                          ? "border-ember bg-background text-ember ring-2 ring-ember/30"
+                          ? "border-lime bg-background text-lime ring-2 ring-lime/30"
                           : "border-border bg-background text-muted-foreground"
                     }`}
                   >
@@ -1374,7 +1354,7 @@ function LandingChatLinkBadge({
             showTrack || showTime ? " border-r border-border" : ""
           }`}
         >
-          <span className="text-ember">
+          <span className="text-lime">
             <LandingChatBranchIcon />
           </span>
           <span className="max-w-[4.5rem] truncate">{branch}</span>
@@ -1406,7 +1386,7 @@ function LandingChatLinkBadge({
 
 function LandingChatMention({ children }: { children: ReactNode }) {
   return (
-    <span className="bg-ember-soft/50 px-0.5 font-bold text-ember">{children}</span>
+    <span className="bg-lime-soft/50 px-0.5 font-bold text-lime">{children}</span>
   );
 }
 
@@ -1418,8 +1398,8 @@ function LandingChatChannelTab({
   hint: string;
 }) {
   return (
-    <div className="relative flex h-10 w-full flex-col justify-center border-b-2 border-ember bg-ember-soft/40 px-3 text-left">
-      <div className="text-[10px] font-bold uppercase leading-none tracking-widest text-ember">
+    <div className="relative flex h-10 w-full flex-col justify-center border-b-2 border-lime bg-lime-soft/40 px-3 text-left">
+      <div className="text-[10px] font-bold uppercase leading-none tracking-widest text-lime">
         {label}
       </div>
       <div className="mt-0.5 font-mono text-[8px] uppercase leading-none tracking-widest text-muted-foreground">
@@ -1487,7 +1467,7 @@ function LandingChatMock() {
               <UserAvatar seed={m.user} size={28} kind="user" className="mt-0.5 shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2 text-[10px] leading-none">
-                  <span className="font-bold text-ember">@{m.user}</span>
+                  <span className="font-bold text-lime">@{m.user}</span>
                   <span className="font-mono tabular-nums text-muted-foreground">{m.time}</span>
                 </div>
                 <div className="mt-1 text-[12px] leading-relaxed text-foreground">{m.body}</div>
@@ -1550,7 +1530,7 @@ function LandingMobileTransportBtn({
       aria-label={label}
       className={`${dim} mx-auto grid place-items-center border transition active:scale-95 ${
         active
-          ? "border-ember bg-ember text-white"
+          ? "border-lime bg-lime text-primary-foreground"
           : "border-border text-muted-foreground"
       }`}
     >
@@ -1571,14 +1551,14 @@ function LandingRehearsalMock() {
       <div className="mx-auto w-full max-w-[320px] border-2 border-border bg-background">
         <div className="p-3">
           <div className="mb-3 flex items-center justify-between">
-            <MonoLabel className="text-ember">
+            <MonoLabel className="text-lime">
               <span className="inline-flex items-center gap-1.5">
-                <span className="size-1.5 bg-ember tb-blink" /> REHEARSAL
+                <span className="size-1.5 bg-lime tb-blink" /> REHEARSAL
               </span>
             </MonoLabel>
             <MonoLabel>142 BPM · Am</MonoLabel>
           </div>
-          <Waveform seed={5.6} bars={42} color="var(--ember)" height={70} />
+          <Waveform seed={5.6} bars={42} color="var(--lime)" height={70} />
           <div className="mt-2 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
             <span>{landingSectionStartTime(8, LANDING_BAR_MS)}</span>
             <span>{landingSectionStartTime(24, LANDING_BAR_MS)}</span>
@@ -1608,7 +1588,7 @@ function LandingRehearsalMock() {
                   key={section.id}
                   className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
                 >
-                  <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-ember">
+                  <div className="w-14 shrink-0 pt-0.5 text-[9px] font-bold uppercase tracking-widest text-lime">
                     {sectionLabel(section)}
                   </div>
                   <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">
@@ -1631,7 +1611,7 @@ function LandingRehearsalMock() {
             <button
               type="button"
               aria-label="Play"
-              className="mx-auto grid size-12 place-items-center bg-ember text-white transition hover:brightness-110 active:scale-95"
+              className="mx-auto grid size-12 place-items-center bg-lime text-primary-foreground transition active:scale-95"
             >
               <LandingMobilePlayIcon />
             </button>
@@ -1684,7 +1664,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "06.2", t: "VERSIONING", accent: "var(--ember)",
+      n: "06.2", t: "VERSIONING", accent: "var(--lime)",
       items: [
         { label: "Versions for safe experiments", icon: GitBranch },
         { label: "Apply with change review", icon: GitMerge },
@@ -1730,7 +1710,7 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "06.7", t: "REHEARSAL VIEW · MOBILE", accent: "var(--ember-bright)",
+      n: "06.7", t: "REHEARSAL VIEW · MOBILE", accent: "var(--lime-bright)",
       items: [
         { label: "Portrait · full mix + structure + chords", icon: Smartphone },
         { label: "Landscape · full mixer", icon: Maximize2 },
@@ -1778,8 +1758,8 @@ function FeatureIndex() {
               <span className="landing-hover-dot size-1.5 opacity-60 transition-opacity group-hover:opacity-100" style={{ background: g.accent }} />
             </div>
             <h3
-              className="font-bold tracking-tight text-lg"
-              style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+              className="font-display-tb font-bold tracking-tight text-lg"
+
             >
               {g.t}
             </h3>
@@ -1859,22 +1839,22 @@ function RehearsalDeepDive() {
         >
           <div className="relative flex h-full flex-col border border-border bg-card p-4">
             <div className="mb-3 flex shrink-0 items-center justify-between">
-              <MonoLabel className="text-ember">
+              <MonoLabel className="text-lime">
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="size-1.5 bg-ember tb-blink" /> REHEARSAL
+                  <span className="size-1.5 bg-lime tb-blink" /> REHEARSAL
                 </span>
               </MonoLabel>
               <MonoLabel>142 BPM · A#m</MonoLabel>
             </div>
 
             <div className="flex shrink-0 flex-col border border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-[color-mix(in_oklab,var(--background)_60%,transparent)] p-3">
-              <Waveform seed={7.3} bars={48} color="var(--ember)" height={84} />
+              <Waveform seed={7.3} bars={48} color="var(--lime)" height={84} />
               <div className="mt-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
                 <span>0:42</span>
                 <motion.span
                   animate={{ opacity: [0.6, 1, 0.6] }}
                   transition={{ duration: 1.8, repeat: Infinity }}
-                  className="text-ember"
+                  className="text-lime"
                 >
                   ● LOOP · CHORUS
                 </motion.span>
@@ -1889,8 +1869,8 @@ function RehearsalDeepDive() {
                   whileHover={{ y: -2 }}
                   className={`cursor-pointer px-1 py-1.5 text-center font-mono-tb text-[9px] uppercase tracking-[0.18em] transition-colors ${
                     i === 2
-                      ? "bg-ember text-primary-foreground"
-                      : "border border-border text-muted-foreground hover:border-[color-mix(in_oklab,var(--ember)_60%,transparent)] hover:text-ember"
+                      ? "bg-lime text-primary-foreground"
+                      : "border border-border text-muted-foreground hover:border-[color-mix(in_oklab,var(--lime)_60%,transparent)] hover:text-lime"
                   }`}
                 >
                   {s}
@@ -1899,7 +1879,7 @@ function RehearsalDeepDive() {
             </div>
 
             <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
-              <div className="mb-1 shrink-0 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-ember">CHORUS</div>
+              <div className="mb-1 shrink-0 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-lime">CHORUS</div>
               <div className="flex flex-1 flex-wrap content-start gap-1.5">
                 {["Bb", "Gm", "Eb", "F", "Bb", "Gm", "Cm", "F"].map((c, i) => (
                   <motion.span
@@ -1910,7 +1890,7 @@ function RehearsalDeepDive() {
                     transition={{ delay: 0.4 + i * 0.05 }}
                     className={`grid h-8 min-w-[34px] place-items-center border px-1.5 font-mono-tb text-[11px] font-bold ${
                       i === 2
-                        ? "border-ember bg-[color-mix(in_oklab,var(--ember)_10%,transparent)] text-ember"
+                        ? "border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] text-lime"
                         : "border-border text-foreground"
                     }`}
                   >
@@ -1921,10 +1901,10 @@ function RehearsalDeepDive() {
             </div>
 
             <div className="mt-3 grid shrink-0 grid-cols-3 gap-1.5">
-              <button className="flex items-center justify-center gap-1.5 bg-ember py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-primary-foreground transition-colors hover:bg-(--ember-bright)">
+              <button className="tb-btn-accent flex items-center justify-center gap-1.5 bg-lime py-2 text-[10px] uppercase text-primary-foreground transition-colors">
                 ▶ PLAY
               </button>
-              <button className="flex items-center justify-center gap-1.5 border border-border py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:border-ember hover:text-ember">
+              <button className="flex items-center justify-center gap-1.5 border border-border py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:border-lime hover:text-lime">
                 <Timer size={11} /> METRO
               </button>
               <motion.button
@@ -1956,9 +1936,9 @@ function RehearsalDeepDive() {
                 lift={3}
                 className="group relative landing-hover-surface h-full overflow-hidden bg-background p-6 transition-colors hover:bg-card"
               >
-                <span className="landing-hover-bar absolute inset-x-0 top-0 h-[2px] bg-ember transition-transform duration-500" />
+                <span className="landing-hover-bar absolute inset-x-0 top-0 h-[2px] bg-lime transition-transform duration-500" />
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="landing-hover-icon grid size-10 place-items-center border border-[color-mix(in_oklab,var(--ember)_60%,transparent)] text-ember transition-[color,background-color,border-color] duration-300 group-hover:border-ember group-hover:bg-ember group-hover:!text-primary-foreground">
+                  <span className="landing-hover-icon grid size-10 place-items-center border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] text-lime transition-[color,background-color,border-color] duration-300 group-hover:border-lime group-hover:bg-lime group-hover:!text-primary-foreground">
                     <Icon size={18} className="transition-colors duration-300" />
                   </span>
                   <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
@@ -1966,8 +1946,8 @@ function RehearsalDeepDive() {
                   </span>
                 </div>
                 <h3
-                  className="font-bold leading-tight tracking-tight text-xl md:text-2xl"
-                  style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                  className="font-display-tb font-bold leading-tight tracking-tight text-xl md:text-2xl"
+
                 >
                   {s.title}
                 </h3>
@@ -2155,11 +2135,11 @@ function ThemeRehearsalPreview({
 
 function ThemingSection() {
   const themes: ThemeTokens[] = [
-    { id: "ember-dark",        name: "EMBER DARK",        sub: "Bone-black canvas, hot amber signal.",  bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "oklch(0.68 0.22 35)",  fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
-    { id: "ember-light",       name: "EMBER LIGHT",       sub: "Studio paper with ember fire.",         bg: "oklch(0.97 0 0)",        surface: "oklch(1 0 0)",           line: "oklch(0.85 0 0)",        accent: "oklch(0.62 0.22 32)",  fg: "oklch(0.16 0 0)",       mute: "oklch(0.42 0 0)" },
-    { id: "blush-dark",        name: "BLUSH DARK",        sub: "Deep black, vivid blush accent.",       bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "oklch(0.72 0.20 350)", fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
+    { id: "lime",              name: "LIME",              sub: "Bone-black canvas, chartreuse signal.",   bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "#dfff00",  fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
     { id: "blush-light",       name: "BLUSH LIGHT",       sub: "Clean white, rose-pink signature.",     bg: "oklch(0.97 0 0)",        surface: "oklch(1 0 0)",           line: "oklch(0.85 0 0)",        accent: "oklch(0.58 0.22 350)", fg: "oklch(0.16 0 0)",       mute: "oklch(0.42 0 0)" },
-    { id: "studio-dark",       name: "STUDIO DARK",       sub: "Slate-blue night, cool teal signal.",   bg: "oklch(0.19 0.012 250)",  surface: "oklch(0.22 0.014 250)", line: "oklch(0.30 0.014 250)", accent: "oklch(0.74 0.13 200)", fg: "oklch(0.92 0.005 250)", mute: "oklch(0.66 0.012 250)" },
+    { id: "blush-dark",        name: "BLUSH DARK",        sub: "Deep black, vivid blush accent.",       bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "oklch(0.72 0.20 350)", fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
+    { id: "studio-dim-light",  name: "STUDIO DIM LIGHT",  sub: "Cool slate day, same teal signal.",     bg: "oklch(0.96 0.018 250)",  surface: "oklch(0.99 0.012 250)", line: "oklch(0.84 0.02 250)",  accent: "oklch(0.48 0.15 200)", fg: "oklch(0.18 0.02 250)", mute: "oklch(0.44 0.016 250)" },
+    { id: "studio-dark",       name: "STUDIO DIM",        sub: "Slate-blue night, cool teal signal.",   bg: "oklch(0.19 0.012 250)",  surface: "oklch(0.22 0.014 250)", line: "oklch(0.30 0.014 250)", accent: "oklch(0.74 0.13 200)", fg: "oklch(0.92 0.005 250)", mute: "oklch(0.66 0.012 250)" },
     { id: "studio-light",      name: "STUDIO LIGHT",      sub: "Warm daylight, muted indigo accent.",   bg: "oklch(0.985 0.003 80)",  surface: "oklch(1 0 0)",          line: "oklch(0.88 0.005 80)",  accent: "oklch(0.52 0.14 282)", fg: "oklch(0.22 0.01 260)",  mute: "oklch(0.46 0.01 260)" },
     { id: "studio-paper-dark", name: "STUDIO PAPER DARK", sub: "Warm amber dark, same indigo depth.",   bg: "oklch(0.17 0.014 80)",   surface: "oklch(0.20 0.016 80)",  line: "oklch(0.30 0.016 80)",  accent: "oklch(0.62 0.15 282)", fg: "oklch(0.92 0.008 80)",  mute: "oklch(0.62 0.012 80)" },
   ];
@@ -2214,8 +2194,8 @@ function ThemingSection() {
 
                     <div className="mt-auto shrink-0">
                       <div
-                        className="text-lg font-bold tracking-tight"
-                        style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                        className="font-display-tb text-lg font-bold tracking-tight"
+
                       >
                         {t.name}
                       </div>
@@ -2234,13 +2214,12 @@ function ThemingSection() {
                     className="flex flex-1 items-end pb-1"
                   >
                     <span
-                      className="text-[1rem] font-bold uppercase tracking-tight"
                       style={{
                         color: t.fg,
                         writingMode: "vertical-rl",
                         transform: "rotate(180deg)",
-                        fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
                       }}
+                      className="font-display-tb text-[1rem] font-bold uppercase tracking-tight"
                     >
                       {t.name}
                     </span>
@@ -2271,10 +2250,9 @@ function ThemingSection() {
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="size-3 shrink-0" style={{ background: t.accent }} />
                   <span
-                    className="truncate text-[1rem] font-bold tracking-tight"
+                    className="font-display-tb truncate text-lg font-bold tracking-tight"
                     style={{
                       color: t.fg,
-                      fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
                     }}
                   >
                     {t.name}
@@ -2360,7 +2338,7 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
       blurb: "For the working band — rehearsals, road, releases. The default choice.",
       cta: "Bring the band",
       featured: true,
-      color: "var(--ember)",
+      color: "var(--lime)",
       features: [
         "Unlimited projects",
         "10 GB per project",
@@ -2437,7 +2415,7 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
             }`}
           >
             {t.featured && (
-              <div className="absolute -top-px left-0 right-0 h-[3px] bg-ember" />
+              <div className="absolute -top-px left-0 right-0 h-[3px] bg-lime" />
             )}
 
             <div className="mb-4 flex items-center gap-2">
@@ -2448,8 +2426,8 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
             </div>
 
             <h3
-              className="font-bold tracking-tight text-2xl text-foreground"
-              style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+              className="font-display-tb font-bold tracking-tight text-2xl text-foreground"
+
             >
               {t.name}
             </h3>
@@ -2459,8 +2437,8 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
 
             <div className="mt-6 flex items-baseline gap-2 border-y border-[color-mix(in_oklab,var(--border)_60%,transparent)] py-5">
               <span
-                className="font-bold tracking-tight text-5xl text-foreground"
-                style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                className="font-display-tb font-bold tracking-tight text-5xl text-foreground"
+
               >
                 {t.price}
               </span>
@@ -2493,17 +2471,17 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
             <div className="mt-auto pt-6">
               <a
                 href={signInHref}
-                className={`group/btn flex w-full items-center justify-between border px-4 py-3 font-mono-tb text-[11px] uppercase tracking-[0.22em] transition-all ${
+                className={`group/btn flex w-full items-center justify-between border px-4 py-3 text-[11px] uppercase transition-all ${
                   t.featured
-                    ? "border-ember bg-ember text-primary-foreground hover:bg-(--ember-bright)"
-                    : "border-[color-mix(in_oklab,var(--foreground)_40%,transparent)] text-foreground hover:border-ember hover:text-ember"
+                    ? "tb-btn-accent border-lime bg-lime text-primary-foreground"
+                    : "font-mono-tb tracking-[0.22em] border-[color-mix(in_oklab,var(--foreground)_40%,transparent)] text-foreground hover:border-lime hover:text-lime"
                 }`}
               >
                 <span>{t.cta}</span>
                 <motion.span className="inline-block" initial={false} whileHover={{ x: 4 }}>→</motion.span>
               </a>
               {t.featured && (
-                <div className="mt-2 flex items-center gap-1.5 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-ember">
+                <div className="mt-2 flex items-center gap-1.5 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-lime">
                   <Sparkles size={10} /> MOST CHOSEN
                 </div>
               )}
@@ -2573,7 +2551,7 @@ const ROADMAP_ITEMS = [
     title: "Private beta",
     body: "Invite-only rooms are stress-testing the full workspace — branching, mixer, structure, chat and Rehearsal View — before the doors open wider.",
     icon: Lock,
-    color: "var(--ember)",
+    color: "var(--lime)",
     active: true,
   },
   {
@@ -2769,7 +2747,7 @@ function Roadmap() {
                     )}
                   </div>
                   {item.active && (
-                    <span className="inline-flex items-center gap-1.5 bg-ember px-2 py-1 font-mono-tb text-[9px] uppercase tracking-[0.2em] text-black">
+                    <span className="tb-btn-accent inline-flex items-center gap-1.5 bg-lime px-2 py-1 text-[9px] uppercase text-primary-foreground">
                       <span className="size-1.5 bg-black tb-blink" />
                       LIVE
                     </span>
@@ -2785,8 +2763,8 @@ function Roadmap() {
                   </span>
                   <div>
                     <h3
-                      className="text-lg font-bold tracking-tight"
-                      style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+                      className="font-display-tb text-lg font-bold tracking-tight"
+
                     >
                       {item.title}
                     </h3>
@@ -2818,23 +2796,22 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
         className="landing-full-bleed-abs pointer-events-none absolute inset-0 tb-grid-bg-landing"
       />
       <div className="relative mx-auto max-w-5xl text-center">
-        <EmberTag className="mx-auto">PRIVATE BETA · OPEN</EmberTag>
+        <LimeTag className="mx-auto">PRIVATE BETA · OPEN</LimeTag>
         <h2
-          className="mt-8 font-bold leading-[0.9] tracking-[-0.03em]"
+          className="font-display-tb mt-8 font-bold leading-[0.9] tracking-[-0.03em]"
           style={{
             fontSize: "clamp(2.5rem, 8vw, 7rem)",
-            fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)",
           }}
         >
           STOP RENAMING <br />
-          <span className="text-ember">FINAL_V3_FINAL.zip</span>
+          <span className="text-lime">FINAL_V3_FINAL.zip</span>
         </h2>
         <p className="mx-auto mt-8 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
           Bring your band, your roster, your class. TrackBase is free during beta — every workspace
           ships with branches, a mixer, structure, chords, chat and the rehearsal view from day one.
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-          <GhostButton variant="ember" href={signInHref}>+ Create my band</GhostButton>
+          <GhostButton variant="lime" href={signInHref}>+ Create my band</GhostButton>
           <GhostButton variant="outline" href={signInHref}>Talk to us (studios)</GhostButton>
         </div>
       </div>
@@ -2853,8 +2830,8 @@ function Footer() {
         <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
           <div
-            className="font-bold tracking-tight text-ember text-xl"
-            style={{ fontFamily: "var(--tb-font-display, 'Space Grotesk', system-ui, sans-serif)" }}
+            className="font-display-tb font-bold tracking-tight text-lime text-xl"
+
           >
             TRACKBASE<span className="text-foreground">.</span>
           </div>
@@ -2895,7 +2872,7 @@ function Footer() {
           ],
         ].map(([t, items]) => (
           <div key={t as string}>
-            <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-ember">
+            <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime">
               {t as string}
             </div>
             <ul className="space-y-2">
@@ -2929,7 +2906,7 @@ export default function LandingPage() {
   const { authHref, authLabel } = useLandingAuth()
 
   return (
-    <div className="landing-page min-h-screen" data-theme="ember-dark">
+    <div className="landing-page min-h-screen" data-theme="lime">
       <div className="mx-auto w-full max-w-[1920px]">
         <main className="min-h-screen bg-background text-foreground">
           <TopBar authHref={authHref} authLabel={authLabel} />

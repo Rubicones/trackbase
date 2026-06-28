@@ -34,7 +34,6 @@ function PlaybackChip({
   compact?: boolean
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
 }) {
-  const size = compact ? 'size-8' : 'size-9'
   const showDuration = Math.abs(duration - 1) >= 0.001
 
   return (
@@ -42,9 +41,11 @@ function PlaybackChip({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`${size} shrink-0 border flex flex-col items-center justify-center transition-all duration-200 ${
+      className={`shrink-0 border flex flex-col items-center justify-center transition-all duration-200 px-1.5 ${
+        compact ? 'min-h-8 py-0.5' : 'min-h-9 py-0.5'
+      } ${
         active
-          ? 'border-ember bg-ember text-white opacity-100'
+          ? 'border-lime bg-lime text-primary-foreground opacity-100'
           : past
             ? 'border-border/50 text-muted-foreground/50 bg-surface/50 opacity-40'
             : onClick
@@ -53,11 +54,11 @@ function PlaybackChip({
       }`}
       title={showDuration ? `${name} · ${formatBarDuration(duration)} bars` : name}
     >
-      <span className={`font-bold leading-none ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+      <span className={`font-bold leading-none whitespace-nowrap ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
         {name}
       </span>
       {showDuration && (
-        <span className={`text-[7px] font-mono leading-none mt-0.5 ${active ? 'text-white/80' : 'text-muted-foreground'}`}>
+        <span className={`text-[7px] font-mono leading-none mt-0.5 ${active ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
           {formatBarDuration(duration)}
         </span>
       )}

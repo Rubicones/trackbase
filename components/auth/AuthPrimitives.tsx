@@ -26,7 +26,7 @@ export function AuthInput({
       ? 'border-online focus:border-online'
       : status === 'invalid'
         ? 'border-destructive focus:border-destructive'
-        : 'border-border focus:border-ember'
+        : 'border-border focus:border-lime'
 
   return (
     <input
@@ -61,15 +61,19 @@ export function AuthButton({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'ghost' | 'link'
 }) {
-  const base =
+  const monoBase =
     'w-full text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none'
+  const accentBase =
+    'w-full tb-btn-accent text-[10px] uppercase transition disabled:opacity-50 disabled:pointer-events-none'
   const styles = {
     primary:
-      'bg-ember text-white border border-ember px-4 py-2.5 font-bold hover:brightness-110 active:scale-[0.99]',
+      'bg-lime text-primary-foreground border border-lime px-4 py-2.5',
     ghost:
-      'border border-border text-muted-foreground hover:border-ember hover:text-ember px-4 py-2.5',
-    link: 'text-muted-foreground hover:text-ember underline underline-offset-2 bg-transparent border-0 py-1',
+      'border border-border text-muted-foreground hover:border-lime hover:text-lime px-4 py-2.5',
+    link: 'text-muted-foreground hover:text-lime underline underline-offset-2 bg-transparent border-0 py-1',
   }
+
+  const base = variant === 'primary' ? accentBase : monoBase
 
   return (
     <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
@@ -105,7 +109,7 @@ export function AuthSteps({ current, total = 2 }: { current: number; total?: num
               className={[
                 'size-6 flex items-center justify-center text-[10px] font-bold border transition-colors',
                 done || active
-                  ? 'bg-ember border-ember text-white'
+                  ? 'bg-lime border-lime text-primary-foreground'
                   : 'bg-background border-border text-muted-foreground',
               ].join(' ')}
             >
@@ -113,7 +117,7 @@ export function AuthSteps({ current, total = 2 }: { current: number; total?: num
             </div>
             {step < total && (
               <div
-                className={`w-6 h-px ${done ? 'bg-ember' : 'bg-border'}`}
+                className={`w-6 h-px ${done ? 'bg-lime' : 'bg-border'}`}
               />
             )}
           </div>
@@ -132,16 +136,16 @@ export function AuthModeCard({
   icon,
   title,
   description,
-  accent = 'ember',
+  accent = 'lime',
 }: {
   selected: boolean
   onClick: () => void
   icon: ReactNode
   title: string
   description: string
-  accent?: 'ember' | 'online'
+  accent?: 'lime' | 'online'
 }) {
-  const accentClass = accent === 'online' ? 'border-online bg-online/5' : 'border-ember bg-ember-soft/40'
+  const accentClass = accent === 'online' ? 'border-online bg-online/5' : 'border-lime bg-lime-soft/40'
 
   return (
     <button
@@ -152,7 +156,7 @@ export function AuthModeCard({
         selected ? accentClass : 'border-border bg-background hover:border-muted-foreground/40',
       ].join(' ')}
     >
-      <span className={`text-2xl leading-none ${accent === 'online' ? 'text-online' : 'text-ember'}`}>
+      <span className={`text-2xl leading-none ${accent === 'online' ? 'text-online' : 'text-lime'}`}>
         {icon}
       </span>
       <span className="text-sm font-medium text-foreground">{title}</span>

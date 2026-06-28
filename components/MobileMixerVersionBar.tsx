@@ -27,11 +27,11 @@ export function CommentToggleBtn({
       className={`${className} grid place-items-center transition shrink-0 relative ${
         isBar
           ? active
-            ? 'border-l border-ember bg-ember text-white'
-            : 'border-l border-border text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60'
+            ? 'border-l border-lime bg-lime text-primary-foreground'
+            : 'border-l border-border text-muted-foreground hover:border-lime hover:text-lime hover:bg-surface/60'
           : active
-            ? 'border border-ember bg-ember text-white'
-            : 'border border-border bg-surface-2 text-muted-foreground hover:border-ember hover:text-ember'
+            ? 'border border-lime bg-lime text-primary-foreground'
+            : 'border border-border bg-surface-2 text-muted-foreground hover:border-lime hover:text-lime'
       }`}
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -43,7 +43,7 @@ export function CommentToggleBtn({
         />
       </svg>
       {!isBar && !active && showCount && count > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-ember text-white text-[8px] font-bold leading-[14px] text-center">
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-lime text-primary-foreground text-[8px] font-bold leading-[14px] text-center">
           {count > 9 ? '9+' : count}
         </span>
       )}
@@ -80,10 +80,10 @@ export function MobileMixerVersionBar({
               onClick={() => onSelect(v.id)}
               className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition overflow-hidden text-ellipsis whitespace-nowrap max-w-[160px] ${
                 isActive
-                  ? 'bg-ember text-white border-ember'
+                  ? 'bg-lime text-primary-foreground border-lime'
                   : v.merged_at
                     ? 'border-border text-muted-foreground opacity-50'
-                    : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+                    : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
               }`}
             >
               {v.type === 'main' && '● '}
@@ -98,7 +98,7 @@ export function MobileMixerVersionBar({
         <button
           type="button"
           onClick={onNewBranch}
-          className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember hover:bg-surface/60 transition"
+          className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime hover:bg-surface/60 transition"
         >
           + Version
         </button>

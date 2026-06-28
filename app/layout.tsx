@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from 'next'
+import type { Viewport } from 'next'
 import './globals.css'
 import { Providers } from './providers'
 import { fontVariables } from '@/lib/fonts'
@@ -10,8 +10,13 @@ import { GoogleAnalytics } from '@next/third-parties/google'
 
 const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
 
-export const metadata: Metadata = buildRootMetadata()
-
+// export const metadata: Metadata = buildRootMetadata()
+export const metadata = {
+  robots: {
+    index: false,
+    follow: false,
+  },
+}
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -29,9 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`dark ${fontVariables}`}
+      className={fontVariables}
       data-theme={DEFAULT_DESIGN_THEME}
-      style={{ height: '100%', colorScheme: 'dark' }}
+      style={{ height: '100%' }}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: buildThemeBootstrapScript() }} />

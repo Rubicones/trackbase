@@ -62,7 +62,7 @@ export function roadmapStuckDotClass(level: StageStuckLevel): string {
     case 'ok':
       return 'bg-chart-4'
     default:
-      return 'bg-ember'
+      return 'bg-lime'
   }
 }
 

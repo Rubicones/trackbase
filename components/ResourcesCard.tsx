@@ -100,7 +100,7 @@ function ResourcesCollapseToggle({
       onClick={onToggle}
       aria-expanded={!collapsed}
       aria-label={collapsed ? 'Expand resources' : 'Collapse resources'}
-      className="inline-flex size-6 shrink-0 items-center justify-center border border-border bg-transparent text-muted-foreground/70 transition-colors hover:border-ember hover:text-ember cursor-pointer"
+      className="inline-flex size-6 shrink-0 items-center justify-center border border-border bg-transparent text-muted-foreground/70 transition-colors hover:border-lime hover:text-lime cursor-pointer"
     >
       <IconChevronDown
         size={12}
@@ -325,7 +325,7 @@ export function ResourcesCard({
     <div className={isDrawer || isSidebar ? (isSidebar ? 'space-y-2 text-sm' : 'space-y-4 text-sm') : undefined}>
       {isSidebar && filterTrackId && (
         <div className="flex items-center justify-between gap-2 px-1">
-          <p className="text-[9px] uppercase tracking-widest text-ember m-0 truncate">
+          <p className="text-[9px] uppercase tracking-widest text-lime m-0 truncate">
             Filter · {filterTrackName ?? 'track'}
           </p>
           {onClearFilter && (
@@ -347,7 +347,7 @@ export function ResourcesCard({
               <button
                 type="button"
                 onClick={() => setMenuOpen(v => !v)}
-                className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition bg-transparent cursor-pointer"
+                className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition bg-transparent cursor-pointer"
               >
                 <IconPlus size={10} />
                 Add
@@ -488,7 +488,7 @@ export function ResourcesCard({
           )}
 
           {isSidebar && showLinkForm && (
-            <div className="border border-ember bg-surface p-2 mb-1.5 space-y-1.5">
+            <div className="border border-lime bg-surface p-2 mb-1.5 space-y-1.5">
               <div className="flex flex-col gap-1.5">
                 <TbInput
                   type="text"
@@ -567,7 +567,7 @@ export function ResourcesCard({
 
           {/* Add link inline form — drawer / default */}
           {showLinkForm && !isSidebar && (
-            <div className="border border-ember bg-surface p-3 mb-2 space-y-2">
+            <div className="border border-lime bg-surface p-3 mb-2 space-y-2">
               <div className="flex gap-2">
                 <TbInput
                   type="text"

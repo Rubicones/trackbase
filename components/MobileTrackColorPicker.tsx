@@ -72,7 +72,7 @@ export function MobileTrackColorPicker({
                     onClick={() => setColor(c)}
                     className={`h-14 w-full rounded-sm ${
                       selected
-                        ? 'ring-2 ring-ember ring-offset-2 ring-offset-popover'
+                        ? 'ring-2 ring-lime ring-offset-2 ring-offset-popover'
                         : 'border border-border/40'
                     }`}
                     style={{ background: c }}

@@ -17,8 +17,8 @@ import {
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { TbButton } from '@/components/design/TbButton'
 
-/** Stored on section rows for merge/API; UI uses ember tokens, not this value. */
-const SECTION_STORED_COLOR = 'oklch(0.68 0.22 35 / 0.12)'
+/** Stored on section rows for merge/API; UI uses lime tokens, not this value. */
+const SECTION_STORED_COLOR = 'var(--lime-soft)'
 
 const SECTION_TYPES: SectionType[] = [
   'intro', 'verse', 'chorus', 'pre-chorus', 'bridge', 'drop', 'breakdown', 'outro', 'custom',
@@ -547,7 +547,7 @@ export function SectionEditPopover({
             <div className="flex items-center justify-between mb-1">
               <div className="text-[9px] uppercase tracking-widest text-muted-foreground">
                 Chords
-                {detectingChords && <span className="text-ember"> · detecting…</span>}
+                {detectingChords && <span className="text-lime"> · detecting…</span>}
                 {!detectingChords && isDirty && saveStatus === 'idle' && <span className="text-amber"> · unsaved</span>}
                 {!detectingChords && saveStatus === 'saving' && <span> · saving…</span>}
                 {!detectingChords && saveStatus === 'saved' && <span className="text-online"> · saved</span>}
@@ -573,7 +573,7 @@ export function SectionEditPopover({
                 <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
                   {audioTracks.map(track => (
                     <label key={track.id} className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer min-w-0">
-                      <input type="checkbox" checked={selectedTrackIds.has(track.id)} onChange={() => toggleTrack(track.id)} className="accent-ember shrink-0" />
+                      <input type="checkbox" checked={selectedTrackIds.has(track.id)} onChange={() => toggleTrack(track.id)} className="accent-lime shrink-0" />
                       <span className="truncate">{trackLabel(track)}</span>
                     </label>
                   ))}
@@ -780,7 +780,7 @@ export default function StructureOverlay({
   editMode, onEditModeChange,
   waveformBounds, currentTimeMs = 0,
   currentTimeRef, playing = false,
-  onSeek, compact = false,
+  onSeek, compact = false, seekEnabled = true,
 }: {
   project: Project
   versionId: string
@@ -797,6 +797,8 @@ export default function StructureOverlay({
   onSeek: (t: number) => void
   /** Mobile landscape — shorter rows, sparse tact labels, no chords/edit UI */
   compact?: boolean
+  /** False while tracks are still loading — disables ruler/structure scrub. */
+  seekEnabled?: boolean
 }) {
   const [timeSignature, setTimeSignature] = useState(project.time_signature ?? '4/4')
   const [selMode, setSelMode] = useState<SelMode>('idle')
@@ -1044,14 +1046,14 @@ export default function StructureOverlay({
   }
 
   function handleRulerMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (totalDurationMs <= 0) return
+    if (!seekEnabled || totalDurationMs <= 0) return
     e.preventDefault()
     e.stopPropagation()
     attachTimelineScrub(e.currentTarget, e.clientX)
   }
 
   function handleStripMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (selMode === 'naming' || resizeDragRef.current) return
+    if (!seekEnabled || selMode === 'naming' || resizeDragRef.current) return
     e.preventDefault()
 
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1321,7 +1323,7 @@ export default function StructureOverlay({
 
         {editMode && !compact && (
           <div className="flex items-center gap-2 h-[34px] px-3 border-b border-border bg-surface/40">
-            <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />
+            <span className="size-1.5 rounded-full bg-lime animate-pulse-dot shrink-0" />
             <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Structure</span>
             <select
               value={timeSignature}
@@ -1334,7 +1336,7 @@ export default function StructureOverlay({
             </select>
 
             {hint ? (
-              <span className={`text-[11px] flex-1 min-w-0 truncate ${hint.isError ? 'text-destructive' : 'text-ember'}`}>
+              <span className={`text-[11px] flex-1 min-w-0 truncate ${hint.isError ? 'text-destructive' : 'text-lime'}`}>
                 {hint.text}
               </span>
             ) : (
@@ -1348,7 +1350,7 @@ export default function StructureOverlay({
             <div className="ml-auto flex gap-2 shrink-0">
               {selMode === 'start_set' && (
                 <button type="button" onClick={resetSel}
-                  className="px-2 h-[26px] text-[11px] border border-border text-muted-foreground hover:border-ember hover:text-ember">
+                  className="px-2 h-[26px] text-[11px] border border-border text-muted-foreground hover:border-lime hover:text-lime">
                   Cancel
                 </button>
               )}
@@ -1375,11 +1377,11 @@ export default function StructureOverlay({
               )}
             </div>
             <div
-              className={`px-3 flex items-center ${compact ? '' : 'flex-col justify-center gap-0.5'} ${editMode && !compact ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
+              className={`px-3 flex items-center ${compact ? '' : 'flex-col justify-center gap-0.5'} ${editMode && !compact ? 'bg-lime-soft/30' : 'bg-lime-soft/40'}`}
               style={{ height: RIBBON_H }}
             >
-              <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-ember">
-                {editMode && !compact && <span className="size-1.5 rounded-full bg-ember animate-pulse-dot shrink-0" />}
+              <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest text-lime">
+                {editMode && !compact && <span className="size-1.5 rounded-full bg-lime animate-pulse-dot shrink-0" />}
                 STRUCTURE
               </div>
               {editMode && !compact && (
@@ -1410,9 +1412,11 @@ export default function StructureOverlay({
             {/* Tacts row — click/drag to seek */}
             <div
               onMouseDown={handleRulerMouseDown}
-              className="relative border-b border-border bg-surface/40 overflow-hidden select-none shrink-0 cursor-pointer hover:bg-surface/60 transition-colors"
+              className={`relative border-b border-border bg-surface/40 overflow-hidden select-none shrink-0 transition-colors ${
+                seekEnabled ? 'cursor-pointer hover:bg-surface/60' : 'pointer-events-none'
+              }`}
               style={{ height: RULER_H }}
-              title="Click or drag to seek"
+              title={seekEnabled ? 'Click or drag to seek' : undefined}
             >
               {Array.from({ length: tactCount }, (_, i) => {
                 if (!showTactLabel(i)) return null
@@ -1452,7 +1456,7 @@ export default function StructureOverlay({
             <div
               ref={stripRef}
               onMouseDown={handleStripMouseDown}
-              className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-ember-soft/30' : 'bg-ember-soft/40'}`}
+              className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-lime-soft/30' : 'bg-lime-soft/40'}`}
               style={{ height: RIBBON_H, cursor: stripCursor }}
             >
               {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
@@ -1474,12 +1478,12 @@ export default function StructureOverlay({
               {sections.map(s => {
                 const isActive = activeEdit?.sectionId === s.id
                 const pendingChords = pendingChordIds.has(s.id)
-                const accent = 'var(--ember)'
+                const accent = 'var(--lime)'
                 const sideBorder = pendingChords
                   ? `1px solid color-mix(in oklab, ${accent} 40%, var(--border))`
                   : isActive
-                    ? '1px solid color-mix(in oklab, var(--ember) 35%, var(--border))'
-                    : '1px solid color-mix(in oklab, var(--border) 85%, var(--ember) 15%)'
+                    ? '1px solid color-mix(in oklab, var(--lime) 35%, var(--border))'
+                    : '1px solid color-mix(in oklab, var(--border) 85%, var(--lime) 15%)'
                 return (
                   <div
                     key={s.id}
@@ -1497,7 +1501,7 @@ export default function StructureOverlay({
                       background: `color-mix(in oklab, ${accent} 12%, transparent)`,
                     }}
                   >
-                    <span className={`font-bold uppercase tracking-widest text-ember truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
+                    <span className={`font-bold uppercase tracking-widest text-lime truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
                       {sectionLabel(s)}
                     </span>
                     {editMode && !compact && (

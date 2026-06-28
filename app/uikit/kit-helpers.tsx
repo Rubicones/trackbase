@@ -14,7 +14,7 @@ export function UikitRoot({ children }: { children: ReactNode }) {
 
 export function PageTag({ children }: { children: ReactNode }) {
   return (
-    <div className="inline-block border border-ember/40 bg-ember-soft px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-ember">
+    <div className="inline-block border border-lime/40 bg-lime-soft px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-lime">
       {children}
     </div>
   )
@@ -25,10 +25,10 @@ export function Section({ title, tag, id, children }: { title: string; tag: stri
     <section id={id} className="scroll-mt-32">
       <div className="flex items-baseline justify-between border-b border-border pb-2 mb-5">
         <div className="flex items-baseline gap-3">
-          <span className="text-[10px] font-mono tracking-widest text-ember">{tag}</span>
+          <span className="text-[10px] font-mono tracking-widest text-lime">{tag}</span>
           <h2 className="tb-section-title">{title}</h2>
         </div>
-        <a href={`#${id}`} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember">#{id}</a>
+        <a href={`#${id}`} className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime">#{id}</a>
       </div>
       <div>{children}</div>
     </section>
@@ -73,14 +73,14 @@ export function ThemeMatrix() {
             key={t.id}
             type="button"
             onClick={() => setTheme(t.id)}
-            className={`text-left border p-4 transition ${active ? 'border-ember bg-ember-soft' : 'border-border hover:border-ember'}`}
+            className={`text-left border p-4 transition ${active ? 'border-lime bg-lime-soft' : 'border-border hover:border-lime'}`}
           >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="font-display text-lg font-normal uppercase tracking-tight">{t.label}</div>
+                <div className="tb-type-name text-lg uppercase tracking-tight">{t.label}</div>
                 <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{t.mode} · {t.id}</div>
               </div>
-              {active && <span className="text-[10px] uppercase tracking-widest text-ember">● ACTIVE</span>}
+              {active && <span className="text-[10px] uppercase tracking-widest text-lime">● ACTIVE</span>}
             </div>
             <div className="mt-3 flex gap-1">
               {t.swatches.map((c, i) => (

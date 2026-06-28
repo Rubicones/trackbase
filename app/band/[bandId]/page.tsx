@@ -377,7 +377,7 @@ const PreviewMixTimeline = memo(function PreviewMixTimeline({
         }}
       >
         <div
-          className="absolute inset-y-0 left-0 bg-ember pointer-events-none"
+          className="absolute inset-y-0 left-0 bg-lime pointer-events-none"
           style={{ width: `${ratio * 100}%` }}
         />
       </div>
@@ -440,8 +440,8 @@ const ProjectRow = memo(function ProjectRow({
           aria-label={playing ? `Pause ${project.name}` : `Play ${project.name}`}
           className={`size-10 shrink-0 border grid place-items-center transition group ${
             playActive
-              ? 'bg-ember border-ember text-white'
-              : 'border-border bg-surface-2 hover:bg-ember hover:border-ember hover:text-white'
+              ? 'bg-lime border-lime text-primary-foreground'
+              : 'border-border bg-surface-2 hover:bg-lime hover:border-lime hover:text-primary-foreground'
           } ${project.audio_track_count === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
         >
           {error
@@ -459,7 +459,7 @@ const ProjectRow = memo(function ProjectRow({
           className="min-w-0 flex-1 text-left sm:flex-none"
         >
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="font-display text-lg uppercase tracking-tight truncate hover:text-ember transition-colors">
+            <div className="tb-type-name text-xl uppercase tracking-tight truncate hover:text-lime transition-colors">
               {project.name}
             </div>
             {project.roadmap_configured && project.roadmap_step_index != null && (
@@ -478,7 +478,7 @@ const ProjectRow = memo(function ProjectRow({
               >
                 <span className="h-1 w-10 bg-surface-2 border border-border inline-block overflow-hidden">
                   <span
-                    className="block h-full bg-ember"
+                    className="block h-full bg-lime"
                     style={{ width: `${Math.round((project.checklist_my_done / project.checklist_my_total) * 100)}%` }}
                   />
                 </span>
@@ -489,7 +489,7 @@ const ProjectRow = memo(function ProjectRow({
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
             <span>{project.track_count} TRACKS</span>
             {project.total_duration_ms > 0 && <span>{formatDuration(project.total_duration_ms)}</span>}
-            {project.bpm != null && <span className="text-ember">{project.bpm} BPM</span>}
+            {project.bpm != null && <span className="text-lime">{project.bpm} BPM</span>}
             {project.key && <span>{project.key.toUpperCase()}</span>}
             <span>{project.version_count} VERSION{project.version_count !== 1 ? 'S' : ''}</span>
             <span>{project.comment_count} COMMENTS</span>
@@ -506,7 +506,7 @@ const ProjectRow = memo(function ProjectRow({
             type="button"
             onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
             aria-label="Project options"
-            className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+            className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition-colors"
           >
             <IconDotsV />
           </button>
@@ -1177,7 +1177,7 @@ export default function BandPage() {
   // ── Derived ──────────────────────────────────────────────────────────────────
   const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
   const storageFull = stats.storage_bytes >= storageLimitBytes
-  const bandColor = band ? avatarColor(band.name, palette) : 'var(--ember)'
+  const bandColor = band ? avatarColor(band.name, palette) : 'var(--lime)'
   const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
   const dataLoading = authLoading || loading
@@ -1208,7 +1208,7 @@ export default function BandPage() {
     <div className="min-h-screen flex flex-col bg-background">
 
       <AppHeader
-        crumbs={<span className="text-foreground truncate">{band?.name}</span>}
+        crumbs={<span className="tb-type-name text-xs text-foreground truncate">{band?.name}</span>}
         right={
           <TbButton variant="primary" className="hidden sm:inline-flex items-center gap-1.5" onClick={openNewProjectModal}>
             <IconPlus size={12} />
@@ -1233,7 +1233,7 @@ export default function BandPage() {
               </div>
             )}
             {dataLoading && <Skeleton width={120} height={10} className="mb-1" />}
-            <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter m-0 min-w-0">
+            <h1 className="tb-type-name text-4xl sm:text-5xl lg:text-6xl uppercase tracking-tighter m-0 min-w-0">
               {dataLoading ? (
                 <Skeleton width="60%" height={40} />
               ) : bandNameEditing ? (
@@ -1246,21 +1246,21 @@ export default function BandPage() {
                     if (e.key === 'Escape') setBandNameEditing(false)
                   }}
                   onBlur={commitBandRename}
-                  className="font-display text-3xl sm:text-4xl lg:text-5xl uppercase tracking-tighter bg-background border border-ember px-2 py-1 outline-none w-full max-w-full"
+                  className="tb-type-name text-4xl sm:text-5xl lg:text-6xl uppercase tracking-tighter bg-background border border-lime px-2 py-1 outline-none w-full max-w-full"
                 />
               ) : (
                 <span
                   className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' ? 'cursor-text' : ''}`}
                   onDoubleClick={myRole === 'owner' ? startBandRename : undefined}
                 >
-                  <span className={`truncate transition-colors ${bandNameFlash ? 'text-ember' : ''}`}>
+                  <span className={`truncate transition-colors ${bandNameFlash ? 'text-lime' : ''}`}>
                     {band?.name}
                   </span>
                   {myRole === 'owner' && (
                     <button
                       type="button"
                       onClick={startBandRename}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0"
                       title="Rename band"
                       aria-label="Rename band"
                     >
@@ -1318,12 +1318,12 @@ export default function BandPage() {
                   type="button"
                   onClick={() => switchTab(tab)}
                   className={`px-4 sm:px-5 h-11 text-[10px] uppercase tracking-widest border-b-2 transition whitespace-nowrap ${
-                    isActive ? 'border-ember text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+                    isActive ? 'border-lime text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {tab}
                   {count > 0 && (
-                    <span className={`ml-2 tabular-nums ${isActive ? 'text-ember' : 'text-muted-foreground/60'}`}>
+                    <span className={`ml-2 tabular-nums ${isActive ? 'text-lime' : 'text-muted-foreground/60'}`}>
                       {count}
                     </span>
                   )}
@@ -1352,7 +1352,7 @@ export default function BandPage() {
                   + New
                 </TbButton>
               </div>
-              <div className="flex items-center border border-border bg-surface/60 px-3 h-10 mb-4 focus-within:border-ember transition-colors">
+              <div className="flex items-center border border-border bg-surface/60 px-3 h-10 mb-4 focus-within:border-lime transition-colors">
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground mr-3 shrink-0">Search</span>
                 <input
                   ref={projectSearchRef}
@@ -1417,7 +1417,7 @@ export default function BandPage() {
                     <div className="size-8 border border-border grid place-items-center text-muted-foreground">
                       <IconPlus size={14} />
                     </div>
-                    <span className="text-sm text-muted-foreground hover:text-ember transition-colors font-medium">
+                    <span className="text-sm text-muted-foreground hover:text-lime transition-colors font-medium">
                       Start a new project
                     </span>
                     <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
@@ -1491,7 +1491,7 @@ export default function BandPage() {
               <div className="flex items-center gap-2 min-w-0">
                 <SectionLabel>MEMBERS</SectionLabel>
                 {myRole === 'owner' && pendingJoinRequests.length > 0 && (
-                  <span className="text-[9px] font-bold uppercase tracking-widest bg-ember text-white px-1.5 py-0.5 shrink-0">
+                  <span className="text-[9px] font-bold uppercase tracking-widest bg-lime text-primary-foreground px-1.5 py-0.5 shrink-0">
                     {pendingJoinRequests.length} pending
                   </span>
                 )}
@@ -1499,8 +1499,8 @@ export default function BandPage() {
             </div>
 
             {myRole === 'owner' && pendingJoinRequests.length > 0 && (
-              <div className="mb-3 border border-ember/40 bg-ember-soft/30">
-                <div className="px-3 py-2 border-b border-ember/20 text-[9px] font-bold uppercase tracking-widest text-ember">
+              <div className="mb-3 border border-lime/40 bg-lime-soft/30">
+                <div className="px-3 py-2 border-b border-lime/20 text-[9px] font-bold uppercase tracking-widest text-lime">
                   Join requests
                 </div>
                 <div className="divide-y divide-border">
@@ -1559,9 +1559,9 @@ export default function BandPage() {
                         {memberInitials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold truncate">
+                        <div className="tb-type-name text-sm uppercase truncate">
                           {displayName}
-                          {isMemberOwner && <span className="text-ember text-[9px] ml-1">★</span>}
+                          {isMemberOwner && <span className="text-lime text-[9px] ml-1">★</span>}
                         </div>
                         <div className="text-[9px] text-muted-foreground truncate">@{username}</div>
                       </div>
@@ -1579,7 +1579,7 @@ export default function BandPage() {
                         <button
                           type="button"
                           onClick={() => { setEditingMember(m.user_id); setEditRoleLabel(m.role_label ?? '') }}
-                          className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer shrink-0"
+                          className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer shrink-0"
                         >
                           Edit
                         </button>
@@ -1589,7 +1589,7 @@ export default function BandPage() {
                           <button
                             type="button"
                             onClick={e => { e.stopPropagation(); setMemberMenu(memberMenu === m.user_id ? null : m.user_id) }}
-                            className="size-7 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember bg-transparent cursor-pointer"
+                            className="size-7 border border-border grid place-items-center text-muted-foreground hover:border-lime hover:text-lime bg-transparent cursor-pointer"
                           >
                             <IconDotsV size={12} />
                           </button>
@@ -1642,7 +1642,7 @@ export default function BandPage() {
                     className={`shrink-0 size-9 border grid place-items-center transition bg-transparent cursor-pointer disabled:opacity-50 ${
                       inviteCopied
                         ? 'border-online text-online'
-                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                     }`}
                     aria-label="Copy invite code"
                   >
@@ -1656,7 +1656,7 @@ export default function BandPage() {
                   type="button"
                   onClick={handleRegenerateInviteCode}
                   disabled={regeneratingCode}
-                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
+                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
                 >
                   {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
                 </button>
@@ -1709,7 +1709,7 @@ export default function BandPage() {
                     trackEvent('activity_view_all_clicked')
                     switchTab('activity')
                   }}
-                  className="mt-2 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+                  className="mt-2 text-[10px] uppercase tracking-widest text-lime hover:underline bg-transparent border-0 cursor-pointer p-0"
                 >
                   View all activity →
                 </button>
@@ -1730,7 +1730,7 @@ export default function BandPage() {
               <div className="h-1 bg-surface-2 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 ${
-                    storageFull || storagePct > 95 ? 'bg-destructive' : storagePct > 80 ? 'bg-chart-2' : 'bg-ember'
+                    storageFull || storagePct > 95 ? 'bg-destructive' : storagePct > 80 ? 'bg-chart-2' : 'bg-lime'
                   }`}
                   style={{ width: `${storagePct}%` }}
                 />
@@ -1742,7 +1742,7 @@ export default function BandPage() {
           </div>
 
           {/* Welcome */}
-          <div className="border border-ember/30 bg-ember-soft p-4">
+          <div className="border border-lime/30 bg-lime-soft p-4">
             <SectionLabel>WELCOME</SectionLabel>
             <p className="text-xs text-muted-foreground mt-2 leading-relaxed m-0">
               This is {band?.name}&apos;s workspace. Songs, people, and activity all live here.

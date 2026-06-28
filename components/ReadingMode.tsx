@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import Link from 'next/link'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
@@ -10,6 +10,7 @@ import { ResourcesCard } from '@/components/ResourcesCard'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { Spinner } from '@/components/ui/Spinner'
 import { buildCompositeWaveform, decodeWaveformFromArrayBuffer } from '@/lib/waveform-decode'
+import { WaveformBarsPlayhead, playedPctStyle } from '@/components/WaveformBars'
 import { fetchPreviewMixBuffer } from '@/lib/previewMixClient'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 
@@ -62,7 +63,7 @@ import { formatChordsDisplay } from '@/lib/chords'
 // ─── Master waveform (uikit bar style) ────────────────────────────────────────
 
 function MasterWaveform({
-  bars, playedRatio, onSeek, ready, animKey = 0,
+  bars, playedRatio, onSeek, ready, animKey = 0, interactive = true,
 }: {
   bars: number[]
   playedRatio: number
@@ -70,6 +71,7 @@ function MasterWaveform({
   ready: boolean
   /** Bumped when waveform data first becomes ready — retriggers draw animation. */
   animKey?: number
+  interactive?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
@@ -82,7 +84,7 @@ function MasterWaveform({
   }, [onSeek])
 
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (!ready) return
+    if (!interactive || !ready) return
     draggingRef.current = true
     e.currentTarget.setPointerCapture(e.pointerId)
     seekAt(e.clientX)
@@ -100,73 +102,20 @@ function MasterWaveform({
 
   const playheadPct = Math.min(100, Math.max(0, playedRatio * 100))
 
-  // Bar layers are memoized so they never reconcile during playback. The
-  // played/unplayed highlight is done purely in CSS: the bright overlay is
-  // revealed left→right via clip-path + the --played-pct variable, so only that
-  // single variable changes per frame (no per-bar opacity recompute, no draw-in
-  // re-trigger). animate-draw-wave-h animates scaleY only, leaving the inline
-  // opacity (which encodes playback state) intact.
-  const dimBars = useMemo(
-    () => bars.map((h, i) => (
-      <div
-        key={`${animKey}-${i}`}
-        className={`flex-1 min-w-0${ready ? ' animate-draw-wave-h' : ''}`}
-        style={{
-          height: `${Math.max(6, h * 100)}%`,
-          background: 'var(--ember)',
-          opacity: ready ? 0.35 : 0.2,
-          animationDelay: ready ? `${i * 4}ms` : undefined,
-          transformOrigin: 'bottom',
-        }}
-      />
-    )),
-    [bars, ready, animKey],
-  )
-
-  const playedBars = useMemo(
-    () => bars.map((h, i) => (
-      <div
-        key={`${animKey}-${i}`}
-        className="flex-1 min-w-0 animate-draw-wave-h"
-        style={{
-          height: `${Math.max(6, h * 100)}%`,
-          background: 'var(--ember)',
-          opacity: 0.95,
-          animationDelay: `${i * 4}ms`,
-          transformOrigin: 'bottom',
-        }}
-      />
-    )),
-    [bars, animKey],
-  )
-
   return (
     <div
       ref={containerRef}
-      className="relative mt-2 h-28 border border-border bg-surface/40 p-2 cursor-pointer touch-none select-none"
-      style={{ '--played-pct': `${playheadPct}%` } as React.CSSProperties}
+      className={`relative mt-2 h-28 border border-border bg-surface/40 p-2 touch-none select-none ${
+        interactive && ready ? 'cursor-pointer' : 'pointer-events-none'
+      }`}
+      style={playedPctStyle(playheadPct)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
       <div className="relative h-full">
-        {/* Unplayed (dim) base — full waveform */}
-        <div className="absolute inset-0 flex items-end gap-px">
-          {dimBars}
-        </div>
-        {/* Played (bright) overlay — identical bars, revealed left→right purely by
-            the --played-pct CSS variable + clip-path. No per-frame JS. */}
-        {ready && (
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{ clipPath: 'inset(0 calc(100% - var(--played-pct, 0%)) 0 0)' }}
-          >
-            <div className="absolute inset-0 flex items-end gap-px">
-              {playedBars}
-            </div>
-          </div>
-        )}
+        <WaveformBarsPlayhead bars={bars} color="var(--lime)" ready={ready} animKey={animKey} />
         {ready && (
           <div
             className="absolute top-0 bottom-0 w-px -ml-px bg-foreground pointer-events-none z-10"
@@ -208,12 +157,12 @@ function VersionDrawer({
             >
               <span
                 className={`size-1.5 rounded-full shrink-0 ${
-                  isActive ? 'bg-ember' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
+                  isActive ? 'bg-lime' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
                 }`}
               />
               <span className="flex-1 truncate">{v.name}</span>
               {v.type === 'main' && (
-                <span className="text-[9px] uppercase tracking-widest text-ember border border-ember/40 px-1.5 shrink-0">
+                <span className="text-[9px] uppercase tracking-widest text-lime border border-lime/40 px-1.5 shrink-0">
                   Master
                 </span>
               )}
@@ -245,8 +194,8 @@ function RehearsalTransportToggle({
         aria-label={tooltip}
         className={`h-9 px-2.5 border text-[9px] font-bold uppercase tracking-widest transition disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
           active
-            ? 'border-ember bg-ember text-white'
-            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+            ? 'border-lime bg-lime text-primary-foreground'
+            : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
         }`}
       >
         {label}
@@ -464,7 +413,7 @@ export function ReadingMode({
               type="button"
               onClick={() => setVersionDrawerOpen(true)}
               aria-label="Versions"
-              className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
+              className="size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition shrink-0"
             >
               <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
                 <rect x="2" y="4" width="14" height="1.5" rx="0.75" fill="currentColor" />
@@ -476,7 +425,7 @@ export function ReadingMode({
             <div className="flex-1 min-w-0 flex items-center gap-2">
               <Link
                 href="/dashboard"
-                className="font-display text-sm font-bold tracking-tight text-ember shrink-0 no-underline"
+                className="font-display text-sm font-bold tracking-tight text-lime shrink-0 no-underline"
               >
                 TRACKBASE
               </Link>
@@ -490,12 +439,12 @@ export function ReadingMode({
                 <span className="text-border shrink-0">/</span>
                 <Link
                   href={`/band/${bandId}`}
-                  className="hover:text-foreground no-underline truncate min-w-0"
+                  className="tb-type-name text-xs hover:text-foreground no-underline truncate min-w-0"
                 >
                   {project.band_name ?? 'Band'}
                 </Link>
                 <span className="text-border shrink-0">/</span>
-                <span className="text-foreground truncate min-w-0">{project.name}</span>
+                <span className="tb-type-name text-xs text-foreground truncate min-w-0">{project.name}</span>
               </nav>
             </div>
 
@@ -518,21 +467,21 @@ export function ReadingMode({
 
         {/* Project header */}
         <div className="px-5 py-4 border-b border-border">
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-ember">
-            <span className="size-1.5 rounded-full bg-ember animate-pulse-dot" />
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-lime">
+            <span className="size-1.5 rounded-full bg-lime animate-pulse-dot" />
             Rehearsal mode
           </div>
-          <h1 className="font-display text-3xl uppercase tracking-tighter mt-1 text-foreground">
+          <h1 className="tb-type-name text-3xl sm:text-4xl uppercase tracking-tighter mt-1 text-foreground">
             {project.name}
           </h1>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
             {project.bpm != null && <span>{project.bpm} BPM</span>}
-            {project.key && <span className="text-ember">{project.key}</span>}
+            {project.key && <span className="text-lime">{project.key}</span>}
             <span>{project.time_signature ?? '4/4'}</span>
             {player.duration > 0 && <span>{fmt(player.duration)}</span>}
           </div>
           {project.band_name && (
-            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
+            <div className="tb-type-name text-sm uppercase tracking-tight text-muted-foreground mt-1">
               {project.band_name}
             </div>
           )}
@@ -559,6 +508,7 @@ export function ReadingMode({
               onSeek={handleSeek}
               ready={waveformReady}
               animKey={waveAnimKey}
+              interactive={!isLoadingTracks && waveformReady}
             />
           )}
           <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-muted-foreground mt-1">
@@ -578,8 +528,8 @@ export function ReadingMode({
                     onClick={() => onVersionChange(v.id)}
                     className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
                       isActive
-                        ? 'bg-ember text-white border-ember'
-                        : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                        ? 'bg-lime text-primary-foreground border-lime'
+                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                     }`}
                   >
                     {v.name}
@@ -639,7 +589,7 @@ export function ReadingMode({
                   onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
                   className="w-full flex items-start gap-3 px-3 py-2.5 text-left hover:bg-surface/40 transition"
                 >
-                  <div className="text-[9px] font-bold uppercase tracking-widest text-ember w-16 shrink-0 pt-0.5">
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-lime w-16 shrink-0 pt-0.5">
                     {sectionLabel(section)}
                   </div>
                   <div className="text-xs flex-1 min-w-0 text-left text-foreground whitespace-normal break-words leading-relaxed">
@@ -698,7 +648,7 @@ export function ReadingMode({
           type="button"
           onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}
           disabled={!isReady || player.total === 0}
-          className="row-span-2 size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed self-center"
+          className="row-span-2 size-12 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed self-center"
           aria-label={(player.playing || isCounting) ? 'Pause' : awaitingPlayback ? 'Loading' : 'Play'}
         >
           {awaitingPlayback ? (
@@ -740,7 +690,7 @@ export function ReadingMode({
               handleSeek(Math.max(0, Math.min(1, (e.changedTouches[0].clientX - rect.left) / rect.width)))
             }}
           >
-            <div className="absolute inset-y-0 left-0 bg-ember/40 transition-[width] duration-75" style={{ width: `${progressPct}%` }} />
+            <div className="absolute inset-y-0 left-0 bg-lime/40 transition-[width] duration-75" style={{ width: `${progressPct}%` }} />
             <div className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: `${progressPct}%` }} />
           </div>
           <div className="flex justify-between text-[9px] font-mono tabular-nums text-muted-foreground mt-1">
@@ -754,8 +704,8 @@ export function ReadingMode({
         <div className="absolute bottom-0 left-0 right-0 h-[52px] bg-surface border-t border-border flex items-center justify-center gap-2.5 z-10">
           <span className="rm-rotate-icon" aria-hidden>
             <svg width="18" height="26" viewBox="0 0 18 26" fill="none">
-              <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--ember)" strokeWidth="1.5" />
-              <circle cx="9" cy="22" r="1.25" fill="var(--ember)" opacity="0.6" />
+              <rect x="1" y="1" width="16" height="24" rx="3" stroke="var(--lime)" strokeWidth="1.5" />
+              <circle cx="9" cy="22" r="1.25" fill="var(--lime)" opacity="0.6" />
             </svg>
           </span>
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">

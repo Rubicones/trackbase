@@ -12,7 +12,7 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
         {left}
         <Link
           href="/dashboard"
-          className="font-display text-lg font-bold tracking-tight text-ember shrink-0 no-underline"
+          className="font-display text-lg font-bold tracking-tight text-lime shrink-0 no-underline"
         >
           TRACKBASE
         </Link>
@@ -51,7 +51,7 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
         {right}
         <Link
           href="/uikit"
-          className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember no-underline"
+          className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime no-underline"
           title="UI Kit & Brandbook"
         >
           UI Kit

@@ -28,7 +28,7 @@ function RoadmapConnector({ filled }: { filled: boolean }) {
   return (
     <div className="w-full h-px bg-border" aria-hidden>
       <div
-        className={`h-full bg-ember transition-all duration-300 ${filled ? 'w-full' : 'w-0'}`}
+        className={`h-full bg-lime transition-all duration-300 ${filled ? 'w-full' : 'w-0'}`}
       />
     </div>
   )
@@ -135,7 +135,7 @@ function RoadmapSetup({
               disabled={readOnly || saving}
               placeholder={`Step ${i + 1}`}
               maxLength={50}
-              className="flex-1 bg-background border border-border px-2.5 py-1.5 text-sm outline-none focus:border-ember disabled:opacity-50"
+              className="flex-1 bg-background border border-border px-2.5 py-1.5 text-sm outline-none focus:border-lime disabled:opacity-50"
             />
             {!readOnly && draft.length > 1 && (
               <button
@@ -155,7 +155,7 @@ function RoadmapSetup({
             type="button"
             onClick={addStep}
             disabled={saving}
-            className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember inline-flex items-center gap-1.5 transition"
+            className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime inline-flex items-center gap-1.5 transition"
           >
             <IconPlus /> Add step
           </button>
@@ -168,7 +168,7 @@ function RoadmapSetup({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="h-7 px-3 border border-ember bg-ember text-white text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition disabled:opacity-50"
+            className="h-7 px-3 border border-lime bg-lime text-primary-foreground text-[10px] font-bold uppercase tracking-widest transition disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save roadmap'}
           </button>
@@ -190,7 +190,7 @@ function RoadmapEditorButton({
       type="button"
       onClick={onClick}
       disabled={readOnly}
-      className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember transition disabled:opacity-50"
+      className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime transition disabled:opacity-50"
     >
       Edit steps
     </button>
@@ -304,7 +304,7 @@ export function SongRoadmap({
               <button
                 onClick={() => jump(-1)}
                 disabled={completedCount <= 0}
-                className="size-7 border border-border grid place-items-center hover:border-ember hover:text-ember transition disabled:opacity-30 disabled:cursor-not-allowed"
+                className="size-7 border border-border grid place-items-center hover:border-lime hover:text-lime transition disabled:opacity-30 disabled:cursor-not-allowed"
                 aria-label="Move back one stage"
               >
                 <IconChevronLeft size={13} />
@@ -312,7 +312,7 @@ export function SongRoadmap({
               <button
                 onClick={() => jump(1)}
                 disabled={completedCount >= steps.length}
-                className="h-7 px-2.5 border border-ember bg-ember text-white text-[10px] font-bold uppercase tracking-widest inline-flex items-center gap-1 hover:brightness-110 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                className="h-7 px-2.5 border border-lime bg-lime text-primary-foreground text-[10px] font-bold uppercase tracking-widest inline-flex items-center gap-1 transition disabled:opacity-30 disabled:cursor-not-allowed"
                 aria-label="Advance to next stage"
               >
                 Advance <IconChevronRight size={11} />
@@ -346,12 +346,12 @@ export function SongRoadmap({
                       aria-label={readOnly ? s.name : `Move to ${s.name}`}
                       className={`relative z-10 ${stepMetrics.box} grid place-items-center border text-[10px] font-bold transition ${
                         state === 'done'
-                          ? 'bg-ember border-ember text-white hover:brightness-110'
+                          ? 'bg-lime border-lime text-primary-foreground'
                           : state === 'current'
-                          ? 'bg-background border-ember text-ember ring-2 ring-ember/30'
+                          ? 'bg-background border-lime text-lime ring-2 ring-lime/30'
                           : readOnly
                           ? 'bg-background border-border text-muted-foreground cursor-default'
-                          : 'bg-background border-border text-muted-foreground hover:border-ember hover:text-ember'
+                          : 'bg-background border-border text-muted-foreground hover:border-lime hover:text-lime'
                       }`}
                     >
                       {state === 'done' ? <IconCheck size={12} /> : i + 1}
@@ -374,7 +374,7 @@ export function SongRoadmap({
       <footer className="border-t border-border px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] uppercase tracking-widest">
         <span className="inline-flex items-center gap-1.5 font-bold text-foreground">
           <span
-            className={`size-1.5 rounded-full shrink-0 ${stuck ? roadmapStuckDotClass(stuck) : 'bg-ember'}`}
+            className={`size-1.5 rounded-full shrink-0 ${stuck ? roadmapStuckDotClass(stuck) : 'bg-lime'}`}
             aria-hidden
           />
           {allDone ? 'Complete' : (current?.name ?? '—')}

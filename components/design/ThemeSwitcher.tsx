@@ -22,7 +22,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 border border-border bg-surface/40 px-2 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember transition"
+        className="flex items-center gap-2 border border-border bg-surface/40 px-2 py-1.5 text-[10px] uppercase tracking-widest hover:border-lime hover:text-lime transition"
         aria-label="Switch theme"
         title={`Theme: ${current.label}`}
       >
@@ -48,7 +48,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
                   setOpen(false)
                 }}
                 className={`w-full text-left flex items-start gap-3 px-3 py-2.5 hover:bg-surface transition ${
-                  t.id === theme ? 'bg-ember-soft' : ''
+                  t.id === theme ? 'bg-lime-soft' : ''
                 }`}
               >
                 <div className="flex flex-col gap-px shrink-0">
@@ -63,7 +63,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-foreground">
                     {t.label}
-                    {t.id === theme && <span className="text-ember">●</span>}
+                    {t.id === theme && <span className="text-lime">●</span>}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{t.description}</div>
                 </div>

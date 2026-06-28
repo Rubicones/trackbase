@@ -77,7 +77,7 @@ function ComposerChip({
       }}
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 border text-[9px] font-bold uppercase tracking-widest transition ${
         active
-          ? 'border-ember bg-ember-soft text-ember'
+          ? 'border-lime bg-lime-soft text-lime'
           : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-foreground'
       }`}
     >
@@ -194,7 +194,7 @@ function ContextPopover({
           onClick={() => onPickVersion(v.id, v.name)}
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition bg-transparent border-0 cursor-pointer"
         >
-          <span className="text-ember shrink-0"><IconBranch size={12} /></span>
+          <span className="text-lime shrink-0"><IconBranch size={12} /></span>
           <span className="truncate">{v.name}</span>
           {v.type === 'main' && (
             <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
@@ -240,7 +240,7 @@ function AttachedChip({
 }) {
   return (
     <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] font-mono max-w-full">
-      <span className={accent ? 'text-ember shrink-0' : 'shrink-0'}>{icon}</span>
+      <span className={accent ? 'text-lime shrink-0' : 'shrink-0'}>{icon}</span>
       <button
         type="button"
         disabled={disabled}
@@ -252,7 +252,7 @@ function AttachedChip({
           onNavigate?.()
         }}
         className={`truncate bg-transparent border-0 cursor-pointer p-0 font-mono text-[10px] ${
-          accent ? 'text-ember' : 'text-foreground'
+          accent ? 'text-lime' : 'text-foreground'
         } ${compact ? 'max-w-[2.75rem]' : 'max-w-[4.5rem]'} ${onNavigate ? 'hover:brightness-110' : ''}`}
       >
         {label}
@@ -418,7 +418,7 @@ export function ResourceContextControls({
       ) : (
         <ComposerChip
           chipRef={branchChipRef}
-          icon={<span className="text-ember"><IconBranch size={12} /></span>}
+          icon={<span className="text-lime"><IconBranch size={12} /></span>}
           label="version"
           onClick={() => setPicker(p => (p === 'branch' ? null : 'branch'))}
         />

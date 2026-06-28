@@ -22,6 +22,7 @@ import { MetronomeIcon, CountInMark } from '@/components/design/TransportIcons'
 import { Spinner } from '@/components/ui/Spinner'
 import { decodeWaveformBars } from '@/lib/waveform-decode'
 import { waveformBarsCache } from '@/lib/waveformCache'
+import { WaveformBarsPlayhead } from '@/components/WaveformBars'
 import { findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import type { SectionRange } from '@/lib/sectionPlayback'
 import { trackAccentColor } from '@/lib/trackIcon'
@@ -117,8 +118,8 @@ function TransportBtn({
       aria-label={label}
       className={`${wide ? 'h-9 min-w-[52px] px-2' : dim} mx-auto border grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed ${
         active
-          ? 'border-ember bg-ember text-white'
-          : 'border-border text-muted-foreground hover:text-ember hover:border-ember'
+          ? 'border-lime bg-lime text-primary-foreground'
+          : 'border-border text-muted-foreground hover:text-lime hover:border-lime'
       }`}
     >
       {children}
@@ -167,11 +168,6 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
 
   const barsPerTact = 4
   const tactCount = Math.max(1, Math.ceil(totalBars / barsPerTact))
-  // Played (left of playhead) vs unplayed (dark) opacities — matches uikit reference.
-  const dimOpacity = 0.4
-  const playedOpacity = 0.95
-  // While loading: flat placeholder bars. Once decoded: real heights that animate in
-  // (same draw-in effect as the desktop mixer).
   const audioReady = bars !== null
   const renderedBars = bars ?? WAVEFORM_PLACEHOLDER_BARS
 
@@ -211,53 +207,16 @@ const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
           </div>
         )
       ) : (
-        <>
-          {/* Unplayed (dark) base — placeholder until decoded, then real bars draw in */}
-          <div
-            className="absolute inset-y-1 right-1 flex items-center gap-px"
-            style={{ left: `${startPct}%` }}
-          >
-            {renderedBars.map((h, i) => (
-              <div
-                key={i}
-                className={`flex-1${audioReady ? ' animate-draw-wave-h' : ''}`}
-                style={{
-                  height: `${Math.max(10, h * 100)}%`,
-                  background: color,
-                  opacity: audioReady ? dimOpacity : 0.2,
-                  animationDelay: audioReady ? `${i * 4}ms` : undefined,
-                }}
-              />
-            ))}
-          </div>
-          {/* Played (bright) overlay — identical bars, revealed left→right purely by
-              the inherited --played-pct CSS variable + clip-path. No per-frame JS,
-              no re-render of these (memoized) bars. */}
-          {audioReady && (
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{ clipPath: 'inset(0 calc(100% - var(--played-pct, 0%)) 0 0)' }}
-            >
-              <div
-                className="absolute inset-y-1 right-1 flex items-center gap-px"
-                style={{ left: `${startPct}%` }}
-              >
-                {renderedBars.map((h, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 animate-draw-wave-h"
-                    style={{
-                      height: `${Math.max(10, h * 100)}%`,
-                      background: color,
-                      opacity: playedOpacity,
-                      animationDelay: `${i * 4}ms`,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        <div
+          className="absolute inset-y-1 right-1"
+          style={{ left: `${startPct}%` }}
+        >
+          <WaveformBarsPlayhead
+            bars={renderedBars}
+            color={color}
+            ready={audioReady}
+          />
+        </div>
       )}
     </>
   )
@@ -268,6 +227,7 @@ function TrackWaveformLane({
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
+  waveformsInteractive = true,
 }: {
   track: Track
   color: string
@@ -287,6 +247,7 @@ function TrackWaveformLane({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  waveformsInteractive?: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -327,6 +288,7 @@ function TrackWaveformLane({
           currentUserId={currentUserId}
           isOwner={isOwner}
           currentUser={currentUser}
+          interactionsEnabled={waveformsInteractive}
         />
         <div
           className="absolute top-0 bottom-0 w-px bg-foreground/80 pointer-events-none z-10"
@@ -344,6 +306,7 @@ function TrackMiniWaveform({
   timelineDurationMs, commentMode, comments, activeCommentInput,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
+  waveformsInteractive = true,
 }: {
   track: Track
   color: string
@@ -363,6 +326,7 @@ function TrackMiniWaveform({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  waveformsInteractive?: boolean
 }) {
   return (
     <TrackWaveformLane
@@ -384,6 +348,7 @@ function TrackMiniWaveform({
       currentUserId={currentUserId}
       isOwner={isOwner}
       currentUser={currentUser}
+      waveformsInteractive={waveformsInteractive}
     />
   )
 }
@@ -411,6 +376,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   currentUserId,
   isOwner,
   currentUser,
+  waveformsInteractive = true,
   openMenu,
   colorPickerOpen,
   onToggleMenu,
@@ -442,6 +408,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  waveformsInteractive?: boolean
   openMenu: boolean
   colorPickerOpen: boolean
   onToggleMenu: (id: string) => void
@@ -528,7 +495,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             type="button"
             onClick={() => onToggleMute(track.id)}
             className={`size-7 border text-[10px] font-bold grid place-items-center ${
-              muted ? 'bg-foreground text-background border-foreground' : 'border-border hover:border-ember'
+              muted ? 'bg-foreground text-background border-foreground' : 'border-border hover:border-lime'
             }`}
             aria-label="Mute"
           >
@@ -547,7 +514,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           <button
             type="button"
             onClick={() => onToggleMenu(track.id)}
-            className="size-7 border border-border grid place-items-center hover:border-ember hover:text-ember"
+            className="size-7 border border-border grid place-items-center hover:border-lime hover:text-lime"
             aria-label="Track options"
           >
             <MoreIcon />
@@ -574,6 +541,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             currentUserId={currentUserId}
             isOwner={isOwner}
             currentUser={currentUser}
+            waveformsInteractive={waveformsInteractive}
           />
         </div>
       </div>
@@ -622,10 +590,10 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
       {downloading && (
         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-surface-2 overflow-hidden pointer-events-none">
           {downloadPct! < 0 ? (
-            <div className="h-full w-1/3 bg-ember animate-track-load-indeterminate" />
+            <div className="h-full w-1/3 bg-lime animate-track-load-indeterminate" />
           ) : (
             <div
-              className="h-full bg-ember transition-[width] duration-200"
+              className="h-full bg-lime transition-[width] duration-200"
               style={{ width: `${downloadPct}%` }}
             />
           )}
@@ -703,6 +671,8 @@ export type MobileMixerPortraitProps = {
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  /** False while audio/MIDI tracks are still loading — blocks waveform comment drag. */
+  waveformsInteractive?: boolean
 }
 
 export function MobileMixerPortrait(props: MobileMixerPortraitProps) {
@@ -756,6 +726,7 @@ function MobileMixerPortraitInner({
   currentUserId,
   isOwner,
   currentUser,
+  waveformsInteractive = true,
 }: MobileMixerPortraitProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [colorPickerTrackId, setColorPickerTrackId] = useState<string | null>(null)
@@ -951,8 +922,8 @@ function MobileMixerPortraitInner({
       </div>
 
       {commentMode && (
-        <div className="px-3 py-1.5 border-b border-ember/30 bg-ember-soft shrink-0">
-          <span className="text-[9px] uppercase tracking-widest text-ember">
+        <div className="px-3 py-1.5 border-b border-lime/30 bg-lime-soft shrink-0">
+          <span className="text-[9px] uppercase tracking-widest text-lime">
             ● Comment mode — tap and drag on a waveform
           </span>
         </div>
@@ -963,7 +934,7 @@ function MobileMixerPortraitInner({
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
           {activeSection && (
-            <span className="text-[9px] font-mono tabular-nums text-ember">
+            <span className="text-[9px] font-mono tabular-nums text-lime">
               ● {sectionLabel(activeSection)} · {sectionTimeRange(activeSection.start_bar, activeSection.end_bar, barDurationMs)}
             </span>
           )}
@@ -982,7 +953,7 @@ function MobileMixerPortraitInner({
                 onClick={() => handleSectionClick(s, active)}
                 className={`shrink-0 px-2.5 py-1.5 border text-[10px] uppercase tracking-widest transition ${
                   active
-                    ? 'bg-ember text-white border-ember'
+                    ? 'bg-lime text-primary-foreground border-lime'
                     : 'border-border bg-background text-muted-foreground hover:text-foreground'
                 }`}
                 title={`Bars ${s.start_bar + 1}–${s.end_bar}`}
@@ -1054,6 +1025,7 @@ function MobileMixerPortraitInner({
               onCloseColorPicker={handleCloseColorPicker}
               onReplace={onReplaceTrack}
               onDelete={onDeleteTrack}
+              waveformsInteractive={waveformsInteractive}
             />
           )
         })}
@@ -1066,7 +1038,7 @@ function MobileMixerPortraitInner({
             onClick={onAddTrack}
             disabled={storageFull}
             data-tour="mobile-mixer-add-track"
-            className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:border-ember flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
+            className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime hover:border-lime flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
           >
             <span className="text-base leading-none">+</span>
             {storageFull ? 'Storage full' : 'Add audio / MIDI / loop'}
@@ -1120,7 +1092,7 @@ function MobileMixerPortraitInner({
               data-scrub-bar
               className="h-2 bg-surface-2 relative cursor-pointer"
             >
-              <div className="absolute inset-y-0 left-0 bg-ember" style={{ width: `${progressPct}%` }} />
+              <div className="absolute inset-y-0 left-0 bg-lime" style={{ width: `${progressPct}%` }} />
               <div
                 className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-foreground"
                 style={{ left: `${progressPct}%` }}
@@ -1149,7 +1121,7 @@ function MobileMixerPortraitInner({
             type="button"
             onClick={() => (isPlaying ? player.pause() : player.play())}
             disabled={!isReady && player.duration > 0}
-            className="mx-auto size-12 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-50"
+            className="mx-auto size-12 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-50"
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
             {awaitingPlayback ? (

@@ -7,7 +7,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col bg-background grid-bg-sm">
       <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md shrink-0">
-        <span className="font-display text-lg font-bold tracking-tight text-ember shrink-0">
+        <span className="font-display text-lg font-bold tracking-tight text-lime shrink-0">
           TRACKBASE
         </span>
         <span className="hidden sm:inline text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -96,7 +96,7 @@ export function AuthWaveAccent() {
       {heights.map((h, i) => (
         <span
           key={i}
-          className="w-[3px] bg-ember/70 animate-draw-wave"
+          className="w-[3px] bg-lime/70 animate-draw-wave"
           style={{
             height: `${Math.round(h * 100)}%`,
             animationDelay: `${i * 40}ms`,

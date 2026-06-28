@@ -20,7 +20,11 @@ export interface TimelineChord {
   sectionLabel: string
 }
 
-const CHORD_NAME_RE = /^[A-Za-z0-9#]+$/
+const CHORD_NAME_RE = /^[A-Za-z0-9#/]+$/
+
+export function isValidChordName(name: string): boolean {
+  return CHORD_NAME_RE.test(name)
+}
 
 const DURATION_PRESETS = ['1/2', '1', '2', '4', '8', '16'] as const
 export { DURATION_PRESETS }
@@ -266,6 +270,6 @@ export function findActiveChordGlobalIndex(
 
 /** Filter input to allowed chord characters. */
 export function filterChordInputChar(char: string): string {
-  if (/[A-Za-z0-9#]/.test(char)) return char
+  if (/[A-Za-z0-9#/]/.test(char)) return char
   return ''
 }

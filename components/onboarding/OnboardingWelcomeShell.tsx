@@ -7,7 +7,7 @@ import { TbModal } from '@/components/design/TbModal'
 export function WelcomeListItem({ label, desc }: { label: string; desc: string }) {
   return (
     <li className="flex items-start gap-2.5 text-sm text-muted-foreground">
-      <span className="size-1 bg-ember shrink-0 mt-2" aria-hidden />
+      <span className="size-1 bg-lime shrink-0 mt-2" aria-hidden />
       <span>
         <span className="text-foreground font-medium uppercase text-[11px] tracking-wide">{label}</span>
         {' — '}
@@ -30,7 +30,7 @@ export function OnboardingWelcomeShell({
 }) {
   return (
     <TbModal onClose={onDismiss} wide>
-      <div className="size-12 border border-border grid place-items-center text-ember mb-4 shrink-0">
+      <div className="size-12 border border-border grid place-items-center text-lime mb-4 shrink-0">
         {icon}
       </div>
       <h2 className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-3">

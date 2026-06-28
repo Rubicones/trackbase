@@ -495,7 +495,7 @@ export function StructurePreviewPanel({
               onClick={() => handleTabChange(tab)}
               className={`h-10 flex-1 px-2 text-[10px] uppercase tracking-widest border-b-2 transition sm:px-4 ${
                 activeTab === tab
-                  ? 'border-ember text-foreground'
+                  ? 'border-lime text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -621,7 +621,7 @@ export function StructurePreviewPanel({
                         key={section.id}
                         className="grid grid-cols-[minmax(72px,88px)_1fr_auto] gap-x-3 items-start px-3 py-2.5 text-xs"
                       >
-                        <span className="text-ember font-bold tracking-widest uppercase shrink-0 pt-0.5">
+                        <span className="text-lime font-bold tracking-widest uppercase shrink-0 pt-0.5">
                           {sectionLabel(section).toUpperCase()}
                         </span>
                         <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed min-w-0">
@@ -645,7 +645,7 @@ export function StructurePreviewPanel({
                 value={notesContent}
                 onChange={e => handleNotesChange(e.target.value)}
                 placeholder="Project notes, ideas, references…"
-                className="w-full flex-1 min-h-[240px] bg-surface border border-border p-3 text-sm text-foreground outline-none focus:border-ember resize-none leading-relaxed placeholder:text-muted-foreground/60"
+                className="w-full flex-1 min-h-[240px] bg-surface border border-border p-3 text-sm text-foreground outline-none focus:border-lime resize-none leading-relaxed placeholder:text-muted-foreground/60"
               />
               <p className="text-[10px] uppercase tracking-widest text-muted-foreground text-right mt-2 m-0">
                 {notesSaving ? 'Saving…' : notesContent ? 'Auto-saved' : ''}
@@ -660,7 +660,7 @@ export function StructurePreviewPanel({
             <button
               type="button"
               onClick={() => router.push(`/band/${bandId}/project/${projectId}`)}
-              className="bg-ember text-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest hover:brightness-110 transition"
+              className="bg-lime text-primary-foreground px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition"
             >
               Open Full Mixer ↗
             </button>

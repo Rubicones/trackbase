@@ -322,7 +322,7 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
         <div className="fixed inset-0 z-[300] bg-background/80 backdrop-blur-sm pointer-events-none" />
       ) : spotlight ? (
         <div
-          className="fixed pointer-events-none z-[301] border-2 border-ember"
+          className="fixed pointer-events-none z-[301] border-2 border-lime"
           style={{
             top: spotlight.top,
             left: spotlight.left,
@@ -367,7 +367,7 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
             <button
               type="button"
               onClick={handleSkip}
-              className="size-7 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
+              className="size-7 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition shrink-0"
               title="Close tour"
               aria-label="Close tour"
             >
@@ -391,7 +391,7 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
               <div
                 key={i}
                 className={`h-0.5 flex-1 transition-colors ${
-                  i === stepIndex ? 'bg-ember' : i < stepIndex ? 'bg-foreground/35' : 'bg-border'
+                  i === stepIndex ? 'bg-lime' : i < stepIndex ? 'bg-foreground/35' : 'bg-border'
                 }`}
               />
             ))}
@@ -562,7 +562,7 @@ export function TourHelpButton({ onClick }: { onClick: () => void }) {
         type="button"
         onClick={onClick}
         aria-label="Restart tour"
-        className="size-8 border border-border bg-surface-2 grid place-items-center text-foreground hover:border-ember transition"
+        className="size-8 border border-border bg-surface-2 grid place-items-center text-foreground hover:border-lime transition"
       >
         <span className="text-[11px] leading-none" aria-hidden>?</span>
       </button>

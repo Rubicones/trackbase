@@ -3,7 +3,7 @@
  * Selected via [data-theme] on <html>.
  */
 
-/* ─── Default (ember-dark) — visible before / without data-theme ─── */
+/* ─── Default (lime) — visible before / without data-theme ─── */
 :root {
   --radius: 0.125rem;
   --background: oklch(0.13 0 0);
@@ -14,23 +14,23 @@
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.16 0 0);
   --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.68 0.22 35);
-  --primary-foreground: oklch(0.98 0 0);
+  --primary: #dfff00;
+  --primary-foreground: oklch(0.13 0 0);
   --secondary: oklch(0.22 0 0);
   --secondary-foreground: oklch(0.93 0 0);
   --muted: oklch(0.22 0 0);
   --muted-foreground: oklch(0.58 0 0);
-  --accent: oklch(0.68 0.22 35);
-  --accent-foreground: oklch(0.98 0 0);
-  --ember: oklch(0.68 0.22 35);
-  --ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --accent: #dfff00;
+  --accent-foreground: oklch(0.13 0 0);
+  --lime: #dfff00;
+  --lime-soft: color-mix(in oklch, #dfff00 12%, transparent);
   --destructive: oklch(0.62 0.22 22);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.26 0 0);
   --grid: oklch(0.22 0 0);
   --input: oklch(0.22 0 0);
-  --ring: oklch(0.68 0.22 35);
-  --chart-1: oklch(0.68 0.22 35);
+  --ring: #dfff00;
+  --chart-1: #dfff00;
   --chart-2: oklch(0.78 0.18 145);
   --chart-3: oklch(0.72 0.16 240);
   --chart-4: oklch(0.80 0.18 90);
@@ -38,8 +38,8 @@
   --online: oklch(0.78 0.18 145);
 }
 
-/* ─── ember-dark (also forced on marketing landing) ─── */
-:root[data-theme="ember-dark"],
+/* ─── lime (also forced on marketing landing) ─── */
+:root[data-theme="lime"],
 .landing-page {
   --background: oklch(0.13 0 0);
   --foreground: oklch(0.93 0 0);
@@ -49,23 +49,23 @@
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.16 0 0);
   --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.68 0.22 35);
-  --primary-foreground: oklch(0.98 0 0);
+  --primary: #dfff00;
+  --primary-foreground: oklch(0.13 0 0);
   --secondary: oklch(0.22 0 0);
   --secondary-foreground: oklch(0.93 0 0);
   --muted: oklch(0.22 0 0);
   --muted-foreground: oklch(0.58 0 0);
-  --accent: oklch(0.68 0.22 35);
-  --accent-foreground: oklch(0.98 0 0);
-  --ember: oklch(0.68 0.22 35);
-  --ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --accent: #dfff00;
+  --accent-foreground: oklch(0.13 0 0);
+  --lime: #dfff00;
+  --lime-soft: color-mix(in oklch, #dfff00 12%, transparent);
   --destructive: oklch(0.62 0.22 22);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.26 0 0);
   --grid: oklch(0.22 0 0);
   --input: oklch(0.22 0 0);
-  --ring: oklch(0.68 0.22 35);
-  --chart-1: oklch(0.68 0.22 35);
+  --ring: #dfff00;
+  --chart-1: #dfff00;
   --chart-2: oklch(0.78 0.18 145);
   --chart-3: oklch(0.72 0.16 240);
   --chart-4: oklch(0.80 0.18 90);
@@ -73,41 +73,7 @@
   --online: oklch(0.78 0.18 145);
 }
 
-/* ─── ember-light ─── */
-:root[data-theme="ember-light"] {
-  --background: oklch(0.97 0 0);
-  --foreground: oklch(0.16 0 0);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.94 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0 0);
-  --primary: oklch(0.62 0.22 32);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.92 0 0);
-  --secondary-foreground: oklch(0.16 0 0);
-  --muted: oklch(0.92 0 0);
-  --muted-foreground: oklch(0.42 0 0);
-  --accent: oklch(0.62 0.22 32);
-  --accent-foreground: oklch(0.99 0 0);
-  --ember: oklch(0.62 0.22 32);
-  --ember-soft: oklch(0.62 0.22 32 / 0.1);
-  --destructive: oklch(0.55 0.22 22);
-  --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.85 0 0);
-  --grid: oklch(0.90 0 0);
-  --input: oklch(0.90 0 0);
-  --ring: oklch(0.62 0.22 32);
-  --chart-1: oklch(0.62 0.22 32);
-  --chart-2: oklch(0.68 0.18 145);
-  --chart-3: oklch(0.60 0.16 240);
-  --chart-4: oklch(0.70 0.18 90);
-  --chart-5: oklch(0.58 0.20 320);
-  --online: oklch(0.62 0.18 145);
-}
-
-/* ─── blush-dark — ember-dark surfaces, pink accent ─── */
+/* ─── blush-dark — lime surfaces, pink accent ─── */
 :root[data-theme="blush-dark"] {
   --background: oklch(0.13 0 0);
   --foreground: oklch(0.93 0 0);
@@ -125,8 +91,8 @@
   --muted-foreground: oklch(0.58 0 0);
   --accent: oklch(0.72 0.20 350);
   --accent-foreground: oklch(0.98 0 0);
-  --ember: oklch(0.72 0.20 350);
-  --ember-soft: oklch(0.72 0.20 350 / 0.12);
+  --lime: oklch(0.72 0.20 350);
+  --lime-soft: oklch(0.72 0.20 350 / 0.12);
   --destructive: oklch(0.62 0.22 22);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.26 0 0);
@@ -141,7 +107,7 @@
   --online: oklch(0.78 0.18 145);
 }
 
-/* ─── blush-light — ember-light surfaces, pink accent ─── */
+/* ─── blush-light —  surfaces, pink accent ─── */
 :root[data-theme="blush-light"] {
   --background: oklch(0.97 0 0);
   --foreground: oklch(0.16 0 0);
@@ -159,8 +125,8 @@
   --muted-foreground: oklch(0.42 0 0);
   --accent: oklch(0.58 0.22 350);
   --accent-foreground: oklch(0.99 0 0);
-  --ember: oklch(0.58 0.22 350);
-  --ember-soft: oklch(0.58 0.22 350 / 0.10);
+  --lime: oklch(0.58 0.22 350);
+  --lime-soft: oklch(0.58 0.22 350 / 0.10);
   --destructive: oklch(0.55 0.22 22);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.85 0 0);
@@ -193,8 +159,8 @@
   --muted-foreground: oklch(0.66 0.012 250);
   --accent: oklch(0.74 0.13 200);
   --accent-foreground: oklch(0.14 0.02 250);
-  --ember: oklch(0.74 0.13 200);
-  --ember-soft: oklch(0.74 0.13 200 / 0.14);
+  --lime: oklch(0.74 0.13 200);
+  --lime-soft: oklch(0.74 0.13 200 / 0.14);
   --destructive: oklch(0.62 0.18 22);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.30 0.014 250);
@@ -207,6 +173,40 @@
   --chart-4: oklch(0.80 0.18 90);
   --chart-5: oklch(0.68 0.20 320);
   --online: oklch(0.78 0.18 145);
+}
+
+/* ─── studio-dim-light — studio-dark pair, bright slate day + teal accent ─── */
+:root[data-theme="studio-dim-light"] {
+  --background: oklch(0.96 0.018 250);
+  --foreground: oklch(0.18 0.02 250);
+  --surface: oklch(0.99 0.012 250);
+  --surface-2: oklch(0.93 0.022 250);
+  --card: oklch(0.99 0.012 250);
+  --card-foreground: oklch(0.18 0.02 250);
+  --popover: oklch(0.99 0.012 250);
+  --popover-foreground: oklch(0.18 0.02 250);
+  --primary: oklch(0.48 0.15 200);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.91 0.018 250);
+  --secondary-foreground: oklch(0.18 0.02 250);
+  --muted: oklch(0.91 0.018 250);
+  --muted-foreground: oklch(0.44 0.016 250);
+  --accent: oklch(0.48 0.15 200);
+  --accent-foreground: oklch(0.99 0 0);
+  --lime: oklch(0.48 0.15 200);
+  --lime-soft: oklch(0.48 0.15 200 / 0.12);
+  --destructive: oklch(0.55 0.22 22);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.84 0.02 250);
+  --grid: oklch(0.89 0.02 250);
+  --input: oklch(0.89 0.02 250);
+  --ring: oklch(0.48 0.15 200);
+  --chart-1: oklch(0.48 0.15 200);
+  --chart-2: oklch(0.52 0.18 145);
+  --chart-3: oklch(0.50 0.16 240);
+  --chart-4: oklch(0.55 0.18 90);
+  --chart-5: oklch(0.48 0.20 320);
+  --online: oklch(0.50 0.18 145);
 }
 
 /* ─── studio-light ─── */
@@ -227,8 +227,8 @@
   --muted-foreground: oklch(0.46 0.01 260);
   --accent: oklch(0.52 0.14 282);
   --accent-foreground: oklch(0.99 0 0);
-  --ember: oklch(0.52 0.14 282);
-  --ember-soft: oklch(0.52 0.14 282 / 0.10);
+  --lime: oklch(0.52 0.14 282);
+  --lime-soft: oklch(0.52 0.14 282 / 0.10);
   --destructive: oklch(0.55 0.22 22);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.88 0.005 80);
@@ -261,8 +261,8 @@
   --muted-foreground: oklch(0.62 0.012 80);
   --accent: oklch(0.62 0.15 282);
   --accent-foreground: oklch(0.98 0 0);
-  --ember: oklch(0.62 0.15 282);
-  --ember-soft: oklch(0.62 0.15 282 / 0.14);
+  --lime: oklch(0.62 0.15 282);
+  --lime-soft: oklch(0.62 0.15 282 / 0.14);
   --destructive: oklch(0.62 0.18 22);
   --destructive-foreground: oklch(0.98 0 0);
   --border: oklch(0.30 0.016 80);
@@ -287,8 +287,8 @@
   --text-sec: color-mix(in oklch, var(--foreground) 85%, var(--muted-foreground));
   --text-muted: var(--muted-foreground);
   --text-dim: color-mix(in oklch, var(--muted-foreground) 75%, transparent);
-  --accent: var(--ember);
-  --accent-hover: color-mix(in oklch, var(--ember) 85%, black);
+  --accent: var(--lime);
+  --accent-hover: color-mix(in oklch, var(--lime) 85%, black);
   --on-accent: var(--primary-foreground);
   --green: var(--online);
   --danger: var(--destructive);
@@ -296,7 +296,29 @@
 }
 
 .font-display {
-  font-family: var(--tb-font-display);
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: normal;
+  font-synthesis: none;
+}
+
+/* Accent / primary CTAs — Archivo bold, tight tracking (brandbook display type) */
+.tb-btn-accent,
+html[data-theme] button.tb-btn-accent,
+html[data-theme] a.tb-btn-accent {
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-feature-settings: normal;
+  font-synthesis: none;
+}
+
+/* Entity names — band, project/track, member display names, dashboard greeting */
+.tb-type-name {
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-feature-settings: normal;
+  font-synthesis: none;
 }
 
 .font-mono,
@@ -316,7 +338,6 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  html[data-theme] button,
   html[data-theme] input,
   html[data-theme] textarea,
   html[data-theme] select {
@@ -334,14 +355,143 @@
     letter-spacing: -0.02em;
   }
 
-  html[data-theme] ::selection {
-    background-color: var(--ember);
-    color: oklch(0.98 0 0);
+  html[data-theme="lime"] ::selection,
+  html:not([data-theme]) ::selection {
+    background-color: var(--lime);
+    color: var(--primary-foreground);
   }
 
-  html[data-theme] ::-moz-selection {
-    background-color: var(--ember);
-    color: oklch(0.98 0 0);
+  html[data-theme="lime"] ::-moz-selection,
+  html:not([data-theme]) ::-moz-selection {
+    background-color: var(--lime);
+    color: var(--primary-foreground);
+  }
+}
+
+/* Readable label on filled accent surfaces (legacy text-white utilities) */
+@layer utilities {
+  .bg-lime.text-white,
+  .bg-primary.text-white,
+  .bg-accent.text-white,
+  .bg-lime.text-primary-foreground,
+  .bg-primary.text-primary-foreground,
+  .bg-accent.text-primary-foreground,
+  .hover\:bg-lime.hover\:text-white:hover,
+  .hover\:bg-primary.hover\:text-white:hover {
+    color: var(--on-accent);
+  }
+
+  /* Primary-filled controls: display type + bold (all themes) */
+  .tb-btn-accent,
+  button.bg-lime,
+  a.bg-lime,
+  button.bg-primary,
+  a.bg-primary,
+  button.bg-accent,
+  a.bg-accent {
+    font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-feature-settings: normal;
+    font-synthesis: none;
+  }
+}
+
+/*
+ * Unlayered — wins over Tailwind utilities so hardcoded text-white on accent
+ * fills cannot beat theme contrast tokens.
+ */
+.bg-lime.text-white,
+.bg-primary.text-white,
+.bg-accent.text-white,
+.bg-lime.text-primary-foreground,
+.bg-primary.text-primary-foreground,
+.bg-accent.text-primary-foreground {
+  color: var(--on-accent);
+}
+
+button.bg-lime,
+a.bg-lime,
+button.bg-primary,
+a.bg-primary,
+button.bg-accent,
+a.bg-accent,
+.tb-btn-accent {
+  color: var(--on-accent);
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-feature-settings: normal;
+  font-synthesis: none;
+  transform-origin: center;
+  transition: transform 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@media (hover: hover) {
+  .tb-btn-accent:hover:not(:disabled):not([aria-disabled="true"]),
+  button.bg-lime:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-lime:hover:not([aria-disabled="true"]),
+  button.bg-primary:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-primary:hover:not([aria-disabled="true"]),
+  button.bg-accent:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-accent:hover:not([aria-disabled="true"]) {
+    transform: scale(1.04);
+    filter: none;
+    opacity: 1;
+  }
+
+  button.bg-lime:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-lime:hover:not([aria-disabled="true"]) {
+    background-color: var(--color-lime, var(--lime));
+  }
+
+  button.bg-primary:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-primary:hover:not([aria-disabled="true"]) {
+    background-color: var(--color-primary, var(--primary));
+  }
+
+  button.bg-accent:hover:not(:disabled):not([aria-disabled="true"]),
+  a.bg-accent:hover:not([aria-disabled="true"]) {
+    background-color: var(--color-accent, var(--accent));
+  }
+}
+
+.tb-btn-accent:active:not(:disabled):not([aria-disabled="true"]),
+button.bg-lime:active:not(:disabled):not([aria-disabled="true"]),
+a.bg-lime:active:not([aria-disabled="true"]),
+button.bg-primary:active:not(:disabled):not([aria-disabled="true"]),
+a.bg-primary:active:not([aria-disabled="true"]),
+button.bg-accent:active:not(:disabled):not([aria-disabled="true"]),
+a.bg-accent:active:not([aria-disabled="true"]) {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-btn-accent,
+  button.bg-lime,
+  a.bg-lime,
+  button.bg-primary,
+  a.bg-primary,
+  button.bg-accent,
+  a.bg-accent {
+    transition: none;
+  }
+
+  .tb-btn-accent:hover,
+  button.bg-lime:hover,
+  a.bg-lime:hover,
+  button.bg-primary:hover,
+  a.bg-primary:hover,
+  button.bg-accent:hover,
+  a.bg-accent:hover,
+  .tb-btn-accent:active,
+  button.bg-lime:active,
+  a.bg-lime:active,
+  button.bg-primary:active,
+  a.bg-primary:active,
+  button.bg-accent:active,
+  a.bg-accent:active {
+    transform: none;
   }
 }
 

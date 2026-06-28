@@ -9,9 +9,10 @@ import { TactGrid } from '@/components/design/TactGrid'
 import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
+import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 
 const TRACK_LABEL_W = 192
-const WAVEFORM_COLOR = 'var(--ember, #e07a5f)'
+const WAVEFORM_COLOR = 'var(--lime, #e07a5f)'
 const BAR_COUNT = 96
 const LIVE_MONITOR_BARS = 28
 const METER_RENDER_MS = 70
@@ -58,20 +59,6 @@ function barsFromBuffer(buffer: AudioBuffer, n = BAR_COUNT): number[] {
   return amps.map(a => a / max)
 }
 
-function downsampleBars(bars: number[], target = BAR_COUNT): number[] {
-  if (bars.length <= target) return bars
-  const out: number[] = []
-  const step = bars.length / target
-  for (let i = 0; i < target; i++) {
-    const start = Math.floor(i * step)
-    const end = Math.min(bars.length, Math.floor((i + 1) * step))
-    let peak = 0
-    for (let j = start; j < end; j++) peak = Math.max(peak, bars[j])
-    out.push(peak)
-  }
-  const max = Math.max(...out, 0.001)
-  return out.map(v => v / max)
-}
 
 /** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
 function applyNudgeToBuffer(buffer: AudioBuffer, nudgeMs: number): AudioBuffer {
@@ -100,12 +87,13 @@ function applyNudgeToBuffer(buffer: AudioBuffer, nudgeMs: number): AudioBuffer {
 }
 
 function BarWaveform({
-  bars, leftPct, widthPct, opacity = 0.95, minBarPct = 8, bottom = false,
+  bars, leftPct, widthPct, color = WAVEFORM_COLOR, opacity = 1, minBarPct, bottom = false,
   animate = false, barCount = BAR_COUNT,
 }: {
   bars: number[]
   leftPct: string
   widthPct: string
+  color?: string
   opacity?: number
   minBarPct?: number
   bottom?: boolean
@@ -113,25 +101,21 @@ function BarWaveform({
   barCount?: number
 }) {
   if (!bars.length) return null
-  const display = downsampleBars(bars, barCount)
+  const display = downsampleWaveformBars(bars, barCount)
   return (
     <div
       className={bottom
-        ? 'absolute bottom-3 flex items-end gap-px z-[2]'
-        : 'absolute top-2 bottom-2 flex items-center gap-px px-1 z-[2]'}
+        ? 'absolute bottom-3 z-[2]'
+        : 'absolute top-2 bottom-2 z-[2]'}
       style={{ left: leftPct, width: widthPct, opacity, height: bottom ? 32 : undefined, minWidth: bottom ? 24 : undefined }}
     >
-      {display.map((h, i) => (
-        <div
-          key={i}
-          className={`flex-1 min-w-0${animate ? ' animate-draw-wave' : ''}`}
-          style={{
-            height: `${Math.max(minBarPct, h * 100)}%`,
-            background: WAVEFORM_COLOR,
-            animationDelay: animate ? `${i * 4}ms` : undefined,
-          }}
-        />
-      ))}
+      <WaveformBarRow
+        bars={display}
+        color={color}
+        className="h-full px-1"
+        animate={animate}
+        minBarPct={minBarPct}
+      />
     </div>
   )
 }
@@ -159,7 +143,7 @@ function LiveVolumeBar({
         style={{
           height: '100%',
           width: `${Math.min(100, Math.max(0, level * 100))}%`,
-          background: 'var(--ember)',
+          background: 'var(--lime)',
           opacity: pulsing ? 0.95 : 0.75,
           animation: pulsing ? 'recPulse 1s ease-in-out infinite' : undefined,
           transition: 'width 60ms ease-out',
@@ -973,7 +957,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       {isSaving && (
         <div className="absolute inset-0 flex items-center justify-center z-[3]">
-          <span className="text-[9px] uppercase tracking-widest text-ember">
+          <span className="text-[9px] uppercase tracking-widest text-lime">
             {uploadProgress > 0 ? `${uploadProgress}%` : 'Saving…'}
           </span>
         </div>
@@ -982,7 +966,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   )
 
   const rowBg = isRecording
-    ? 'color-mix(in srgb, var(--ember) 5%, var(--surface))'
+    ? 'color-mix(in srgb, var(--lime) 5%, var(--surface))'
     : 'var(--surface)'
 
   const nameRow = (
@@ -998,7 +982,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         value={editName}
         onChange={e => { setEditName(e.target.value); onNameChange(id, e.target.value) }}
         disabled={isRecording || isCounting || isSaving}
-        className="min-w-0 flex-1 bg-transparent text-xs font-bold uppercase tracking-tight text-foreground outline-none border-b border-transparent focus:border-ember truncate"
+        className="min-w-0 flex-1 bg-transparent text-xs font-bold uppercase tracking-tight text-foreground outline-none border-b border-transparent focus:border-lime truncate"
         placeholder="New recording"
       />
       <button
@@ -1019,7 +1003,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           type="button"
           onClick={() => void handleArm()}
           disabled={isActiveRecording}
-          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-ember disabled:opacity-30 transition w-fit"
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime disabled:opacity-30 transition w-fit"
         >
           <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
           Arm
@@ -1074,14 +1058,14 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               type="button"
               onClick={() => setPreviewMuted(m => !m)}
               className="text-[9px] uppercase tracking-widest"
-              style={{ color: previewMuted ? 'var(--ember)' : 'var(--muted-foreground)' }}
+              style={{ color: previewMuted ? 'var(--lime)' : 'var(--muted-foreground)' }}
             >
               {previewMuted ? 'Muted' : 'Mute'}
             </button>
             <button
               type="button"
               onClick={() => void handleSave()}
-              className="text-[9px] uppercase tracking-widest font-semibold text-ember"
+              className="text-[9px] uppercase tracking-widest font-semibold text-lime"
             >
               Save
             </button>
@@ -1098,7 +1082,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               type="button"
               title="-10ms"
               onClick={() => setNudgeOffsetMs(ms => ms - 10)}
-              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-lime transition"
               aria-label="Nudge 10ms earlier"
             >
               <NudgeArrowIcon direction="left" />
@@ -1107,7 +1091,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               type="button"
               title="+10ms"
               onClick={() => setNudgeOffsetMs(ms => ms + 10)}
-              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-ember transition"
+              className="size-5 flex items-center justify-center text-muted-foreground hover:text-foreground border border-border hover:border-lime transition"
               aria-label="Nudge 10ms later"
             >
               <NudgeArrowIcon direction="right" />
@@ -1121,7 +1105,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         </div>
       )}
       {isSaving && (
-        <span className="text-[9px] uppercase tracking-widest text-ember">
+        <span className="text-[9px] uppercase tracking-widest text-lime">
           {uploadProgress > 0 ? `Saving ${uploadProgress}%…` : 'Saving…'}
         </span>
       )}
@@ -1136,7 +1120,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
             value={monitorVol}
             onChange={e => handleMonitorChange(parseFloat(e.target.value))}
             disabled={isRecording}
-            className="flex-1 min-w-0 accent-ember"
+            className="flex-1 min-w-0 accent-lime"
           />
         </div>
       )}

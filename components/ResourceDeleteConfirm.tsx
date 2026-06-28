@@ -29,7 +29,7 @@ export function ResourceDeleteConfirm({
           type="button"
           onClick={onConfirm}
           disabled={deleting}
-          className="text-[9px] uppercase tracking-widest text-destructive hover:brightness-110 bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
+          className="text-[9px] uppercase tracking-widest text-destructive bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
         >
           Delete
         </button>

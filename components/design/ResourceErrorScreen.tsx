@@ -55,8 +55,8 @@ export function ResourceErrorScreen({
             {actions.map(action => {
               const className = `w-full justify-center text-[10px] uppercase tracking-widest transition disabled:opacity-50 ${
                 action.primary
-                  ? 'bg-ember text-white border border-ember px-3 py-2 font-bold hover:brightness-110'
-                  : 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-2'
+                  ? 'bg-lime text-primary-foreground border border-lime px-3 py-2 font-display font-bold'
+                  : 'border border-border text-muted-foreground hover:border-lime hover:text-lime px-3 py-2'
               }`
               if (action.href) {
                 return (

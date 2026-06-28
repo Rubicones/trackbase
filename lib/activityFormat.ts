@@ -14,7 +14,7 @@ export function isDeleteAction(action: string): boolean {
 }
 
 type ActivityColorToken =
-  | 'ember'
+  | 'lime'
   | 'chart-2'
   | 'chart-3'
   | 'chart-4'
@@ -28,7 +28,7 @@ function activityColorToken(action: string): ActivityColorToken {
 
   switch (action) {
     case 'merge':
-      return 'ember'
+      return 'lime'
     case 'branch':
       return 'chart-3'
     case 'comment':
@@ -56,7 +56,7 @@ export function activityCategoryLabel(action: string): string {
 }
 
 const ACTIVITY_TEXT_CLASS: Record<ActivityColorToken, string> = {
-  ember: 'text-ember',
+  lime: 'text-lime',
   'chart-2': 'text-chart-2',
   'chart-3': 'text-chart-3',
   'chart-4': 'text-chart-4',
@@ -67,7 +67,7 @@ const ACTIVITY_TEXT_CLASS: Record<ActivityColorToken, string> = {
 }
 
 const ACTIVITY_BG_CLASS: Record<ActivityColorToken, string> = {
-  ember: 'bg-ember',
+  lime: 'bg-lime',
   'chart-2': 'bg-chart-2',
   'chart-3': 'bg-chart-3',
   'chart-4': 'bg-chart-4',

@@ -50,7 +50,7 @@ export function ResourceContextChips({
       className={`inline-flex max-w-full items-stretch border border-border bg-surface text-[9px] font-mono overflow-hidden shrink-0 ${className}`}
     >
       {showBranch && (
-        <span className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 text-ember${showTrack ? ' border-r border-border' : ''}`}>
+        <span className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 text-lime${showTrack ? ' border-r border-border' : ''}`}>
           <IconBranch size={12} />
           <span className={compact ? 'max-w-[2.75rem] truncate' : 'max-w-[4.5rem] truncate'}>
             {versionName}

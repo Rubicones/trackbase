@@ -35,7 +35,7 @@ function ComposerChip({
       onClick={onClick}
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 border text-[9px] font-bold uppercase tracking-widest transition disabled:opacity-50 ${
         active
-          ? 'border-ember bg-ember-soft text-ember'
+          ? 'border-lime bg-lime-soft text-lime'
           : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-foreground'
       }`}
     >
@@ -150,10 +150,10 @@ export function VersionChipSelector({
                 setOpen(false)
               }}
               className={`w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs transition ${
-                v.id === selectedId ? 'bg-ember-soft text-ember' : 'hover:bg-surface'
+                v.id === selectedId ? 'bg-lime-soft text-lime' : 'hover:bg-surface'
               }`}
             >
-              <span className="text-ember shrink-0"><IconBranch /></span>
+              <span className="text-lime shrink-0"><IconBranch /></span>
               <span className="truncate">{v.name}</span>
               {v.type === 'main' && (
                 <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>

@@ -96,7 +96,7 @@ function CommentTooltip({
         <div className="flex items-center gap-2 mb-1">
           <UserAvatar seed={author} size={18} kind="user" />
           <span className="text-[11px] text-foreground truncate">{author}</span>
-          <span className="text-[10px] tabular-nums text-ember shrink-0">
+          <span className="text-[10px] tabular-nums text-lime shrink-0">
             {fmtMs(comment.timecode_start_ms)} → {fmtMs(comment.timecode_end_ms)}
           </span>
           {canDelete && (
@@ -285,7 +285,7 @@ function CommentInputBubble({
             <span className="text-[11px] text-foreground">{currentUser.username}</span>
           </div>
         )}
-        <div className="text-[10px] tabular-nums text-ember mb-2">
+        <div className="text-[10px] tabular-nums text-lime mb-2">
           {fmtMs(startMs)} → {fmtMs(endMs)}
         </div>
         <input
@@ -325,6 +325,7 @@ export function MobileWaveformComments({
   currentUserId,
   isOwner,
   currentUser,
+  interactionsEnabled = true,
 }: {
   trackId: string
   durationMs: number
@@ -341,6 +342,7 @@ export function MobileWaveformComments({
   currentUserId: string | undefined
   isOwner: boolean
   currentUser: { username: string } | null
+  interactionsEnabled?: boolean
 }) {
   const scrollSync = useMobileTimelineScroll()
   const dragRef = useRef<{ active: boolean; startPct: number; currentPct: number; clientX: number } | null>(null)
@@ -439,7 +441,7 @@ export function MobileWaveformComments({
   }, [finalizeRange, stopEdgeScroll])
 
   function handleDragStart(clientX: number) {
-    if (!commentMode) return
+    if (!interactionsEnabled || !commentMode) return
     const pct = getXPercent(clientX)
     dragRef.current = { active: true, startPct: pct, currentPct: pct, clientX }
     setDragRect({ startX: pct, endX: pct })
@@ -455,7 +457,7 @@ export function MobileWaveformComments({
     <div className="absolute inset-0 z-[5] pointer-events-none">
       {commentMode && (
         <div
-          className="absolute inset-0 pointer-events-auto"
+          className={`absolute inset-0${interactionsEnabled ? ' pointer-events-auto' : ' pointer-events-none'}`}
           style={{ touchAction: 'none' }}
           onMouseDown={e => { e.preventDefault(); handleDragStart(e.clientX) }}
           onMouseMove={e => handleDragMove(e.clientX)}
@@ -463,8 +465,8 @@ export function MobileWaveformComments({
           onTouchMove={e => { e.preventDefault(); handleDragMove(e.touches[0].clientX) }}
         >
           {!dragRect && (
-            <div className="absolute inset-0 pointer-events-none bg-ember/5 border border-dashed border-ember/40 grid place-items-center">
-              <div className="text-[8px] uppercase tracking-widest text-ember bg-background/90 border border-ember/40 px-1.5 py-0.5">
+            <div className="absolute inset-0 pointer-events-none bg-lime/5 border border-dashed border-lime/40 grid place-items-center">
+              <div className="text-[8px] uppercase tracking-widest text-lime bg-background/90 border border-lime/40 px-1.5 py-0.5">
                 Tap & drag
               </div>
             </div>

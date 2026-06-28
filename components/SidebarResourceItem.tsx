@@ -13,7 +13,7 @@ import { ResourceDeleteConfirm } from './ResourceDeleteConfirm'
 
 function IconLink({ size = 13 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 text-ember">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 text-lime">
       <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
@@ -170,7 +170,7 @@ export function SidebarResourceItem({
 
   if (editing) {
     return (
-      <div className="px-1.5 py-1 flex flex-col gap-1.5 border border-ember/40 bg-surface/50">
+      <div className="px-1.5 py-1 flex flex-col gap-1.5 border border-lime/40 bg-surface/50">
         {isLink ? (
           <>
             <input
@@ -178,14 +178,14 @@ export function SidebarResourceItem({
               placeholder="Title"
               value={linkTitle}
               onChange={e => setLinkTitle(e.target.value)}
-              className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-ember"
+              className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-lime"
             />
             <input
               autoFocus
               type="url"
               value={linkUrl}
               onChange={e => setLinkUrl(e.target.value)}
-              className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-ember"
+              className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-lime"
             />
           </>
         ) : (
@@ -194,7 +194,7 @@ export function SidebarResourceItem({
             type="text"
             value={nameInput}
             onChange={e => setNameInput(e.target.value)}
-            className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-ember"
+            className="w-full bg-surface border border-border px-1.5 py-0.5 text-[10px] outline-none focus:border-lime"
           />
         )}
         <ResourceContextControls
@@ -208,7 +208,7 @@ export function SidebarResourceItem({
         />
         <div className="flex gap-2 justify-end">
           <button type="button" onClick={() => setEditing(false)} className="text-[9px] text-muted-foreground bg-transparent border-0 cursor-pointer">Cancel</button>
-          <button type="button" onClick={saveEdit} disabled={saving} className="text-[9px] text-ember bg-transparent border-0 cursor-pointer">Save</button>
+          <button type="button" onClick={saveEdit} disabled={saving} className="text-[9px] text-lime bg-transparent border-0 cursor-pointer">Save</button>
         </div>
       </div>
     )
@@ -225,7 +225,7 @@ export function SidebarResourceItem({
           {isLink ? (
             <IconLink />
           ) : (
-            <span className="text-[10px] font-bold tracking-widest text-ember uppercase">{fileKind(resource)}</span>
+            <span className="text-[10px] font-bold tracking-widest text-lime uppercase">{fileKind(resource)}</span>
           )}
         </span>
         <span className="flex-1 truncate min-w-0 text-xs font-medium text-foreground" title={name}>{name}</span>

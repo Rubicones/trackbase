@@ -67,7 +67,7 @@ export function TactGrid({
               'absolute top-0 bottom-0 border-r p-0',
               heavy ? 'border-border/30' : 'border-border/15',
               interactive
-                ? 'cursor-pointer hover:bg-ember/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ember/40'
+                ? 'cursor-pointer hover:bg-lime/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lime/40'
                 : '',
             ].join(' ')}
             style={{ left: `${leftPct}%`, width: `${widthPct}%` }}

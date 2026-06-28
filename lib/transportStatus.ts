@@ -71,11 +71,27 @@ export function resolveTransportStatus(input: TransportStatusInput): TransportSt
   return status
 }
 
+/** True when every audio buffer is decoded and every MIDI track is playback-ready. */
+export function allTracksLoaded(input: {
+  tracksLoaded: number
+  tracksTotal: number
+  activeTracks: readonly { id: string; file_type?: string | null; midi_data?: unknown }[]
+  midiPlaybackReadyIds: ReadonlySet<string>
+}): boolean {
+  if (input.tracksTotal > 0 && input.tracksLoaded < input.tracksTotal) return false
+  for (const t of input.activeTracks) {
+    if (t.file_type === 'midi' && t.midi_data && !input.midiPlaybackReadyIds.has(t.id)) {
+      return false
+    }
+  }
+  return true
+}
+
 export function transportStatusClass(status: TransportStatus): string {
   const base = 'inline-flex items-center gap-1 uppercase tracking-widest text-[8.5px] px-1.5 py-px border whitespace-nowrap max-w-[min(72vw,14rem)] truncate text-center'
   switch (status.tone) {
     case 'accent':
-      return `${base} border-ember text-ember font-medium`
+      return `${base} border-lime text-lime font-medium`
     case 'destructive':
       return `${base} border-destructive text-destructive font-medium${status.pulse ? ' font-bold animate-pulse' : ''}`
     default:

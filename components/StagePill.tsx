@@ -56,7 +56,7 @@ export function StagePill({
   if (variant === 'chip') {
     return (
       <span
-        className={`inline-flex items-center gap-1.5 border border-ember/50 bg-ember-soft text-ember px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest ${className}`}
+        className={`inline-flex items-center gap-1.5 border border-lime/50 bg-lime-soft text-lime px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest ${className}`}
         title={`Stage ${idx + 1}/${STAGES.length} · ${meta.name} · since ${formatRelativeStage(stageSince)}`}
       >
         <span className={`size-1.5 rounded-full ${dot}`} />
@@ -76,7 +76,7 @@ export function StagePill({
           <span
             key={i}
             className={`h-1.5 w-3 ${
-              i < idx ? 'bg-ember/60' : i === idx ? 'bg-ember' : 'bg-border'
+              i < idx ? 'bg-lime/60' : i === idx ? 'bg-lime' : 'bg-border'
             }`}
           />
         ))}

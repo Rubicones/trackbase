@@ -124,7 +124,7 @@ function AuthPageContent() {
               subtitle="We sent a magic link to complete sign-in. No password needed."
             />
             <AuthCardBody className="space-y-4 text-center">
-              <div className="mx-auto size-14 border border-ember/40 bg-ember-soft/30 grid place-items-center">
+              <div className="mx-auto size-14 border border-lime/40 bg-lime-soft/30 grid place-items-center">
                 <MailIcon />
               </div>
 
@@ -190,7 +190,7 @@ function AuthPageContent() {
 
 function MailIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-ember">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-lime">
       <rect x="3" y="5" width="18" height="14" stroke="currentColor" strokeWidth="1.5" />
       <path d="M3 9l9 6 9-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>

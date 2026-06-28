@@ -92,6 +92,10 @@ const ROADMAP_STEPS = [
 export function ProductionButtonsSection() {
   return (
     <Section title="TbButton · menu items" id="tb-buttons" tag="04.01">
+      <Caption className="mb-4">
+        Primary / accent fills use Archivo bold (<code className="font-mono text-[10px]">tb-btn-accent</code>) with dark on-accent text.
+        Hover scales up slightly — background color does not shift.
+      </Caption>
       <div className="grid sm:grid-cols-2 gap-6">
         <Tile>
           <Caption className="mb-3">@/components/design/TbButton — primary app actions</Caption>
@@ -145,7 +149,7 @@ export function ProductionFormsSection() {
             <textarea
               rows={3}
               placeholder="Take 3 — re-tracked the bridge"
-              className="mt-1 w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 resize-none"
+              className="mt-1 w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-lime placeholder:text-muted-foreground/60 resize-none"
             />
           </div>
         </Tile>
@@ -192,10 +196,10 @@ export function ProductionTagsSection() {
           <UserAvatar seed="the_noise" size={36} kind="band" />
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-4">
-          <span className="border border-ember/40 bg-ember-soft px-2 py-1 text-[10px] uppercase tracking-widest text-ember">● LIVE</span>
+          <span className="border border-lime/40 bg-lime-soft px-2 py-1 text-[10px] uppercase tracking-widest text-lime">● LIVE</span>
           <span className="border border-online/40 bg-online/10 px-2 py-1 text-[10px] uppercase tracking-widest text-online">● ONLINE</span>
           <span className="border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">DRAFT</span>
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 border border-ember bg-ember-soft text-[9px] font-bold uppercase tracking-widest text-ember">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 border border-lime bg-lime-soft text-[9px] font-bold uppercase tracking-widest text-lime">
             <IconBranch /> main
           </span>
         </div>
@@ -208,7 +212,7 @@ export function ProductionTagsSection() {
               <span className="text-[10px] text-dim">2.4 / 5 GB</span>
             </div>
             <div className="h-0.5 rounded-full bg-surface-2">
-              <div className="h-full rounded-full bg-ember" style={{ width: '48%' }} />
+              <div className="h-full rounded-full bg-lime" style={{ width: '48%' }} />
             </div>
           </div>
         </div>
@@ -282,6 +286,7 @@ export function ProductionVersioningSection() {
   const [mergeTarget, setMergeTarget] = useState('v-main')
   const [mobileActive, setMobileActive] = useState('v-main')
   const [commentMode, setCommentMode] = useState(false)
+  const [hideApplied, setHideApplied] = useState(false)
 
   return (
     <Section title="Version selectors · mobile bar" id="versioning" tag="05.05">
@@ -327,8 +332,22 @@ export function ProductionVersioningSection() {
         <Caption className="mb-3">Version history sidebar pattern — timeline with merge markers</Caption>
         <div className="max-w-[208px] border border-border bg-surface/40 p-3">
           <SectionLabel>Versions</SectionLabel>
-          <button type="button" className="w-full text-left px-[10px] py-1 mt-2 mb-2 text-[8px] uppercase tracking-widest text-muted-foreground">
-            Hide non-active
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={hideApplied}
+            onClick={() => setHideApplied(v => !v)}
+            className="flex items-center gap-2 px-[10px] py-1 mt-2 mb-2 cursor-pointer select-none bg-transparent border-0 text-left"
+          >
+            <span
+              className={`size-2 shrink-0 rounded-none border transition-colors ${
+                hideApplied ? 'bg-lime border-lime' : 'bg-transparent border-border'
+              }`}
+              aria-hidden
+            />
+            <span className="text-[8px] uppercase tracking-widest text-muted-foreground">
+              Hide applied
+            </span>
           </button>
           {[
             { name: 'main', active: true, merged: false },
@@ -345,12 +364,12 @@ export function ProductionVersioningSection() {
               }}
             >
               <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 shrink-0 bg-ember" />
+                <span className="w-1.5 h-1.5 shrink-0 bg-lime" />
                 <span className="flex-1 text-[13px] truncate text-muted-foreground">{v.name}</span>
               </div>
               {v.merged && (
                 <p className="text-[9px] uppercase tracking-widest mt-0.5 pl-[14px] m-0 flex items-center gap-1">
-                  <span className="font-bold text-ember">M</span>
+                  <span className="font-bold text-lime">M</span>
                   <span className="text-muted-foreground">{v.mergedInto}</span>
                 </p>
               )}
@@ -524,7 +543,7 @@ export function ProductionErrorSection() {
           </svg>
         </div>
         <div>
-          <p className="font-display text-lg uppercase tracking-tight text-foreground m-0">
+          <p className="tb-type-name text-lg uppercase tracking-tight text-foreground m-0">
             You don&apos;t have access to this project
           </p>
           <p className="text-xs text-muted-foreground mt-2 leading-relaxed m-0">
@@ -552,31 +571,31 @@ export function ProductionFilterTabsSection() {
   return (
     <Section title="Filter tabs · list patterns" id="filter-tabs" tag="08.03">
       <Tile className="space-y-4">
-        <Caption>Dashboard band filters — border-bottom active state, not filled pills</Caption>
-        <div className="flex gap-4 border-b border-border">
-          {tabs.map(t => (
+        <Caption>Dashboard band filters — segmented bordered tabs (hover raises z-index so all edges highlight)</Caption>
+        <div className="flex">
+          {tabs.map(({ id, label }) => (
             <button
-              key={t.id}
+              key={id}
               type="button"
-              onClick={() => setFilter(t.id)}
-              className={`pb-2 text-[10px] uppercase tracking-widest transition border-b-2 -mb-px ${
-                filter === t.id
-                  ? 'border-ember text-ember'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              onClick={() => setFilter(id)}
+              className={`px-4 h-10 text-[10px] uppercase tracking-widest border border-border -ml-px first:ml-0 transition-colors whitespace-nowrap ${
+                filter === id
+                  ? 'bg-lime text-primary-foreground border-lime z-[1] relative'
+                  : 'bg-background text-foreground hover:border-lime hover:text-lime hover:relative hover:z-[1]'
               }`}
             >
-              {t.label}
+              {label}
             </button>
           ))}
         </div>
-        <Caption>Structure preview / panel tabs — same underline pattern</Caption>
+        <Caption className="mt-4">Structure preview / panel tabs — underline pattern</Caption>
         <div className="flex gap-6 border-b border-border">
           {['Resources', 'Roadmap', 'Checklist', 'Structure', 'Notes'].map((label, i) => (
             <button
               key={label}
               type="button"
               className={`pb-2 text-[10px] uppercase tracking-[0.2em] transition border-b-2 -mb-px ${
-                i === 3 ? 'border-ember text-ember' : 'border-transparent text-muted-foreground'
+                i === 3 ? 'border-lime text-lime' : 'border-transparent text-muted-foreground'
               }`}
             >
               {label}
@@ -612,18 +631,31 @@ export function ProductionPopoverSection() {
 
 export function ProductionShellSection() {
   return (
-    <Section title="App shell" id="shell" tag="08.02">
-      <Tile>
-        <Caption className="mb-2">AppHeader · StatusFooter · SectionLabel — @/components/design/AppShell</Caption>
-        <p className="text-sm text-muted-foreground m-0">
-          This page uses the live <code className="font-mono text-xs">AppHeader</code> and{' '}
-          <code className="font-mono text-xs">StatusFooter</code> with PushBellButton and AvatarDropdown.
-          SectionLabel matches production: <code className="font-mono text-xs">font-bold</code>, no mono.
-        </p>
-        <Link href="/dashboard" className="inline-block mt-3 text-[10px] uppercase tracking-widest text-ember hover:underline no-underline">
-          View in app →
-        </Link>
-      </Tile>
+    <Section title="App shell · entity names" id="shell" tag="08.02">
+      <div className="grid md:grid-cols-2 gap-4">
+        <Tile>
+          <Caption className="mb-2">AppHeader · StatusFooter · SectionLabel — @/components/design/AppShell</Caption>
+          <p className="text-sm text-muted-foreground m-0">
+            This page uses the live <code className="font-mono text-xs">AppHeader</code> and{' '}
+            <code className="font-mono text-xs">StatusFooter</code> with PushBellButton and AvatarDropdown.
+          </p>
+          <Link href="/dashboard" className="inline-block mt-3 text-[10px] uppercase tracking-widest text-lime hover:underline no-underline">
+            View in app →
+          </Link>
+        </Tile>
+        <Tile>
+          <Caption className="mb-2">Breadcrumb entity names</Caption>
+          <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
+            <span className="shrink-0">Bands</span>
+            <span className="text-border shrink-0">/</span>
+            <span className="tb-type-name text-xs truncate min-w-0">Test! Test!</span>
+            <span className="text-border shrink-0">/</span>
+            <span className="tb-type-name text-xs text-foreground truncate min-w-0">Cat (formerly Dog)</span>
+          </nav>
+          <Caption className="mt-4 mb-2">Mixer project title</Caption>
+          <h1 className="tb-type-name text-3xl uppercase tracking-tighter m-0">Cat (formerly Dog)</h1>
+        </Tile>
+      </div>
     </Section>
   )
 }

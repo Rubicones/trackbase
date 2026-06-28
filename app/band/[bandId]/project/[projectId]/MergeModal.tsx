@@ -12,6 +12,7 @@ import { trackEvent } from '@/lib/analytics'
 import { MergePreviewLoading, MergeTargetSelector } from '@/components/merge/MergeTargetSelector'
 import { useMergePreview } from '@/components/merge/useMergePreview'
 import { mergeTargetVersions } from '@/lib/versionSort'
+import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 
 export type {
   MergePreview,
@@ -105,8 +106,8 @@ function MergeTitle({ branchName, targetName }: { branchName: string; targetName
 
 function AutoCheckIcon() {
   return (
-    <svg className="shrink-0 mt-0.5 text-ember" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden>
-      <rect x="0.5" y="0.5" width="12" height="12" className="fill-ember/15" />
+    <svg className="shrink-0 mt-0.5 text-lime" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden>
+      <rect x="0.5" y="0.5" width="12" height="12" className="fill-lime/15" />
       <path
         d="M4 6.5l2 2 3-3"
         stroke="currentColor"
@@ -121,7 +122,7 @@ function AutoCheckIcon() {
 function SectionTag({ state }: { state: BarState | null }) {
   if (!state) return <span className="text-[11px] text-muted-foreground">cleared</span>
   return (
-    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 border border-ember/40 text-ember bg-ember/10">
+    <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 border border-lime/40 text-lime bg-lime/10">
       {sectionLabel(state)}
     </span>
   )
@@ -150,9 +151,9 @@ function MergeBtn({
 }) {
   const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5 px-3 py-1.5'
   const styles = {
-    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember',
-    primary: 'bg-ember text-white border border-ember font-bold hover:brightness-110',
-    selected: 'border border-ember text-ember bg-ember-soft font-medium',
+    ghost: 'border border-border text-muted-foreground hover:border-lime hover:text-lime',
+    primary: 'bg-lime text-primary-foreground border border-lime font-display font-bold',
+    selected: 'border border-lime text-lime bg-lime-soft font-medium',
   }
   return (
     <button type="button" disabled={disabled} onClick={onClick} className={`${base} ${styles[variant]} ${className}`}>
@@ -164,11 +165,8 @@ function MergeBtn({
 // ─── Mini static waveform ─────────────────────────────────────────────────────
 
 function MiniWaveform({ trackId, color }: { trackId: string; color: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const barsRef   = useRef<number[]>([])
+  const barsRef = useRef<number[]>([])
   const [ready, setReady] = useState(false)
-  const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme !== 'light'
 
   useEffect(() => {
     let cancelled = false
@@ -196,38 +194,17 @@ function MiniWaveform({ trackId, color }: { trackId: string; color: string }) {
     return () => { cancelled = true }
   }, [trackId])
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || !ready) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const dpr = window.devicePixelRatio || 1
-    const w = canvas.offsetWidth || 180
-    const h = canvas.offsetHeight || 28
-    canvas.width = w * dpr
-    canvas.height = h * dpr
-    ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, w, h)
-    const barW = 2
-    const gap = 2
-    const step = barW + gap
-    const count = Math.floor((w + gap) / step)
-    const bars = barsRef.current
-    const opacity = isDark ? 0.7 : 0.65
-    for (let i = 0; i < count; i++) {
-      const amp = bars[Math.floor(i * bars.length / count)] ?? 0
-      const bh = Math.max(2, amp * h * 0.85)
-      ctx.globalAlpha = opacity
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.roundRect(i * step, (h - bh) / 2, barW, bh, barW / 2)
-      ctx.fill()
-    }
-  }, [ready, color, isDark])
+  const bars = ready ? downsampleWaveformBars(barsRef.current, 48) : Array.from({ length: 48 }, () => 0.15)
 
   return (
-    <div className="relative" style={{ height: 28 }}>
-      <canvas ref={canvasRef} className="w-full block" style={{ height: 28 }} />
+    <div className="relative h-7">
+      <WaveformBarRow
+        bars={bars}
+        color={color}
+        progress={ready ? 1 : 0}
+        className="h-full"
+        animate={ready}
+      />
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-start pl-1 pointer-events-none">
           <svg className="animate-spin opacity-30" width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -253,16 +230,16 @@ function FileConflictCard({
   return (
     <div
       className={`flex-1 border p-3 flex flex-col gap-2 transition-colors ${
-        chosen ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+        chosen ? 'border-lime bg-lime-soft/40' : 'border-border bg-background'
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-ember' : 'text-muted-foreground'}`}>
+        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-lime' : 'text-muted-foreground'}`}>
           {label}
         </span>
         {chosen && (
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-            <circle cx="6" cy="6" r="5.5" className="fill-ember" />
+            <circle cx="6" cy="6" r="5.5" className="fill-lime" />
             <path d="M3.5 6l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
@@ -274,7 +251,7 @@ function FileConflictCard({
           {' · '}{formatTrackStartBar(track.start_bar)}
         </div>
       </div>
-      <MiniWaveform trackId={track.id} color={chosen ? 'var(--ember)' : '#6b7280'} />
+      <MiniWaveform trackId={track.id} color={chosen ? 'var(--lime)' : '#6b7280'} />
       <MergeBtn variant={chosen ? 'primary' : 'ghost'} onClick={onChoose} className="w-full justify-center">
         {chosen ? '✓ Keeping this' : 'Keep this'}
       </MergeBtn>
@@ -302,10 +279,10 @@ function RenameConflictPills({
           <div
             key={side}
             className={`flex-1 border p-4 flex flex-col gap-3 transition-colors ${
-              sel ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+              sel ? 'border-lime bg-lime-soft/40' : 'border-border bg-background'
             }`}
           >
-            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-ember' : 'text-muted-foreground'}`}>{label}</p>
+            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-lime' : 'text-muted-foreground'}`}>{label}</p>
             <p className="text-sm font-medium m-0 text-foreground">&ldquo;{name}&rdquo;</p>
             <MergeBtn variant={sel ? 'primary' : 'ghost'} onClick={() => onChoose(side)} className="w-full justify-center">
               {sel ? '✓ Keep this' : 'Keep this'}
@@ -337,10 +314,10 @@ function OffsetConflictPills({
           <div
             key={side}
             className={`flex-1 border p-4 flex flex-col gap-3 transition-colors ${
-              sel ? 'border-ember bg-ember-soft/40' : 'border-border bg-background'
+              sel ? 'border-lime bg-lime-soft/40' : 'border-border bg-background'
             }`}
           >
-            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-ember' : 'text-muted-foreground'}`}>{label}</p>
+            <p className={`text-[10px] font-bold uppercase tracking-widest m-0 ${sel ? 'text-lime' : 'text-muted-foreground'}`}>{label}</p>
             <p className="text-sm font-medium m-0 text-foreground font-mono tabular-nums">{formatTrackStartBar(bar)}</p>
             <MergeBtn variant={sel ? 'primary' : 'ghost'} onClick={() => onChoose(side)} className="w-full justify-center">
               {sel ? '✓ Keep this' : 'Keep this'}
@@ -365,17 +342,17 @@ function SectionStatePill({
   return (
     <div
       className={`flex-1 border p-3 flex flex-col gap-2 transition-colors cursor-pointer ${
-        chosen ? 'border-ember bg-ember-soft/30' : 'border-border bg-background'
+        chosen ? 'border-lime bg-lime-soft/30' : 'border-border bg-background'
       }`}
       onClick={onChoose}
     >
       <div className="flex items-center justify-between">
-        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-ember' : 'text-muted-foreground'}`}>
+        <span className={`text-[9px] font-bold tracking-widest uppercase ${chosen ? 'text-lime' : 'text-muted-foreground'}`}>
           {label}
         </span>
         {chosen && (
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-            <circle cx="6" cy="6" r="5.5" className="fill-ember" />
+            <circle cx="6" cy="6" r="5.5" className="fill-lime" />
             <path d="M3.5 6l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
@@ -414,7 +391,7 @@ function CommentRow({ c }: { c: CommentPreview }) {
         <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
           <span className="text-[11px] font-medium text-foreground">{author}</span>
           <span className="text-[10px] text-muted-foreground">·</span>
-          <span className="text-[10px] tabular-nums text-ember">{fmtMs(c.timecode_start_ms)}</span>
+          <span className="text-[10px] tabular-nums text-lime">{fmtMs(c.timecode_start_ms)}</span>
           <span className="text-[10px] text-muted-foreground truncate">{c.track_name}</span>
           {c.reply_count > 0 && (
             <span className="text-[10px] text-muted-foreground">· {c.reply_count} repl{c.reply_count !== 1 ? 'ies' : 'y'}</span>
@@ -451,7 +428,7 @@ function CommentChangesSection({
 
       {added.length > 0 && (
         <div className={deleted.length > 0 ? 'mb-2' : ''}>
-          <div className="flex items-center gap-2 bg-ember-soft/40 border border-ember/30 px-3 py-2">
+          <div className="flex items-center gap-2 bg-lime-soft/40 border border-lime/30 px-3 py-2">
             <AutoCheckIcon />
             <span className="text-xs text-foreground flex-1">
               {added.length} comment{added.length !== 1 ? 's' : ''} from version will be added to Master
@@ -459,7 +436,7 @@ function CommentChangesSection({
             <button
               type="button"
               onClick={onToggleAddedDetail}
-              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember"
+              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime"
             >
               {showAddedDetail ? 'Hide ▴' : 'Details ▾'}
             </button>
@@ -479,7 +456,7 @@ function CommentChangesSection({
       {deleted.length > 0 && (
         <div>
           <div className="flex items-center gap-2 bg-surface border border-border px-3 py-2">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 text-ember" aria-hidden>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 text-lime" aria-hidden>
               <path d="M6 2.5V7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               <circle cx="6" cy="9.5" r="0.75" fill="currentColor" />
             </svg>
@@ -489,7 +466,7 @@ function CommentChangesSection({
             <button
               type="button"
               onClick={onToggleDeletedDetail}
-              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember"
+              className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime"
             >
               {showDeletedDetail ? 'Hide ▴' : 'Details ▾'}
             </button>
@@ -780,7 +757,7 @@ export function MergeModal({
       <div className="px-5 pt-5 pb-4 shrink-0 border-b border-border">
         <MergeTitle branchName={preview.branchName} targetName={preview.targetVersionName} />
         {targetSelectorRow()}
-        <p className={`text-xs mt-1 m-0 ${previewLoading ? 'text-muted-foreground' : unresolvedCount > 0 ? 'text-ember' : 'text-muted-foreground'}`}>
+        <p className={`text-xs mt-1 m-0 ${previewLoading ? 'text-muted-foreground' : unresolvedCount > 0 ? 'text-lime' : 'text-muted-foreground'}`}>
           {previewLoading
             ? 'Updating comparison…'
             : unresolvedCount > 0
@@ -814,11 +791,11 @@ export function MergeModal({
               return (
                 <div key={conflict.trackName}>
                   <div className="flex items-center gap-2 mb-3">
-                    <div className={`size-1.5 shrink-0 ${fullyResolved ? 'bg-ember' : 'bg-destructive'}`} />
+                    <div className={`size-1.5 shrink-0 ${fullyResolved ? 'bg-lime' : 'bg-destructive'}`} />
                     <span className="text-sm font-medium text-foreground">{trackTitle(conflict.branchTrack)}</span>
                     <span className={`text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 ml-auto border ${
                       fullyResolved
-                        ? 'border-ember/40 text-ember bg-ember-soft'
+                        ? 'border-lime/40 text-lime bg-lime-soft'
                         : 'border-destructive/40 text-destructive bg-destructive/10'
                     }`}>
                       {fullyResolved ? 'CHOSEN' : badgeLabel}
@@ -887,12 +864,12 @@ export function MergeModal({
               return (
                 <div key={key}>
                   <div className="flex items-center gap-2 mb-2">
-                    <div className={`size-1.5 shrink-0 ${resolved ? 'bg-ember' : 'bg-destructive'}`} />
+                    <div className={`size-1.5 shrink-0 ${resolved ? 'bg-lime' : 'bg-destructive'}`} />
                     <span className="text-sm font-medium text-foreground font-mono tabular-nums">
                       Bars {conflict.startBar + 1}–{conflict.endBar}
                     </span>
                     <span className={`text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 ml-auto border ${
-                      resolved ? 'border-ember/40 text-ember bg-ember-soft' : 'border-destructive/40 text-destructive bg-destructive/10'
+                      resolved ? 'border-lime/40 text-lime bg-lime-soft' : 'border-destructive/40 text-destructive bg-destructive/10'
                     }`}>
                       {resolved ? 'CHOSEN' : 'STRUCTURE OVERLAP'}
                     </span>

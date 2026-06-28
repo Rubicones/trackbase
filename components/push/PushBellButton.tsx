@@ -56,7 +56,7 @@ export function PushBellButton() {
   const icon = status === 'subscribed' ? Bell : status === 'blocked' ? BellOff : Bell
   const iconClass =
     status === 'subscribed'
-      ? 'text-ember fill-ember/20'
+      ? 'text-lime fill-lime/20'
       : status === 'blocked'
         ? 'text-muted-foreground/50'
         : 'text-muted-foreground'
@@ -90,7 +90,7 @@ export function PushBellButton() {
                 ? 'Notifications off'
                 : 'Enable notifications'
           }
-          className="size-8 grid place-items-center border-0 bg-transparent text-muted-foreground hover:text-ember transition cursor-pointer"
+          className="size-8 grid place-items-center border-0 bg-transparent text-muted-foreground hover:text-lime transition cursor-pointer"
         >
           <LucideIcon icon={icon} size={16} className={iconClass} strokeWidth={status === 'subscribed' ? 2 : 1.75} />
         </button>

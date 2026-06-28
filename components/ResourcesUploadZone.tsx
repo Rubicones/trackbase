@@ -166,14 +166,14 @@ export const ResourcesUploadZone = forwardRef<ResourcesUploadZoneHandle, Props>(
           uploadDisabled
             ? 'border-border opacity-50 cursor-not-allowed'
             : dragging
-              ? 'border-ember bg-ember-soft cursor-pointer'
-              : 'border-border hover:border-ember cursor-pointer'
+              ? 'border-lime bg-lime-soft cursor-pointer'
+              : 'border-border hover:border-lime cursor-pointer'
         }`}
       >
         <p className="m-0 leading-relaxed font-mono">
           {uploadDisabled
             ? 'Band storage full (1 GB) — delete tracks or files to upload more'
-            : <>Drag-and-drop WAV / MP3 / MIDI / PDF / DAW — max 200 MB{' · '}<span className="text-ember">browse</span></>}
+            : <>Drag-and-drop WAV / MP3 / MIDI / PDF / DAW — max 200 MB{' · '}<span className="text-lime">browse</span></>}
         </p>
       </div>
       )}

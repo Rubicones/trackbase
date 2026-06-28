@@ -45,7 +45,7 @@ export function RoadmapPreview({
               className={`h-1.5 w-3 ${
                 animate ? 'opacity-0 animate-roadmap-segment' : ''
               } ${
-                state === 'done' ? 'bg-ember/60' : state === 'current' ? 'bg-ember' : 'bg-border'
+                state === 'done' ? 'bg-lime/60' : state === 'current' ? 'bg-lime' : 'bg-border'
               }`}
               style={animate ? { animationDelay: `${animateBaseDelayMs + i * 70}ms` } : undefined}
             />

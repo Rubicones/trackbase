@@ -114,7 +114,7 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
       >
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <IconMic size={16} className="text-ember shrink-0" />
+            <IconMic size={16} className="text-lime shrink-0" />
             <span className="font-display text-sm uppercase tracking-tight text-foreground truncate">
               Lyrics — {projectName}
             </span>
@@ -123,7 +123,7 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="size-8 border border-border grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors shrink-0"
+            className="size-8 border border-border grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition-colors shrink-0"
           >
             <IconX size={14} />
           </button>
@@ -135,7 +135,7 @@ function LyricsEditorModal({ projectId, projectName, initialContent, onSaved, on
             value={text}
             onChange={e => setText(e.target.value)}
             placeholder={'Verse 1\n...\n\nChorus\n...'}
-            className="flex-1 w-full min-h-[360px] max-h-[calc(100vh-260px)] font-mono text-sm leading-relaxed text-foreground bg-background border border-border p-4 resize-y outline-none focus:border-ember placeholder:text-muted-foreground/60"
+            className="flex-1 w-full min-h-[360px] max-h-[calc(100vh-260px)] font-mono text-sm leading-relaxed text-foreground bg-background border border-border p-4 resize-y outline-none focus:border-lime placeholder:text-muted-foreground/60"
           />
         </div>
 
@@ -193,7 +193,7 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-sec)' }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
         >
-          <IconMic size={13} className="text-ember" />
+          <IconMic size={13} className="text-lime" />
           {lyrics?.content?.trim() ? 'Open lyrics' : 'Add lyrics'}
         </button>
         {editorOpen && (
@@ -244,7 +244,7 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
     <>
       {!isDrawer && (
         <div className="flex items-center gap-2 mb-2">
-          <IconMic size={15} className="text-ember shrink-0" />
+          <IconMic size={15} className="text-lime shrink-0" />
           <span className="text-sm font-medium text-foreground flex-1">Lyrics</span>
           <TbButton onClick={() => setEditorOpen(true)}>Edit</TbButton>
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
@@ -290,7 +290,7 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
         <button
           type="button"
           onClick={() => setEditorOpen(true)}
-          className="mt-2 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+          className="mt-2 text-[10px] uppercase tracking-widest text-lime hover:underline bg-transparent border-0 cursor-pointer p-0"
         >
           Edit lyrics →
         </button>
@@ -301,7 +301,7 @@ export function ResourcesLyrics({ projectId, projectName, lyrics, onUpdate, show
         <button
           type="button"
           onClick={() => setExpanded(v => !v)}
-          className="mt-1 text-[10px] uppercase tracking-widest text-ember hover:underline bg-transparent border-0 cursor-pointer p-0"
+          className="mt-1 text-[10px] uppercase tracking-widest text-lime hover:underline bg-transparent border-0 cursor-pointer p-0"
         >
           {expanded ? 'Show less' : `Show more (${lines.length - PREVIEW_LINES} more lines)`}
         </button>

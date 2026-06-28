@@ -126,7 +126,7 @@ export function AvatarDropdown() {
         aria-label="Account menu"
         aria-expanded={open}
         onClick={() => { setOpen(o => !o); if (open) setActiveSection(null) }}
-        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase hover:border-ember transition-colors"
+        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase hover:border-lime transition-colors"
       >
         {triggerInitials}
       </button>

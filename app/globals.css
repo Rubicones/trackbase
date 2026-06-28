@@ -360,8 +360,8 @@ html.dark[data-palette="green"] .theme-avatar {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-ember: var(--ember);
-  --color-ember-soft: var(--ember-soft);
+  --color-lime: var(--lime);
+  --color-lime-soft: var(--lime-soft);
   --color-surface-2: var(--surface-2);
   --color-grid: var(--grid);
   --color-online: var(--online);
@@ -680,10 +680,10 @@ html.dark[data-palette="green"] .theme-avatar {
 
   /* Comment / selection overlays on waveforms */
   .waveform-accent-fill {
-    background: color-mix(in oklab, var(--ember) 15%, transparent);
+    background: color-mix(in oklab, var(--lime) 15%, transparent);
   }
   .waveform-accent-edge {
-    background: var(--ember);
+    background: var(--lime);
   }
   .waveform-accent-label {
     background: var(--accent);
@@ -1897,10 +1897,10 @@ html.dark[data-palette="green"] .theme-avatar {
 }
 
 /* ── Landing page utilities ───────────────────────────────── */
-/* Semantic tokens come from design-system.css (.landing-page = ember-dark).
+/* Semantic tokens come from design-system.css (.landing-page = lime).
  * Tailwind v4 @theme --color-* vars are registered on :root; override them
  * here so text-foreground / text-muted-foreground / bg-background utilities
- * resolve to ember-dark even when <html> uses another theme. */
+ * resolve to lime even when <html> uses another theme. */
 
 html:has(.landing-page) {
   scroll-behavior: smooth;
@@ -1919,42 +1919,45 @@ html:has(.landing-page) body {
 }
 
 .landing-page {
-  --ember-bright: oklch(0.74 0.22 38);
-  --ember-dim: oklch(0.45 0.16 32);
+  --lime-bright: #eaff33;
+  --lime-dim: #b8cc00;
   --wave-violet: oklch(0.72 0.16 295);
   --wave-mint: oklch(0.78 0.16 165);
   --wave-amber: oklch(0.82 0.17 80);
   --wave-coral: oklch(0.75 0.17 25);
   --wave-sky: oklch(0.78 0.13 220);
   --signal: oklch(0.78 0.18 145);
-  /* Tailwind @theme color aliases — literal ember-dark values */
+  /* Tailwind @theme color aliases — literal lime values */
   --color-background: oklch(0.13 0 0);
   --color-foreground: oklch(0.93 0 0);
   --color-card: oklch(0.16 0 0);
   --color-card-foreground: oklch(0.93 0 0);
   --color-popover: oklch(0.16 0 0);
   --color-popover-foreground: oklch(0.93 0 0);
-  --color-primary: oklch(0.68 0.22 35);
-  --color-primary-foreground: oklch(0.98 0 0);
+  --color-primary: #dfff00;
+  --color-primary-foreground: oklch(0.13 0 0);
   --color-secondary: oklch(0.22 0 0);
   --color-secondary-foreground: oklch(0.93 0 0);
   --color-muted: oklch(0.22 0 0);
   --color-muted-foreground: oklch(0.58 0 0);
-  --color-accent: oklch(0.68 0.22 35);
-  --color-accent-foreground: oklch(0.98 0 0);
+  --color-accent: #dfff00;
+  --color-accent-foreground: oklch(0.13 0 0);
   --color-destructive: oklch(0.62 0.22 22);
   --color-destructive-foreground: oklch(0.98 0 0);
   --color-border: oklch(0.26 0 0);
   --color-input: oklch(0.22 0 0);
-  --color-ring: oklch(0.68 0.22 35);
-  --color-ember: oklch(0.68 0.22 35);
-  --color-ember-soft: oklch(0.68 0.22 35 / 0.12);
+  --color-ring: #dfff00;
+  --color-lime: #dfff00;
+  --color-lime-soft: color-mix(in oklch, #dfff00 12%, transparent);
   --color-surface: oklch(0.16 0 0);
   --color-surface-2: oklch(0.19 0 0);
   --surface: oklch(0.16 0 0);
   --bg-surface: oklch(0.16 0 0);
   --color-grid: oklch(0.22 0 0);
   --color-online: oklch(0.78 0.18 145);
+  --primary-foreground: oklch(0.13 0 0);
+  --accent-foreground: oklch(0.13 0 0);
+  --on-accent: oklch(0.13 0 0);
   color: oklch(0.93 0 0);
   background-color: oklch(0.13 0 0);
   color-scheme: dark;
@@ -2013,28 +2016,34 @@ html:has(.landing-page) body {
   }
 }
 
-.landing-page a {
+.landing-page a:not(.bg-lime) {
   color: inherit;
   text-decoration: none;
 }
 
+/* Lime CTAs are <a> tags — must beat unlayered inherit + themed primary-foreground */
+.landing-page a.bg-lime,
+.landing-page button.bg-lime {
+  color: oklch(0.13 0 0);
+}
+
 .landing-page ::selection,
 .landing-page ::-moz-selection {
-  background-color: oklch(0.68 0.22 35);
-  color: oklch(0.98 0 0);
+  background-color: #dfff00;
+  color: oklch(0.13 0 0);
 }
 
 @layer utilities {
   .landing-page .text-foreground { color: oklch(0.93 0 0); }
   .landing-page .text-muted-foreground { color: oklch(0.58 0 0); }
-  .landing-page .text-ember { color: oklch(0.68 0.22 35); }
-  .landing-page .text-primary-foreground { color: oklch(0.98 0 0); }
+  .landing-page .text-lime { color: #dfff00; }
+  .landing-page .text-primary-foreground { color: oklch(0.13 0 0); }
   .landing-page .text-background { color: oklch(0.13 0 0); }
   .landing-page .bg-background { background-color: oklch(0.13 0 0); }
   .landing-page .bg-card { background-color: oklch(0.16 0 0); }
   .landing-page .bg-surface { background-color: oklch(0.16 0 0); }
   .landing-page .bg-surface\/50 { background-color: color-mix(in oklab, oklch(0.16 0 0) 50%, transparent); }
-  .landing-page .bg-ember { background-color: oklch(0.68 0.22 35); }
+  .landing-page .bg-lime { background-color: #dfff00; }
   .landing-page .bg-border { background-color: oklch(0.26 0 0); }
   .landing-page .border-border { border-color: oklch(0.26 0 0); }
   .landing-page .border-border\/50 { border-color: color-mix(in oklab, oklch(0.26 0 0) 50%, transparent); }
@@ -2044,7 +2053,7 @@ html:has(.landing-page) body {
   .landing-page .text-muted-foreground\/50 { color: color-mix(in oklab, oklch(0.58 0 0) 50%, transparent); }
   .landing-page .text-muted-foreground\/80 { color: color-mix(in oklab, oklch(0.58 0 0) 80%, transparent); }
   .landing-page .border-foreground { border-color: oklch(0.93 0 0); }
-  .landing-page .border-ember { border-color: oklch(0.68 0.22 35); }
+  .landing-page .border-lime { border-color: #dfff00; }
 
   /* Scroll-center active state (touch / narrow viewports — set via data-scroll-active) */
   .landing-page [data-scroll-active].landing-hover-surface,
@@ -2053,22 +2062,22 @@ html:has(.landing-page) body {
     background-color: oklch(0.16 0 0);
   }
   .landing-page [data-scroll-active].landing-hover-border {
-    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent);
+    border-color: color-mix(in oklab, #dfff00 60%, transparent);
   }
   .landing-page [data-scroll-active].landing-hover-row {
     border-color: oklch(0.26 0 0);
     background-color: oklch(0.13 0 0);
   }
-  .landing-page [data-scroll-active].landing-hover-ember {
-    background-color: oklch(0.68 0.22 35);
-    color: oklch(0.98 0 0);
+  .landing-page [data-scroll-active].landing-hover-lime {
+    background-color: #dfff00;
+    color: oklch(0.13 0 0);
   }
   .landing-page .landing-new-branch-btn {
-    color: oklch(0.68 0.22 35);
+    color: #dfff00;
   }
   .landing-page .landing-new-branch-btn:hover {
-    background-color: oklch(0.68 0.22 35);
-    color: oklch(0.98 0 0) !important;
+    background-color: #dfff00;
+    color: oklch(0.13 0 0) !important;
   }
   .landing-page .landing-new-branch-btn:hover .landing-new-branch-btn-icon {
     opacity: 1;
@@ -2085,12 +2094,12 @@ html:has(.landing-page) body {
     transform: scaleX(1);
   }
   .landing-page [data-scroll-active] .landing-hover-divider {
-    background: color-mix(in oklab, oklch(0.68 0.22 35) 60%, transparent) !important;
+    background: color-mix(in oklab, #dfff00 60%, transparent) !important;
   }
   .landing-page [data-scroll-active] .landing-hover-icon {
-    border-color: oklch(0.68 0.22 35) !important;
-    background-color: oklch(0.68 0.22 35) !important;
-    color: oklch(0.98 0 0) !important;
+    border-color: #dfff00 !important;
+    background-color: #dfff00 !important;
+    color: oklch(0.13 0 0) !important;
   }
   .landing-page [data-scroll-active] .landing-hover-dot,
   .landing-page .landing-hover-surface:has(.landing-hover-item-text[data-scroll-active]) .landing-hover-dot,
@@ -2106,7 +2115,7 @@ html:has(.landing-page) body {
     border-color: transparent !important;
   }
   .landing-page [data-scroll-active].landing-hover-border-soft {
-    border-color: color-mix(in oklab, oklch(0.68 0.22 35) 40%, transparent);
+    border-color: color-mix(in oklab, #dfff00 40%, transparent);
   }
   .landing-page [data-scroll-active].landing-hover-lift-2,
   .landing-page .landing-hover-lift-2:has(.landing-hover-item-text[data-scroll-active]),
@@ -2131,13 +2140,13 @@ html:has(.landing-page) body {
 }
 
 .font-display-tb {
-  font-family: var(--tb-font-display), system-ui, sans-serif;
+  font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;
 }
 
 .tb-grid-bg-landing {
   background-image:
-    linear-gradient(to right, color-mix(in oklab, oklch(0.68 0.21 35) 6%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklab, oklch(0.68 0.21 35) 6%, transparent) 1px, transparent 1px);
+    linear-gradient(to right, color-mix(in oklab, #dfff00 6%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, #dfff00 6%, transparent) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 

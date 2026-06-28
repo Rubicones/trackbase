@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project } from '@/lib/types'
 
 const menuInputCls =
-  'w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ember'
+  'w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-lime'
 
 const inlineInputCls =
-  'bg-surface border border-ember px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:border-ember tabular-nums'
+  'bg-surface border border-lime px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:border-lime tabular-nums'
 
 export function ProjectMetaFields({
   projectId,
@@ -137,7 +137,7 @@ export function ProjectMetaFields({
           <button
             type="button"
             onClick={() => { setEditingBpm(true); setTimeout(() => bpmRef.current?.select(), 0) }}
-            className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums hover:text-ember transition-colors"
+            className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums hover:text-lime transition-colors"
           >
             {bpm != null ? `${bpm} BPM` : 'Set BPM'}
           </button>
@@ -159,8 +159,8 @@ export function ProjectMetaFields({
           <button
             type="button"
             onClick={() => { setEditingKey(true); setTimeout(() => keyRef.current?.select(), 0) }}
-            className={`text-[10px] uppercase tracking-widest tabular-nums hover:text-ember transition-colors ${
-              keySig ? 'text-ember' : 'text-muted-foreground italic normal-case'
+            className={`text-[10px] uppercase tracking-widest tabular-nums hover:text-lime transition-colors ${
+              keySig ? 'text-lime' : 'text-muted-foreground italic normal-case'
             }`}
           >
             {keySig ?? 'Set key'}
@@ -193,7 +193,7 @@ export function ProjectMetaFields({
             type="button"
             onClick={() => { setEditingBpm(true); setTimeout(() => bpmRef.current?.select(), 0) }}
             className={`font-mono normal-case tracking-normal ${
-              bpm ? 'text-ember' : 'text-muted-foreground/70 italic'
+              bpm ? 'text-lime' : 'text-muted-foreground/70 italic'
             }`}
           >
             {bpm ?? 'set'}

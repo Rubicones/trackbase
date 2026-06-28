@@ -42,7 +42,7 @@ export function MixLoader({
         ) : (
           <div className="h-1 w-full bg-surface-2 overflow-hidden">
             <div
-              className="h-full bg-ember transition-[width] duration-300"
+              className="h-full bg-lime transition-[width] duration-300"
               style={{ width: `${controlledProgress}%` }}
             />
           </div>

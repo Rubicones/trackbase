@@ -99,7 +99,7 @@ function MidiBtn({
   return (
     <button
       type="button"
-      className={`${midiBtnShared} border-border bg-surface text-foreground hover:border-ember hover:text-ember px-3 py-1.5 ${className}`}
+      className={`${midiBtnShared} border-border bg-surface text-foreground hover:border-lime hover:text-lime px-3 py-1.5 ${className}`}
       {...props}
     />
   )
@@ -112,7 +112,7 @@ function MidiBtnPrimary({
   return (
     <button
       type="button"
-      className={`${midiBtnShared} bg-ember text-primary-foreground border-ember px-3 py-1.5 font-bold hover:brightness-110 disabled:opacity-50 ${className}`}
+      className={`${midiBtnShared} bg-lime text-primary-foreground border-lime px-3 py-1.5 font-bold disabled:opacity-50 ${className}`}
       {...props}
     />
   )
@@ -125,7 +125,7 @@ function MidiIconBtn({
   return (
     <button
       type="button"
-      className={`${midiBtnShared} size-7 border-border bg-surface text-foreground hover:border-ember hover:text-ember text-base font-semibold leading-none disabled:opacity-35 ${className}`}
+      className={`${midiBtnShared} size-7 border-border bg-surface text-foreground hover:border-lime hover:text-lime text-base font-semibold leading-none disabled:opacity-35 ${className}`}
       {...props}
     />
   )
@@ -483,11 +483,11 @@ export default function PianoRollEditor({
     }
   }, [totalCanvasW, canvasW, canvasH, sixteenthW, totalSixteenths, timeSigN, timeSigD, isDark, gridCanvasW])
 
-  // Resolve --ember to rgb() for canvas — redraw after theme change
+  // Resolve --lime to rgb() for canvas — redraw after theme change
   useEffect(() => {
     const probe = document.createElement('span')
     probe.style.display = 'none'
-    probe.style.color = 'var(--ember)'
+    probe.style.color = 'var(--lime)'
     document.documentElement.appendChild(probe)
     accentColorRef.current = getComputedStyle(probe).color || 'rgb(232, 93, 58)'
     document.documentElement.removeChild(probe)
@@ -1029,8 +1029,8 @@ export default function PianoRollEditor({
               }}
               className={`text-[10px] uppercase tracking-widest px-3 py-1.5 transition border-r border-border last:border-r-0 ${
                 mode === m
-                  ? 'bg-ember text-white'
-                  : 'text-muted-foreground hover:text-ember hover:bg-ember-soft'
+                  ? 'bg-lime text-primary-foreground'
+                  : 'text-muted-foreground hover:text-lime hover:bg-lime-soft'
               }`}
             >
               {m === 'draw' ? 'Draw' : 'Select'}
@@ -1044,7 +1044,7 @@ export default function PianoRollEditor({
           <select
             value={snap}
             onChange={e => setSnap(e.target.value)}
-            className="bg-surface border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-foreground outline-none focus:border-ember cursor-pointer"
+            className="bg-surface border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-foreground outline-none focus:border-lime cursor-pointer"
           >
             {Object.keys(SNAP_DIVISIONS).map(k => (
               <option key={k} value={k}>{k}</option>
@@ -1078,7 +1078,7 @@ export default function PianoRollEditor({
                       }}
                       className={`block w-full text-left px-4 py-1.5 text-xs transition ${
                         instrument === p.num
-                          ? 'text-ember bg-ember-soft'
+                          ? 'text-lime bg-lime-soft'
                           : 'text-muted-foreground hover:bg-surface hover:text-foreground'
                       }`}
                     >
@@ -1218,7 +1218,7 @@ export default function PianoRollEditor({
                     pointerEvents: 'none',
                     zIndex: 5,
                     background: 'rgba(232, 93, 58, 0.12)',
-                    border: '2px solid var(--ember)',
+                    border: '2px solid var(--lime)',
                     boxSizing: 'border-box',
                   }}
                 />
@@ -1278,7 +1278,7 @@ export default function PianoRollEditor({
                 const v = parseInt(e.target.value)
                 setNotes(prev => prev.map(n => n.id === singleSelected.id ? { ...n, velocity: v } : n))
               }}
-              className="w-20 accent-ember"
+              className="w-20 accent-lime"
             />
             <span className="text-foreground min-w-6 tabular-nums">{singleSelected.velocity}</span>
           </div>

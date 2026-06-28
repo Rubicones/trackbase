@@ -4,13 +4,13 @@ type SpinnerProps = {
   size?: number
   className?: string
   label?: string
-  tone?: 'ember' | 'foreground' | 'muted' | 'white'
+  tone?: 'lime' | 'foreground' | 'muted' | 'white'
 }
 
 /** Brutalist 8-tick rotor — matches trackbase-uikit spinner. */
-export function Spinner({ size = 20, className, label, tone = 'ember' }: SpinnerProps) {
+export function Spinner({ size = 20, className, label, tone = 'lime' }: SpinnerProps) {
   const color =
-    tone === 'ember' ? 'var(--ember)'
+    tone === 'lime' ? 'var(--lime)'
       : tone === 'muted' ? 'var(--muted-foreground)'
       : tone === 'white' ? '#fff'
       : 'var(--foreground)'
@@ -69,7 +69,7 @@ export function SpinnerBars({ count = 5, className }: { count?: number; classNam
       {Array.from({ length: count }).map((_, i) => (
         <span
           key={i}
-          className="w-[3px] bg-ember animate-bars-pulse"
+          className="w-[3px] bg-lime animate-bars-pulse"
           style={{ animationDelay: `${i * 110}ms` }}
         />
       ))}

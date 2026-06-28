@@ -389,9 +389,9 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
         <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
           <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
             isPending
-              ? 'border-ember/50 text-ember'
+              ? 'border-lime/50 text-lime'
               : isOwner
-                ? 'border-ember text-ember'
+                ? 'border-lime text-lime'
                 : 'border-border text-muted-foreground'
           }`}>
             {roleLabel}
@@ -403,7 +403,7 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
                 aria-label="Band options"
                 aria-expanded={menuOpen}
                 onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
-                className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition-colors"
+                className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition-colors"
               >
                 <DotsVIcon />
               </button>
@@ -421,8 +421,8 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
         </div>
       </div>
 
-      <h3 className={`font-display text-xl uppercase tracking-tight m-0 ${
-        isPending ? 'text-muted-foreground' : 'group-hover:text-ember transition-colors'
+      <h3 className={`tb-type-name text-2xl uppercase tracking-tight m-0 ${
+        isPending ? 'text-muted-foreground' : 'group-hover:text-lime transition-colors'
       }`}>
         {band.name}
       </h3>
@@ -434,11 +434,11 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
 
       <div className="mt-5 space-y-3">
         {isPending ? (
-          <div className="text-[10px] text-muted-foreground line-clamp-2 border-l-2 border-ember/60 pl-2 leading-relaxed">
+          <div className="text-[10px] text-muted-foreground line-clamp-2 border-l-2 border-lime/60 pl-2 leading-relaxed">
             Waiting for the owner to approve your join request. You&apos;ll get access once they do.
           </div>
         ) : activityLine ? (
-          <div className="text-[10px] text-muted-foreground line-clamp-1 border-l-2 border-ember/60 pl-2" title={activityLine}>
+          <div className="text-[10px] text-muted-foreground line-clamp-1 border-l-2 border-lime/60 pl-2" title={activityLine}>
             {activityLine}
           </div>
         ) : (
@@ -456,7 +456,7 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
             </div>
             <div className="h-1 bg-surface-2 overflow-hidden">
               <div
-                className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-ember'}`}
+                className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-lime'}`}
                 style={{ width: `${Math.min(storagePct * 100, 100)}%` }}
               />
             </div>
@@ -628,12 +628,12 @@ export default function DashboardPage() {
       <section className="border-b border-border bg-surface/40">
         <div className="mx-auto max-w-7xl px-6 py-10 grid lg:grid-cols-[1fr_auto] gap-8 items-end">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-ember font-bold mb-2">/ HOME BASE</div>
-            <h1 className="font-display text-4xl sm:text-6xl uppercase tracking-tighter m-0 leading-none">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-lime font-bold mb-2">/ HOME BASE</div>
+            <h1 className="tb-type-name text-4xl sm:text-6xl uppercase tracking-tighter m-0 leading-none">
               {timeGreeting()},{' '}
               {heroLoading
                 ? <Skeleton width={220} height={44} className="inline-block align-middle" />
-                : <span className="text-ember">{displayName(profile?.username)}</span>}
+                : <span className="text-lime">{displayName(profile?.username)}</span>}
             </h1>
             {heroLoading ? (
               <Skeleton width="60%" height={14} className="mt-3" />
@@ -671,7 +671,7 @@ export default function DashboardPage() {
       {/* Search + filters + new band */}
       <section className="border-b border-border">
         <div className="mx-auto max-w-7xl px-6 py-4 flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
-          <div className="flex-1 flex items-center border border-border bg-surface/60 px-3 h-10 focus-within:border-ember transition-colors">
+          <div className="flex-1 flex items-center border border-border bg-surface/60 px-3 h-10 focus-within:border-lime transition-colors">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground mr-3 shrink-0">SEARCH</span>
             <input
               ref={searchRef}
@@ -696,8 +696,8 @@ export default function DashboardPage() {
                   }}
                   className={`px-4 h-10 text-[10px] uppercase tracking-widest border border-border -ml-px first:ml-0 transition-colors whitespace-nowrap ${
                     filter === id
-                      ? 'bg-ember text-white border-ember z-[1] relative'
-                      : 'bg-background text-foreground hover:border-ember hover:text-ember'
+                      ? 'bg-lime text-primary-foreground border-lime z-[1] relative'
+                      : 'bg-background text-foreground hover:border-lime hover:text-lime hover:relative hover:z-[1]'
                   }`}
                 >
                   {label}
@@ -743,7 +743,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setSortOpen(open => !open)}
-                  className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember transition-colors"
+                  className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime transition-colors"
                   aria-expanded={sortOpen}
                   aria-haspopup="listbox"
                 >
@@ -796,9 +796,9 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={openNewBandModal}
-                    className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-ember hover:bg-surface transition-colors min-h-[200px]"
+                    className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-lime hover:bg-surface transition-colors min-h-[200px]"
                   >
-                    <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-ember">+</div>
+                    <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-lime">+</div>
                     <div className="font-display text-sm uppercase tracking-widest">Create new band</div>
                     <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
                   </button>

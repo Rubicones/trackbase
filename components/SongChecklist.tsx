@@ -120,7 +120,7 @@ function AssigneePicker({
     <span className="relative inline-flex">
       <button
         onClick={() => setOpen(o => !o)}
-        className="inline-flex items-center gap-1 hover:text-ember transition"
+        className="inline-flex items-center gap-1 hover:text-lime transition"
         title="Assign band member"
       >
         <IconUser />
@@ -198,10 +198,10 @@ function ChecklistRow({
         disabled={readOnly}
         className={`shrink-0 mt-0.5 size-4 border grid place-items-center transition ${
           item.done
-            ? 'bg-ember border-ember text-white'
+            ? 'bg-lime border-lime text-primary-foreground'
             : readOnly
             ? 'border-border cursor-default'
-            : 'border-border hover:border-ember cursor-pointer'
+            : 'border-border hover:border-lime cursor-pointer'
         }`}
         aria-label={item.done ? 'Mark as not done' : 'Mark as done'}
       >
@@ -219,7 +219,7 @@ function ChecklistRow({
               if (e.key === 'Enter') saveEdit()
               if (e.key === 'Escape') { setDraft(item.text); setEditing(false) }
             }}
-            className="w-full bg-surface border border-ember px-2 py-1 text-xs focus:outline-none"
+            className="w-full bg-surface border border-lime px-2 py-1 text-xs focus:outline-none"
           />
         ) : (
           <div className={`text-xs leading-snug ${item.done ? 'line-through text-muted-foreground' : ''}`}>
@@ -249,7 +249,7 @@ function ChecklistRow({
           {!editing && (
             <button
               onClick={() => { setDraft(item.text); setEditing(true) }}
-              className="size-6 border border-border grid place-items-center hover:border-ember hover:text-ember transition"
+              className="size-6 border border-border grid place-items-center hover:border-lime hover:text-lime transition"
               aria-label="Edit task"
               title="Edit"
             >
@@ -305,7 +305,7 @@ function AddRow({
       onSubmit={submit}
       className="border-t border-border px-3 py-2 flex items-center gap-2 bg-background/40"
     >
-      <span className="size-5 border border-dashed border-ember/60 text-ember grid place-items-center shrink-0">
+      <span className="size-5 border border-dashed border-lime/60 text-lime grid place-items-center shrink-0">
         <IconPlus size={10} />
       </span>
       <input
@@ -332,7 +332,7 @@ function AddRow({
       <button
         type="submit"
         disabled={!text.trim()}
-        className="text-[10px] uppercase tracking-widest bg-ember text-white px-2.5 py-1 disabled:opacity-30 disabled:cursor-not-allowed hover:brightness-110"
+        className="text-[10px] uppercase tracking-widest bg-lime text-primary-foreground px-2.5 py-1 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         Add
       </button>
@@ -400,7 +400,7 @@ export function SongChecklist({
                 onClick={() => setFilter(f)}
                 className={`text-[9px] uppercase tracking-widest px-2 py-1 border-b-2 transition ${
                   filter === f
-                    ? 'border-ember text-foreground'
+                    ? 'border-lime text-foreground'
                     : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
               >

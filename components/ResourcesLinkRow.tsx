@@ -268,7 +268,7 @@ export function ResourcesLinkRow({
         {...rowHandlers}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="w-7 shrink-0 flex items-center justify-center text-ember">
+          <span className="w-7 shrink-0 flex items-center justify-center text-lime">
             <IconLink size={13} />
           </span>
           <span className="flex-1 truncate min-w-0 text-sm font-medium text-foreground">{getDisplayTitle(resource)}</span>
@@ -306,7 +306,7 @@ export function ResourcesLinkRow({
               href={resource.url ?? '#'}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-muted-foreground truncate hover:text-ember no-underline block text-xs"
+              className="text-muted-foreground truncate hover:text-lime no-underline block text-xs"
             >
               {resource.url}
             </a>

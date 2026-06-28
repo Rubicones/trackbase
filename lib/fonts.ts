@@ -1,8 +1,8 @@
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google'
+import { Archivo, JetBrains_Mono } from 'next/font/google'
 
-export const spaceGrotesk = Space_Grotesk({
+export const archivo = Archivo({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  weight: ['400', '500', '600', '700', '800'],
   variable: '--tb-font-display',
   display: 'swap',
 })
@@ -14,4 +14,4 @@ export const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
 })
 
-export const fontVariables = `${spaceGrotesk.variable} ${jetbrainsMono.variable}`
+export const fontVariables = `${archivo.variable} ${jetbrainsMono.variable}`

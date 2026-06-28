@@ -5,6 +5,7 @@ import { ChordDurationPicker } from '@/components/ChordDurationPicker'
 import {
   filterChordInputChar,
   formatBarDuration,
+  isValidChordName,
   parseChordsString,
   serializeChords,
   type ParsedChord,
@@ -30,17 +31,18 @@ function ChordChip({
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
   compact?: boolean
 }) {
-  const size = compact ? 'size-7' : 'size-8'
   const showDuration = Math.abs(chord.duration - 1) >= 0.001
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`${size} shrink-0 border border-border bg-surface flex flex-col items-center justify-center hover:border-foreground/40 transition`}
+      className={`shrink-0 border border-border bg-surface flex flex-col items-center justify-center hover:border-foreground/40 transition px-1.5 ${
+        compact ? 'min-h-7 py-0.5' : 'min-h-8 py-0.5'
+      }`}
       title={showDuration ? `${chord.name} · ${formatBarDuration(chord.duration)} bars` : chord.name}
     >
-      <span className={`font-bold leading-none ${compact ? 'text-[10px]' : 'text-[11px]'} text-foreground/90`}>
+      <span className={`font-bold leading-none whitespace-nowrap ${compact ? 'text-[10px]' : 'text-[11px]'} text-foreground/90`}>
         {chord.name}
       </span>
       {showDuration && (
@@ -74,7 +76,10 @@ function InactiveInsertSlot({
         type="button"
         tabIndex={-1}
         disabled={disabled}
-        onClick={onActivate}
+        onPointerDown={e => {
+          e.preventDefault()
+          if (!disabled) onActivate()
+        }}
         aria-label="Place cursor here"
         className="absolute top-0 bottom-0 -left-1.5 -right-1.5 z-[1] disabled:pointer-events-none"
       />
@@ -135,12 +140,12 @@ export function ChordInput({
 
   const focusCursor = useCallback((index: number) => {
     setCursorIndex(index)
-    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
+    inputRef.current?.focus({ preventScroll: true })
   }, [])
 
   function commitDraft(nameOverride?: string) {
     const name = (nameOverride ?? draftRef.current).trim()
-    if (!name || !/^[A-Za-z0-9#]+$/.test(name)) return
+    if (!name || !isValidChordName(name)) return
 
     const insertAt = cursorIndexRef.current
     const next = [
@@ -195,6 +200,11 @@ export function ChordInput({
       e.preventDefault()
       skipNextInputRef.current = true
       commitDraft()
+      // preventDefault stops onChange on some browsers; clear the skip flag so the
+      // next chord's first character is not swallowed.
+      queueMicrotask(() => {
+        skipNextInputRef.current = false
+      })
       return
     }
 
@@ -227,7 +237,6 @@ export function ChordInput({
     const raw = e.target.value
     // Mobile soft keyboards insert space via onChange, not keydown.
     if (/\s/.test(raw)) {
-      skipNextInputRef.current = true
       const name = raw.split(/\s/)[0].split('').map(filterChordInputChar).join('')
       if (name) commitDraft(name)
       else setDraft('')

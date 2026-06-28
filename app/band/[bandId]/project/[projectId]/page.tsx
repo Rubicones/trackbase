@@ -9,6 +9,7 @@ import type { TrackComment, CommentReply, Track, Version, Project, Section, Midi
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
+import { allTracksLoaded } from '@/lib/transportStatus'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
@@ -27,6 +28,7 @@ import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
+import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 import { MobileExperience } from '@/components/MobileExperience'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
@@ -316,9 +318,9 @@ function TbBtn({
 }) {
   const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5'
   const styles = {
-    ghost: 'border border-border text-muted-foreground hover:border-ember hover:text-ember px-3 py-1.5',
-    primary: 'bg-ember text-white border border-ember px-3 py-1.5 font-bold hover:brightness-110',
-    solid: 'bg-foreground text-background px-3 py-1.5 font-bold hover:bg-ember',
+    ghost: 'border border-border text-muted-foreground hover:border-lime hover:text-lime px-3 py-1.5',
+    primary: 'bg-lime text-primary-foreground border border-lime px-3 py-1.5 font-display font-bold',
+    solid: 'bg-foreground text-background px-3 py-1.5 font-bold hover:bg-lime',
   }
   return (
     <button type="button" className={`${base} ${styles[variant]} ${className}`} {...props}>
@@ -405,7 +407,7 @@ function CommentTooltip({
         <div className="flex items-center gap-2 mb-1">
           <UserAvatar seed={author} size={18} kind="user" />
           <span className="text-[11px] text-foreground truncate">{author}</span>
-          <span className="text-[10px] tabular-nums text-ember shrink-0">
+          <span className="text-[10px] tabular-nums text-lime shrink-0">
             {fmtMs(comment.timecode_start_ms)} → {fmtMs(comment.timecode_end_ms)}
           </span>
           {canDelete && (
@@ -438,7 +440,7 @@ function CommentTooltip({
               <button
                 type="button"
                 onClick={() => setShowAllReplies(true)}
-                className="text-[10px] uppercase tracking-widest text-ember hover:underline"
+                className="text-[10px] uppercase tracking-widest text-lime hover:underline"
               >
                 Show {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
               </button>
@@ -495,8 +497,8 @@ function CommentToggleBtn({
       aria-pressed={active}
       className={`${className} border grid place-items-center transition shrink-0 relative ${
         active
-          ? 'border-ember bg-ember text-white'
-          : 'border-border bg-surface-2 text-muted-foreground hover:border-ember hover:text-ember'
+          ? 'border-lime bg-lime text-primary-foreground'
+          : 'border-border bg-surface-2 text-muted-foreground hover:border-lime hover:text-lime'
       }`}
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -508,7 +510,7 @@ function CommentToggleBtn({
         />
       </svg>
       {!active && count > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-ember text-white text-[8px] font-bold leading-[14px] text-center">
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-lime text-primary-foreground text-[8px] font-bold leading-[14px] text-center">
           {count > 9 ? '9+' : count}
         </span>
       )}
@@ -691,7 +693,7 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
             <span className="text-[11px] text-foreground">{currentUser.username}</span>
           </div>
         )}
-        <div className="text-[10px] tabular-nums text-ember mb-2">
+        <div className="text-[10px] tabular-nums text-lime mb-2">
           {fmtMs(startMs)} → {fmtMs(endMs)}
         </div>
         <input
@@ -764,7 +766,7 @@ function Waveform({
   commentMode, comments, activeInput, audioReady,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
   currentUserId, isOwner, onReplyCreate, currentUser, onCommentInteractionChange,
-  compact = false, barCount = 96,
+  compact = false, barCount = 96, interactionsEnabled = true,
 }: {
   trackId: string; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
@@ -782,6 +784,7 @@ function Waveform({
   /** How many bars to render. Scale this proportionally to the clip's share of the timeline
    *  so each bar stays ~12 px wide regardless of clip length. Defaults to 96. */
   barCount?: number
+  interactionsEnabled?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const barsRef = useRef<number[]>([])
@@ -894,7 +897,7 @@ function Waveform({
   }, [])
 
   function handleDragStart(clientX: number) {
-    if (!commentMode) return
+    if (!interactionsEnabled || !commentMode) return
     const pct = getXPercent(clientX)
     dragRef.current = { active: true, startPct: pct, currentPct: pct }
     setDragRect({ startX: pct, endX: pct })
@@ -935,54 +938,34 @@ function Waveform({
 
   const dragSpan = dragRect ? Math.abs(dragRect.endX - dragRect.startX) : 0
 
-  // Downsample 96-bar buffer to the requested bar count so bars stay visually wide
-  // even when a short clip occupies only a small slice of the timeline.
   const displayCount = Math.max(4, barCount)
-  function downsample(src: number[], n: number): number[] {
-    if (src.length <= n) return src
-    const out: number[] = []
-    const step = src.length / n
-    for (let i = 0; i < n; i++) {
-      const s = Math.floor(i * step)
-      const e = Math.min(src.length, Math.floor((i + 1) * step))
-      let peak = 0
-      for (let j = s; j < e; j++) peak = Math.max(peak, src[j])
-      out.push(peak)
-    }
-    return out
-  }
   const bars = ready
-    ? downsample(barsRef.current, displayCount)
-    : Array.from({ length: displayCount }, () => 0.12)
+    ? downsampleWaveformBars(barsRef.current, displayCount)
+    : Array.from({ length: displayCount }, () => 0.15)
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-visible px-1 py-2"
-      style={{ cursor, userSelect: 'none', WebkitUserSelect: 'none', touchAction: commentMode ? 'none' : 'auto' } as React.CSSProperties}
+      className={`relative w-full h-full overflow-visible px-1 py-2${interactionsEnabled ? '' : ' pointer-events-none'}`}
+      style={{ cursor: interactionsEnabled ? cursor : 'default', userSelect: 'none', WebkitUserSelect: 'none', touchAction: commentMode ? 'none' : 'auto' } as React.CSSProperties}
       onMouseDown={handleMouseDown}
       onMouseMove={commentMode ? handleMouseMove : undefined}
       onTouchStart={commentMode ? handleTouchStart : undefined}
       onTouchMove={commentMode ? handleTouchMove : undefined}
     >
-      <div className="absolute inset-x-1 top-2 bottom-2 flex items-center gap-px z-[1]">
-        {bars.map((h, i) => (
-          <div
-            key={i}
-            className={`flex-1 min-w-0 ${ready ? 'animate-draw-wave' : ''}`}
-            style={{
-              height: `${Math.max(8, h * 100)}%`,
-              background: color,
-              opacity: 0.4,
-              animationDelay: ready ? `${i * 4}ms` : undefined,
-            }}
-          />
-        ))}
+      <div className="absolute inset-x-1 top-2 bottom-2 z-[1]">
+        <WaveformBarRow
+          bars={bars}
+          color={color}
+          progress={ready ? 1 : 0}
+          className="h-full"
+          animate={ready}
+        />
       </div>
 
       {commentMode && !dragRect && (
-        <div className="absolute inset-0 z-[2] pointer-events-none bg-ember/5 border border-dashed border-ember/40 grid place-items-center">
-          <div className={`uppercase tracking-widest text-ember bg-background/90 border border-ember/40 ${
+        <div className="absolute inset-0 z-[2] pointer-events-none bg-lime/5 border border-dashed border-lime/40 grid place-items-center">
+          <div className={`uppercase tracking-widest text-lime bg-background/90 border border-lime/40 ${
             compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1'
           }`}>
             {compact ? 'Tap & drag' : 'Click-drag to comment'}
@@ -2218,7 +2201,7 @@ function TrackLetterBtn({
         onClick={onClick}
         disabled={disabled}
         className={`size-5 border text-[9px] font-medium grid place-items-center transition uppercase disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
-          active && activeClass ? activeClass : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+          active && activeClass ? activeClass : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
         }`}
       >
         {letter}
@@ -2241,7 +2224,7 @@ function ActionButton({
   const className = `size-5 border text-[9px] font-medium grid place-items-center transition uppercase ${
     danger
       ? 'border-border text-muted-foreground hover:border-destructive hover:text-destructive hover:bg-destructive/10'
-      : 'border-border text-muted-foreground hover:border-ember hover:text-ember hover:bg-ember-soft'
+      : 'border-border text-muted-foreground hover:border-lime hover:text-lime hover:bg-lime-soft'
   }`
 
   return (
@@ -2267,7 +2250,7 @@ function TrackIconBtn({
   const className = `size-5 border grid place-items-center transition ${
     danger
       ? 'border-border text-muted-foreground hover:border-destructive hover:text-destructive'
-      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
   }`
 
   return (
@@ -2360,7 +2343,7 @@ function TrackColorPicker({ trackId, initialColor, onApply, onClose }: {
             key={c}
             type="button"
             onClick={() => setColor(c)}
-            className={`size-6 rounded-sm transition-transform ${color === c ? 'ring-2 ring-ember ring-offset-1 ring-offset-background scale-110' : 'hover:scale-105'}`}
+            className={`size-6 rounded-sm transition-transform ${color === c ? 'ring-2 ring-lime ring-offset-1 ring-offset-background scale-110' : 'hover:scale-105'}`}
             style={{ background: c }}
             aria-label={`Color ${c}`}
           />
@@ -2379,7 +2362,7 @@ function TrackColorPicker({ trackId, initialColor, onApply, onClose }: {
         <button
           type="button"
           onClick={onClose}
-          className="text-[10px] uppercase tracking-widest border border-border px-2 py-1 text-muted-foreground hover:border-ember hover:text-ember"
+          className="text-[10px] uppercase tracking-widest border border-border px-2 py-1 text-muted-foreground hover:border-lime hover:text-lime"
         >
           Cancel
         </button>
@@ -2387,7 +2370,7 @@ function TrackColorPicker({ trackId, initialColor, onApply, onClose }: {
           type="button"
           onClick={handleApply}
           disabled={saving}
-          className="text-[10px] uppercase tracking-widest bg-ember text-white px-2 py-1 font-bold disabled:opacity-60"
+          className="text-[10px] uppercase tracking-widest bg-lime text-primary-foreground px-2 py-1 font-bold disabled:opacity-60"
         >
           {saving ? '…' : 'Apply'}
         </button>
@@ -2405,6 +2388,7 @@ const TrackRow = React.memo(function TrackRow({
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging, waveformDimmed,
+  waveformsInteractive = true,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
   timelineDurationMs, onTrackDuration, waitForMidiRender,
@@ -2432,6 +2416,8 @@ const TrackRow = React.memo(function TrackRow({
   otherTrackDragging: boolean
   /** Dim waveform row like offset-drag when muted or ducked by solo. */
   waveformDimmed: boolean
+  /** False while audio/MIDI tracks are still loading — blocks offset & comment drag. */
+  waveformsInteractive: boolean
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
@@ -2597,7 +2583,7 @@ const TrackRow = React.memo(function TrackRow({
 
   // Drag-to-offset handlers (mouse + touch)
   function startOffsetDrag(clientX: number) {
-    if (commentMode || commentUiActiveRef.current) return
+    if (!waveformsInteractive || commentMode || commentUiActiveRef.current) return
     dragStartXRef.current = clientX
     dragMovedRef.current = false
     origStartBarRef.current = track.start_bar ?? 0
@@ -2779,7 +2765,9 @@ const TrackRow = React.memo(function TrackRow({
       ref={trackRowRef}
       data-track-row={track.id}
       className={`relative flex group/track hover:bg-surface/30 overflow-visible border-b border-border ${
-        resourceFilterActive ? 'bg-ember-soft/40 ring-1 ring-inset ring-ember/40' : ''
+        showColorPicker ? 'z-30' : ''
+      } ${
+        resourceFilterActive ? 'bg-lime-soft/40 ring-1 ring-inset ring-lime/40' : ''
       }`}
       style={{
         minHeight: rowH,
@@ -2810,7 +2798,7 @@ const TrackRow = React.memo(function TrackRow({
         }}
       >
         <div className="flex items-start gap-2 min-w-0">
-          <div className="relative shrink-0">
+          <div className={`relative shrink-0 ${showColorPicker ? 'z-50' : ''}`}>
             <button
               type="button"
               onClick={() => setShowColorPicker(p => !p)}
@@ -2840,19 +2828,19 @@ const TrackRow = React.memo(function TrackRow({
                   if (e.key === 'Escape') { setEditing(false) }
                 }}
                 onBlur={commitRename}
-                className="w-full bg-background border border-ember px-1.5 py-0.5 text-xs uppercase outline-none"
+                className="w-full bg-background border border-lime px-1.5 py-0.5 text-xs uppercase outline-none"
               />
             ) : (
               <div className="flex items-center gap-1 min-w-0" onDoubleClick={startEdit}>
                 <div
-                  className={`text-xs font-bold uppercase tracking-tight truncate transition-colors ${
-                    nameFlash ? 'text-ember' : 'text-foreground'
+                  className={`tb-type-name text-sm uppercase tracking-tight truncate transition-colors ${
+                    nameFlash ? 'text-lime' : 'text-foreground'
                   }`}
                 >
                   {displayName}
                 </div>
                 {isMidi && (
-                  <span className="text-[8px] uppercase tracking-widest text-ember border border-ember/40 px-1 shrink-0">
+                  <span className="text-[8px] uppercase tracking-widest text-lime border border-lime/40 px-1 shrink-0">
                     MIDI
                   </span>
                 )}
@@ -2891,7 +2879,7 @@ const TrackRow = React.memo(function TrackRow({
             letter="M"
             tooltip={midiRendering ? 'Rendering audio…' : 'Mute'}
             active={muted}
-            activeClass="bg-ember text-white border-ember"
+            activeClass="bg-lime text-primary-foreground border-lime"
             onClick={onToggleMute}
             disabled={midiRendering}
           />
@@ -2906,7 +2894,7 @@ const TrackRow = React.memo(function TrackRow({
             <button
               type="button"
               onClick={() => setPianoRollOpen(p => !p)}
-              className="text-[9px] uppercase tracking-widest border border-border text-muted-foreground hover:border-ember hover:text-ember px-1.5 py-0.5 transition"
+              className="text-[9px] uppercase tracking-widest border border-border text-muted-foreground hover:border-lime hover:text-lime px-1.5 py-0.5 transition"
             >
               {pianoRollOpen ? 'Close' : 'Edit'}
             </button>
@@ -2918,7 +2906,7 @@ const TrackRow = React.memo(function TrackRow({
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(false)}
-                  className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition"
+                  className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition"
                 >
                   No
                 </button>
@@ -2962,7 +2950,7 @@ const TrackRow = React.memo(function TrackRow({
             totalBars={totalBars}
             barDurationMs={barDurationMsRow}
             totalDurationMs={timelineDurationMs}
-            interactive
+            interactive={waveformsInteractive}
             onTactClick={bar => { void snapStartBar(bar) }}
           />
         )}
@@ -2979,7 +2967,8 @@ const TrackRow = React.memo(function TrackRow({
           height: '100%',
           minHeight: rowH,
           opacity: waveformOpacity,
-          cursor: isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
+          cursor: !waveformsInteractive ? 'default' : isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
+          pointerEvents: waveformsInteractive ? 'auto' : 'none',
           borderLeft: effectiveStartBar !== 0 ? '1px solid var(--border)' : 'none',
           zIndex: 1,
           transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out, opacity 0.15s',
@@ -3039,6 +3028,7 @@ const TrackRow = React.memo(function TrackRow({
                 currentUser={currentUser}
                 onCommentInteractionChange={handleCommentInteractionChange}
                 compact={compact}
+                interactionsEnabled={waveformsInteractive}
               />
           )}
       </div>
@@ -3050,13 +3040,13 @@ const TrackRow = React.memo(function TrackRow({
             className="absolute top-0 h-full pointer-events-none z-20"
             style={{ left: clipLayout.left, width: 0, minHeight: rowH }}
           >
-            <div className="absolute top-0 bottom-0 w-px bg-ember" />
+            <div className="absolute top-0 bottom-0 w-px bg-lime" />
           </div>
           <span
             ref={snapBarLabelRef}
             className="absolute top-1 z-20 pointer-events-none text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px"
             style={{
-              background: 'var(--ember)',
+              background: 'var(--lime)',
               color: '#fff',
               lineHeight: '1.3',
             }}
@@ -3215,8 +3205,8 @@ const TransportToggle = memo(function TransportToggle({
         aria-label={tooltip}
         className={`h-7 px-2 border text-[9px] font-bold uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground ${
           active
-            ? 'border-ember bg-ember text-white'
-            : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+            ? 'border-lime bg-lime text-primary-foreground'
+            : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
         }`}
       >
         {label}
@@ -3281,6 +3271,7 @@ function MasterPlayerBar({
   }
 
   function startDrag(clientX: number) {
+    if (isLoading) return
     draggingRef.current = true
     seekPreviewRef.current = clientXToPct(clientX) * durationRef.current
   }
@@ -3331,7 +3322,7 @@ function MasterPlayerBar({
           type="button"
           onClick={(playing || isCounting) ? onPause : onPlay}
           disabled={duration <= 0 || isLoading}
-          className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          className="size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
         >
           {isLoading ? (
@@ -3342,7 +3333,7 @@ function MasterPlayerBar({
         </button>
         <div
           ref={barRef}
-          className="flex-1 min-w-0 h-1 bg-surface-2 relative cursor-pointer select-none"
+          className={`flex-1 min-w-0 h-1 bg-surface-2 relative select-none ${isLoading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
           onMouseDown={e => startDrag(e.clientX)}
           onMouseMove={e => moveDrag(e.clientX)}
           onMouseUp={commitDrag}
@@ -3351,7 +3342,7 @@ function MasterPlayerBar({
           onTouchMove={e => moveDrag(e.touches[0].clientX)}
           onTouchEnd={commitDrag}
         >
-          <div ref={fillRefC} className="absolute inset-y-0 left-0 bg-ember" style={{ width: '0%' }} />
+          <div ref={fillRefC} className="absolute inset-y-0 left-0 bg-lime" style={{ width: '0%' }} />
           <div ref={cursorRefC} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
         </div>
         <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 w-[4.5rem] text-right">
@@ -3369,7 +3360,7 @@ function MasterPlayerBar({
           type="button"
           onClick={(playing || isCounting) ? onPause : onPlay}
           disabled={duration <= 0 || isLoading}
-          className="size-10 bg-ember text-white grid place-items-center hover:brightness-110 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          className="size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
         >
           {isLoading ? (
@@ -3386,13 +3377,13 @@ function MasterPlayerBar({
 
       <div
         ref={barRef}
-        className="flex-1 min-w-[200px] h-2 bg-surface-2 relative cursor-pointer select-none"
+        className={`flex-1 min-w-[200px] h-2 bg-surface-2 relative select-none ${isLoading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
         onMouseDown={e => startDrag(e.clientX)}
         onMouseMove={e => moveDrag(e.clientX)}
         onMouseUp={commitDrag}
         onMouseLeave={commitDrag}
       >
-        <div ref={fillRef} className="absolute inset-y-0 left-0 bg-ember" style={{ width: '0%' }} />
+        <div ref={fillRef} className="absolute inset-y-0 left-0 bg-lime" style={{ width: '0%' }} />
         <div ref={cursorRef} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
       </div>
 
@@ -3405,7 +3396,7 @@ function MasterPlayerBar({
           step={0.01}
           value={volume}
           onChange={e => onVolume(parseFloat(e.target.value))}
-          className="w-24 accent-ember"
+          className="w-24 accent-lime"
         />
         <span className="text-[10px] text-muted-foreground tabular-nums w-8">{Math.round(volume * 100)}</span>
       </div>
@@ -3514,12 +3505,20 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
           <SectionLabel>VERSION HISTORY</SectionLabel>
           <button
             type="button"
+            role="checkbox"
+            aria-checked={hideMerged}
             onClick={() => setHideMerged(v => !v)}
-            className={`w-full text-left mt-1.5 text-[9px] uppercase tracking-widest transition ${
-              hideMerged ? 'text-ember' : 'text-muted-foreground hover:text-foreground'
-            }`}
+            className="flex items-center gap-2 mt-1.5 cursor-pointer select-none bg-transparent border-0 p-0 text-left"
           >
-            {hideMerged ? 'Show applied' : 'Hide non-active'}
+            <span
+              className={`size-2 shrink-0 rounded-none border transition-colors ${
+                hideMerged ? 'bg-lime border-lime' : 'bg-transparent border-border'
+              }`}
+              aria-hidden
+            />
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground">
+              Hide applied
+            </span>
           </button>
         </div>
 
@@ -3536,7 +3535,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                   type="button"
                   onClick={() => onSelect(v!.id)}
                   className={`group w-full text-left flex items-center gap-2 px-1.5 py-0.5 transition-colors ${
-                    isActive ? 'bg-ember/10' : 'hover:bg-surface-2'
+                    isActive ? 'bg-lime/10' : 'hover:bg-surface-2'
                   }`}
                 >
                   {/* Square indicator */}
@@ -3545,7 +3544,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                     style={{
                       width: 8, height: 8, borderRadius: 1,
                       background: isActive
-                        ? 'var(--ember)'
+                        ? 'var(--lime)'
                         : v!.merged_at
                           ? 'var(--color-online)'
                           : 'var(--border)',
@@ -3593,7 +3592,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
               type="button"
               onClick={() => !isChecking && onMerge(activeId)}
               disabled={isChecking}
-              className="w-full text-left border border-ember/50 text-ember bg-ember-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-ember/20 transition disabled:opacity-50"
+              className="w-full text-left border border-lime/50 text-lime bg-lime-soft py-2 px-3 uppercase tracking-widest text-[10px] hover:bg-lime/20 transition disabled:opacity-50"
             >
               {isChecking ? 'Checking…' : 'Apply version →'}
             </button>
@@ -3604,7 +3603,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
               type="button"
               onClick={action}
               data-tour="new-branch-button"
-              className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember transition flex items-center gap-2"
+              className="w-full text-left border border-border px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition flex items-center gap-2"
             >
               <span>{icon}</span>
               {label}
@@ -3645,7 +3644,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
         {compact ? (
           <div className="text-[10px] tabular-nums mt-1 text-muted-foreground truncate">
             {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
-            <span className={`ml-2 ${storageFull ? 'text-destructive' : storagePct > 95 ? 'text-destructive' : 'text-ember'}`}>
+            <span className={`ml-2 ${storageFull ? 'text-destructive' : storagePct > 95 ? 'text-destructive' : 'text-lime'}`}>
               {Math.round(storagePct)}%
             </span>
           </div>
@@ -3656,7 +3655,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
             </div>
             <div className="h-1 bg-surface-2 mt-1 overflow-hidden">
               <div
-                className={`h-full transition-all ${storageFull || storagePct > 95 ? 'bg-destructive' : 'bg-ember'}`}
+                className={`h-full transition-all ${storageFull || storagePct > 95 ? 'bg-destructive' : 'bg-lime'}`}
                 style={{ width: `${storagePct}%` }}
               />
             </div>
@@ -3716,7 +3715,7 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
               onChange={e => setName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && name.trim()) advanceToTag(); if (e.key === 'Escape') onCancel() }}
               placeholder="feature/new-guitar"
-              className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
+              className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-lime placeholder:text-muted-foreground/60 mb-4"
             />
             <div className="flex gap-2 justify-end">
               <TbBtn onClick={onCancel}>Cancel</TbBtn>
@@ -3764,7 +3763,7 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
                 onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setSelectedTag(null) }}
                 placeholder="e.g. vocals-rewrite"
                 maxLength={20}
-                className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-ember placeholder:text-muted-foreground/60 mb-4"
+                className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-lime placeholder:text-muted-foreground/60 mb-4"
               />
             )}
             <div className="flex gap-2 justify-between">
@@ -3805,7 +3804,7 @@ function MobilePortraitSkeleton() {
       {/* Slim top bar — matches MobileExperience header */}
       <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
         <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span className="font-display text-sm font-bold tracking-tight text-ember shrink-0">TRACKBASE</span>
+          <span className="font-display text-sm font-bold tracking-tight text-lime shrink-0">TRACKBASE</span>
           <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
             <span className="shrink-0">Bands</span>
             <span className="text-border shrink-0">/</span>
@@ -3821,7 +3820,7 @@ function MobilePortraitSkeleton() {
       {/* Mode switch bar — matches MobileExperience mode tabs */}
       <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
         <div className="grid grid-cols-2 border border-border bg-background">
-          <div className="py-2.5 bg-ember text-white text-[10px] font-bold uppercase tracking-widest flex items-center justify-center">
+          <div className="py-2.5 bg-lime text-primary-foreground text-[10px] font-bold uppercase tracking-widest flex items-center justify-center">
             ● Rehearsal
           </div>
           <div className="py-2.5 text-muted-foreground text-[10px] font-bold uppercase tracking-widest flex items-center justify-center">
@@ -3998,7 +3997,7 @@ function DesktopPageSkeleton() {
             <SectionLabel>STORAGE</SectionLabel>
             <Skeleton width="65%" height={9} className="mt-1 mb-1" />
             <div className="h-1 bg-surface-2 overflow-hidden mt-1">
-              <div className="h-full bg-ember/30" style={{ width: '40%' }} />
+              <div className="h-full bg-lime/30" style={{ width: '40%' }} />
             </div>
           </div>
         </aside>
@@ -5464,6 +5463,15 @@ function uploadFileType(file: File): 'audio' | 'midi' {
   const currentUser = profile && profile.username ? { username: profile.username as string } : null
 
   const totalComments = activeTracks.reduce((n, t) => n + (t.comments?.length ?? 0), 0)
+  const waveformsInteractive = useMemo(
+    () => allTracksLoaded({
+      tracksLoaded: player.loaded,
+      tracksTotal: player.total,
+      activeTracks,
+      midiPlaybackReadyIds: player.midiPlaybackReadyIds,
+    }),
+    [player.loaded, player.total, activeTracks, player.midiPlaybackReadyIds],
+  )
 
   const commentCounts: Record<string, number> = {}
   for (const v of versions) {
@@ -5525,7 +5533,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
       <a
         href={`/api/versions/${activeVersionId}/export`}
         onClick={() => trackEvent('export_wav_clicked')}
-        className="hidden sm:inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-ember hover:text-white transition no-underline items-center"
+        className="hidden sm:inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-lime hover:text-primary-foreground transition no-underline items-center"
       >
         Export WAV
       </a>
@@ -5685,6 +5693,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             currentUserId: user?.id,
             isOwner,
             currentUser,
+            waveformsInteractive,
             recordingSlot: recordingSessions.map(session => (
               <RecordingTrackRow
                 key={session.id}
@@ -5782,7 +5791,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           left={
             <button
               type="button"
-              className="project-sidebar-toggle lg:hidden size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-ember hover:text-ember transition shrink-0"
+              className="project-sidebar-toggle lg:hidden size-8 border border-border bg-surface-2 grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition shrink-0"
               onClick={() => setSidebarOpen(v => !v)}
               aria-label="Toggle sidebar"
             >
@@ -5796,11 +5805,11 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           crumbs={
             project ? (
               <>
-                <Link href={`/band/${bandId}`} className="hover:text-foreground no-underline text-muted-foreground">
+                <Link href={`/band/${bandId}`} className="tb-type-name text-xs hover:text-foreground no-underline text-muted-foreground">
                   {project.band_name ?? 'Band'}
                 </Link>
                 <span className="text-border">/</span>
-                <span className="text-foreground truncate">{project.name}</span>
+                <span className="tb-type-name text-xs text-foreground truncate">{project.name}</span>
               </>
             ) : (
               <>
@@ -5916,12 +5925,12 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         >
           {/* Full-screen drag overlay */}
           {isDragging && (
-            <div className="absolute inset-0 z-[200] pointer-events-none border-2 border-dashed border-ember bg-ember-soft/50 flex flex-col items-center justify-center gap-2">
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-ember">
+            <div className="absolute inset-0 z-[200] pointer-events-none border-2 border-dashed border-lime bg-lime-soft/50 flex flex-col items-center justify-center gap-2">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="text-lime">
                 <path d="M16 4v16M8 14l8-8 8 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                 <path d="M4 26h24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
               </svg>
-              <span className="text-sm font-medium text-ember uppercase tracking-widest">Drop files to add tracks</span>
+              <span className="text-sm font-medium text-lime uppercase tracking-widest">Drop files to add tracks</span>
               <span className="text-[10px] text-muted-foreground uppercase tracking-widest">WAV · MP3 · MIDI</span>
             </div>
           )}
@@ -5959,13 +5968,13 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                       if (e.key === 'Escape') setProjectNameEditing(false)
                     }}
                     onBlur={commitProjectRename}
-                    className="font-display text-xl uppercase tracking-tight bg-background border border-ember px-2 py-1 outline-none max-w-full"
+                    className="tb-type-name text-xl uppercase tracking-tight bg-background border border-lime px-2 py-1 outline-none max-w-full"
                   />
                 ) : (
                   <div className="flex items-center gap-2 group min-w-0" onDoubleClick={startProjectRename}>
                     <h1
-                      className={`font-display text-2xl sm:text-3xl uppercase tracking-tighter truncate m-0 transition-colors ${
-                        projectNameFlash ? 'text-ember' : 'text-foreground'
+                      className={`tb-type-name text-3xl sm:text-4xl uppercase tracking-tighter truncate m-0 transition-colors ${
+                        projectNameFlash ? 'text-lime' : 'text-foreground'
                       }`}
                     >
                       {project.name}
@@ -5973,7 +5982,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     <button
                       type="button"
                       onClick={startProjectRename}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-ember bg-transparent border-0 cursor-pointer p-0"
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0"
                       title="Rename project"
                     >
                       <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -5995,8 +6004,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   onClick={togglePlanOpen}
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
                     planOpen
-                      ? 'bg-ember text-white border-ember'
-                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                      ? 'bg-lime text-primary-foreground border-lime'
+                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                   }`}
                 >
                   {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
@@ -6008,8 +6017,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   data-tour="edit-structure-button"
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
                     editStructure || sections.length > 0
-                      ? 'border-ember text-ember bg-ember-soft'
-                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                      ? 'border-lime text-lime bg-lime-soft'
+                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                   }`}
                 >
                   {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
@@ -6020,8 +6029,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   data-tour="comments-toggle"
                   className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
                     commentMode
-                      ? 'bg-ember text-white border-ember'
-                      : 'border-border text-muted-foreground hover:border-ember hover:text-ember'
+                      ? 'bg-lime text-primary-foreground border-lime'
+                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                   }`}
                 >
                   {commentMode ? '● Comment mode' : `Comment mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
@@ -6053,10 +6062,10 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         onClick={() => selectVersion(v.id)}
                         className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition whitespace-nowrap ${
                           isActive
-                            ? 'bg-ember text-white border-ember'
+                            ? 'bg-lime text-primary-foreground border-lime'
                             : v.merged_at
                               ? 'border-border text-muted-foreground opacity-50'
-                              : 'border-border hover:border-ember hover:text-ember text-muted-foreground'
+                              : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
                         }`}
                       >
                         {v.type === 'main' && '● '}
@@ -6071,7 +6080,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   type="button"
                   onClick={() => setShowBranchModal(true)}
                   data-tour="new-branch-button"
-                  className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-ember hover:text-ember text-muted-foreground transition"
+                  className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
                 >
                   + New Version
                 </button>
@@ -6119,14 +6128,15 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               playing={player.playing}
               onSeek={player.seek}
               compact={isMobileLandscape}
+              seekEnabled={waveformsInteractive}
             />
           )}
 
           {/* Comment mode banner — desktop only; mobile uses top-bar icon */}
           {!isMobileLandscape && (
           <div className={`overflow-hidden transition-[height,opacity] duration-200 shrink-0 ${commentMode ? 'h-9 opacity-100' : 'h-0 opacity-0'}`}>
-            <div className="flex items-center gap-2 px-4 sm:px-6 h-9 bg-ember-soft border-b border-ember/30">
-              <span className="text-[10px] uppercase tracking-widest text-ember">
+            <div className="flex items-center gap-2 px-4 sm:px-6 h-9 bg-lime-soft border-b border-lime/30">
+              <span className="text-[10px] uppercase tracking-widest text-lime">
                 ● Comment mode — click-drag on any waveform to select a time range
               </span>
             </div>
@@ -6208,6 +6218,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     || player.midiRenderingTracks.has(t.id)
                     || (player.soloedTracks.size > 0 && !player.soloedTracks.has(t.id))
                   }
+                  waveformsInteractive={waveformsInteractive}
                   currentUserId={user?.id}
                   isOwner={isOwner}
                   onReplyCreate={handleReplyCreate}
@@ -6294,8 +6305,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     disabled={uploading || storageFull}
                     className={`w-full min-h-[60px] p-4 text-left text-[10px] uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isDraggingAddRow
-                        ? 'text-ember bg-ember-soft'
-                        : 'text-muted-foreground hover:text-ember hover:bg-surface/30'
+                        ? 'text-lime bg-lime-soft'
+                        : 'text-muted-foreground hover:text-lime hover:bg-surface/30'
                     }`}
                   >
                     {isDraggingAddRow ? '↓ Drop to add track' : '+ Add track'}
@@ -6305,7 +6316,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     onClick={handleAddRecordingTrack}
                     disabled={!activeVersionId || storageFull}
                     data-tour="record-track-button"
-                    className="w-full min-h-[48px] px-4 text-left text-[10px] uppercase tracking-widest text-muted-foreground hover:text-ember hover:bg-surface/30 transition disabled:opacity-40 disabled:cursor-not-allowed border-t border-border flex items-center gap-2"
+                    className="w-full min-h-[48px] px-4 text-left text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime hover:bg-surface/30 transition disabled:opacity-40 disabled:cursor-not-allowed border-t border-border flex items-center gap-2"
                   >
                     <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
                     Record track

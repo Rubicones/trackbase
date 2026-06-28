@@ -49,12 +49,12 @@ export function ChatLauncherButton({
         type="button"
         onClick={onClick}
         aria-label="Open band chat"
-        className={`relative w-full flex items-center justify-center gap-2 py-2.5 border border-border bg-background text-[10px] font-bold uppercase tracking-[0.28em] text-foreground hover:text-ember hover:bg-surface/60 transition ${className}`}
+        className={`relative w-full flex items-center justify-center gap-2 py-2.5 border border-border bg-background text-[10px] font-bold uppercase tracking-[0.28em] text-foreground hover:text-lime hover:bg-surface/60 transition ${className}`}
       >
         <IconChat size={14} />
         Chat
         {unread > 0 && (
-          <span className="min-w-[16px] h-4 px-1 grid place-items-center bg-ember text-white text-[9px] font-bold leading-none">
+          <span className="min-w-[16px] h-4 px-1 grid place-items-center bg-lime text-primary-foreground text-[9px] font-bold leading-none">
             {unread > 99 ? '99+' : unread}
           </span>
         )}
@@ -67,11 +67,11 @@ export function ChatLauncherButton({
       type="button"
       onClick={onClick}
       aria-label="Open band chat"
-      className={`relative grid place-items-center border border-border bg-background text-foreground hover:border-ember hover:text-ember transition ${className}`}
+      className={`relative grid place-items-center border border-border bg-background text-foreground hover:border-lime hover:text-lime transition ${className}`}
     >
       <IconChat size={14} />
       {unread > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 grid h-4 min-w-4 place-items-center border border-background bg-ember px-1 text-[9px] font-bold text-white">
+        <span className="absolute -top-1.5 -right-1.5 grid h-4 min-w-4 place-items-center border border-background bg-lime px-1 text-[9px] font-bold text-white">
           {Math.min(unread, 99)}
         </span>
       )}
@@ -515,7 +515,7 @@ export function ChatDock({
           Chat
         </span>
         {totalUnread > 0 && (
-          <span className="grid h-4 min-w-4 place-items-center bg-ember px-1 text-[9px] font-bold text-white">
+          <span className="grid h-4 min-w-4 place-items-center bg-lime px-1 text-[9px] font-bold text-white">
             {Math.min(totalUnread, 99)}
           </span>
         )}
@@ -551,7 +551,7 @@ export function ChatDock({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border bg-surface/40 px-6 h-11 shrink-0">
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-foreground min-w-0">
-            <span className="text-ember"><IconChat /></span>
+            <span className="text-lime"><IconChat /></span>
             <span>Chat</span>
             {onlineMembers.length > 0 && (
               <span className="flex items-center -space-x-1 ml-1">
@@ -633,7 +633,7 @@ export function ChatDock({
         {showNewIndicator && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 border border-ember bg-ember text-white px-3 py-1 text-[9px] font-bold uppercase tracking-widest shadow-lg"
+            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 border border-lime bg-lime text-primary-foreground px-3 py-1 text-[9px] font-bold uppercase tracking-widest shadow-lg"
           >
             <IconArrowDown /> New messages
           </button>
@@ -645,7 +645,7 @@ export function ChatDock({
             <span className="text-muted-foreground uppercase tracking-widest">Attached:</span>
             {attach.versionId && (
               <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5">
-                <span className="text-ember"><IconBranch /></span>
+                <span className="text-lime"><IconBranch /></span>
                 {attach.versionName}
                 <button onClick={() => setAttach(a => ({ ...a, versionId: undefined, versionName: undefined }))} aria-label="Remove version" className="ml-0.5 text-muted-foreground hover:text-foreground">
                   <IconClose size={10} />
@@ -716,11 +716,11 @@ export function ChatDock({
                     type="button"
                     onMouseDown={e => { e.preventDefault(); pickMention(m) }}
                     className={`w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs transition ${
-                      i === mentionPickIdx ? 'bg-ember-soft text-ember' : 'hover:bg-surface'
+                      i === mentionPickIdx ? 'bg-lime-soft text-lime' : 'hover:bg-surface'
                     }`}
                   >
                     <UserAvatar seed={m.username} size={20} kind="user" />
-                    <span className="font-bold text-ember">@{m.username}</span>
+                    <span className="font-bold text-lime">@{m.username}</span>
                     {m.display_name && (
                       <span className="text-muted-foreground truncate">{m.display_name}</span>
                     )}
@@ -763,13 +763,13 @@ export function ChatDock({
               }}
               rows={1}
               placeholder={`Message #${channelName}… (@ to mention)`}
-              className="flex-1 resize-none bg-background border border-border px-2 py-1.5 text-xs outline-none focus:border-ember max-h-24"
+              className="flex-1 resize-none bg-background border border-border px-2 py-1.5 text-xs outline-none focus:border-lime max-h-24"
             />
             <button
               type="submit"
               disabled={!draft.trim()}
               aria-label="Send"
-              className="grid h-8 w-8 shrink-0 place-items-center border border-ember bg-ember text-white transition disabled:opacity-40 disabled:bg-surface-2 disabled:text-muted-foreground disabled:border-border"
+              className="grid h-8 w-8 shrink-0 place-items-center border border-lime bg-lime text-primary-foreground transition disabled:opacity-40 disabled:bg-surface-2 disabled:text-muted-foreground disabled:border-border"
             >
               <IconSend />
             </button>
@@ -797,15 +797,15 @@ function ChannelTab({
     <button
       onClick={onClick}
       className={`relative shrink-0 max-w-[9rem] px-3 h-10 text-left border-b-2 transition ${
-        active ? 'border-ember bg-ember-soft/40' : 'border-transparent hover:bg-surface/60'
+        active ? 'border-lime bg-lime-soft/40' : 'border-transparent hover:bg-surface/60'
       }`}
     >
-      <div className={`text-[10px] font-bold uppercase tracking-widest leading-none truncate ${active ? 'text-ember' : 'text-foreground'}`}>
+      <div className={`text-[10px] font-bold uppercase tracking-widest leading-none truncate ${active ? 'text-lime' : 'text-foreground'}`}>
         {label}
       </div>
       <div className="text-[8px] font-mono uppercase tracking-widest text-muted-foreground mt-0.5 truncate">{hint}</div>
       {unread > 0 && (
-        <span className="absolute top-1.5 right-1.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-ember text-white text-[8px] font-bold leading-[14px] text-center">
+        <span className="absolute top-1.5 right-1.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-lime text-primary-foreground text-[8px] font-bold leading-[14px] text-center">
           {unread > 9 ? '9+' : unread}
         </span>
       )}
@@ -831,7 +831,7 @@ function ComposerChip({
       disabled={disabled}
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 border text-[9px] font-bold uppercase tracking-widest transition ${
         active
-          ? 'border-ember bg-ember-soft text-ember'
+          ? 'border-lime bg-lime-soft text-lime'
           : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-foreground'
       } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border`}
     >
@@ -909,7 +909,7 @@ function ContextPopover({
           onClick={() => onPickVersion(v.id, v.name)}
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition"
         >
-          <span className="text-ember"><IconBranch /></span>
+          <span className="text-lime"><IconBranch /></span>
           <span className="truncate">{v.name}</span>
           {v.type === 'main' && <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground">Master</span>}
         </button>
@@ -946,7 +946,7 @@ function MessageGroupView({
       <UserAvatar seed={group.author_username} size={28} kind="user" className="mt-0.5" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2 text-[10px] leading-none">
-          <span className="font-bold text-ember">@{group.author_username}</span>
+          <span className="font-bold text-lime">@{group.author_username}</span>
           <span className="text-muted-foreground tabular-nums font-mono">{formatMessageTime(group.items[0].created_at)}</span>
         </div>
         <div className="mt-1 space-y-1.5">
@@ -996,7 +996,7 @@ function MessageBubble({
               key={i}
               className={`font-bold ${
                 memberHandles.has(tok.handle.toLowerCase())
-                  ? 'text-ember bg-ember-soft/50 px-0.5'
+                  ? 'text-lime bg-lime-soft/50 px-0.5'
                   : 'text-muted-foreground'
               }`}
               title={`@${tok.handle}`}
@@ -1012,11 +1012,11 @@ function MessageBubble({
         <button
           type="button"
           onClick={() => onChipClick(m)}
-          className="mt-1 inline-flex max-w-full items-stretch border border-border bg-surface text-[10px] font-mono hover:border-ember transition overflow-hidden"
+          className="mt-1 inline-flex max-w-full items-stretch border border-border bg-surface text-[10px] font-mono hover:border-lime transition overflow-hidden"
         >
           {m.context_version_name && (
             <span className={`inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5${showTrack || showTime ? ' border-r border-border' : ''}`}>
-              <span className="text-ember"><IconBranch /></span>
+              <span className="text-lime"><IconBranch /></span>
               <span className="max-w-[4.5rem] truncate">{m.context_version_name}</span>
             </span>
           )}

@@ -137,7 +137,7 @@ export function ProjectResourcesButton({
         type="button"
         data-tour="resources-card"
         onClick={() => setOpen(true)}
-        className={`w-full flex items-center justify-center gap-2 border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:border-ember hover:text-ember px-3 py-2 transition bg-transparent cursor-pointer ${className}`}
+        className={`w-full flex items-center justify-center gap-2 border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime px-3 py-2 transition bg-transparent cursor-pointer ${className}`}
       >
         <IconFile />
         Resources

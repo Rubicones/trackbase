@@ -72,7 +72,7 @@ export function PushPermissionModal({
       ) : (
         <>
           <div className="flex flex-col items-center text-center mb-5">
-            <LucideIcon icon={Bell} size={40} className="text-ember mb-3" strokeWidth={1.75} />
+            <LucideIcon icon={Bell} size={40} className="text-lime mb-3" strokeWidth={1.75} />
             <h2 className="m-0 font-display text-lg uppercase tracking-tight text-foreground">
               Stay in the loop
             </h2>

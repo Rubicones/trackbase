@@ -120,7 +120,7 @@ export function MobileExperience({
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <Link
             href="/dashboard"
-            className="font-display text-sm font-bold tracking-tight text-ember shrink-0 no-underline"
+            className="font-display text-sm font-bold tracking-tight text-lime shrink-0 no-underline"
           >
             TRACKBASE
           </Link>
@@ -134,12 +134,12 @@ export function MobileExperience({
             <span className="text-border shrink-0">/</span>
             <Link
               href={`/band/${bandId}`}
-              className="hover:text-foreground no-underline truncate min-w-0"
+              className="tb-type-name text-xs hover:text-foreground no-underline truncate min-w-0"
             >
               {project.band_name ?? 'Band'}
             </Link>
             <span className="text-border shrink-0">/</span>
-            <span className="text-foreground truncate min-w-0">{project.name}</span>
+            <span className="tb-type-name text-xs text-foreground truncate min-w-0">{project.name}</span>
           </nav>
         </div>
 
@@ -176,7 +176,7 @@ export function MobileExperience({
                 }}
                 data-tour={m === 'rehearse' ? 'mobile-mode-rehearse' : 'mobile-mode-mixer'}
                 className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
-                  active ? 'bg-ember text-white' : 'text-muted-foreground hover:text-foreground'
+                  active ? 'bg-lime text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {m === 'rehearse' ? '● Rehearsal' : '≡ Mixer'}

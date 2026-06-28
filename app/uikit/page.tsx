@@ -1,13 +1,19 @@
 'use client'
 
 import React, {
-  useState, useContext, createContext, useRef, useEffect,
+  useState, useContext, createContext, useRef, useEffect, useMemo, useCallback,
   type ReactNode,
 } from 'react'
 
 import { DESIGN_THEMES } from '@/lib/design-theme'
 import { AppHeader, StatusFooter, SectionLabel } from '@/components/design/AppShell'
 import { Button } from '@/components/ui/button'
+import {
+  WaveformBarRow,
+  WaveformBarsPlayhead,
+  makeSeededWaveformBars,
+  playedPctStyle,
+} from '@/components/WaveformBars'
 import {
   UikitRoot,
   PageTag,
@@ -35,24 +41,93 @@ import {
   ProductionErrorSection,
 } from './production-sections'
 
-// ─── Waveform ────────────────────────────────────────────────────────────────
+// ─── Waveform demos (production components) ───────────────────────────────────
 
-function seed(s: string) {
-  let h = 2166136261
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) }
-  return () => {
-    h = Math.imul(h ^ (h >>> 15), 2246822507)
-    h = Math.imul(h ^ (h >>> 13), 3266489909)
-    h ^= h >>> 16
-    return ((h >>> 0) % 1000) / 1000
-  }
-}
-function makeWaveform(s: string, bars = 96, peak = 1): number[] {
-  const r = seed(s)
-  return Array.from({ length: bars }, (_, i) => {
-    const env = Math.sin((i / bars) * Math.PI * 2.5) * 0.4 + Math.sin((i / bars) * Math.PI * 0.8) * 0.3 + 0.4
-    return Math.min(1, Math.max(0.05, env * r() * 1.3)) * peak
-  })
+function WaveformStudioDemo() {
+  const [played, setPlayed] = useState(0.46)
+  const masterBars = useMemo(() => makeSeededWaveformBars(7, 96), [])
+  const channelRows = useMemo(() => ([
+    { label: 'Guitars', color: '#F5C544', seed: 42, progress: played },
+    { label: 'Drums', color: '#5BA8FF', seed: 11, progress: 1 },
+    { label: 'Bass', color: '#7DE07A', seed: 29, progress: 0.72 },
+  ] as const), [played])
+
+  const seekMaster = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    setPlayed(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
+  }, [])
+
+  return (
+    <div className="space-y-4">
+      <Tile>
+        <SectionLabel>Master mix · scrubbable playhead</SectionLabel>
+        <div
+          className="relative mt-2 h-28 border border-border bg-surface/40 p-2 cursor-pointer touch-none select-none"
+          style={playedPctStyle(played * 100)}
+          onClick={seekMaster}
+          role="slider"
+          aria-valuenow={Math.round(played * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Waveform playhead position"
+        >
+          <div className="relative h-full">
+            <WaveformBarsPlayhead bars={masterBars} color="var(--lime)" ready animKey={0} />
+            <div
+              className="absolute top-0 bottom-0 w-px -ml-px bg-foreground pointer-events-none z-10"
+              style={{ left: 'var(--played-pct, 0%)' }}
+            />
+          </div>
+        </div>
+        <Caption className="mt-2">
+          @/components/WaveformBars — rounded bars · color-mix unplayed layer · clip-path bright overlay · animate-draw-wave-h
+        </Caption>
+      </Tile>
+
+      <Tile className="space-y-4">
+        <SectionLabel>Per-channel rows</SectionLabel>
+        {channelRows.map(row => {
+          const bars = makeSeededWaveformBars(row.seed, 72)
+          return (
+            <div key={row.label} className="flex items-center gap-3">
+              <span className="tb-type-name text-xs uppercase w-16 shrink-0" style={{ color: row.color }}>{row.label}</span>
+              <div className="relative flex-1 h-14 border border-border bg-surface/30 p-1.5">
+                <WaveformBarRow
+                  bars={bars}
+                  color={row.color}
+                  progress={row.progress}
+                  className="h-full"
+                  animate
+                />
+              </div>
+            </div>
+          )
+        })}
+        <Caption>WaveformBarRow — static progress fraction per row (mixer track lanes)</Caption>
+      </Tile>
+
+      <Tile className="p-0 overflow-hidden">
+        <div className="px-4 pt-4">
+          <SectionLabel>Comment range overlay</SectionLabel>
+        </div>
+        <div className="relative h-24 mt-3 mx-4 mb-4 border border-border bg-surface/40 p-1.5">
+          <WaveformBarRow
+            bars={makeSeededWaveformBars(55, 80)}
+            color="var(--lime)"
+            progress={1}
+            className="h-full opacity-80"
+          />
+          <div
+            className="absolute inset-y-1.5 left-[28%] right-[52%] pointer-events-none waveform-accent-fill"
+            aria-hidden
+          />
+          <div className="absolute inset-y-1.5 left-[28%] w-px waveform-accent-edge" aria-hidden />
+          <div className="absolute inset-y-1.5 right-[52%] w-px waveform-accent-edge" aria-hidden />
+        </div>
+        <Caption className="px-4 pb-4">waveform-accent-fill / waveform-accent-edge — comment & selection ranges on mixer lanes</Caption>
+      </Tile>
+    </div>
+  )
 }
 
 // ─── Inline SVG Icons ────────────────────────────────────────────────────────
@@ -172,8 +247,8 @@ function Slider({ defaultValue, className = '' }: { defaultValue?: number[]; cla
       max={100}
       value={val}
       onChange={e => setVal(Number(e.target.value))}
-      className={`w-full accent-ember h-1 ${className}`}
-      style={{ accentColor: 'var(--ember)' }}
+      className={`w-full accent-lime h-1 ${className}`}
+      style={{ accentColor: 'var(--lime)' }}
     />
   )
 }
@@ -233,14 +308,14 @@ function TabsList({ children, className = '' }: { children: ReactNode; className
 function TabsTrigger({ value, children, className }: { value: string; children: ReactNode; className?: string }) {
   const ctx = useContext(TabsContext)
   const active = ctx.value === value
-  const defaultCls = 'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow'
+  const pillCls = 'inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow'
   return (
     <button
       role="tab"
       aria-selected={active}
       data-state={active ? 'active' : 'inactive'}
       onClick={() => ctx.onChange(value)}
-      className={className ?? defaultCls}
+      className={className === undefined ? pillCls : className}
     >
       {children}
     </button>
@@ -381,8 +456,8 @@ const TOKENS = [
   { name: 'muted-foreground', role: 'Secondary text' },
   { name: 'primary', role: 'Primary action' },
   { name: 'primary-foreground', role: 'On primary' },
-  { name: 'ember', role: 'Signature accent' },
-  { name: 'ember-soft', role: 'Accent wash' },
+  { name: 'lime', role: 'Signature accent' },
+  { name: 'lime-soft', role: 'Accent wash' },
   { name: 'destructive', role: 'Errors, danger' },
   { name: 'chart-1', role: 'Vocals / lead' },
   { name: 'chart-2', role: 'Drums' },
@@ -393,9 +468,10 @@ const TOKENS = [
 ]
 
 const TYPE_SCALE: { label: string; cls: string; sample: string; spec: string }[] = [
-  { label: 'Display XL',  cls: 'tb-type-display-xl',  sample: 'Wildfire',                                      spec: 'Space Grotesk · 72 / 0.92 · ‑0.04em' },
-  { label: 'Display L',   cls: 'tb-type-display-l',   sample: 'Branch the chorus',                               spec: 'Space Grotesk · 48 / 1 · ‑0.03em' },
-  { label: 'Display M',   cls: 'tb-type-display-m',   sample: 'Master player',                                  spec: 'Space Grotesk · 30' },
+  { label: 'Display XL',  cls: 'tb-type-display-xl',  sample: 'Wildfire',                                      spec: 'Archivo · 72 / 0.92 · ‑0.04em · 700' },
+  { label: 'Display L',   cls: 'tb-type-display-l',   sample: 'Branch the chorus',                               spec: 'Archivo · 48 / 1 · ‑0.03em · 700' },
+  { label: 'Display M',   cls: 'tb-type-display-m',   sample: 'Master player',                                  spec: 'Archivo · 30 · 700' },
+  { label: 'Entity name', cls: 'tb-type-name text-2xl uppercase', sample: 'Test! Test!',                    spec: 'Archivo · 700 · ‑0.02em · band / track / member names' },
   { label: 'Body L',      cls: 'tb-type-body-l',      sample: 'Synchronized multitrack playback, chord-aware timelines.', spec: 'JetBrains Mono · 16 / 1.6' },
   { label: 'Body M',      cls: 'tb-type-body-m',      sample: 'Drop a comment on bar 36–40 of the lead vocal.',  spec: 'JetBrains Mono · 14 / 1.6' },
   { label: 'Meta',        cls: 'tb-type-meta',        sample: 'BAR 36 · 1:14 · ALEX',                           spec: 'JetBrains Mono · 10 / 0.18em' },
@@ -413,7 +489,7 @@ function UikitContent() {
         crumbs={<span className="text-foreground">UI Kit</span>}
         right={
           <a href="/dashboard"
-            className="hidden sm:inline-flex border border-border px-3 py-1.5 text-[10px] uppercase tracking-widest hover:border-ember hover:text-ember no-underline text-muted-foreground"
+            className="hidden sm:inline-flex border border-border px-3 py-1.5 text-[10px] uppercase tracking-widest hover:border-lime hover:text-lime no-underline text-muted-foreground"
           >
             ← App
           </a>
@@ -440,7 +516,7 @@ function UikitContent() {
             <SectionLabel>Active theme</SectionLabel>
             <div className="mt-3 flex items-center justify-between gap-3">
               <ActiveTheme />
-              <a href="#theme-picker" className="text-[10px] uppercase tracking-widest text-ember hover:underline no-underline">
+              <a href="#theme-picker" className="text-[10px] uppercase tracking-widest text-lime hover:underline no-underline">
                 Change theme →
               </a>
             </div>
@@ -452,7 +528,7 @@ function UikitContent() {
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col">
         <div className="sticky top-14 z-30 border-b border-border bg-background/95 backdrop-blur px-6">
           <div className="max-w-6xl mx-auto overflow-x-auto">
-            <TabsList className="bg-transparent gap-1 h-12">
+            <TabsList className="tb-tabs-underline inline-flex h-12">
               {([
                 ['foundations', '01 · Foundations'],
                 ['color',       '02 · Color & Themes'],
@@ -463,12 +539,7 @@ function UikitContent() {
                 ['motion',      '07 · Motion'],
                 ['voice',       '08 · Voice'],
               ] as [string, string][]).map(([id, label]) => (
-                <TabsTrigger
-                  key={id}
-                  value={id}
-                  className={`text-[10px] uppercase tracking-widest rounded-none border border-transparent px-3 h-12 transition-all
-                    ${tab === id ? 'bg-ember text-white border-ember' : 'text-muted-foreground hover:text-foreground'}`}
-                >
+                <TabsTrigger key={id} value={id} className="">
                   {label}
                 </TabsTrigger>
               ))}
@@ -483,11 +554,11 @@ function UikitContent() {
             <Section title="Logotype" id="logotype" tag="01.01">
               <div className="grid sm:grid-cols-2 gap-4">
                 <Tile>
-                  <div className="font-display text-3xl font-bold tracking-tight text-ember">TRACKBASE</div>
-                  <Caption>Primary wordmark · Space Grotesk Bold · ember</Caption>
+                  <div className="font-display text-3xl font-bold tracking-tight text-lime">TRACKBASE</div>
+                  <Caption>Primary wordmark · Archivo Bold · lime</Caption>
                 </Tile>
                 <Tile>
-                  <div className="font-display text-3xl font-bold tracking-tight text-foreground">TRACKBASE<span className="text-ember">.</span></div>
+                  <div className="font-display text-3xl font-bold tracking-tight text-foreground">TRACKBASE<span className="text-lime">.</span></div>
                   <Caption>Inline lockup · use in dense headers</Caption>
                 </Tile>
               </div>
@@ -505,7 +576,7 @@ function UikitContent() {
               <div className="grid sm:grid-cols-6 gap-2 mt-4">
                 {[2, 4, 8, 12, 16, 24].map(sp => (
                   <div key={sp} className="border border-border p-3 text-center text-[10px] uppercase tracking-widest">
-                    <div className="mx-auto bg-ember" style={{ width: sp, height: sp }} />
+                    <div className="mx-auto bg-lime" style={{ width: sp, height: sp }} />
                     <div className="mt-2 text-muted-foreground">{sp}px</div>
                   </div>
                 ))}
@@ -520,7 +591,7 @@ function UikitContent() {
                   [IcoHeadphones, 'Mix'], [IcoRadio, 'Live'], [IcoSliders, 'Fader'], [IcoVolume2, 'Vol'],
                   [IcoGitBranch, 'Branch'], [IcoWaves, 'Stem'], [IcoAlarmClock, 'Cue'], [IcoCheck, 'OK'],
                 ] as [React.FC<{className?: string}>, string][]).map(([Icon, label], i) => (
-                  <div key={i} className="border border-border p-4 grid place-items-center gap-2 hover:border-ember hover:text-ember transition-colors">
+                  <div key={i} className="border border-border p-4 grid place-items-center gap-2 hover:border-lime hover:text-lime transition-colors">
                     <Icon className="size-5" />
                     <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</span>
                   </div>
@@ -532,7 +603,7 @@ function UikitContent() {
               <div className="grid sm:grid-cols-4 gap-3">
                 {([['none','0'],['sm','2px'],['md','6px'],['lg','10px']] as [string,string][]).map(([k, v]) => (
                   <Tile key={k}>
-                    <div className={`h-16 bg-ember/80`} style={{ borderRadius: v === '0' ? 0 : v }} />
+                    <div className={`h-16 bg-lime/80`} style={{ borderRadius: v === '0' ? 0 : v }} />
                     <Caption className="mt-2">radius-{k} · {v}</Caption>
                   </Tile>
                 ))}
@@ -588,8 +659,8 @@ function UikitContent() {
             <Section title="Type families" id="families" tag="03.01">
               <div className="grid md:grid-cols-2 gap-4">
                 <Tile>
-                  <div className="tb-type-family-display">Space Grotesk</div>
-                  <Caption className="mt-2">Display · Headings, structure ribbon, branding</Caption>
+                  <div className="tb-type-family-display">Archivo</div>
+                  <Caption className="mt-2">Display · Headings, entity names, accent CTAs</Caption>
                 </Tile>
                 <Tile>
                   <div className="tb-type-family-mono">JetBrains Mono</div>
@@ -611,6 +682,35 @@ function UikitContent() {
                 ))}
               </div>
             </Section>
+
+            <Section title="Entity names" id="entity-names" tag="03.03">
+              <Caption className="mb-3">
+                <code className="font-mono text-[10px]">.tb-type-name</code> — production surfaces: dashboard greeting, band &amp; project titles, member display names (not @handles).
+              </Caption>
+              <div className="border border-border divide-y">
+                <div className="px-4 py-5">
+                  <Caption className="mb-2">Dashboard greeting</Caption>
+                  <h1 className="tb-type-name text-4xl sm:text-5xl uppercase tracking-tighter m-0 leading-none">
+                    Good afternoon, <span className="text-lime">Rubicon</span>.
+                  </h1>
+                </div>
+                <div className="px-4 py-5">
+                  <Caption className="mb-2">Band page hero</Caption>
+                  <h1 className="tb-type-name text-4xl sm:text-5xl uppercase tracking-tighter m-0">Test! Test!</h1>
+                </div>
+                <div className="px-4 py-5">
+                  <Caption className="mb-2">Project list row</Caption>
+                  <div className="tb-type-name text-xl uppercase tracking-tight">Cat (formerly Dog)</div>
+                </div>
+                <div className="px-4 py-5 flex items-center gap-3">
+                  <div className="size-8 bg-surface-2 grid place-items-center text-[10px] font-bold shrink-0">RU</div>
+                  <div className="min-w-0">
+                    <div className="tb-type-name text-sm uppercase truncate">rubicon</div>
+                    <div className="text-[9px] text-muted-foreground truncate">@rubicon</div>
+                  </div>
+                </div>
+              </div>
+            </Section>
           </TabsContent>
 
           {/* ─── COMPONENTS ─── */}
@@ -627,11 +727,12 @@ function UikitContent() {
                     <CardDescription>14 tracks · 124 BPM · Eb Minor</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="flex items-end gap-px h-12">
-                      {makeWaveform('wave', 48, 1).map((h, i) => (
-                        <div key={i} className="flex-1 bg-ember" style={{ height: `${Math.max(8, h * 100)}%`, opacity: 0.7 }} />
-                      ))}
-                    </div>
+                    <WaveformBarRow
+                      bars={makeSeededWaveformBars(3, 48)}
+                      color="var(--lime)"
+                      progress={0.65}
+                      className="h-12"
+                    />
                   </CardContent>
                 </Card>
                 <div className="space-y-3">
@@ -650,11 +751,12 @@ function UikitContent() {
             <Section title="Tabs · Accordion" id="layered" tag="04.05">
               <div className="grid md:grid-cols-2 gap-6">
                 <Tile>
+                  <Caption className="mb-3">Underline tabs — dashboard / band page pattern</Caption>
                   <Tabs defaultValue="mix">
-                    <TabsList>
-                      <TabsTrigger value="mix">Mix</TabsTrigger>
-                      <TabsTrigger value="lyrics">Lyrics</TabsTrigger>
-                      <TabsTrigger value="notes">Notes</TabsTrigger>
+                    <TabsList className="tb-tabs-underline">
+                      <TabsTrigger value="mix" className="">Mix</TabsTrigger>
+                      <TabsTrigger value="lyrics" className="">Lyrics</TabsTrigger>
+                      <TabsTrigger value="notes" className="">Notes</TabsTrigger>
                     </TabsList>
                     <TabsContent value="mix" className="text-sm text-muted-foreground pt-3">7 tracks · 18 comments</TabsContent>
                     <TabsContent value="lyrics" className="text-sm text-muted-foreground pt-3">Verse 1, Chorus, Bridge</TabsContent>
@@ -684,7 +786,7 @@ function UikitContent() {
                   <Caption className="mb-1">Native-style controls — prefer TbInput + chip selectors in product UI</Caption>
                   <div>
                     <Label>Project name</Label>
-                    <Input placeholder="Wildfire" className="mt-1 focus-visible:ring-0 focus-visible:border-ember" />
+                    <Input placeholder="Wildfire" className="mt-1 focus-visible:ring-0 focus-visible:border-lime" />
                   </div>
                   <div>
                     <Label>Time signature</Label>
@@ -742,7 +844,7 @@ function UikitContent() {
                       <TableRow key={b}>
                         <TableCell className="font-mono text-xs">{b}</TableCell>
                         <TableCell>{a}</TableCell>
-                        <TableCell><span className="text-[10px] uppercase tracking-widest text-ember">{s}</span></TableCell>
+                        <TableCell><span className="text-[10px] uppercase tracking-widest text-lime">{s}</span></TableCell>
                         <TableCell className="text-right tabular-nums">{c}</TableCell>
                       </TableRow>
                     ))}
@@ -761,7 +863,7 @@ function UikitContent() {
                 </Tile>
                 <Tile className="text-center">
                   <div className="text-3xl">∅</div>
-                  <div className="font-display uppercase tracking-tight mt-2">No projects yet</div>
+                  <div className="tb-type-name text-2xl uppercase tracking-tight mt-2">No projects yet</div>
                   <Caption className="mt-1">Spin up your first song with one click.</Caption>
                   <Button className="mt-3">+ New Project</Button>
                 </Tile>
@@ -775,22 +877,15 @@ function UikitContent() {
           {/* ─── STUDIO ─── */}
           <TabsContent value="studio" className="m-0 space-y-12">
             <Section title="Waveform" id="waveform" tag="05.01">
-              <Tile>
-                <div className="flex items-end gap-px h-24">
-                  {makeWaveform('kit', 80, 1).map((h, i) => (
-                    <div key={i} className="flex-1 bg-chart-1 animate-draw-wave" style={{ height: `${Math.max(6, h * 100)}%`, opacity: i / 80 < 0.46 ? 0.95 : 0.4, animationDelay: `${i * 5}ms` }} />
-                  ))}
-                </div>
-                <Caption className="mt-2">Per-channel waveform — color = instrument · opacity = playhead state</Caption>
-              </Tile>
+              <WaveformStudioDemo />
             </Section>
 
             <Section title="Bar grid · chord ribbon" id="grid-strip" tag="05.02">
               <Tile className="p-0 overflow-hidden">
-                <div className="flex bg-ember-soft/40 border-b border-border">
+                <div className="flex bg-lime-soft/40 border-b border-border">
                   {([['INTRO','Ebm—Bbm'],['VERSE 1','Ebm7—Ab9'],['CHORUS','Bbm7—Ebm'],['BRIDGE','Gbmaj7—Db']] as [string,string][]).map(([n, c]) => (
-                    <div key={n} className="flex-1 px-3 py-2 border-r border-ember/30 last:border-r-0">
-                      <div className="text-[9px] font-bold tracking-widest text-ember">{n}</div>
+                    <div key={n} className="flex-1 px-3 py-2 border-r border-lime/30 last:border-r-0">
+                      <div className="text-[9px] font-bold tracking-widest text-lime">{n}</div>
                       <div className="text-[10px]">{c}</div>
                     </div>
                   ))}
@@ -808,8 +903,10 @@ function UikitContent() {
             <Section title="Comment pin" id="comment-pin" tag="05.03">
               <Tile className="p-0">
                 <div className="relative h-20 bg-surface">
-                  <div className="absolute inset-y-0 left-[30%] right-[55%] border-x border-ember bg-ember/15">
-                    <div className="absolute -top-1 left-0 size-2 bg-ember" />
+                  <div className="absolute inset-y-0 left-[30%] right-[55%] waveform-accent-fill border-x border-transparent">
+                    <div className="absolute inset-y-0 left-0 w-px waveform-accent-edge" />
+                    <div className="absolute inset-y-0 right-0 w-px waveform-accent-edge" />
+                    <div className="absolute -top-1 left-0 size-2 waveform-accent-edge" />
                   </div>
                   <div className="absolute top-3 left-[32%] w-56 border border-border bg-background p-3 shadow-2xl">
                     <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Sarah · 12m · BAR 36–40</div>
@@ -830,7 +927,7 @@ function UikitContent() {
                   <div key={n} className="flex items-center gap-3 border border-border p-3">
                     <div className="size-7 grid place-items-center text-xs font-bold text-background" style={{ background: c }}>{l}</div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-bold uppercase">{n}</div>
+                      <div className="tb-type-name text-sm uppercase">{n}</div>
                       <div className="text-[10px] text-muted-foreground font-mono">stem · 42 MB</div>
                     </div>
                     <button className="size-5 border border-border text-[9px]">M</button>
@@ -859,16 +956,20 @@ function UikitContent() {
             <Section title="Motion library" id="motion-lib" tag="07.01">
               <div className="grid sm:grid-cols-3 gap-3">
                 <Tile>
-                  <div className="size-12 bg-ember animate-pulse-dot" />
+                  <div className="size-12 bg-lime animate-pulse-dot" />
                   <Caption className="mt-2">pulse-dot · 1.6s · live indicators</Caption>
                 </Tile>
                 <Tile>
-                  <div className="flex items-end gap-px h-12">
-                    {makeWaveform('m', 30, 1).map((h, i) => (
-                      <div key={i} className="flex-1 bg-ember animate-draw-wave" style={{ height: `${h * 100}%`, animationDelay: `${i * 10}ms` }} />
-                    ))}
+                  <div className="h-12">
+                    <WaveformBarRow
+                      bars={makeSeededWaveformBars(99, 30)}
+                      color="var(--lime)"
+                      progress={1}
+                      className="h-full"
+                      animate
+                    />
                   </div>
-                  <Caption className="mt-2">draw-wave · 0.7s · waveform load-in</Caption>
+                  <Caption className="mt-2">draw-wave-h · 0.7s · height-only load-in (opacity stays caller-controlled)</Caption>
                 </Tile>
                 <Tile>
                   <div className="border border-border p-3 animate-slide-in">Slide-in · 0.6s</div>
@@ -905,7 +1006,7 @@ function UikitContent() {
             </Section>
             <Section title="Sample copy" id="copy" tag="08.02">
               <div className="grid sm:grid-cols-2 gap-3 text-sm">
-                <Tile><Caption>Button</Caption><div className="mt-1 font-display uppercase tracking-widest">Initialize studio</div></Tile>
+                <Tile><Caption>Accent CTA</Caption><div className="mt-2"><button type="button" className="tb-btn-accent bg-lime text-primary-foreground border border-lime px-4 py-2 text-sm uppercase">Initialize studio</button></div></Tile>
                 <Tile><Caption>Empty state</Caption><div className="mt-1">No takes yet. Drop a WAV to get started.</div></Tile>
                 <Tile><Caption>Toast — success</Caption><div className="mt-1">Branch merged. 3 conflicts resolved.</div></Tile>
                 <Tile><Caption>Toast — error</Caption><div className="mt-1 text-destructive">Couldn't reach the mixer. Hold tight — auto-retrying.</div></Tile>

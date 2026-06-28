@@ -292,7 +292,7 @@ export function ResourcesFileRow({
               if (e.key === 'Enter') saveRename()
               if (e.key === 'Escape') setRenaming(false)
             }}
-            className="w-full min-w-0 bg-surface border border-ember px-2 py-1 text-xs outline-none"
+            className="w-full min-w-0 bg-surface border border-lime px-2 py-1 text-xs outline-none"
           />
           <ResourceContextControls
             resource={resource}
@@ -304,7 +304,7 @@ export function ResourcesFileRow({
             onDraftChange={setContextDraft}
           />
           <div className="flex gap-2 justify-end">
-            <button type="button" onClick={saveRename} disabled={saving} className="text-ember text-xs bg-transparent border-0 cursor-pointer">Save</button>
+            <button type="button" onClick={saveRename} disabled={saving} className="text-lime text-xs bg-transparent border-0 cursor-pointer">Save</button>
             <button type="button" onClick={() => setRenaming(false)} className="text-muted-foreground text-xs bg-transparent border-0 cursor-pointer">✕</button>
           </div>
         </div>
@@ -318,7 +318,7 @@ export function ResourcesFileRow({
         {...rowHandlers}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="w-7 shrink-0 flex items-center justify-center text-[10px] font-bold tracking-widest text-ember uppercase">{kind}</span>
+          <span className="w-7 shrink-0 flex items-center justify-center text-[10px] font-bold tracking-widest text-lime uppercase">{kind}</span>
           <span className="flex-1 truncate min-w-0 text-sm font-medium text-foreground" title={displayName}>{displayName}</span>
           <button type="button" onClick={e => { e.stopPropagation(); handleDownload() }} title="Download" className="shrink-0 text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer p-0.5">
             <IconDownload size={14} />

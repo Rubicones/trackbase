@@ -3,8 +3,17 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 export type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'
 export type ButtonSize = 'default' | 'sm' | 'lg' | 'icon'
 
+const fontClass: Record<ButtonVariant, string> = {
+  default: 'font-display font-bold',
+  secondary: 'font-mono font-medium',
+  outline: 'font-mono font-medium',
+  ghost: 'font-mono font-medium',
+  destructive: 'font-mono font-medium',
+  link: 'font-mono font-medium',
+}
+
 const variantClass: Record<ButtonVariant, string> = {
-  default: 'bg-primary text-primary-foreground hover:opacity-90',
+  default: 'bg-primary text-primary-foreground',
   secondary: 'bg-secondary text-secondary-foreground hover:opacity-80',
   outline: 'border border-border bg-background hover:bg-accent hover:text-accent-foreground',
   ghost: 'hover:bg-surface hover:text-foreground',
@@ -34,7 +43,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-2 font-mono font-medium rounded-sm transition-colors disabled:pointer-events-none disabled:opacity-50 ${variantClass[variant]} ${sizeClass[size]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-sm transition-[transform,colors,opacity] disabled:pointer-events-none disabled:opacity-50 ${fontClass[variant]} ${variantClass[variant]} ${sizeClass[size]} ${className}`}
       {...props}
     >
       {children}

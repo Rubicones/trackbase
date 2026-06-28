@@ -45,10 +45,10 @@ export function TrackLoadProgressBar({
         aria-label={label ?? 'Loading tracks'}
       >
         {indeterminate ? (
-          <div className="h-full w-1/3 bg-ember animate-track-load-indeterminate" />
+          <div className="h-full w-1/3 bg-lime animate-track-load-indeterminate" />
         ) : (
           <div
-            className="h-full bg-ember transition-[width] duration-300"
+            className="h-full bg-lime transition-[width] duration-300"
             style={{ width: `${pct ?? 0}%` }}
           />
         )}

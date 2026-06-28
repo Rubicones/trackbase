@@ -80,7 +80,7 @@ export function ChordDurationPicker({
             onClick={() => { onSelect(parseBarDuration(preset)!); onClose() }}
             className={`text-[10px] font-mono py-1 border transition ${
               isActivePreset(preset)
-                ? 'border-ember text-ember bg-ember-soft/40'
+                ? 'border-lime text-lime bg-lime-soft/40'
                 : 'border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground'
             }`}
           >
