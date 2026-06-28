@@ -761,7 +761,7 @@ export function useSectionEditActions({
 
 // ─── Structure overlay ────────────────────────────────────────────────────────
 
-type SelMode = 'idle' | 'start_set' | 'naming'
+type SelMode = 'idle' | 'naming'
 type ActiveEdit = { sectionId: string; cellPos: CellPos }
 type ResizeDrag = {
   sectionId: string
@@ -810,6 +810,7 @@ export default function StructureOverlay({
   const sectionsRef = useRef(sections)
   const activeEditRef = useRef(activeEdit)
   const resizeDragRef = useRef<ResizeDrag | null>(null)
+  const newSectionDragRef = useRef<{ startBar: number } | null>(null)
   const pendingChordSavesRef = useRef<Map<string, string>>(new Map())
   const chordSaveGenRef = useRef<Map<string, number>>(new Map())
   const [pendingChordIds, setPendingChordIds] = useState<Set<string>>(new Set())
@@ -1053,7 +1054,7 @@ export default function StructureOverlay({
   }
 
   function handleStripMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (!seekEnabled || selMode === 'naming' || resizeDragRef.current) return
+    if (!seekEnabled || selMode === 'naming' || resizeDragRef.current || newSectionDragRef.current) return
     e.preventDefault()
 
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1084,29 +1085,56 @@ export default function StructureOverlay({
 
     if (activeEdit) return
 
-    // Placement flow
-    if (selMode === 'idle') {
-      setSelStart(bar)
-      setSelMode('start_set')
-      setHint({ text: `Bar ${bar + 1} — click to set end`, isError: false })
-      return
+    // Drag-to-create: start drag
+    const dragStartBar = bar
+    newSectionDragRef.current = { startBar: dragStartBar }
+    document.body.style.userSelect = 'none'
+
+    // Compute selection range from drag direction (snap outward to include partial bars)
+    function computeSelection(startB: number, curB: number): [number, number] {
+      return curB >= startB ? [startB, curB + 1] : [curB, startB + 1]
     }
 
-    if (selMode === 'start_set' && selStart !== null) {
-      if (bar < selStart) {
-        setHint({ text: 'Click to the right of the start', isError: true })
-        return
-      }
-      const endBar = bar + 1
-      const overlap = sections.find(s => selStart < s.end_bar && endBar > s.start_bar)
-      if (overlap) {
-        setHint({ text: `Overlaps with "${sectionLabel(overlap)}"`, isError: true })
-        return
-      }
-      setSelEnd(endBar)
-      setSelMode('naming')
-      setHint(null)
+    setSelStart(dragStartBar)
+    setSelEnd(dragStartBar + 1)
+    setHint({ text: `Bar ${dragStartBar + 1}`, isError: false })
+
+    function onDragMove(ev: MouseEvent) {
+      if (!newSectionDragRef.current) return
+      const curBar = barFromClientX(ev.clientX)
+      const [s, e] = computeSelection(dragStartBar, curBar)
+      const overlap = sectionsRef.current.find(sec => s < sec.end_bar && e > sec.start_bar)
+      setSelStart(s)
+      setSelEnd(e)
+      setHint(
+        overlap
+          ? { text: `Overlaps with "${sectionLabel(overlap)}"`, isError: true }
+          : { text: `Bars ${s + 1}–${e} · ${e - s} bar${e - s !== 1 ? 's' : ''}`, isError: false },
+      )
     }
+
+    function onDragUp(ev: MouseEvent) {
+      window.removeEventListener('mousemove', onDragMove)
+      window.removeEventListener('mouseup', onDragUp)
+      document.body.style.userSelect = ''
+      newSectionDragRef.current = null
+
+      const curBar = barFromClientX(ev.clientX)
+      const [s, e] = computeSelection(dragStartBar, curBar)
+      const overlap = sectionsRef.current.find(sec => s < sec.end_bar && e > sec.start_bar)
+
+      if (!overlap) {
+        setSelStart(s)
+        setSelEnd(e)
+        setSelMode('naming')
+        setHint(null)
+      } else {
+        resetSel()
+      }
+    }
+
+    window.addEventListener('mousemove', onDragMove)
+    window.addEventListener('mouseup', onDragUp)
   }
 
   function openSectionEdit(section: Section) {
@@ -1342,18 +1370,12 @@ export default function StructureOverlay({
             ) : (
               <span className="text-[11px] flex-1 min-w-0 truncate text-muted-foreground">
                 {sections.length === 0
-                  ? 'Click the strip to place your first section'
-                  : `${sections.length} section${sections.length !== 1 ? 's' : ''} — drag edges to resize, click empty space to add`}
+                  ? 'Drag the strip to place your first section'
+                  : `${sections.length} section${sections.length !== 1 ? 's' : ''} — drag to add · drag edges to resize`}
               </span>
             )}
 
             <div className="ml-auto flex gap-2 shrink-0">
-              {selMode === 'start_set' && (
-                <button type="button" onClick={resetSel}
-                  className="px-2 h-[26px] text-[11px] border border-border text-muted-foreground hover:border-lime hover:text-lime">
-                  Cancel
-                </button>
-              )}
               <TbButton variant="primary" onClick={handleDone} className="h-[26px] px-3.5">
                 Done
               </TbButton>
@@ -1386,7 +1408,7 @@ export default function StructureOverlay({
               </div>
               {editMode && !compact && (
                 <span className="text-[8px] normal-case tracking-normal font-mono text-muted-foreground">
-                  drag edges · click to add
+                  drag to add · drag edges to resize
                 </span>
               )}
             </div>

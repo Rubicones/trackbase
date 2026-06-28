@@ -2541,14 +2541,6 @@ const TrackRow = React.memo(function TrackRow({
   const labelColW = compact ? 140 : TRACK_LABEL_W
   const clipLayout = trackClipRowStyle(labelColW, totalBars, effectiveStartBar, layoutWidthPercent)
 
-  function barFromClientX(clientX: number): number {
-    const colEl = waveformColRef.current
-    if (!colEl || totalBars <= 0) return 0
-    const rect = colEl.getBoundingClientRect()
-    const xPct = (clientX - rect.left) / rect.width
-    return Math.max(0, Math.min(totalBars - 1, Math.floor(xPct * totalBars)))
-  }
-
   async function snapStartBar(startBar: number) {
     if (startBar === (track.start_bar ?? 0)) return
     try {
@@ -2670,13 +2662,16 @@ const TrackRow = React.memo(function TrackRow({
 
       setIsOffsetDragging(false)
       onDragEndOffset()
-      let newBar = dragPreviewBarRef.current
+
       if (!dragMovedRef.current) {
-        newBar = barFromClientX('changedTouches' in e
-          ? e.changedTouches[0]?.clientX ?? dragStartXRef.current
-          : e.clientX)
-        dragPreviewBarRef.current = newBar
-      } else if (newBar !== null) {
+        dragPreviewBarRef.current = null
+        setDragPreviewBar(null)
+        resetLabelColOpacity()
+        return
+      }
+
+      let newBar = dragPreviewBarRef.current
+      if (newBar !== null) {
         newBar = clampTrackStartBar(newBar, trackDurationBars)
         dragPreviewBarRef.current = newBar
       }
@@ -3044,12 +3039,8 @@ const TrackRow = React.memo(function TrackRow({
           </div>
           <span
             ref={snapBarLabelRef}
-            className="absolute top-1 z-20 pointer-events-none text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px"
-            style={{
-              background: 'var(--lime)',
-              color: '#fff',
-              lineHeight: '1.3',
-            }}
+            className="absolute top-1 z-20 pointer-events-none text-[9px] font-mono tabular-nums whitespace-nowrap rounded px-1 py-px bg-lime text-primary-foreground"
+            style={{ lineHeight: '1.3' }}
           />
         </>
       )}

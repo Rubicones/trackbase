@@ -41,7 +41,7 @@
 /* ─── lime (also forced on marketing landing) ─── */
 :root[data-theme="lime"],
 .landing-page {
-  --background: oklch(0.13 0 0);
+  --background: oklch(0 0 0);
   --foreground: oklch(0.93 0 0);
   --surface: oklch(0.16 0 0);
   --surface-2: oklch(0.19 0 0);
