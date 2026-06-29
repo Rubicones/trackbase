@@ -14,6 +14,7 @@ import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/compo
 import type { ProjectRoadmap } from '@/lib/roadmap'
 import { trackEvent } from '@/lib/analytics'
 import type { Project, Section } from '@/lib/types'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 type PanelTab = 'roadmap' | 'checklist' | 'resources' | 'structure' | 'notes'
 
@@ -432,7 +433,7 @@ export function StructurePreviewPanel({
     0
   )
 
-  const viewingLabel = (selectedVersion?.name ?? 'main').toUpperCase()
+  const viewingLabel = (selectedVersion ? getVersionDisplayName(selectedVersion) : 'Master').toUpperCase()
 
   return createPortal(
     <div

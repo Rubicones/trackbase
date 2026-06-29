@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     const { data: version, error: verErr } = await supabase
       .from('versions')
-      .insert({ project_id: project.id, name: 'main', type: 'main' })
+      .insert({ project_id: project.id, name: 'Master', type: 'main' })
       .select()
       .single()
     if (verErr) throw verErr

@@ -14,6 +14,7 @@ import MiniPianoRoll from '@/components/MiniPianoRoll'
 import { trackAccentColor } from '@/lib/trackIcon'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { transportStatusClass, type TransportStatus } from '@/lib/transportStatus'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1050,7 +1051,7 @@ function VersionSideHeader({
           >
             {versions.map(v => (
               <option key={v.id} value={v.id}>
-                {v.name}{v.type === 'main' ? ' (main)' : ''}
+                {getVersionDisplayName(v)}{v.type === 'main' ? ' (Master)' : ''}
               </option>
             ))}
           </select>
@@ -1165,8 +1166,8 @@ function CompareTransportBar({
   const listeningLabel = abMode === 'both'
     ? 'Sync'
     : abMode === 'a'
-      ? `A · ${versionA?.name ?? ''}`
-      : `B · ${versionB?.name ?? ''}`
+      ? `A · ${versionA ? getVersionDisplayName(versionA) : ''}`
+      : `B · ${versionB ? getVersionDisplayName(versionB) : ''}`
 
   return (
     <div className="border-t border-border bg-background flex items-center gap-3 px-4 py-2 shrink-0">
@@ -1432,8 +1433,8 @@ export default function CompareMode({
   const pairs = useMemo(() => buildComparePairs(tracksA, tracksB), [tracksA, tracksB])
 
   // ── Comments for both versions ─────────────────────────────────────────────
-  const commentsA = tracksA.flatMap(t => (t.comments ?? []).map(c => ({ ...c, versionName: versionA?.name ?? 'A' })))
-  const commentsB = tracksB.flatMap(t => (t.comments ?? []).map(c => ({ ...c, versionName: versionB?.name ?? 'B' })))
+  const commentsA = tracksA.flatMap(t => (t.comments ?? []).map(c => ({ ...c, versionName: versionA ? getVersionDisplayName(versionA) : 'A' })))
+  const commentsB = tracksB.flatMap(t => (t.comments ?? []).map(c => ({ ...c, versionName: versionB ? getVersionDisplayName(versionB) : 'B' })))
 
   // ── Project timing ─────────────────────────────────────────────────────────
   const totalDurationMs = audio.duration || 1

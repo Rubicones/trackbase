@@ -6,6 +6,7 @@ import type { ProjectResource, Version } from '@/lib/types'
 import { SpinnerBars } from '@/components/ui/Spinner'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 import { resolveResourceChipNames } from './ResourceContextChips'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 function IconClose({ size = 10 }: { size?: number }) {
   return (
@@ -177,7 +178,7 @@ function ContextPopover({
       onClick={e => e.stopPropagation()}
     >
       <div className="px-2 py-1.5 border-b border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
+        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${getVersionDisplayName(trackVersion)}` : ''}`}
       </div>
       {versionsLoading && (
         <div className="flex justify-center py-3" role="status" aria-label="Loading versions and tracks">
@@ -191,11 +192,11 @@ function ContextPopover({
         <button
           key={v.id}
           type="button"
-          onClick={() => onPickVersion(v.id, v.name)}
+          onClick={() => onPickVersion(v.id, getVersionDisplayName(v))}
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition bg-transparent border-0 cursor-pointer"
         >
           <span className="text-lime shrink-0"><IconBranch size={12} /></span>
-          <span className="truncate">{v.name}</span>
+          <span className="truncate">{getVersionDisplayName(v)}</span>
           {v.type === 'main' && (
             <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
           )}

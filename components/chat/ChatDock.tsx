@@ -19,6 +19,7 @@ import {
 import { useBandChat, type ChatMember } from '@/components/chat/useBandChat'
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 // ─── Inline icons (match the app's lightweight SVG convention) ─────────────────
 
@@ -895,7 +896,7 @@ function ContextPopover({
       className="absolute bottom-full left-2 mb-1 z-50 w-56 max-h-64 overflow-y-auto scrollbar-none border border-border bg-surface-2 shadow-2xl"
     >
       <div className="px-2 py-1.5 border-b border-border text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${trackVersion.name}` : ''}`}
+        {mode === 'branch' ? 'Attach version' : `Attach track${trackVersion ? ` · ${getVersionDisplayName(trackVersion)}` : ''}`}
       </div>
       {versions === null && (
         <div className="flex justify-center py-3" role="status" aria-label="Loading branches and tracks">
@@ -906,11 +907,11 @@ function ContextPopover({
         <button
           key={v.id}
           type="button"
-          onClick={() => onPickVersion(v.id, v.name)}
+          onClick={() => onPickVersion(v.id, getVersionDisplayName(v))}
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition"
         >
           <span className="text-lime"><IconBranch /></span>
-          <span className="truncate">{v.name}</span>
+          <span className="truncate">{getVersionDisplayName(v)}</span>
           {v.type === 'main' && <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground">Master</span>}
         </button>
       ))}

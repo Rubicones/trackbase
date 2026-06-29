@@ -63,6 +63,7 @@ import {
 } from '@/lib/previewMixClient'
 import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
 import { ChevronsLeftRightEllipsis } from 'lucide-react'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -3702,10 +3703,10 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                   {/* Version name + sub-info */}
                   <span className="flex-1 min-w-0">
                     {compact ? (
-                      <span className="block text-[10px] font-bold text-foreground truncate leading-tight">{v!.name}</span>
+                      <span className="block text-[10px] font-bold text-foreground truncate leading-tight">{getVersionDisplayName(v!)}</span>
                     ) : (
                       <>
-                        <span className="block text-[11px] font-bold text-foreground truncate">{v!.name}</span>
+                        <span className="block text-[11px] font-bold text-foreground truncate">{getVersionDisplayName(v!)}</span>
                         <span className="block text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5 truncate">
                           {fmtDate(v!.created_at)}{comments > 0 ? ` · ${comments} CMT` : ''}
                         </span>
@@ -3836,11 +3837,22 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
   const isDark = resolvedTheme === 'dark'
   const [step, setStep] = useState<'name' | 'tag'>('name')
   const [name, setName] = useState('')
+  const [nameError, setNameError] = useState('')
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [customTag, setCustomTag] = useState('')
 
+  function validateName(value: string): boolean {
+    if (value.trim().toLowerCase() === 'master') {
+      setNameError('"Master" is reserved for the primary version. Try "Master 2" or another name.')
+      return false
+    }
+    setNameError('')
+    return true
+  }
+
   function advanceToTag() {
     if (!name.trim()) return
+    if (!validateName(name)) return
     setStep('tag')
   }
 
@@ -3861,11 +3873,15 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
             <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New version</p>
             <input
               autoFocus value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={e => { setName(e.target.value); if (nameError) validateName(e.target.value) }}
               onKeyDown={e => { if (e.key === 'Enter' && name.trim()) advanceToTag(); if (e.key === 'Escape') onCancel() }}
               placeholder="feature/new-guitar"
-              className="w-full bg-background border border-border px-3 py-2 text-sm text-foreground outline-none focus:border-lime placeholder:text-muted-foreground/60 mb-4"
+              className={`w-full bg-background border px-3 py-2 text-sm text-foreground outline-none focus:border-lime placeholder:text-muted-foreground/60 mb-1 ${nameError ? 'border-red-500' : 'border-border'}`}
             />
+            {nameError && (
+              <p className="text-[10px] text-red-500 mb-3">{nameError}</p>
+            )}
+            {!nameError && <div className="mb-3" />}
             <div className="flex gap-2 justify-end">
               <TbBtn onClick={onCancel}>Cancel</TbBtn>
               <TbBtn variant="primary" onClick={advanceToTag} disabled={!name.trim()}>Next →</TbBtn>
@@ -6379,7 +6395,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         {v.type === 'main' && '● '}
                         {v.merged_at && '✓ '}
                         {v.type === 'branch' && !v.merged_at && '⌥ '}
-                        {v.name}
+                        {getVersionDisplayName(v)}
                       </button>
                     )
                   })}

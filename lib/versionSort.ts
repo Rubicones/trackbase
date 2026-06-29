@@ -1,5 +1,15 @@
 import type { Version } from '@/lib/types'
 
+/**
+ * Returns the display name for a version.
+ * Versions with type='main' and name='main' (legacy rows created before the
+ * rename) are shown as "Master" so the UI is consistent without a migration.
+ */
+export function getVersionDisplayName(version: Pick<Version, 'name' | 'type'>): string {
+  if (version.type === 'main' && version.name === 'main') return 'Master'
+  return version.name
+}
+
 /** Mobile version bar: main first, then branches newest-first. */
 export function sortMobileVersions(versions: Version[]): Version[] {
   return [...versions].sort((a, b) => {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { IconBranch } from '@/components/chat/ContextIcons'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 export type VersionChipOption = {
   id: string
@@ -73,7 +74,7 @@ export function VersionChipSelector({
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null)
 
   const selected = versions.find(v => v.id === selectedId)
-  const label = selected?.name ?? 'Version'
+  const label = selected ? getVersionDisplayName(selected) : 'Version'
 
   const reposition = useCallback(() => {
     const anchor = chipRef.current
@@ -154,7 +155,7 @@ export function VersionChipSelector({
               }`}
             >
               <span className="text-lime shrink-0"><IconBranch /></span>
-              <span className="truncate">{v.name}</span>
+              <span className="truncate">{getVersionDisplayName(v)}</span>
               {v.type === 'main' && (
                 <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
               )}

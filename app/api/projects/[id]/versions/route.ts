@@ -28,6 +28,14 @@ export async function POST(
       )
     }
 
+    // "Master" is reserved for the primary version
+    if (name.trim().toLowerCase() === 'master') {
+      return NextResponse.json(
+        { error: '"Master" is reserved for the primary version. Try "Master 2" or another name.' },
+        { status: 400 }
+      )
+    }
+
     // Validate tag length if provided
     if (tag != null && (typeof tag !== 'string' || tag.length > 20)) {
       return NextResponse.json({ error: 'tag must be a string of max 20 characters' }, { status: 400 })

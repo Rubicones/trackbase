@@ -34,7 +34,7 @@ export async function POST(
   // Seed main version
   const { data: version, error: verErr } = await supabase
     .from('versions')
-    .insert({ project_id: project.id, name: 'main', type: 'main' })
+    .insert({ project_id: project.id, name: 'Master', type: 'main' })
     .select()
     .single()
   if (verErr) return NextResponse.json({ error: verErr.message }, { status: 500 })

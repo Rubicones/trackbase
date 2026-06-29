@@ -2,6 +2,7 @@
 
 import type { ProjectResource, Version } from '@/lib/types'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
+import { getVersionDisplayName } from '@/lib/versionSort'
 
 export function resolveResourceChipNames(
   resource: Pick<
@@ -14,7 +15,8 @@ export function resolveResourceChipNames(
   let trackName = resource.context_track_name ?? null
 
   if (!versionName && resource.context_version_id) {
-    versionName = versions.find(v => v.id === resource.context_version_id)?.name ?? null
+    const found = versions.find(v => v.id === resource.context_version_id)
+    versionName = found ? getVersionDisplayName(found) : null
   }
 
   if (!trackName && resource.context_track_id) {
