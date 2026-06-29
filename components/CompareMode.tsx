@@ -15,6 +15,7 @@ import { trackAccentColor } from '@/lib/trackIcon'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { transportStatusClass, type TransportStatus } from '@/lib/transportStatus'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionChipSelector } from '@/components/VersionChipSelector'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1044,17 +1045,12 @@ function VersionSideHeader({
           {sideStatus.label}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <select
-            value={selectedId}
-            onChange={e => onSelect(e.target.value)}
-            className="text-[10px] uppercase tracking-widest bg-background border border-border text-foreground px-2 py-0.5 focus:outline-none focus:border-lime cursor-pointer max-w-[160px]"
-          >
-            {versions.map(v => (
-              <option key={v.id} value={v.id}>
-                {getVersionDisplayName(v)}{v.type === 'main' ? ' (Master)' : ''}
-              </option>
-            ))}
-          </select>
+          <VersionChipSelector
+            versions={versions}
+            selectedId={selectedId}
+            onChange={onSelect}
+            popoverLabel="Version"
+          />
         </div>
       </div>
       <div className="flex items-center gap-3">
