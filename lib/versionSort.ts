@@ -5,7 +5,7 @@ import type { Version } from '@/lib/types'
  * Versions with type='main' and name='main' (legacy rows created before the
  * rename) are shown as "Master" so the UI is consistent without a migration.
  */
-export function getVersionDisplayName(version: Pick<Version, 'name' | 'type'>): string {
+export function getVersionDisplayName(version: { name: string; type?: 'main' | 'branch' }): string {
   if (version.type === 'main' && version.name === 'main') return 'Master'
   return version.name
 }
