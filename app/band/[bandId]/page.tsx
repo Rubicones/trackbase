@@ -36,7 +36,7 @@ const bandDataCache = new Map<string, { data: object; cachedAt: number }>()
 interface Band { id: string; name: string; created_at: string }
 
 interface EnhancedProject {
-  id: string; name: string; bpm: number | null; key: string | null; created_at: string
+  id: string; name: string; bpm: number | null; key: string | null; time_signature: string | null; created_at: string
   track_count: number; audio_track_count: number; total_duration_ms: number; version_count: number
   comment_count: number; last_updated_at: string; first_track_id: string | null
   roadmap_configured: boolean
