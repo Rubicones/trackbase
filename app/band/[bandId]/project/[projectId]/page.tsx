@@ -62,6 +62,7 @@ import {
   takePreloadedPreviewAudio,
 } from '@/lib/previewMixClient'
 import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
+import { ChevronsLeftRightEllipsis } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2979,63 +2980,53 @@ const TrackRow = React.memo(function TrackRow({
               {pianoRollOpen ? 'Close' : 'Edit'}
             </button>
           )}
-          {!isMidi && !compact && !confirmDelete && track.file_size_bytes ? (
+          {!isMidi && !compact && track.file_size_bytes ? (
             <span className="ml-auto text-[8px] font-mono text-muted-foreground tabular-nums pr-2">
               {fmtSize(track.file_size_bytes)}
             </span>
           ) : null}
-          {confirmDelete && (
-            <div className="ml-auto flex items-center gap-1">
-              <span className="text-[9px] uppercase tracking-widest text-destructive whitespace-nowrap">Delete?</span>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="h-5 px-1.5 border border-border text-[9px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition"
-              >
-                No
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                disabled={deleting}
-                className="h-5 px-1.5 border border-destructive bg-destructive text-white text-[9px] uppercase tracking-widest disabled:opacity-60 transition"
-              >
-                {deleting ? '…' : 'Yes'}
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Full-height chevron strip — right border of label column */}
-        {!confirmDelete && (
-          <button
-            type="button"
-            data-no-resource-filter
-            onClick={(e) => { e.stopPropagation(); setShowTools(p => !p) }}
-            className={`absolute right-0 top-0 bottom-0 w-5 flex items-center justify-center border-l transition-colors ${
-              showTools
-                ? 'border-lime/40 bg-surface text-lime'
-                : 'border-border text-muted-foreground hover:bg-surface/60 hover:text-lime'
-            }`}
-            aria-label={showTools ? 'Close track actions' : 'Track actions'}
+        <button
+          type="button"
+          data-no-resource-filter
+          onClick={(e) => {
+            e.stopPropagation()
+            if (showTools) {
+              setShowTools(false)
+              setConfirmDelete(false)
+            } else {
+              setShowTools(true)
+            }
+          }}
+          className={`absolute right-0 top-0 bottom-0 w-5 flex items-center justify-center border-l transition-colors ${
+            showTools
+              ? 'border-lime/40 bg-surface text-lime'
+              : 'border-border text-muted-foreground hover:bg-surface/60 hover:text-lime'
+          }`}
+          aria-label={showTools ? 'Close track actions' : 'Track actions'}
+        >
+          <svg
+            width="6" height="10" viewBox="0 0 6 10"
+            fill="none" stroke="currentColor" strokeWidth="1.5"
+            strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: showTools ? 'rotate(180deg)' : 'none', transition: 'transform 0.22s ease' }}
+            aria-hidden
           >
-            <svg
-              width="6" height="10" viewBox="0 0 6 10"
-              fill="none" stroke="currentColor" strokeWidth="1.5"
-              strokeLinecap="round" strokeLinejoin="round"
-              style={{ transform: showTools ? 'rotate(180deg)' : 'none', transition: 'transform 0.22s ease' }}
-              aria-hidden
-            >
-              <path d="M1 1.5L4.5 5 1 8.5" />
-            </svg>
-          </button>
-        )}
+            <path d="M1 1.5L4.5 5 1 8.5" />
+          </svg>
+        </button>
       </div>
 
       {/* Track action drawer — overlays the waveform */}
-      {showTools && !confirmDelete && (
+      {showTools && (
         <>
-          <div className="fixed inset-0 z-10" data-no-resource-filter onClick={() => setShowTools(false)} />
+          <div
+            className="fixed inset-0 z-10"
+            data-no-resource-filter
+            onClick={() => { setShowTools(false); setConfirmDelete(false) }}
+          />
           <div
             className="track-drawer absolute z-20 flex bg-background border-r border-border"
             style={{ left: labelColW, top: 0, bottom: 0, minHeight: rowH }}
@@ -3045,7 +3036,7 @@ const TrackRow = React.memo(function TrackRow({
               type="button"
               className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors"
               style={{ animationDelay: '0ms' }}
-              onClick={() => { fileRef.current?.click(); setShowTools(false) }}
+              onClick={() => { fileRef.current?.click(); setShowTools(false); setConfirmDelete(false) }}
             >
               <ReplaceIcon size={16} />
               <span className="text-[8px] uppercase tracking-[0.08em]">Replace</span>
@@ -3055,20 +3046,51 @@ const TrackRow = React.memo(function TrackRow({
               download
               className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors no-underline"
               style={{ animationDelay: '60ms' }}
-              onClick={() => setShowTools(false)}
+              onClick={() => { setShowTools(false); setConfirmDelete(false) }}
             >
               <DownloadIcon size={16} />
               <span className="text-[8px] uppercase tracking-[0.08em]">Download</span>
             </a>
-            <button
-              type="button"
-              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors"
-              style={{ animationDelay: '120ms' }}
-              onClick={() => { setShowTools(false); setConfirmDelete(true) }}
-            >
-              <TrashIcon size={16} />
-              <span className="text-[8px] uppercase tracking-[0.08em]">Delete</span>
-            </button>
+            {confirmDelete ? (
+              <div
+                className="track-drawer-item flex flex-col items-center justify-center gap-1.5 w-20 px-1 transition-colors"
+                style={{
+                  animationDelay: '120ms',
+                  background: deleteError ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.06)',
+                }}
+              >
+                <span className="text-[8px] uppercase tracking-[0.08em] text-destructive font-bold">
+                  {deleteError ? 'Failed' : 'Delete?'}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    className="h-5 px-1.5 border border-border text-[8px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime transition"
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDelete}
+                    disabled={deleting}
+                    className="h-5 px-1.5 border border-destructive bg-destructive text-white text-[8px] uppercase tracking-widest disabled:opacity-60 transition"
+                  >
+                    {deleting ? '…' : 'Yes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors"
+                style={{ animationDelay: '120ms' }}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <TrashIcon size={16} />
+                <span className="text-[8px] uppercase tracking-[0.08em]">Delete</span>
+              </button>
+            )}
           </div>
         </>
       )}
@@ -6366,7 +6388,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   type="button"
                   onClick={() => setShowBranchModal(true)}
                   data-tour="new-branch-button"
-                  className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+                  className="shrink-0 self-stretch ml-1.5 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
                 >
                   + New Version
                 </button>
@@ -6381,9 +6403,10 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         if (player.playing) player.pause()
                       }
                     }}
-                    className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+                    className="shrink-0 self-stretch ml-1.5 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
                   >
-                    ⇄ Compare
+                    <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                    Compare
                   </button>
                 )}
               </div>

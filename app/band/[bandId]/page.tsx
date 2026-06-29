@@ -500,7 +500,7 @@ const ProjectRow = memo(function ProjectRow({
 
       <div className="flex items-center gap-1 shrink-0 sm:justify-end">
         <TbButton onClick={e => onQuick(e, project.id)}>Quick peek</TbButton>
-        <TbButton variant="solid" onClick={() => onOpen(project.id)}>Open ↗</TbButton>
+        <TbButton variant="solid" onClick={() => onOpen(project.id)}>Open</TbButton>
         <div ref={menuRef} className="relative">
           <button
             type="button"

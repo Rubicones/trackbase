@@ -41,20 +41,31 @@ function formatSectionOption(s: Section): string {
 type CompareStatus = 'identical' | 'changed' | 'only_a' | 'only_b'
 
 interface ComparePair {
-  name: string          // display name for the row
+  fileName: string       // original upload filename — pairing key
+  nameA: string | null   // display label on side A
+  nameB: string | null   // display label on side B
   status: CompareStatus
   trackA: Track | null
   trackB: Track | null
 }
 
-function buildComparePairs(tracksA: Track[], tracksB: Track[]): ComparePair[] {
-  const labelsA = tracksA.map(t => (t.display_name ?? t.name).toLowerCase())
-  const labelsB = tracksB.map(t => (t.display_name ?? t.name).toLowerCase())
-  const allLabels = Array.from(new Set([...labelsA, ...labelsB]))
+/** Match key: original file name (not user-editable track label). */
+function compareFileKey(t: Track): string {
+  return (t.original_filename ?? t.name).toLowerCase()
+}
 
-  return allLabels.map(label => {
-    const trackA = tracksA.find(t => (t.display_name ?? t.name).toLowerCase() === label) ?? null
-    const trackB = tracksB.find(t => (t.display_name ?? t.name).toLowerCase() === label) ?? null
+function compareTrackLabel(t: Track): string {
+  return t.display_name ?? t.name
+}
+
+function buildComparePairs(tracksA: Track[], tracksB: Track[]): ComparePair[] {
+  const keysA = tracksA.map(compareFileKey)
+  const keysB = tracksB.map(compareFileKey)
+  const allKeys = Array.from(new Set([...keysA, ...keysB]))
+
+  return allKeys.map(key => {
+    const trackA = tracksA.find(t => compareFileKey(t) === key) ?? null
+    const trackB = tracksB.find(t => compareFileKey(t) === key) ?? null
     let status: CompareStatus
     if (trackA && trackB) {
       status = trackA.file_hash === trackB.file_hash ? 'identical' : 'changed'
@@ -63,14 +74,21 @@ function buildComparePairs(tracksA: Track[], tracksB: Track[]): ComparePair[] {
     } else {
       status = 'only_b'
     }
-    const displayTrack = trackA ?? trackB!
+    const fileName = trackA?.original_filename ?? trackB?.original_filename
+      ?? trackA?.name ?? trackB?.name ?? key
     return {
-      name: displayTrack.display_name ?? displayTrack.name,
+      fileName,
+      nameA: trackA ? compareTrackLabel(trackA) : null,
+      nameB: trackB ? compareTrackLabel(trackB) : null,
       status,
       trackA,
       trackB,
     }
-  })
+  }).sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' }))
+}
+
+function comparePairKey(pair: ComparePair): string {
+  return `${pair.fileName}-${pair.trackA?.id ?? ''}-${pair.trackB?.id ?? ''}`
 }
 
 // ─── useCompareAudio ─────────────────────────────────────────────────────────
@@ -772,6 +790,50 @@ function TrackVisual({
   )
 }
 
+function ComparePairLabel({
+  pair,
+  bColor,
+}: {
+  pair: ComparePair
+  bColor: string
+}) {
+  const namesDiffer = pair.nameA && pair.nameB && pair.nameA !== pair.nameB
+
+  if (namesDiffer) {
+    return (
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <span
+          className="text-[11px] font-medium truncate uppercase tracking-wide"
+          style={{ color: 'var(--lime)' }}
+          title={pair.nameA!}
+        >
+          {pair.nameA}
+        </span>
+        <span
+          className="text-[11px] font-medium truncate uppercase tracking-wide"
+          style={{ color: bColor }}
+          title={pair.nameB!}
+        >
+          {pair.nameB}
+        </span>
+      </div>
+    )
+  }
+
+  const singleName = pair.nameA ?? pair.nameB ?? pair.fileName
+  const sideColor = pair.status === 'only_b' ? bColor : pair.status === 'only_a' ? 'var(--lime)' : undefined
+
+  return (
+    <span
+      className="text-[11px] font-medium truncate uppercase tracking-wide"
+      style={sideColor ? { color: sideColor } : { color: 'var(--foreground)' }}
+      title={singleName}
+    >
+      {singleName}
+    </span>
+  )
+}
+
 function CompareTrackRow({
   pair, index,
   totalDurationMs, barDurationMs,
@@ -822,9 +884,7 @@ function CompareTrackRow({
         className="shrink-0 border-r border-border px-3 flex flex-col justify-center gap-0.5 bg-surface/40"
         style={{ width: 140 }}
       >
-        <span className="text-[11px] font-medium truncate uppercase tracking-wide text-foreground">
-          {pair.name}
-        </span>
+        <ComparePairLabel pair={pair} bColor={bColor} />
         <span
           className="text-[9px] uppercase tracking-widest font-bold"
           style={{
@@ -1696,7 +1756,7 @@ export default function CompareMode({
         ) : (
           pairs.map((pair, i) => (
             <CompareTrackRow
-              key={pair.name}
+              key={comparePairKey(pair)}
               pair={pair}
               index={i}
               totalDurationMs={totalDurationMs}

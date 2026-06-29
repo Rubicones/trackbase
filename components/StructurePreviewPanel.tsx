@@ -660,9 +660,14 @@ export function StructurePreviewPanel({
             <button
               type="button"
               onClick={() => router.push(`/band/${bandId}/project/${projectId}`)}
-              className="bg-lime text-primary-foreground px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition"
+              className="inline-flex items-center gap-1.5 bg-lime text-primary-foreground px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition"
             >
-              Open Full Mixer ↗
+              Open Full Mixer
+              <svg width={11} height={11} viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+                <path d="M5 2h5v5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M7 5 10 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 4H2v6h6V8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
           </div>
         )}

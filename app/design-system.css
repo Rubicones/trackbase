@@ -363,13 +363,13 @@ html[data-theme] a.tb-btn-accent {
     letter-spacing: -0.02em;
   }
 
-  html[data-theme="lime"] ::selection,
+  html[data-theme] ::selection,
   html:not([data-theme]) ::selection {
     background-color: var(--lime);
     color: var(--primary-foreground);
   }
 
-  html[data-theme="lime"] ::-moz-selection,
+  html[data-theme] ::-moz-selection,
   html:not([data-theme]) ::-moz-selection {
     background-color: var(--lime);
     color: var(--primary-foreground);
