@@ -56,7 +56,9 @@ export interface TrackComment {
   track_id: string
   version_id: string
   content: string
+  /** Ms from the start of the track audio (waveform-relative, not project timeline). */
   timecode_start_ms: number
+  /** Ms from the start of the track audio (waveform-relative, not project timeline). */
   timecode_end_ms: number
   created_by: string
   author_username: string

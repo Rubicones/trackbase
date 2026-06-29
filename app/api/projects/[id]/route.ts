@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { requireBandMember } from '@/lib/supabase/server'
+import { isValidProjectTimeSignature } from '@/lib/metronomeAudio'
 import { markPreviewMixStale } from '@/lib/previewMix'
 
-// PATCH /api/projects/[id] — update project metadata (name, bpm, key)
+// PATCH /api/projects/[id] — update project metadata (name, bpm, key, time_signature)
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,7 +18,12 @@ export async function PATCH(
     const { userId, project } = access
 
     const body = await req.json()
-    const { name, bpm, key } = body as { name?: string; bpm?: number | null; key?: string | null }
+    const { name, bpm, key, time_signature } = body as {
+      name?: string
+      bpm?: number | null
+      key?: string | null
+      time_signature?: string | null
+    }
 
     const updates: Record<string, unknown> = {}
     if (name !== undefined) {
@@ -49,6 +55,15 @@ export async function PATCH(
         return NextResponse.json({ error: 'key must be 40 characters or fewer' }, { status: 400 })
       } else {
         updates.key = key.trim()
+      }
+    }
+    if (time_signature !== undefined) {
+      if (time_signature === null || time_signature === '') {
+        updates.time_signature = '4/4'
+      } else if (typeof time_signature !== 'string' || !isValidProjectTimeSignature(time_signature)) {
+        return NextResponse.json({ error: 'time_signature must be a supported value' }, { status: 400 })
+      } else {
+        updates.time_signature = time_signature
       }
     }
 
@@ -106,6 +121,16 @@ export async function PATCH(
         action: 'meta',
         subject: 'Key',
         detail: updates.key != null ? String(updates.key) : 'cleared',
+        projectId,
+      })
+    }
+    if (timeSigChanged) {
+      void logActivity({
+        bandId: project.band_id,
+        userId,
+        action: 'meta',
+        subject: 'Time signature',
+        detail: String(updates.time_signature),
         projectId,
       })
     }

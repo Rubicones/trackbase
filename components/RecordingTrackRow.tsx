@@ -12,6 +12,7 @@ import { waveformBarsCache } from '@/lib/waveformCache'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 
 const TRACK_LABEL_W = 192
+const TRACK_ROW_H = 96
 const WAVEFORM_COLOR = 'var(--lime, #e07a5f)'
 const BAR_COUNT = 96
 const LIVE_MONITOR_BARS = 28
@@ -1175,8 +1176,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           className="px-3 pb-2.5 overflow-x-auto scrollbar-none touch-pan-x"
         >
           <div
-            className="relative h-14 bg-surface/40 border border-border"
-            style={{ width: `${mobileTimelineWidthPct}%`, minHeight: 56 }}
+            className="relative bg-surface/40 border border-border"
+            style={{ width: `${mobileTimelineWidthPct}%`, minHeight: 67 }}
           >
             {waveformCol}
           </div>
@@ -1191,7 +1192,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       data-track-row
       data-recording-id={id}
       className="flex border-t border-border"
-      style={{ minHeight: 80, background: rowBg }}
+      style={{ minHeight: TRACK_ROW_H, background: rowBg }}
     >
       <div
         className="shrink-0 border-r border-border flex flex-col justify-between py-2 px-3"
@@ -1204,7 +1205,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       <div
         data-waveform-col
         className="flex-1 min-w-0 relative overflow-hidden border-l border-border/0"
-        style={{ minHeight: 80 }}
+        style={{ minHeight: TRACK_ROW_H }}
       >
         {waveformCol}
       </div>

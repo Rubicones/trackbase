@@ -10,6 +10,7 @@ import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
 import { allTracksLoaded } from '@/lib/transportStatus'
+import { barOffsetToMs } from '@/lib/commentTimecodes'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { MergeModal } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
@@ -374,6 +375,7 @@ function isCommentUiTarget(target: EventTarget | null): boolean {
 
 function CommentTooltip({
   comment, anchorLeft, anchorTop, onDelete, onHide, onShow, currentUserId, isOwner, onReplySubmit, onReplyFocusChange,
+  projectOffsetMs = 0,
 }: {
   comment: TrackComment
   anchorLeft: number
@@ -385,6 +387,8 @@ function CommentTooltip({
   isOwner: boolean
   onReplySubmit: (commentId: string, content: string) => Promise<void>
   onReplyFocusChange?: (focused: boolean) => void
+  /** Added to track-relative timecodes for project-timeline display. */
+  projectOffsetMs?: number
 }) {
   const W = 260
   let left = anchorLeft - W / 2
@@ -408,7 +412,7 @@ function CommentTooltip({
           <UserAvatar seed={author} size={18} kind="user" />
           <span className="text-[11px] text-foreground truncate">{author}</span>
           <span className="text-[10px] tabular-nums text-lime shrink-0">
-            {fmtMs(comment.timecode_start_ms)} → {fmtMs(comment.timecode_end_ms)}
+            {fmtMs(comment.timecode_start_ms + projectOffsetMs)} → {fmtMs(comment.timecode_end_ms + projectOffsetMs)}
           </span>
           {canDelete && (
             <button
@@ -519,7 +523,7 @@ function CommentToggleBtn({
 }
 
 
-function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete, currentUserId, isOwner, onReplyCreate, onInteractionChange }: {
+function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, onDelete, currentUserId, isOwner, onReplyCreate, onInteractionChange, projectOffsetMs = 0 }: {
   comment: TrackComment
   durationMs: number
   dotTopOffset: number
@@ -529,6 +533,7 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
   onInteractionChange?: (commentId: string, active: boolean) => void
+  projectOffsetMs?: number
 }) {
   const startPct = durationMs > 0 ? (comment.timecode_start_ms / durationMs) * 100 : 0
   const endPct = durationMs > 0 ? (comment.timecode_end_ms / durationMs) * 100 : 0
@@ -631,6 +636,7 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
             isOwner={isOwner}
             onReplySubmit={onReplyCreate}
             onReplyFocusChange={(focused) => setReplyFocused(focused)}
+            projectOffsetMs={projectOffsetMs}
           />
         )
       })()}
@@ -726,8 +732,8 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
 // ─── Track row layout ─────────────────────────────────────────────────────────
 
 const TRACK_LABEL_W = 192
-const TRACK_ROW_H = 80
-const COMPACT_TRACK_ROW_H = 48
+const TRACK_ROW_H = 96
+const COMPACT_TRACK_ROW_H = 58
 
 /** Position a clip on the full track row — bar 0 aligns with the waveform column left edge. */
 function trackClipRowStyle(
@@ -765,8 +771,9 @@ function Waveform({
   trackId, color, durationMs,
   commentMode, comments, activeInput, audioReady,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput, onReady,
-  currentUserId, isOwner, onReplyCreate, currentUser, onCommentInteractionChange,
+  currentUserId, isOwner, onReplyCreate, currentUser,   onCommentInteractionChange,
   compact = false, barCount = 96, interactionsEnabled = true,
+  projectOffsetMs = 0,
 }: {
   trackId: string; color: string; durationMs: number
   commentMode: boolean; comments: TrackComment[]; activeInput: ActiveCommentInput | null; audioReady: boolean
@@ -785,6 +792,8 @@ function Waveform({
    *  so each bar stays ~12 px wide regardless of clip length. Defaults to 96. */
   barCount?: number
   interactionsEnabled?: boolean
+  /** Track start_bar offset — for project-timeline labels in tooltips. */
+  projectOffsetMs?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const barsRef = useRef<number[]>([])
@@ -986,6 +995,7 @@ function Waveform({
           isOwner={isOwner}
           onReplyCreate={onReplyCreate}
           onInteractionChange={onCommentInteractionChange}
+          projectOffsetMs={projectOffsetMs}
         />
       ))}
 
@@ -2485,6 +2495,14 @@ const TrackRow = React.memo(function TrackRow({
     commentUiActiveRef.current = activeCommentInteractionsRef.current.size > 0
   }, [])
 
+  // Reset stale comment-UI lock when leaving comment mode (e.g. after posting a comment).
+  useEffect(() => {
+    if (!commentMode) {
+      activeCommentInteractionsRef.current.clear()
+      commentUiActiveRef.current = false
+    }
+  }, [commentMode])
+
   function syncLabelColOpacity(bar: number) {
     if (trackLabelColRef.current) {
       trackLabelColRef.current.style.opacity = bar < 0 ? '0.45' : ''
@@ -2510,7 +2528,6 @@ const TrackRow = React.memo(function TrackRow({
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       if (!isCommentUiTarget(e.target)) return
-      commentUiActiveRef.current = true
       if (isOffsetDragging) cancelOffsetDrag()
     }
     document.addEventListener('pointerdown', onPointerDown, true)
@@ -2524,7 +2541,7 @@ const TrackRow = React.memo(function TrackRow({
   const beatsPerBarRow = parseInt(projTimeSigRow.split('/')[0]) || 4
   const barDurationMsRow = (60000 / projBpmRow) * beatsPerBarRow
   const effectiveStartBar = dragPreviewBar ?? (track.start_bar ?? 0)
-  const trackOffsetMs = effectiveStartBar * barDurationMsRow
+  const savedTrackOffsetMs = barOffsetToMs(track.start_bar ?? 0, projBpmRow, projTimeSigRow)
   // Prefer runtime decoded duration (populated once audio buffer loads); fall back to DB value.
   const rawContentMs = trackContentDurationMs(track, projBpmRow, runtimeDurationMs)
   const durationKnown = rawContentMs > 0
@@ -2960,7 +2977,7 @@ const TrackRow = React.memo(function TrackRow({
       {/* Track action drawer — overlays the waveform */}
       {showTools && !confirmDelete && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setShowTools(false)} />
+          <div className="fixed inset-0 z-10" data-no-resource-filter onClick={() => setShowTools(false)} />
           <div
             className="track-drawer absolute z-20 flex bg-background border-r border-border"
             style={{ left: labelColW, top: 0, bottom: 0, minHeight: rowH }}
@@ -3064,21 +3081,11 @@ const TrackRow = React.memo(function TrackRow({
                 trackId={track.id} color={accentColor}
                 durationMs={trackOwnDurationMs} commentMode={commentMode}
                 barCount={displayBarCount}
-                comments={(track.comments ?? []).map(c => ({
-                  ...c,
-                  timecode_start_ms: c.timecode_start_ms - trackOffsetMs,
-                  timecode_end_ms: c.timecode_end_ms - trackOffsetMs,
-                }))}
+                comments={track.comments ?? []}
                 activeInput={activeInput} audioReady={audioReady}
-                onCommentPlace={input => onCommentPlace({
-                  ...input,
-                  startMs: input.startMs + trackOffsetMs,
-                  endMs: input.endMs + trackOffsetMs,
-                })}
+                onCommentPlace={onCommentPlace}
                 onCommentDelete={onCommentDelete}
-                onCommentCreate={(tid, sMs, eMs, content) =>
-                  onCommentCreate(tid, trackOffsetMs + sMs, trackOffsetMs + eMs, content)
-                }
+                onCommentCreate={onCommentCreate}
                 onCloseInput={onCloseInput}
                 onReady={(decodedMs) => {
                   setWaveformReady(true)
@@ -3089,6 +3096,7 @@ const TrackRow = React.memo(function TrackRow({
                 onCommentInteractionChange={handleCommentInteractionChange}
                 compact={compact}
                 interactionsEnabled={waveformsInteractive}
+                projectOffsetMs={savedTrackOffsetMs}
               />
           )}
       </div>
@@ -5051,9 +5059,25 @@ export default function ProjectPage() {
   }, [player.trackDurations])
 
   async function handleCommentCreate(trackId: string, startMs: number, endMs: number, content: string) {
+    const track = activeTracks.find(t => t.id === trackId)
+    let trackStartMs = startMs
+    let trackEndMs = endMs
+    if (track) {
+      const offsetMs = barOffsetToMs(
+        track.start_bar ?? 0,
+        project?.bpm ?? 120,
+        project?.time_signature ?? '4/4',
+      )
+      // Mobile mixer uses project-timeline ms; desktop waveform uses track-relative ms.
+      if (offsetMs > 0 && startMs >= offsetMs) {
+        trackStartMs = startMs - offsetMs
+        trackEndMs = endMs - offsetMs
+      }
+    }
+
     const res = await fetch(`/api/tracks/${trackId}/comments`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, timecode_start_ms: startMs, timecode_end_ms: endMs }),
+      body: JSON.stringify({ content, timecode_start_ms: trackStartMs, timecode_end_ms: trackEndMs }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
@@ -6103,10 +6127,10 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   projectId={projectId}
                   bpm={project.bpm}
                   keySig={project.key}
+                  timeSig={project.time_signature}
                   onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
                   variant="header"
                 />
-                <span>{project.time_signature ?? '4/4'}</span>
                 <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
                 {player.duration > 0 && <span>{fmtTime(player.duration)}</span>}
               </div>
@@ -6200,10 +6224,10 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   projectId={projectId}
                   bpm={project.bpm}
                   keySig={project.key}
+                  timeSig={project.time_signature}
                   onUpdated={patch => setProject(p => p ? { ...p, ...patch } : p)}
                   variant="header"
                 />
-                <span>{project.time_signature ?? '4/4'}</span>
                 <span>{activeTracks.length} TRACK{activeTracks.length !== 1 ? 'S' : ''}</span>
                 {totalProjectDurationMs > 0 && <span>{fmtTime(totalProjectDurationMs / 1000)}</span>}
               </div>

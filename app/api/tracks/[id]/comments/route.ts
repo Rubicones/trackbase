@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, fmtTimecode } from '@/lib/activity'
+import { commentToTimelineMs } from '@/lib/commentTimecodes'
+import { trackStartBar } from '@/lib/trackMerge'
 
 // POST /api/tracks/[id]/comments
-// Body: { content: string, timecode_start_ms: number, timecode_end_ms: number }
+// Body: { content, timecode_start_ms, timecode_end_ms } — ms relative to track content (waveform)
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -72,9 +74,25 @@ export async function POST(
     const { data: ver } = await supabase
       .from('versions').select('project_id').eq('id', track.version_id).maybeSingle()
     if (ver) {
-      const { data: proj } = await supabase
-        .from('projects').select('band_id, name').eq('id', ver.project_id).maybeSingle()
+      const [{ data: proj }, { data: trackRow }] = await Promise.all([
+        supabase.from('projects').select('band_id, name, bpm, time_signature').eq('id', ver.project_id).maybeSingle(),
+        supabase.from('tracks').select('start_bar, midi_start_bar').eq('id', trackId).maybeSingle(),
+      ])
       if (proj) {
+        const startBar = trackStartBar(trackRow)
+        const timelineStartMs = commentToTimelineMs(
+          timecode_start_ms,
+          startBar,
+          proj.bpm ?? 120,
+          proj.time_signature ?? '4/4',
+        )
+        const timelineEndMs = commentToTimelineMs(
+          timecode_end_ms,
+          startBar,
+          proj.bpm ?? 120,
+          proj.time_signature ?? '4/4',
+        )
+
         // Auto-generated track-comment message in the project's channel.
         const { error: msgError } = await supabase.from('band_messages').insert({
           band_id: proj.band_id,
@@ -84,15 +102,15 @@ export async function POST(
           type: 'track_comment',
           context_version_id: comment.version_id,
           context_track_id: comment.track_id,
-          context_timecode_start_ms: comment.timecode_start_ms,
-          context_timecode_end_ms: comment.timecode_end_ms,
+          context_timecode_start_ms: timelineStartMs,
+          context_timecode_end_ms: timelineEndMs,
           source_track_comment_id: comment.id,
         })
         if (msgError) console.error('[comments/post] band_messages insert error:', msgError)
 
         logActivity({
           bandId: proj.band_id, userId, action: 'comment',
-          subject: proj.name, detail: fmtTimecode(timecode_start_ms),
+          subject: proj.name, detail: fmtTimecode(timelineStartMs),
           projectId: ver.project_id,
         })
       }

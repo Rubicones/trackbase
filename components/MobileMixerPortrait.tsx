@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch,
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
 import { resolveTransportStatus, transportStatusClass } from '@/lib/transportStatus'
 import { formatTrackStartBar } from '@/lib/trackMerge'
+import { commentsToTimeline } from '@/lib/commentTimecodes'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { updateSectionChordDuration } from '@/lib/chords'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -1016,7 +1017,12 @@ function MobileMixerPortraitInner({
               totalBars={mobileTimelineBars}
               barDurationMs={barDurationMs}
               projectBpm={project.bpm ?? undefined}
-              comments={t.comments ?? EMPTY_COMMENTS}
+              comments={commentsToTimeline(
+                t.comments ?? EMPTY_COMMENTS,
+                t.start_bar ?? 0,
+                project.bpm ?? 120,
+                project.time_signature ?? '4/4',
+              )}
               {...waveformCommentProps}
               openMenu={openMenuId === t.id}
               colorPickerOpen={colorPickerTrackId === t.id}

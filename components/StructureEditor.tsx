@@ -800,7 +800,6 @@ export default function StructureOverlay({
   /** False while tracks are still loading — disables ruler/structure scrub. */
   seekEnabled?: boolean
 }) {
-  const [timeSignature, setTimeSignature] = useState(project.time_signature ?? '4/4')
   const [selMode, setSelMode] = useState<SelMode>('idle')
   const [selStart, setSelStart] = useState<number | null>(null)
   const [selEnd, setSelEnd] = useState<number | null>(null)
@@ -844,10 +843,7 @@ export default function StructureOverlay({
     return () => window.removeEventListener('keydown', onKey)
   }, [editMode, activeEdit, selMode, onEditModeChange])
 
-  const effectiveProject = editMode
-    ? { ...project, time_signature: timeSignature }
-    : project
-  const { barDurationMs, totalBars } = getBarMath(effectiveProject, totalDurationMs)
+  const { barDurationMs, totalBars } = getBarMath(project, totalDurationMs)
 
   // Time-based position: maps bar → 0..1 fraction, matching waveform scale
   const tp = (bar: number) =>
@@ -1353,15 +1349,6 @@ export default function StructureOverlay({
           <div className="flex items-center gap-2 h-[34px] px-3 border-b border-border bg-surface/40">
             <span className="size-1.5 rounded-full bg-lime animate-pulse-dot shrink-0" />
             <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">Structure</span>
-            <select
-              value={timeSignature}
-              onChange={e => setTimeSignature(e.target.value)}
-              className="bg-transparent border border-border px-1 py-0.5 text-[11px] text-muted-foreground cursor-pointer outline-none"
-            >
-              {['4/4', '3/4', '6/8', '2/4', '5/4', '7/8'].map(ts => (
-                <option key={ts} value={ts}>{ts}</option>
-              ))}
-            </select>
 
             {hint ? (
               <span className={`text-[11px] flex-1 min-w-0 truncate ${hint.isError ? 'text-destructive' : 'text-lime'}`}>
@@ -1394,7 +1381,7 @@ export default function StructureOverlay({
               <span className={compact ? '' : 'pt-2'}>CHANNEL</span>
               {!compact && (
                 <span className="pb-1.5 normal-case tracking-normal font-mono text-foreground/60 font-normal">
-                  {totalBars} bars · {timeSignature}
+                  {totalBars} bars · {project.time_signature ?? '4/4'}
                 </span>
               )}
             </div>

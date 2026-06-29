@@ -1,6 +1,13 @@
 /** Virtual track id for the hidden metronome buffer in the mixer player. */
 export const METRONOME_TRACK_ID = '__metronome__'
 
+export const PROJECT_TIME_SIGNATURES = ['4/4', '3/4', '6/8', '2/4', '5/4', '7/8'] as const
+export type ProjectTimeSignature = (typeof PROJECT_TIME_SIGNATURES)[number]
+
+export function isValidProjectTimeSignature(value: string): value is ProjectTimeSignature {
+  return (PROJECT_TIME_SIGNATURES as readonly string[]).includes(value)
+}
+
 /** Virtual track id for the cached server preview mix (mobile rehearsal). */
 export const PREVIEW_MIX_TRACK_ID = '__preview_mix__'
 

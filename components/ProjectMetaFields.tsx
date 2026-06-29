@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PROJECT_TIME_SIGNATURES } from '@/lib/metronomeAudio'
 import type { Project } from '@/lib/types'
 
 const menuInputCls =
@@ -9,26 +10,38 @@ const menuInputCls =
 const inlineInputCls =
   'bg-surface border border-lime px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:border-lime tabular-nums'
 
+const inlineSelectCls =
+  'bg-surface border border-lime px-1 py-0.5 text-xs font-mono text-foreground outline-none focus:border-lime tabular-nums cursor-pointer'
+
+type MetaPatch = Pick<Project, 'bpm' | 'key' | 'time_signature'>
+
 export function ProjectMetaFields({
   projectId,
   bpm,
   keySig,
+  timeSig,
   onUpdated,
   variant = 'inline',
 }: {
   projectId: string
   bpm: number | null
   keySig: string | null
-  onUpdated: (patch: Pick<Project, 'bpm' | 'key'>) => void
+  timeSig: string | null
+  onUpdated: (patch: MetaPatch) => void
   /** inline — click-to-edit on card; menu — always-visible fields for dropdown; header — project page meta row */
   variant?: 'inline' | 'menu' | 'header'
 }) {
   const [editingBpm, setEditingBpm] = useState(false)
   const [editingKey, setEditingKey] = useState(false)
+  const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [bpmVal, setBpmVal] = useState(bpm?.toString() ?? '')
   const [keyVal, setKeyVal] = useState(keySig ?? '')
+  const [timeSigVal, setTimeSigVal] = useState(timeSig ?? '4/4')
   const bpmRef = useRef<HTMLInputElement>(null)
   const keyRef = useRef<HTMLInputElement>(null)
+  const timeSigRef = useRef<HTMLSelectElement>(null)
+
+  const displayTimeSig = timeSig ?? '4/4'
 
   useEffect(() => {
     if (!editingBpm) setBpmVal(bpm?.toString() ?? '')
@@ -38,7 +51,11 @@ export function ProjectMetaFields({
     if (!editingKey) setKeyVal(keySig ?? '')
   }, [keySig, editingKey])
 
-  const saveMeta = useCallback(async (patch: { bpm?: number | null; key?: string | null }) => {
+  useEffect(() => {
+    if (!editingTimeSig) setTimeSigVal(displayTimeSig)
+  }, [displayTimeSig, editingTimeSig])
+
+  const saveMeta = useCallback(async (patch: Partial<MetaPatch>) => {
     try {
       const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
@@ -47,7 +64,11 @@ export function ProjectMetaFields({
       })
       if (!res.ok) return
       const { project } = await res.json()
-      onUpdated({ bpm: project.bpm, key: project.key })
+      onUpdated({
+        bpm: project.bpm,
+        key: project.key,
+        time_signature: project.time_signature,
+      })
     } catch {
       // ignore
     }
@@ -60,6 +81,10 @@ export function ProjectMetaFields({
   useEffect(() => {
     if (editingKey) keyRef.current?.focus()
   }, [editingKey])
+
+  useEffect(() => {
+    if (editingTimeSig) timeSigRef.current?.focus()
+  }, [editingTimeSig])
 
   async function commitBpm() {
     setEditingBpm(false)
@@ -82,6 +107,50 @@ export function ProjectMetaFields({
     const next = trimmed || null
     if (next !== (keySig || null)) await saveMeta({ key: next })
   }
+
+  async function commitTimeSig() {
+    setEditingTimeSig(false)
+    if (timeSigVal === displayTimeSig) return
+    await saveMeta({ time_signature: timeSigVal })
+  }
+
+  const timeSigControl = editingTimeSig ? (
+    <select
+      ref={timeSigRef}
+      value={timeSigVal}
+      onChange={e => setTimeSigVal(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') void commitTimeSig()
+        if (e.key === 'Escape') {
+          setEditingTimeSig(false)
+          setTimeSigVal(displayTimeSig)
+        }
+      }}
+      onBlur={() => void commitTimeSig()}
+      className={variant === 'menu' ? menuInputCls : inlineSelectCls}
+    >
+      {PROJECT_TIME_SIGNATURES.map(ts => (
+        <option key={ts} value={ts}>{ts}</option>
+      ))}
+    </select>
+  ) : (
+    <button
+      type="button"
+      onClick={() => {
+        setEditingTimeSig(true)
+        setTimeout(() => timeSigRef.current?.focus(), 0)
+      }}
+      className={
+        variant === 'header'
+          ? 'text-[10px] uppercase tracking-widest tabular-nums hover:text-lime transition-colors text-lime'
+          : variant === 'menu'
+            ? 'font-mono normal-case tracking-normal text-lime text-left'
+            : 'font-mono normal-case tracking-normal text-lime'
+      }
+    >
+      {displayTimeSig}
+    </button>
+  )
 
   if (variant === 'menu') {
     return (
@@ -112,6 +181,22 @@ export function ProjectMetaFields({
             className={menuInputCls}
           />
         </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Time</span>
+          <select
+            value={timeSigVal}
+            onChange={e => {
+              const next = e.target.value
+              setTimeSigVal(next)
+              if (next !== displayTimeSig) void saveMeta({ time_signature: next })
+            }}
+            className={menuInputCls}
+          >
+            {PROJECT_TIME_SIGNATURES.map(ts => (
+              <option key={ts} value={ts}>{ts}</option>
+            ))}
+          </select>
+        </label>
       </div>
     )
   }
@@ -137,11 +222,14 @@ export function ProjectMetaFields({
           <button
             type="button"
             onClick={() => { setEditingBpm(true); setTimeout(() => bpmRef.current?.select(), 0) }}
-            className="text-[10px] uppercase tracking-widest text-muted-foreground tabular-nums hover:text-lime transition-colors"
+            className={`text-[10px] uppercase tracking-widest tabular-nums hover:text-lime transition-colors ${
+              bpm != null ? 'text-lime' : 'text-muted-foreground italic normal-case'
+            }`}
           >
             {bpm != null ? `${bpm} BPM` : 'Set BPM'}
           </button>
         )}
+        {timeSigControl}
         {editingKey ? (
           <input
             ref={keyRef}
@@ -199,6 +287,10 @@ export function ProjectMetaFields({
             {bpm ?? 'set'}
           </button>
         )}
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        Time
+        {timeSigControl}
       </span>
       <span className="inline-flex items-center gap-1.5">
         Key

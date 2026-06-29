@@ -408,7 +408,7 @@ const ProjectRow = memo(function ProjectRow({
   onQuick: (e: React.MouseEvent, projectId: string) => void
   onRename: (projectId: string, name: string) => void
   onDelete?: (projectId: string, name: string) => void
-  onMetaUpdated: (projectId: string, patch: { bpm: number | null; key: string | null }) => void
+  onMetaUpdated: (projectId: string, patch: { bpm: number | null; key: string | null; time_signature: string | null }) => void
   isOwner: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -523,6 +523,7 @@ const ProjectRow = memo(function ProjectRow({
                   projectId={project.id}
                   bpm={project.bpm}
                   keySig={project.key}
+                  timeSig={project.time_signature}
                   onUpdated={patch => onMetaUpdated(project.id, patch)}
                   variant="menu"
                 />
@@ -1079,7 +1080,7 @@ export default function BandPage() {
     setRenameModal(null)
   }, [])
 
-  const updateProjectMeta = useCallback((projectId: string, patch: { bpm: number | null; key: string | null }) => {
+  const updateProjectMeta = useCallback((projectId: string, patch: { bpm: number | null; key: string | null; time_signature: string | null }) => {
     setProjects(prev => prev.map(x => x.id === projectId ? { ...x, ...patch } : x))
   }, [])
 

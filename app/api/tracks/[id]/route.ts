@@ -89,7 +89,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
     }
 
-    // Fetch track's file_type before updating, to skip stale marking for MIDI.
+    // Fetch track file_type before updating (preview mix stale marking).
     const { data: existingTrack } = await supabase
       .from('tracks')
       .select('file_type')
