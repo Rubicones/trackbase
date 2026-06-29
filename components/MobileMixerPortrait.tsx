@@ -637,6 +637,7 @@ export type MobileMixerPortraitProps = {
   versions: Version[]
   activeVersionId: string
   onVersionChange: (id: string) => void
+  versionSwitchDisabled?: boolean
   onNewBranch: () => void
   sections: Section[]
   onSectionsChange: Dispatch<SetStateAction<Section[]>>
@@ -692,6 +693,7 @@ function MobileMixerPortraitInner({
   versions,
   activeVersionId,
   onVersionChange,
+  versionSwitchDisabled = false,
   onNewBranch,
   sections,
   onSectionsChange,
@@ -921,6 +923,7 @@ function MobileMixerPortraitInner({
           commentMode={commentMode}
           commentCount={commentCount}
           onToggleCommentMode={onToggleCommentMode}
+          versionSwitchDisabled={versionSwitchDisabled}
         />
       </div>
 

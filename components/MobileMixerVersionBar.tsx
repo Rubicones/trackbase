@@ -55,6 +55,7 @@ export function MobileMixerVersionBar({
   versions, activeId, onSelect, onNewBranch,
   commentMode, commentCount, onToggleCommentMode,
   switchOnly = false,
+  versionSwitchDisabled = false,
 }: {
   versions: Version[]
   activeId: string
@@ -65,6 +66,7 @@ export function MobileMixerVersionBar({
   onToggleCommentMode?: () => void
   /** Rehearsal — scrollable version switcher only, no branch/comment actions. */
   switchOnly?: boolean
+  versionSwitchDisabled?: boolean
 }) {
   const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
 
@@ -73,17 +75,21 @@ export function MobileMixerVersionBar({
       <div className={`flex-1 min-w-0 overflow-x-auto flex flex-nowrap items-center gap-1.5 scrollbar-none [&::-webkit-scrollbar]:hidden ${switchOnly ? 'px-0' : 'px-2'}`}>
         {sortedVersions.map(v => {
           const isActive = v.id === activeId
+          const switchBlocked = versionSwitchDisabled && !isActive
           return (
             <button
               key={v.id}
               type="button"
+              disabled={switchBlocked}
               onClick={() => onSelect(v.id)}
               className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition overflow-hidden text-ellipsis whitespace-nowrap max-w-[160px] ${
                 isActive
                   ? 'bg-lime text-primary-foreground border-lime'
-                  : v.merged_at
-                    ? 'border-border text-muted-foreground opacity-50'
-                    : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
+                  : switchBlocked
+                    ? 'border-border text-muted-foreground opacity-40 cursor-not-allowed'
+                    : v.merged_at
+                      ? 'border-border text-muted-foreground opacity-50'
+                      : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
               }`}
             >
               {v.type === 'main' && '● '}

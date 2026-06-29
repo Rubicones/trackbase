@@ -130,12 +130,13 @@ function MasterWaveform({
 // ─── Version drawer ───────────────────────────────────────────────────────────
 
 function VersionDrawer({
-  versions, activeVersionId, onSelect, onClose,
+  versions, activeVersionId, onSelect, onClose, versionSwitchDisabled = false,
 }: {
   versions: Version[]
   activeVersionId: string
   onSelect: (id: string) => void
   onClose: () => void
+  versionSwitchDisabled?: boolean
 }) {
   return (
     <>
@@ -146,13 +147,17 @@ function VersionDrawer({
         </p>
         {versions.map(v => {
           const isActive = v.id === activeVersionId
+          const switchBlocked = versionSwitchDisabled && !isActive
           return (
             <button
               key={v.id}
               type="button"
+              disabled={switchBlocked}
               onClick={() => { onSelect(v.id); onClose() }}
               className={`w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-[13px] transition ${
-                isActive ? 'bg-surface-2 text-foreground' : 'text-muted-foreground hover:bg-surface/60'
+                isActive ? 'bg-surface-2 text-foreground' : switchBlocked
+                  ? 'text-muted-foreground opacity-40 cursor-not-allowed'
+                  : 'text-muted-foreground hover:bg-surface/60'
               }`}
             >
               <span
@@ -213,6 +218,7 @@ export function ReadingMode({
   versions,
   activeVersionId,
   onVersionChange,
+  versionSwitchDisabled = false,
   projectId,
   bandId,
   activeTracks,
@@ -236,6 +242,7 @@ export function ReadingMode({
   versions: Version[]
   activeVersionId: string
   onVersionChange: (id: string) => void
+  versionSwitchDisabled?: boolean
   projectId: string
   bandId: string
   activeTracks: Track[]
@@ -457,6 +464,7 @@ export function ReadingMode({
               activeVersionId={activeVersionId}
               onSelect={onVersionChange}
               onClose={() => setVersionDrawerOpen(false)}
+              versionSwitchDisabled={versionSwitchDisabled}
             />
           )}
         </>
@@ -521,15 +529,19 @@ export function ReadingMode({
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1 scrollbar-none">
               {versions.map(v => {
                 const isActive = v.id === activeVersionId
+                const switchBlocked = versionSwitchDisabled && !isActive
                 return (
                   <button
                     key={v.id}
                     type="button"
+                    disabled={switchBlocked}
                     onClick={() => onVersionChange(v.id)}
                     className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
                       isActive
                         ? 'bg-lime text-primary-foreground border-lime'
-                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
+                        : switchBlocked
+                          ? 'border-border text-muted-foreground opacity-40 cursor-not-allowed'
+                          : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                     }`}
                   >
                     {v.name}
@@ -547,6 +559,7 @@ export function ReadingMode({
               activeId={activeVersionId}
               onSelect={onVersionChange}
               switchOnly
+              versionSwitchDisabled={versionSwitchDisabled}
             />
           </div>
         )}

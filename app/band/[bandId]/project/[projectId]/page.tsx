@@ -12,6 +12,7 @@ import { trackEvent } from '@/lib/analytics'
 import { allTracksLoaded } from '@/lib/transportStatus'
 import { barOffsetToMs } from '@/lib/commentTimecodes'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
+import CompareMode from '@/components/CompareMode'
 import { MergeModal } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
@@ -29,7 +30,7 @@ import { UserAvatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/Spinner'
 import { waveformBarsCache, fetchTrackAudioBuffer, audioArrayBufferCache } from '@/lib/waveformCache'
-import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
+import { WaveformBarsPlayhead, downsampleWaveformBars } from '@/components/WaveformBars'
 import { MobileExperience } from '@/components/MobileExperience'
 import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
@@ -963,12 +964,12 @@ function Waveform({
       onTouchMove={commentMode ? handleTouchMove : undefined}
     >
       <div className="absolute inset-x-1 top-2 bottom-2 z-[1]">
-        <WaveformBarRow
+        <WaveformBarsPlayhead
           bars={bars}
           color={color}
-          progress={ready ? 1 : 0}
-          className="h-full"
+          ready={ready}
           animate={ready}
+          className="h-full"
         />
       </div>
 
@@ -2407,6 +2408,7 @@ const TrackRow = React.memo(function TrackRow({
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging, waveformDimmed,
   waveformsInteractive = true,
+  onSeek,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
   timelineDurationMs, onTrackDuration, waitForMidiRender,
@@ -2436,6 +2438,8 @@ const TrackRow = React.memo(function TrackRow({
   waveformDimmed: boolean
   /** False while audio/MIDI tracks are still loading — blocks offset & comment drag. */
   waveformsInteractive: boolean
+  /** Desktop mixer — click waveform to seek; dim unplayed region via --played-pct. */
+  onSeek?: (timelineSec: number) => void
   currentUserId: string | undefined
   isOwner: boolean
   onReplyCreate: (commentId: string, content: string) => Promise<void>
@@ -2469,6 +2473,8 @@ const TrackRow = React.memo(function TrackRow({
   const [pianoRollOpen, setPianoRollOpen] = useState(false)
   // Drag-to-offset state
   const [isOffsetDragging, setIsOffsetDragging] = useState(false)
+  const [offsetPointerDown, setOffsetPointerDown] = useState(false)
+  const offsetDragActivatedRef = useRef(false)
   const [dragPreviewBar, setDragPreviewBar] = useState<number | null>(null)
   const dragStartXRef = useRef(0)
   const dragMovedRef = useRef(false)
@@ -2516,8 +2522,11 @@ const TrackRow = React.memo(function TrackRow({
   }
 
   function cancelOffsetDrag() {
+    const wasActive = offsetDragActivatedRef.current
+    setOffsetPointerDown(false)
     setIsOffsetDragging(false)
-    onDragEndOffset()
+    if (wasActive) onDragEndOffset()
+    offsetDragActivatedRef.current = false
     dragPreviewBarRef.current = null
     setDragPreviewBar(null)
     dragMovedRef.current = false
@@ -2528,12 +2537,12 @@ const TrackRow = React.memo(function TrackRow({
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       if (!isCommentUiTarget(e.target)) return
-      if (isOffsetDragging) cancelOffsetDrag()
+      if (isOffsetDragging || offsetPointerDown) cancelOffsetDrag()
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOffsetDragging, onDragEndOffset])
+  }, [isOffsetDragging, offsetPointerDown, onDragEndOffset])
 
   // Per-track offset and timing (uses dragPreviewBar state above)
   const projBpmRow = project.bpm ?? 120
@@ -2566,6 +2575,45 @@ const TrackRow = React.memo(function TrackRow({
 
   const labelColW = compact ? 140 : TRACK_LABEL_W
   const clipLayout = trackClipRowStyle(labelColW, totalBars, effectiveStartBar, layoutWidthPercent)
+  const playheadLayoutRef = useRef({ startBar: effectiveStartBar, durationBars: trackDurationBars, barDurSec: barDurationMsRow / 1000 })
+  playheadLayoutRef.current = {
+    startBar: effectiveStartBar,
+    durationBars: trackDurationBars,
+    barDurSec: barDurationMsRow / 1000,
+  }
+
+  const seekFromClientX = useCallback((clientX: number) => {
+    if (!onSeek || commentMode || !waveformsInteractive) return
+    const col = waveformColRef.current
+    if (!col || !timelineDurationMs) return
+    const rect = col.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+    onSeek(ratio * (timelineDurationMs / 1000))
+  }, [onSeek, commentMode, waveformsInteractive, timelineDurationMs])
+
+  // CSS playhead highlight — bright left of playhead, dim right (no playhead line on waveform).
+  useEffect(() => {
+    if (compact || !onSeek) return
+    let raf: number
+    function tick() {
+      const target = waveformClipRef.current
+      if (!target) {
+        raf = requestAnimationFrame(tick)
+        return
+      }
+      const { startBar, durationBars, barDurSec } = playheadLayoutRef.current
+      const playheadBar = barDurSec > 0 ? (currentTimeRef.current ?? 0) / barDurSec : 0
+      const pct = durationBars > 0
+        ? Math.max(0, Math.min(100, ((playheadBar - startBar) / durationBars) * 100))
+        : 0
+      target.style.setProperty('--played-pct', `${pct}%`)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact, onSeek])
 
   async function snapStartBar(startBar: number) {
     if (startBar === (track.start_bar ?? 0)) return
@@ -2599,13 +2647,21 @@ const TrackRow = React.memo(function TrackRow({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOffsetDragging])
 
-  // Drag-to-offset handlers (mouse + touch)
-  function startOffsetDrag(clientX: number) {
+  // Pointer down on waveform — offset drag UI only after movement past threshold.
+  function beginOffsetPointer(clientX: number) {
     if (!waveformsInteractive || commentMode || commentUiActiveRef.current) return
     dragStartXRef.current = clientX
     dragMovedRef.current = false
     origStartBarRef.current = track.start_bar ?? 0
-    const initialBar = track.start_bar ?? 0
+    offsetDragActivatedRef.current = false
+    setOffsetPointerDown(true)
+  }
+
+  function activateOffsetDrag() {
+    if (offsetDragActivatedRef.current) return
+    offsetDragActivatedRef.current = true
+    dragMovedRef.current = true
+    const initialBar = origStartBarRef.current
     setIsOffsetDragging(true)
     dragPreviewBarRef.current = initialBar
     setDragPreviewBar(initialBar)
@@ -2620,33 +2676,35 @@ const TrackRow = React.memo(function TrackRow({
     if (isCommentUiTarget(e.target) || commentUiActiveRef.current) return
     e.preventDefault()
     e.stopPropagation()
-    startOffsetDrag(e.clientX)
+    beginOffsetPointer(e.clientX)
   }
 
   function handleOffsetTouchStart(e: React.TouchEvent) {
     if (isCommentUiTarget(e.target) || commentUiActiveRef.current) return
     e.preventDefault()
     e.stopPropagation()
-    startOffsetDrag(e.touches[0].clientX)
+    beginOffsetPointer(e.touches[0].clientX)
   }
 
   useEffect(() => {
-    if (!isOffsetDragging) return
+    if (!offsetPointerDown) return
 
-    // Reads the container width once per drag start — avoids getBoundingClientRect inside hot path.
+    const DRAG_THRESHOLD_PX = 3
     const colEl = waveformColRef.current
     const containerWidth = colEl?.offsetWidth ?? 1
     const barsPerPixel = totalBars / containerWidth
 
     function applyDragPosition(clientX: number) {
       const deltaX = clientX - dragStartXRef.current
-      if (Math.abs(deltaX) > 3) dragMovedRef.current = true
+      if (!offsetDragActivatedRef.current) {
+        if (Math.abs(deltaX) <= DRAG_THRESHOLD_PX) return
+        activateOffsetDrag()
+      }
       const newBar = clampTrackStartBar(
         origStartBarRef.current + deltaX * barsPerPixel,
         trackDurationBars,
       )
       dragPreviewBarRef.current = newBar
-      // DOM-direct update — no React state, no re-render per frame.
       if (waveformClipRef.current) {
         waveformClipRef.current.style.left = trackClipRowLeft(labelColW, totalBars, newBar)
       }
@@ -2686,15 +2744,19 @@ const TrackRow = React.memo(function TrackRow({
         return
       }
 
-      setIsOffsetDragging(false)
-      onDragEndOffset()
+      setOffsetPointerDown(false)
 
-      if (!dragMovedRef.current) {
-        dragPreviewBarRef.current = null
-        setDragPreviewBar(null)
-        resetLabelColOpacity()
+      if (!offsetDragActivatedRef.current) {
+        const clientX = 'changedTouches' in e
+          ? e.changedTouches[0]?.clientX
+          : (e as MouseEvent).clientX
+        if (clientX != null) seekFromClientX(clientX)
         return
       }
+
+      setIsOffsetDragging(false)
+      onDragEndOffset()
+      offsetDragActivatedRef.current = false
 
       let newBar = dragPreviewBarRef.current
       if (newBar !== null) {
@@ -2702,10 +2764,6 @@ const TrackRow = React.memo(function TrackRow({
         dragPreviewBarRef.current = newBar
       }
       dragPreviewBarRef.current = null
-      // Optimistic: clear the preview immediately — handleStartBarUpdate updates
-      // track.start_bar in state before the request, so effectiveStartBar
-      // (dragPreviewBar ?? track.start_bar) will reflect the new position at once.
-      // On request failure, handleStartBarUpdate reverts track.start_bar automatically.
       setDragPreviewBar(null)
       resetLabelColOpacity()
       if (newBar !== null && newBar !== (track.start_bar ?? 0)) {
@@ -2726,7 +2784,7 @@ const TrackRow = React.memo(function TrackRow({
       window.removeEventListener('touchend', onTouchEnd)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOffsetDragging, totalBars, trackDurationBars, labelColW])
+  }, [offsetPointerDown, totalBars, trackDurationBars, labelColW])
 
   // ── Inline rename ──────────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false)
@@ -3044,7 +3102,7 @@ const TrackRow = React.memo(function TrackRow({
           height: '100%',
           minHeight: rowH,
           opacity: waveformOpacity,
-          cursor: !waveformsInteractive ? 'default' : isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : 'grab',
+          cursor: !waveformsInteractive ? 'default' : isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : onSeek ? 'pointer' : 'grab',
           pointerEvents: waveformsInteractive ? 'auto' : 'none',
           borderLeft: effectiveStartBar !== 0 ? '1px solid var(--border)' : 'none',
           zIndex: 1,
@@ -3515,7 +3573,7 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack, versionSwitchDisabled = false }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   storageUsed: number
@@ -3532,6 +3590,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
   onClearResourceFilter?: () => void
   onNavigateResourceVersion?: (versionId: string) => void
   onNavigateResourceTrack?: (trackId: string, versionId: string) => void
+  versionSwitchDisabled?: boolean
 }) {
   const [hideMerged, setHideMerged] = useState(false)
   const main = versions.find(v => v.type === 'main')
@@ -3591,15 +3650,19 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
           <div className={compact ? 'px-1 pb-1 space-y-px' : 'px-2 pb-2 space-y-px'}>
             {listedVersions.map(v => {
               const isActive = v!.id === activeId
+              const switchBlocked = versionSwitchDisabled && !isActive
               const comments = commentCounts[v!.id] ?? 0
               const tagStyle = versionTagStyle(v!.tag, isDark)
               return (
                 <button
                   key={v!.id}
                   type="button"
+                  disabled={switchBlocked}
                   onClick={() => onSelect(v!.id)}
                   className={`group w-full text-left flex items-center gap-2 px-1.5 py-0.5 transition-colors ${
-                    isActive ? 'bg-lime/10' : 'hover:bg-surface-2'
+                    isActive ? 'bg-lime/10' : switchBlocked
+                      ? 'opacity-40 cursor-not-allowed'
+                      : 'hover:bg-surface-2'
                   }`}
                 >
                   {/* Square indicator */}
@@ -4223,6 +4286,8 @@ export default function ProjectPage() {
   const [resourceFilterTrackId, setResourceFilterTrackId] = useState<string | null>(null)
   const [activeCommentInput, setActiveCommentInput] = useState<ActiveCommentInput | null>(null)
   const [versionLoading, setVersionLoading] = useState(false)
+  const [versionContentLoading, setVersionContentLoading] = useState(false)
+  const versionSwitchLockedRef = useRef(false)
   const [mergeModal, setMergeModal] = useState<{ branchId: string } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
@@ -4233,6 +4298,14 @@ export default function ProjectPage() {
   const [editStructure, setEditStructure] = useState(false)
   const [showTour, setShowTour] = useState(false)
   const [showMobileTour, setShowMobileTour] = useState(false)
+
+  // ── Compare mode ──────────────────────────────────────────────────────────
+  const [compareActive, setCompareActive] = useState(false)
+  const [compareVersionBId, setCompareVersionBId] = useState<string>('')
+  // Portal slot for compare transport bar (same DOM position as MasterPlayerBar)
+  const [compareTransportSlot, setCompareTransportSlot] = useState<HTMLDivElement | null>(null)
+  const compareActiveRef = useRef(false)
+  compareActiveRef.current = compareActive
 
   // ── Roadmap + checklist ──────────────────────────────────────────────────────
   const [planOpen, setPlanOpen] = useState(false)
@@ -4443,9 +4516,9 @@ export default function ProjectPage() {
   }, [projectId])
 
   const selectVersion = useCallback((id: string) => {
-    if (id !== activeVersionIdRef.current) {
-      trackEvent('version_switched')
-    }
+    if (id === activeVersionIdRef.current) return
+    if (versionSwitchLockedRef.current) return
+    trackEvent('version_switched')
     setActiveVersionId(id)
     setCommentMode(false)
     setActiveCommentInput(null)
@@ -4467,6 +4540,7 @@ export default function ProjectPage() {
   }, [selectVersion])
 
   const navigateResourceTrack = useCallback((trackId: string, versionId: string) => {
+    if (versionSwitchLockedRef.current && versionId !== activeVersionIdRef.current) return
     setActiveVersionId(versionId)
     setCommentMode(false)
     setActiveCommentInput(null)
@@ -4550,12 +4624,33 @@ export default function ProjectPage() {
   }, [activeVersionId])
 
   useEffect(() => {
-    if (!activeVersionId) return
+    if (!activeVersionId) {
+      setVersionContentLoading(false)
+      setSections([])
+      return
+    }
+    let cancelled = false
+    setVersionContentLoading(true)
+    setSections([])
     fetch(`/api/versions/${activeVersionId}/sections`)
       .then(r => r.json())
-      .then(d => setSections(d.sections ?? []))
-      .catch(() => {})
+      .then(d => {
+        if (cancelled) return
+        setSections(d.sections ?? [])
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSections([])
+      })
+      .finally(() => {
+        if (cancelled) return
+        setVersionContentLoading(false)
+      })
+    return () => { cancelled = true }
   }, [activeVersionId])
+
+  const versionSwitchLocked = loading || versionContentLoading
+  versionSwitchLockedRef.current = versionSwitchLocked
 
   const activeVersion = versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
@@ -4668,7 +4763,7 @@ export default function ProjectPage() {
     const obs = new ResizeObserver(measure)
     obs.observe(listEl)
     return () => obs.disconnect()
-  }, [activeTracks.length, recordingSessions.length, isMobilePortrait])
+  }, [activeTracks.length, recordingSessions.length, isMobilePortrait, compareActive])
 
   // Orientation detection — switches between ReadingMode and mixer, collapses topbar on short landscape
   useEffect(() => {
@@ -4945,10 +5040,12 @@ export default function ProjectPage() {
     setRecordingSessions(prev => prev.map(s => s.id === id ? { ...s, name } : s))
   }
 
-  // Spacebar toggles play/pause (skip when typing in inputs)
+  // Spacebar toggles play/pause (skip when typing in inputs or compare mode is active)
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code !== 'Space') return
+      // Compare mode registers its own spacebar handler; let it handle when active
+      if (compareActiveRef.current) return
       const el = e.target as HTMLElement
       if (el.closest('input, textarea, select, [contenteditable="true"]')) return
 
@@ -5777,6 +5874,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           versions={versions}
           activeVersionId={activeVersionId}
           onVersionChange={selectVersion}
+          versionSwitchDisabled={versionSwitchLocked}
           player={{
             playing: player.playing,
             currentTime: player.currentTime,
@@ -5814,6 +5912,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             versions,
             activeVersionId,
             onVersionChange: selectVersion,
+            versionSwitchDisabled: versionSwitchLocked,
             onNewBranch: () => setShowBranchModal(true),
             sections,
             onSectionsChange: setSections,
@@ -6013,6 +6112,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           commentMode={commentMode}
           commentCount={totalComments}
           onToggleCommentMode={toggleCommentMode}
+          versionSwitchDisabled={versionSwitchLocked}
         />
       )}
 
@@ -6091,6 +6191,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           onClearResourceFilter={() => setResourceFilterTrackId(null)}
           onNavigateResourceVersion={navigateResourceVersion}
           onNavigateResourceTrack={navigateResourceTrack}
+          versionSwitchDisabled={versionSwitchLocked}
         />
 
         <main
@@ -6236,17 +6337,21 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                 <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none flex-nowrap touch-pan-x overscroll-x-contain [&::-webkit-scrollbar]:hidden">
                   {versions.map(v => {
                     const isActive = v.id === activeVersionId
+                    const switchBlocked = versionSwitchLocked && !isActive
                     return (
                       <button
                         key={v.id}
                         type="button"
+                        disabled={switchBlocked}
                         onClick={() => selectVersion(v.id)}
                         className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition whitespace-nowrap ${
                           isActive
                             ? 'bg-lime text-primary-foreground border-lime'
-                            : v.merged_at
-                              ? 'border-border text-muted-foreground opacity-50'
-                              : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
+                            : switchBlocked
+                              ? 'border-border text-muted-foreground opacity-40 cursor-not-allowed'
+                              : v.merged_at
+                                ? 'border-border text-muted-foreground opacity-50'
+                                : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
                         }`}
                       >
                         {v.type === 'main' && '● '}
@@ -6265,13 +6370,29 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                 >
                   + New Version
                 </button>
+                {versions.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const other = versions.find(v => v.id !== activeVersionId)
+                      if (other) {
+                        setCompareVersionBId(other.id)
+                        setCompareActive(true)
+                        if (player.playing) player.pause()
+                      }
+                    }}
+                    className="shrink-0 self-stretch ml-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+                  >
+                    ⇄ Compare
+                  </button>
+                )}
               </div>
             </div>
           </section>
           )}
 
           {/* Roadmap + checklist panel */}
-          {planOpen && (
+          {planOpen && !compareActive && (
             <section className="border-b border-border bg-background shrink-0">
               <div className="px-4 sm:px-6 py-5 grid gap-5 lg:grid-cols-[1fr_minmax(300px,420px)] items-start">
                 <SongRoadmap
@@ -6292,8 +6413,24 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             </section>
           )}
 
+          {/* Compare mode — replaces track list when active */}
+          {compareActive && project && (
+            <CompareMode
+              project={project}
+              versions={versions}
+              initialVersionAId={activeVersionId}
+              initialVersionBId={compareVersionBId}
+              onExit={() => setCompareActive(false)}
+              onSetMaster={versionId => {
+                selectVersion(versionId)
+                setCompareActive(false)
+              }}
+              transportSlot={compareTransportSlot}
+            />
+          )}
+
           {/* Structure + transport — bar ruler, sections, play/time/volume */}
-          {project && (
+          {!compareActive && project && (
             <StructureOverlay
               project={project}
               versionId={activeVersionId}
@@ -6312,6 +6449,9 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               seekEnabled={waveformsInteractive}
             />
           )}
+
+          {/* Comment mode banner + track list — hidden when compare mode is active */}
+          {!compareActive && <>
 
           {/* Comment mode banner — desktop only; mobile uses top-bar icon */}
           {!isMobileLandscape && (
@@ -6400,6 +6540,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     || (player.soloedTracks.size > 0 && !player.soloedTracks.has(t.id))
                   }
                   waveformsInteractive={waveformsInteractive}
+                  onSeek={isDesktopMixer ? player.seek : undefined}
                   currentUserId={user?.id}
                   isOwner={isOwner}
                   onReplyCreate={handleReplyCreate}
@@ -6523,34 +6664,39 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             </div>
           </div>
 
+          </>}{/* end !compareActive */}
+
           </div>{/* end content dim wrapper */}
         </main>
       </div>
 
-      <MasterPlayerBar
-        playing={player.playing}
-        currentTime={player.currentTime}
-        currentTimeRef={player.currentTimeRef}
-        duration={Math.max(player.duration, totalProjectDurationMs / 1000)}
-        loaded={player.loaded}
-        total={player.total}
-        volume={player.volume}
-        onPlay={player.play}
-        onPause={player.pause}
-        onSeek={player.seek}
-        onVolume={player.setVolume}
-        metronomeOn={player.metronomeOn}
-        countdownOn={player.countdownOn}
-        isCounting={player.isCounting}
-        onToggleMetronome={player.toggleMetronome}
-        onToggleCountdown={player.toggleCountdown}
-        sectionLoopOn={player.sectionLoopOn}
-        sectionLoopEnabled={sectionLoopButtonEnabled}
-        onToggleSectionLoop={handleToggleSectionLoop}
-        compact={isMobileLandscape}
-      />
+      {compareActive
+        ? <div ref={setCompareTransportSlot} className="shrink-0" />
+        : <MasterPlayerBar
+            playing={player.playing}
+            currentTime={player.currentTime}
+            currentTimeRef={player.currentTimeRef}
+            duration={Math.max(player.duration, totalProjectDurationMs / 1000)}
+            loaded={player.loaded}
+            total={player.total}
+            volume={player.volume}
+            onPlay={player.play}
+            onPause={player.pause}
+            onSeek={player.seek}
+            onVolume={player.setVolume}
+            metronomeOn={player.metronomeOn}
+            countdownOn={player.countdownOn}
+            isCounting={player.isCounting}
+            onToggleMetronome={player.toggleMetronome}
+            onToggleCountdown={player.toggleCountdown}
+            sectionLoopOn={player.sectionLoopOn}
+            sectionLoopEnabled={sectionLoopButtonEnabled}
+            onToggleSectionLoop={handleToggleSectionLoop}
+            compact={isMobileLandscape}
+          />
+      }
 
-      {!isMobileLandscape && (
+      {!compareActive && !isMobileLandscape && (
       <StatusFooter
         left={
           <span className="uppercase tracking-widest truncate hidden sm:inline">
@@ -6581,6 +6727,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             isOpen={sidebarOpen}
             compact={isMobileLandscape}
             isDark={resolvedTheme === 'dark'}
+            versionSwitchDisabled
           />
           <main className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background">
             {/* Project name / meta header — name + meta skeletons; action buttons are real */}

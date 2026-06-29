@@ -19,6 +19,7 @@ export type MobileExperienceProps = {
   versions: Version[]
   activeVersionId: string
   onVersionChange: (id: string) => void
+  versionSwitchDisabled?: boolean
   player: ReadingModePlayer
   sections: Section[]
   projectId: string
@@ -52,6 +53,7 @@ export function MobileExperience({
   versions,
   activeVersionId,
   onVersionChange,
+  versionSwitchDisabled = false,
   player,
   sections,
   projectId,
@@ -197,6 +199,7 @@ export function MobileExperience({
             versions={versions}
             activeVersionId={activeVersionId}
             onVersionChange={onVersionChange}
+            versionSwitchDisabled={versionSwitchDisabled}
             projectId={projectId}
             bandId={bandId}
             activeTracks={activeTracks}
