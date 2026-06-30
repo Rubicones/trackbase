@@ -812,7 +812,6 @@ function MobileMixerPortraitInner({
   }, [sectionRanges, player.currentTime, projBarDurationSec, sections])
 
   const activeSection = activeSectionIdx >= 0 ? sections[activeSectionIdx] : undefined
-  const isReady = player.duration > 0 && player.playbackReady
   const awaitingPlayback = player.duration > 0 && !player.playbackReady
   const isPlaying = player.playing || player.isCounting
   const isRecording = recordingTransportState === 'recording' || recordingTransportState === 'countdown'
@@ -1131,13 +1130,21 @@ function MobileMixerPortraitInner({
           </TransportBtn>
           <button
             type="button"
-            onClick={() => (isPlaying ? player.pause() : player.play())}
-            disabled={!isReady && player.duration > 0}
-            className="mx-auto size-12 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-50"
-            aria-label={isPlaying ? 'Pause' : 'Play'}
+            onClick={() => {
+              if (awaitingPlayback) return
+              if (isPlaying) player.pause()
+              else player.play()
+            }}
+            disabled={player.duration <= 0}
+            className={`mx-auto size-12 grid place-items-center ${
+              awaitingPlayback
+                ? 'border border-border bg-background cursor-wait'
+                : 'bg-lime text-primary-foreground active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed'
+            }`}
+            aria-label={awaitingPlayback ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
           >
             {awaitingPlayback ? (
-              <Spinner size={20} tone="white" />
+              <Spinner size={20} tone="lime" />
             ) : isPlaying ? (
               <PauseIcon />
             ) : (

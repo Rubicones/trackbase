@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom'
 import type { Project, Section, Track, Version } from '@/lib/types'
 import { waveformBarsCache, fetchTrackAudioBuffer } from '@/lib/waveformCache'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
-import { renderMidiTrackToBuffer } from '@/lib/midiRender'
+import { renderMidiTrackToBuffer, midiRenderSourceKey } from '@/lib/midiRender'
 import { WaveformBarsPlayhead, playedPctStyle } from '@/components/WaveformBars'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
 import { trackAccentColor } from '@/lib/trackIcon'
@@ -93,6 +93,86 @@ function comparePairKey(pair: ComparePair): string {
   return `${pair.fileName}-${pair.trackA?.id ?? ''}-${pair.trackB?.id ?? ''}`
 }
 
+// ─── Compare-mode decode caches (keyed by content, not track ID) ───────────────
+
+const compareDecodedAudioCache = new Map<string, AudioBuffer>()
+const compareDecodedMidiCache = new Map<string, AudioBuffer>()
+const compareDecodeInflight = new Map<string, Promise<AudioBuffer | null>>()
+
+const WAVEFORM_BAR_COUNT = 96
+
+function computeWaveformBars(decoded: AudioBuffer, barCount = WAVEFORM_BAR_COUNT): number[] {
+  const raw = decoded.getChannelData(0)
+  const block = Math.max(1, Math.floor(raw.length / barCount))
+  const amps: number[] = []
+  for (let i = 0; i < barCount; i++) {
+    let s = 0
+    for (let j = 0; j < block; j++) s += Math.abs(raw[i * block + j])
+    amps.push(s / block)
+  }
+  const max = Math.max(...amps, 0.001)
+  return amps.map(a => a / max)
+}
+
+function seedWaveformBars(trackId: string, bars: number[]) {
+  if (!waveformBarsCache.has(trackId)) {
+    waveformBarsCache.set(trackId, bars)
+  }
+}
+
+async function loadSharedAudioBuffer(
+  representative: Track,
+  cacheKey: string,
+  fetchContentKey?: string,
+): Promise<AudioBuffer | null> {
+  const cached = compareDecodedAudioCache.get(cacheKey)
+  if (cached) return cached
+
+  let inflight = compareDecodeInflight.get(`audio:${cacheKey}`)
+  if (!inflight) {
+    inflight = (async () => {
+      const ctx = getSharedAudioContext()
+      const ab = await fetchTrackAudioBuffer(representative.id, {
+        contentKey: fetchContentKey ?? null,
+      })
+      if (!ab) return null
+      const decoded = await ctx.decodeAudioData(ab.slice(0))
+      compareDecodedAudioCache.set(cacheKey, decoded)
+      return decoded
+    })().finally(() => {
+      compareDecodeInflight.delete(`audio:${cacheKey}`)
+    })
+    compareDecodeInflight.set(`audio:${cacheKey}`, inflight)
+  }
+
+  return inflight
+}
+
+async function loadSharedMidiBuffer(
+  representative: Track,
+  renderKey: string,
+  projectBpm: number,
+): Promise<AudioBuffer | null> {
+  const cached = compareDecodedMidiCache.get(renderKey)
+  if (cached) return cached
+
+  let inflight = compareDecodeInflight.get(`midi:${renderKey}`)
+  if (!inflight) {
+    inflight = (async () => {
+      const ctx = getSharedAudioContext()
+      const decoded = await renderMidiTrackToBuffer(ctx.sampleRate, representative, projectBpm)
+      if (!decoded) return null
+      compareDecodedMidiCache.set(renderKey, decoded)
+      return decoded
+    })().finally(() => {
+      compareDecodeInflight.delete(`midi:${renderKey}`)
+    })
+    compareDecodeInflight.set(`midi:${renderKey}`, inflight)
+  }
+
+  return inflight
+}
+
 // ─── useCompareAudio ─────────────────────────────────────────────────────────
 
 type ABMode = 'a' | 'b' | 'both'
@@ -146,7 +226,7 @@ function useCompareAudio(
   const [resolvedDurationsA, setResolvedDurationsA] = useState<Map<string, number>>(() => new Map())
   const [resolvedDurationsB, setResolvedDurationsB] = useState<Map<string, number>>(() => new Map())
 
-  // Load buffers for both versions
+  // Load buffers for both versions — dedupe by file_hash / MIDI render key
   useEffect(() => {
     let cancelled = false
     bufsARef.current = new Map()
@@ -155,77 +235,118 @@ function useCompareAudio(
     setLoadedB(0)
     setResolvedDurationsA(new Map())
     setResolvedDurationsB(new Map())
-    async function loadSide(
-      tracks: Track[],
-      bufs: Map<string, AudioBuffer>,
-      setLoaded: (n: number) => void,
-      setResolvedDurations: React.Dispatch<React.SetStateAction<Map<string, number>>>,
-    ) {
-      for (const t of tracks) {
-        if (cancelled) continue
-        try {
-          const ctx = getSharedAudioContext()
-          let decoded: AudioBuffer | null
-          if (t.file_type === 'midi') {
-            decoded = await renderMidiTrackToBuffer(ctx.sampleRate, t, project?.bpm ?? 120)
-          } else {
-            const ab = await fetchTrackAudioBuffer(t.id)
-            if (!ab || cancelled) continue
-            decoded = await ctx.decodeAudioData(ab)
+
+    async function loadCompareTracks() {
+      const proj = project
+      const projectBpm = proj?.bpm ?? 120
+      const projectTimeSig = proj?.time_signature ?? '4/4'
+      const allTracks = [...tracksA, ...tracksB]
+
+      // One representative track per unique audio file_hash
+      const audioRepresentatives = new Map<string, Track>()
+      const midiRepresentatives = new Map<string, Track>()
+
+      for (const t of allTracks) {
+        if (t.file_type === 'midi') {
+          const renderKey = midiRenderSourceKey(t, projectBpm, projectTimeSig)
+          if (!midiRepresentatives.has(renderKey)) {
+            midiRepresentatives.set(renderKey, t)
           }
-          if (!decoded || cancelled) continue
-          bufs.set(t.id, decoded)
+        } else {
+          const contentKey = t.file_hash || t.id
+          if (!audioRepresentatives.has(contentKey)) {
+            audioRepresentatives.set(contentKey, t)
+          }
+        }
+      }
+
+      function assignBuffer(track: Track, decoded: AudioBuffer, bars: number[] | null) {
+        const durMs = decoded.duration * 1000
+        if (tracksA.some(x => x.id === track.id)) {
+          bufsARef.current.set(track.id, decoded)
           if (!cancelled) {
-            setLoaded(bufs.size)
-            // Record decoded duration (ms) — source of truth for waveform sizing
-            const durMs = decoded.duration * 1000
-            setResolvedDurations(prev => new Map(prev).set(t.id, durMs))
+            setResolvedDurationsA(prev => new Map(prev).set(track.id, durMs))
           }
-          // Compute waveform bars for non-MIDI tracks only
-          if (t.file_type !== 'midi' && !waveformBarsCache.has(t.id)) {
-            const raw = decoded.getChannelData(0)
-            const N = 96
-            const block = Math.floor(raw.length / N)
-            const amps: number[] = []
-            for (let i = 0; i < N; i++) {
-              let s = 0
-              for (let j = 0; j < block; j++) s += Math.abs(raw[i * block + j])
-              amps.push(s / block)
-            }
-            const max = Math.max(...amps, 0.001)
-            waveformBarsCache.set(t.id, amps.map(a => a / max))
+        }
+        if (tracksB.some(x => x.id === track.id)) {
+          bufsBRef.current.set(track.id, decoded)
+          if (!cancelled) {
+            setResolvedDurationsB(prev => new Map(prev).set(track.id, durMs))
           }
-        } catch { /* ignore */ }
-      }
-      // recompute duration
-      if (!cancelled) {
-        const proj = project
-        if (!proj) return
-        const bpm = proj.bpm ?? 120
-        const timeSig = proj.time_signature ?? '4/4'
-        const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
-        const barDurSec = (60 / bpm) * beatsPerBar
-        let maxSec = 0
-        for (const [id, buf] of bufsARef.current) {
-          const t = tracksA.find(x => x.id === id)
-          const startSec = (t?.start_bar ?? 0) * barDurSec
-          maxSec = Math.max(maxSec, startSec + buf.duration)
         }
-        for (const [id, buf] of bufsBRef.current) {
-          const t = tracksB.find(x => x.id === id)
-          const startSec = (t?.start_bar ?? 0) * barDurSec
-          maxSec = Math.max(maxSec, startSec + buf.duration)
-        }
-        if (maxSec > 0) setDuration(maxSec * 1000)
+        if (bars) seedWaveformBars(track.id, bars)
       }
+
+      function syncLoadedCounts() {
+        if (cancelled) return
+        setLoadedA(bufsARef.current.size)
+        setLoadedB(bufsBRef.current.size)
+      }
+
+      const loadJobs: Promise<void>[] = []
+
+      for (const [contentKey, representative] of audioRepresentatives) {
+        loadJobs.push((async () => {
+          try {
+            const decoded = await loadSharedAudioBuffer(
+              representative,
+              contentKey,
+              representative.file_hash || undefined,
+            )
+            if (!decoded || cancelled) return
+            const bars = computeWaveformBars(decoded)
+            const matching = allTracks.filter(t => {
+              if (t.file_type === 'midi') return false
+              return (t.file_hash || t.id) === contentKey
+            })
+            for (const t of matching) assignBuffer(t, decoded, bars)
+            syncLoadedCounts()
+          } catch { /* ignore */ }
+        })())
+      }
+
+      for (const [renderKey, representative] of midiRepresentatives) {
+        loadJobs.push((async () => {
+          try {
+            const decoded = await loadSharedMidiBuffer(representative, renderKey, projectBpm)
+            if (!decoded || cancelled) return
+            const matching = allTracks.filter(t => {
+              if (t.file_type !== 'midi') return false
+              return midiRenderSourceKey(t, projectBpm, projectTimeSig) === renderKey
+            })
+            for (const t of matching) assignBuffer(t, decoded, null)
+            syncLoadedCounts()
+          } catch { /* ignore */ }
+        })())
+      }
+
+      await Promise.all(loadJobs)
+
+      if (cancelled) return
+      const beatsPerBar = parseInt(projectTimeSig.split('/')[0]) || 4
+      const barDurSec = (60 / projectBpm) * beatsPerBar
+      let maxSec = 0
+      for (const [id, buf] of bufsARef.current) {
+        const t = tracksA.find(x => x.id === id)
+        const startSec = (t?.start_bar ?? 0) * barDurSec
+        maxSec = Math.max(maxSec, startSec + buf.duration)
+      }
+      for (const [id, buf] of bufsBRef.current) {
+        const t = tracksB.find(x => x.id === id)
+        const startSec = (t?.start_bar ?? 0) * barDurSec
+        maxSec = Math.max(maxSec, startSec + buf.duration)
+      }
+      if (maxSec > 0) setDuration(maxSec * 1000)
     }
-    loadSide(tracksA, bufsARef.current, setLoadedA, setResolvedDurationsA)
-    loadSide(tracksB, bufsBRef.current, setLoadedB, setResolvedDurationsB)
+
+    void loadCompareTracks()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    tracksA.map(t => t.id).join('|'),
-    tracksB.map(t => t.id).join('|'),
+    tracksA.map(t => `${t.id}:${t.file_hash}:${t.file_type}:${t.start_bar ?? 0}`).join('|'),
+    tracksB.map(t => `${t.id}:${t.file_hash}:${t.file_type}:${t.start_bar ?? 0}`).join('|'),
+    project?.bpm,
+    project?.time_signature,
   ])
 
   // Ensure playback graph
@@ -649,7 +770,7 @@ function WaveformCell({
   if (absent) {
     return (
       <div
-        className="flex-1 min-w-0 relative flex items-center justify-center"
+        className="w-full h-full min-w-0 relative flex items-center justify-center"
         style={{ background: 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(128,128,128,0.06) 6px, rgba(128,128,128,0.06) 12px)' }}
       >
         <span className="text-[9px] uppercase tracking-widest text-muted-foreground/60">
@@ -661,7 +782,7 @@ function WaveformCell({
 
   if (!bars.length) {
     return (
-      <div className="flex-1 min-w-0 relative flex items-center justify-end pr-3">
+      <div className="w-full h-full min-w-0 relative flex items-center justify-end pr-3">
         <span className="text-[9px] uppercase tracking-widest text-muted-foreground/40">Loading…</span>
       </div>
     )
@@ -670,7 +791,7 @@ function WaveformCell({
   return (
     <div
       ref={cellRef}
-      className="flex-1 min-w-0 relative overflow-hidden"
+      className="w-full h-full min-w-0 relative overflow-hidden"
       style={playedPctStyle(0)}
     >
       <div
@@ -749,7 +870,7 @@ function TrackVisual({
   if (absent || !track) {
     return (
       <div
-        className="flex-1 min-w-0 relative flex items-center justify-center"
+        className="w-full h-full min-w-0 relative flex items-center justify-center"
         style={{ background: 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(128,128,128,0.06) 6px, rgba(128,128,128,0.06) 12px)' }}
       >
         <span className="text-[9px] uppercase tracking-widest text-muted-foreground/60">
@@ -764,7 +885,7 @@ function TrackVisual({
     // (it uses midiStartBar + totalProjectMs to position notes absolutely),
     // so it fills the full column width — no spacer needed.
     return (
-      <div className="flex-1 min-w-0 relative overflow-hidden flex items-center">
+      <div className="w-full h-full min-w-0 relative overflow-hidden flex items-center">
         <MiniPianoRoll
           midiData={track.midi_data}
           color={color}
@@ -900,52 +1021,61 @@ function CompareTrackRow({
         </span>
       </div>
 
-      {/* Side A: M/S + visual */}
-      {pair.trackA ? (
-        <MuteSoloButtons
-          muted={mutedA} soloed={soloedA}
-          onMute={onMuteA} onSolo={onSoloA}
-          accentColor="var(--lime)"
-        />
-      ) : (
-        <div className="shrink-0" style={{ width: 28 }} />
-      )}
-      <TrackVisual
-        track={pair.trackA}
-        color={colorA}
-        totalDurationMs={totalDurationMs}
-        barDurationMs={barDurationMs}
-        currentTimeMsRef={currentTimeMsRef}
-        playing={playing}
-        absent={!pair.trackA}
-        resolvedDurationMs={durA}
-        projectBpm={projectBpm}
-      />
+      {/* Side A: equal-width pane — M/S + visual */}
+      <div className="flex flex-1 min-w-0 basis-0 overflow-hidden border-r border-border">
+        {pair.trackA ? (
+          <MuteSoloButtons
+            muted={mutedA} soloed={soloedA}
+            onMute={onMuteA} onSolo={onSoloA}
+            accentColor="var(--lime)"
+          />
+        ) : (
+          <div className="shrink-0" style={{ width: 28 }} />
+        )}
+        <div className="relative flex-1 min-w-0 self-stretch" style={{ minHeight: 56 }}>
+          <div className="absolute inset-0 min-w-0">
+            <TrackVisual
+              track={pair.trackA}
+              color={colorA}
+              totalDurationMs={totalDurationMs}
+              barDurationMs={barDurationMs}
+              currentTimeMsRef={currentTimeMsRef}
+              playing={playing}
+              absent={!pair.trackA}
+              resolvedDurationMs={durA}
+              projectBpm={projectBpm}
+            />
+          </div>
+        </div>
+      </div>
 
-      {/* Divider */}
-      <div className="w-px bg-border/60 shrink-0" />
-
-      {/* Side B: M/S + visual */}
-      {pair.trackB ? (
-        <MuteSoloButtons
-          muted={mutedB} soloed={soloedB}
-          onMute={onMuteB} onSolo={onSoloB}
-          accentColor={bColor}
-        />
-      ) : (
-        <div className="shrink-0" style={{ width: 28 }} />
-      )}
-      <TrackVisual
-        track={pair.trackB}
-        color={colorB}
-        totalDurationMs={totalDurationMs}
-        barDurationMs={barDurationMs}
-        currentTimeMsRef={currentTimeMsRef}
-        playing={playing}
-        absent={!pair.trackB}
-        resolvedDurationMs={durB}
-        projectBpm={projectBpm}
-      />
+      {/* Side B: equal-width pane — M/S + visual */}
+      <div className="flex flex-1 min-w-0 basis-0 overflow-hidden">
+        {pair.trackB ? (
+          <MuteSoloButtons
+            muted={mutedB} soloed={soloedB}
+            onMute={onMuteB} onSolo={onSoloB}
+            accentColor={bColor}
+          />
+        ) : (
+          <div className="shrink-0" style={{ width: 28 }} />
+        )}
+        <div className="relative flex-1 min-w-0 self-stretch" style={{ minHeight: 56 }}>
+          <div className="absolute inset-0 min-w-0">
+            <TrackVisual
+              track={pair.trackB}
+              color={colorB}
+              totalDurationMs={totalDurationMs}
+              barDurationMs={barDurationMs}
+              currentTimeMsRef={currentTimeMsRef}
+              playing={playing}
+              absent={!pair.trackB}
+              resolvedDurationMs={durB}
+              projectBpm={projectBpm}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

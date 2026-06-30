@@ -38,6 +38,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
 import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChatDock } from '@/components/chat/ChatDock'
+import { TrackGainSlider } from '@/components/TrackGainSlider'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { useResourcesSidebarOpen } from '@/lib/useResourcesSidebarOpen'
 import MiniPianoRoll from '@/components/MiniPianoRoll'
@@ -64,6 +65,7 @@ import {
 import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
 import { ChevronsLeftRightEllipsis } from 'lucide-react'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionListName } from '@/components/VersionListName'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1142,6 +1144,8 @@ function usePlayer(
   const mutedTracksRef = useRef<Set<string>>(new Set())
   const [soloedTracks, setSoloedTracks] = useState<Set<string>>(new Set())
   const soloedTracksRef = useRef<Set<string>>(new Set())
+  const [trackGains, setTrackGainsState] = useState<Map<string, number>>(() => new Map())
+  const trackGainsRef = useRef<Map<string, number>>(new Map())
   const playingRef = useRef(playing)
   playingRef.current = playing
   const [trackDurations, setTrackDurations] = useState<Map<string, number>>(new Map())
@@ -1181,6 +1185,30 @@ function usePlayer(
     const hasSolos = soloSet.size > 0
     return (hasSolos ? !soloSet.has(trackId) : mutedSet.has(trackId)) ? 0 : 1
   }, [])
+
+  const effectiveGainForTrack = useCallback((
+    trackId: string,
+    soloSet: Set<string>,
+    mutedSet: Set<string>,
+  ) => gainForTrack(trackId, soloSet, mutedSet) * (trackGainsRef.current.get(trackId) ?? 1), [gainForTrack])
+
+  const applyGainToTrackNode = useCallback((
+    trackId: string,
+    gainNode?: GainNode,
+  ) => {
+    const g = gainNode ?? gainsRef.current.get(trackId)
+    if (!g) return
+    const ctx = actxRef.current
+    const targetVal = effectiveGainForTrack(trackId, soloedTracksRef.current, mutedTracksRef.current)
+    if (ctx) {
+      const now = ctx.currentTime
+      g.gain.cancelScheduledValues(now)
+      g.gain.setValueAtTime(g.gain.value, now)
+      g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
+    } else {
+      g.gain.value = targetVal
+    }
+  }, [effectiveGainForTrack])
   const minPlaybackDurationRef = useRef(minPlaybackDuration)
   minPlaybackDurationRef.current = minPlaybackDuration
   const timelineDurationSecRef = useRef(timelineDurationSec)
@@ -1364,6 +1392,8 @@ function usePlayer(
     sectionLoopRef.current = null
     setSectionLoopOn(false)
     clearPreviewMixPlayback()
+    trackGainsRef.current = new Map()
+    setTrackGainsState(new Map())
   }, [versionId, clearPreviewMixPlayback])
 
   const resolveMidiRenderWaiters = useCallback((trackId: string) => {
@@ -1409,7 +1439,7 @@ function usePlayer(
     const g = gainsRef.current.get(trackId)
     if (g) {
       const ctx = actxRef.current
-      const targetVal = gainForTrack(trackId, soloedTracksRef.current, nextMuted)
+      const targetVal = effectiveGainForTrack(trackId, soloedTracksRef.current, nextMuted)
       if (ctx) {
         const now = ctx.currentTime
         g.gain.cancelScheduledValues(now)
@@ -1423,7 +1453,7 @@ function usePlayer(
     if (playingRef.current) {
       void playFnRef.current(offsetRef.current)
     }
-  }, [recomputeTransportDuration, resolveMidiRenderWaiters, gainForTrack, noteTrackDuration])
+  }, [recomputeTransportDuration, resolveMidiRenderWaiters, effectiveGainForTrack, noteTrackDuration])
 
   const finishMidiRenderRef = useRef(finishMidiRender)
   finishMidiRenderRef.current = finishMidiRender
@@ -1896,7 +1926,7 @@ function usePlayer(
       // Skip tracks that end before the playback position
       if (trackEndSec <= offset) return
       const g = ctx.createGain()
-      const targetGain = gainForTrack(id, soloedTracksRef.current, mutedTracksRef.current)
+      const targetGain = effectiveGainForTrack(id, soloedTracksRef.current, mutedTracksRef.current)
       // Ramp from 0 → target over RAMP_SECS to avoid start-of-playback click
       g.gain.setValueAtTime(0, audioCtxPlayTime)
       g.gain.linearRampToValueAtTime(targetGain, audioCtxPlayTime + RAMP_SECS)
@@ -1951,7 +1981,7 @@ function usePlayer(
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [getTransportDuration, stopSources, ensurePlaybackGraph, ensureMetronomeBuffer, gainForTrack, ensurePreviewMixBuffer])
+  }, [getTransportDuration, stopSources, ensurePlaybackGraph, ensureMetronomeBuffer, effectiveGainForTrack, ensurePreviewMixBuffer])
 
   playFnRef.current = play
 
@@ -2023,7 +2053,7 @@ function usePlayer(
     const g = gainsRef.current.get(id)
     if (g) {
       const ctx = actxRef.current
-      const targetVal = gainForTrack(id, soloedTracksRef.current, next)
+      const targetVal = effectiveGainForTrack(id, soloedTracksRef.current, next)
       if (ctx) {
         const now = ctx.currentTime
         g.gain.cancelScheduledValues(now)
@@ -2033,7 +2063,7 @@ function usePlayer(
         g.gain.value = targetVal
       }
     }
-  }, [gainForTrack])
+  }, [effectiveGainForTrack])
 
   const toggleSolo = useCallback((id: string) => {
     const next = new Set(soloedTracksRef.current)
@@ -2045,19 +2075,20 @@ function usePlayer(
     trackEvent('track_solo_toggled', { enabled: enabling })
 
     // Soloing one track affects ALL gain nodes — update them all at once.
-    const ctx = actxRef.current
-    const now = ctx?.currentTime
     gainsRef.current.forEach((g, trackId) => {
-      const targetVal = gainForTrack(trackId, next, mutedTracksRef.current)
-      if (ctx && now !== undefined) {
-        g.gain.cancelScheduledValues(now)
-        g.gain.setValueAtTime(g.gain.value, now)
-        g.gain.linearRampToValueAtTime(targetVal, now + RAMP_SECS)
-      } else {
-        g.gain.value = targetVal
-      }
+      applyGainToTrackNode(trackId, g)
     })
-  }, [gainForTrack])
+  }, [applyGainToTrackNode])
+
+  const setTrackGain = useCallback((trackId: string, gain: number) => {
+    if (midiRenderingTracksRef.current.has(trackId)) return
+    const clamped = Math.max(0, Math.min(2, gain))
+    const next = new Map(trackGainsRef.current)
+    next.set(trackId, clamped)
+    trackGainsRef.current = next
+    setTrackGainsState(next)
+    applyGainToTrackNode(trackId)
+  }, [applyGainToTrackNode])
 
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
@@ -2175,7 +2206,7 @@ function usePlayer(
     midiRenderingTracks,
     midiPlaybackReadyIds,
     waitForMidiRender,
-    mutedTracks, soloedTracks, volume, setVolume,
+    mutedTracks, soloedTracks, trackGains, volume, setVolume,
     play: () => playWithCountIn(),
     playTransport: (scheduledStartTime?: number) => {
       const waitingForTracks = audioTracks.length > 0 && loaded < audioTracks.length
@@ -2185,7 +2216,7 @@ function usePlayer(
     },
     prepareTransport,
     playWithCountIn,
-    pause, seek, seekEpoch, toggleMute, toggleSolo,
+    pause, seek, seekEpoch, toggleMute, toggleSolo, setTrackGain,
     metronomeOn, countdownOn, isCounting, toggleMetronome, toggleCountdown,
     sectionLoopOn, toggleSectionLoop, clearSectionLoop, setSectionLoop,
     audioContext: actxRef, trackDurations,
@@ -2406,6 +2437,7 @@ const TrackRow = React.memo(function TrackRow({
   track, index, muted, soloed, changed, currentTimeRef,
   commentMode, activeInput, audioReady, midiRendering,
   onToggleMute, onToggleSolo, onReplace,
+  trackGain, onTrackGainChange,
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseInput,
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging, waveformDimmed,
@@ -2424,6 +2456,8 @@ const TrackRow = React.memo(function TrackRow({
   activeInput: ActiveCommentInput | null; audioReady: boolean
   midiRendering?: boolean
   onToggleMute: () => void; onToggleSolo: () => void; onReplace: (f: File) => void
+  trackGain: number
+  onTrackGainChange: (gain: number) => void
   onCommentPlace: (input: ActiveCommentInput) => void
   onCommentDelete: (id: string) => void
   onCommentCreate: (trackId: string, startMs: number, endMs: number, content: string) => Promise<void>
@@ -3033,10 +3067,15 @@ const TrackRow = React.memo(function TrackRow({
             style={{ left: labelColW, top: 0, bottom: 0, minHeight: rowH }}
             data-no-resource-filter
           >
+            <TrackGainSlider
+              value={trackGain}
+              onChange={onTrackGainChange}
+              disabled={midiRendering}
+            />
             <button
               type="button"
               className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors"
-              style={{ animationDelay: '0ms' }}
+              style={{ animationDelay: '40ms' }}
               onClick={() => { fileRef.current?.click(); setShowTools(false); setConfirmDelete(false) }}
             >
               <ReplaceIcon size={16} />
@@ -3046,7 +3085,7 @@ const TrackRow = React.memo(function TrackRow({
               href={`/api/tracks/${track.id}/download`}
               download
               className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors no-underline"
-              style={{ animationDelay: '60ms' }}
+              style={{ animationDelay: '80ms' }}
               onClick={() => { setShowTools(false); setConfirmDelete(false) }}
             >
               <DownloadIcon size={16} />
@@ -3085,7 +3124,7 @@ const TrackRow = React.memo(function TrackRow({
               <button
                 type="button"
                 className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors"
-                style={{ animationDelay: '120ms' }}
+                style={{ animationDelay: '160ms' }}
                 onClick={() => setConfirmDelete(true)}
               >
                 <TrashIcon size={16} />
@@ -3388,6 +3427,18 @@ function MasterPlayerBar({
   const durationRef = useRef(duration)
   durationRef.current = duration
   const isLoading = loaded < total && total > 0
+  const playLoading = isLoading && !playing && !isCounting
+  const playBtnClass = playLoading
+    ? 'size-10 border border-border bg-background grid place-items-center cursor-wait'
+    : 'size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed'
+
+  function handleTransportClick() {
+    if (playing || isCounting) {
+      onPause()
+      return
+    }
+    if (!isLoading && duration > 0) onPlay()
+  }
 
   // Drive progress bar fill + cursor via rAF — no React state per frame.
   useEffect(() => {
@@ -3465,13 +3516,13 @@ function MasterPlayerBar({
         {transportToggles}
         <button
           type="button"
-          onClick={(playing || isCounting) ? onPause : onPlay}
-          disabled={duration <= 0 || isLoading}
-          className="size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
+          onClick={handleTransportClick}
+          disabled={duration <= 0}
+          className={`${playBtnClass} shrink-0`}
+          aria-label={playLoading ? 'Loading' : (playing || isCounting) ? 'Pause' : 'Play'}
         >
-          {isLoading ? (
-            <Spinner size={14} tone="white" />
+          {playLoading ? (
+            <Spinner size={14} tone="lime" />
           ) : (
             <span className="text-sm translate-x-px">{(playing || isCounting) ? '❚❚' : '▶'}</span>
           )}
@@ -3503,13 +3554,13 @@ function MasterPlayerBar({
         {transportToggles}
         <button
           type="button"
-          onClick={(playing || isCounting) ? onPause : onPlay}
-          disabled={duration <= 0 || isLoading}
-          className="size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          aria-label={(playing || isCounting) ? 'Pause' : 'Play'}
+          onClick={handleTransportClick}
+          disabled={duration <= 0}
+          className={playBtnClass}
+          aria-label={playLoading ? 'Loading' : (playing || isCounting) ? 'Pause' : 'Play'}
         >
-          {isLoading ? (
-            <Spinner size={14} tone="white" />
+          {playLoading ? (
+            <Spinner size={14} tone="lime" />
           ) : (
             <span className="text-sm translate-x-px">{(playing || isCounting) ? '❚❚' : '▶'}</span>
           )}
@@ -3703,10 +3754,10 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                   {/* Version name + sub-info */}
                   <span className="flex-1 min-w-0">
                     {compact ? (
-                      <span className="block text-[10px] font-bold text-foreground truncate leading-tight">{getVersionDisplayName(v!)}</span>
+                      <VersionListName version={v!} className="block text-[10px] font-bold text-foreground truncate leading-tight" />
                     ) : (
                       <>
-                        <span className="block text-[11px] font-bold text-foreground truncate">{getVersionDisplayName(v!)}</span>
+                        <VersionListName version={v!} className="block text-[11px] font-bold text-foreground truncate" />
                         <span className="block text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5 truncate">
                           {fmtDate(v!.created_at)}{comments > 0 ? ` · ${comments} CMT` : ''}
                         </span>
@@ -6395,7 +6446,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         {v.type === 'main' && '● '}
                         {v.merged_at && '✓ '}
                         {v.type === 'branch' && !v.merged_at && '⌥ '}
-                        {getVersionDisplayName(v)}
+                        <VersionListName version={v} />
                       </button>
                     )
                   })}
@@ -6560,6 +6611,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   waitForMidiRender={player.waitForMidiRender}
                   onToggleMute={() => player.toggleMute(t.id)}
                   onToggleSolo={() => player.toggleSolo(t.id)}
+                  trackGain={player.trackGains.get(t.id) ?? 1}
+                  onTrackGainChange={gain => player.setTrackGain(t.id, gain)}
                   onReplace={f => handleReplaceTrack(t, f)}
                   onCommentPlace={setActiveCommentInput}
                   onCommentDelete={handleCommentDelete}

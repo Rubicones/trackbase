@@ -436,17 +436,19 @@ const ProjectRow = memo(function ProjectRow({
         <button
           type="button"
           onClick={e => onPlay(e, project.id)}
-          disabled={loading && !playing}
-          aria-label={playing ? `Pause ${project.name}` : `Play ${project.name}`}
+          disabled={project.audio_track_count === 0}
+          aria-label={loading && !playing ? `Loading ${project.name}` : playing ? `Pause ${project.name}` : `Play ${project.name}`}
           className={`size-10 shrink-0 border grid place-items-center transition group ${
-            playActive
-              ? 'bg-lime border-lime text-primary-foreground'
-              : 'border-border bg-surface-2 hover:bg-lime hover:border-lime hover:text-primary-foreground'
+            loading && !playing
+              ? 'border-border bg-background text-lime cursor-wait'
+              : playActive
+                ? 'bg-lime border-lime text-primary-foreground'
+                : 'border-border bg-surface-2 hover:bg-lime hover:border-lime hover:text-primary-foreground'
           } ${project.audio_track_count === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
         >
           {error
             ? <IconPlayError />
-            : loading
+            : loading && !playing
               ? <IconSpinner />
               : playing
                 ? <IconPause />

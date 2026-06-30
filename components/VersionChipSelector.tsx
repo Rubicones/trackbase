@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { IconBranch } from '@/components/chat/ContextIcons'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionListName, versionListNameClass } from '@/components/VersionListName'
 
 export type VersionChipOption = {
   id: string
@@ -19,6 +20,7 @@ function ComposerChip({
   onClick,
   disabled,
   showPlus = false,
+  masterNameClass,
 }: {
   icon: React.ReactNode
   label: string
@@ -27,6 +29,7 @@ function ComposerChip({
   onClick: () => void
   disabled?: boolean
   showPlus?: boolean
+  masterNameClass?: string
 }) {
   return (
     <button
@@ -38,7 +41,7 @@ function ComposerChip({
         active
           ? 'border-lime bg-lime-soft text-lime'
           : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-foreground'
-      }`}
+      } ${masterNameClass ?? ''}`}
     >
       {icon}
       {label}
@@ -131,6 +134,7 @@ export function VersionChipSelector({
         active={!!selectedId}
         disabled={disabled}
         showPlus={showPlus}
+        masterNameClass={selected ? versionListNameClass(selected) : undefined}
         onClick={() => setOpen(o => !o)}
       />
       {open && coords && createPortal(
@@ -155,10 +159,7 @@ export function VersionChipSelector({
               }`}
             >
               <span className="text-lime shrink-0"><IconBranch /></span>
-              <span className="truncate">{getVersionDisplayName(v)}</span>
-              {v.type === 'main' && (
-                <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
-              )}
+              <VersionListName version={v} className="truncate" />
             </button>
           ))}
         </div>,

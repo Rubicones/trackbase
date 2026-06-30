@@ -7,6 +7,7 @@ import { SpinnerBars } from '@/components/ui/Spinner'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 import { resolveResourceChipNames } from './ResourceContextChips'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionListName } from '@/components/VersionListName'
 
 function IconClose({ size = 10 }: { size?: number }) {
   return (
@@ -196,10 +197,7 @@ function ContextPopover({
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition bg-transparent border-0 cursor-pointer"
         >
           <span className="text-lime shrink-0"><IconBranch size={12} /></span>
-          <span className="truncate">{getVersionDisplayName(v)}</span>
-          {v.type === 'main' && (
-            <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
-          )}
+          <VersionListName version={v} className="truncate" />
         </button>
       ))}
       {!versionsLoading && mode === 'track' && tracks.length === 0 && (
