@@ -64,6 +64,7 @@ import {
 import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
 import { ChevronsLeftRightEllipsis } from 'lucide-react'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionNameLabel } from '@/components/VersionChipSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1117,11 +1118,7 @@ function usePlayer(
   const midiRenderedKeysRef = useRef<Map<string, string>>(new Map())
   const midiRenderGenRef = useRef<Map<string, number>>(new Map())
   const midiRenderWaitersRef = useRef<Map<string, Array<() => void>>>(new Map())
-  const [volume, setVolumeState] = useState<number>(() => {
-    if (typeof window === 'undefined') return 1
-    const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
-    return isNaN(saved) ? 1 : Math.max(0, Math.min(1, saved))
-  })
+  const [volume, setVolumeState] = useState(1)
 
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -2064,6 +2061,13 @@ function usePlayer(
     if (masterGainRef.current) masterGainRef.current.gain.value = v
     if (typeof window !== 'undefined') localStorage.setItem('trackbase_volume', String(v))
   }, [])
+
+  // Restore persisted volume after mount — must not read localStorage during SSR init.
+  useEffect(() => {
+    const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
+    if (isNaN(saved)) return
+    setVolume(Math.max(0, Math.min(1, saved)))
+  }, [setVolume])
 
   const toggleMetronome = useCallback(() => {
     const next = !metronomeOnRef.current
@@ -3703,10 +3707,10 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                   {/* Version name + sub-info */}
                   <span className="flex-1 min-w-0">
                     {compact ? (
-                      <span className="block text-[10px] font-bold text-foreground truncate leading-tight">{getVersionDisplayName(v!)}</span>
+                      <VersionNameLabel version={v!} className="block text-[10px] font-bold text-foreground truncate leading-tight" />
                     ) : (
                       <>
-                        <span className="block text-[11px] font-bold text-foreground truncate">{getVersionDisplayName(v!)}</span>
+                        <VersionNameLabel version={v!} className="block text-[11px] font-bold text-foreground truncate" />
                         <span className="block text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5 truncate">
                           {fmtDate(v!.created_at)}{comments > 0 ? ` · ${comments} CMT` : ''}
                         </span>
@@ -6395,7 +6399,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         {v.type === 'main' && '● '}
                         {v.merged_at && '✓ '}
                         {v.type === 'branch' && !v.merged_at && '⌥ '}
-                        {getVersionDisplayName(v)}
+                        <VersionNameLabel version={v} />
                       </button>
                     )
                   })}

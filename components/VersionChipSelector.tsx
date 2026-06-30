@@ -11,6 +11,23 @@ export type VersionChipOption = {
   type?: 'main' | 'branch'
 }
 
+/** Renders a version name with the Archivo display font when it's the primary version. */
+export function VersionNameLabel({
+  version,
+  className = '',
+}: {
+  version: { name: string; type?: 'main' | 'branch' }
+  className?: string
+}) {
+  const name = getVersionDisplayName(version)
+  const isMain = version.type === 'main'
+  return (
+    <span className={`${isMain ? 'font-display' : ''} ${className}`.trim()}>
+      {name}
+    </span>
+  )
+}
+
 function ComposerChip({
   icon,
   label,
@@ -155,7 +172,7 @@ export function VersionChipSelector({
               }`}
             >
               <span className="text-lime shrink-0"><IconBranch /></span>
-              <span className="truncate">{getVersionDisplayName(v)}</span>
+              <VersionNameLabel version={v} className="truncate" />
               {v.type === 'main' && (
                 <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground shrink-0">Master</span>
               )}

@@ -1024,7 +1024,7 @@ function VersionSideHeader({
   return (
     <div
       className="border-b border-border px-4 py-2 flex flex-col gap-2"
-      style={{ background: isA ? 'color-mix(in oklch, var(--lime) 8%, transparent)' : `color-mix(in oklch, ${bColor} 8%, transparent)` }}
+      style={{ background: isA ? 'color-mix(in oklch, var(--lime) 8%, transparent)' : 'var(--compare-b-muted)' }}
     >
       <div className="flex items-center gap-2">
         <div
@@ -1067,8 +1067,12 @@ function VersionSideHeader({
         <button
           type="button"
           onClick={onUseAsMaster}
-          className="text-[9px] uppercase tracking-widest px-2 py-1 border hover:opacity-90 transition shrink-0 text-primary-foreground"
-          style={{ borderColor: accentColor, background: accentColor }}
+          className="text-[9px] uppercase tracking-widest px-2 py-1 border hover:opacity-90 transition shrink-0"
+          style={{
+            borderColor: accentColor,
+            background: accentColor,
+            color: isA ? 'var(--primary-foreground)' : 'var(--compare-b-foreground)',
+          }}
         >
           Use this
         </button>
@@ -1346,28 +1350,10 @@ export default function CompareMode({
   const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
   const barDurationMs = (60000 / bpm) * beatsPerBar
 
-  // ── Theme-aware B side color ───────────────────────────────────────────────
-  // In studio-paper-dark / studio-light, --lime is indigo so violet would look identical.
-  // Use bright lime (#dfff00) for B in those themes to maintain contrast.
-  const [isStudioPaper, setIsStudioPaper] = useState(() => {
-    if (typeof document === 'undefined') return false
-    const t = document.documentElement.getAttribute('data-theme')
-    return t === 'studio-paper-dark' || t === 'studio-light'
-  })
-  useEffect(() => {
-    const update = () => {
-      const t = document.documentElement.getAttribute('data-theme')
-      setIsStudioPaper(t === 'studio-paper-dark' || t === 'studio-light')
-    }
-    const obs = new MutationObserver(update)
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-    return () => obs.disconnect()
-  }, [])
-  // B-side accent values (raw color, soft overlay, border, text)
-  const bColor     = isStudioPaper ? '#dfff00' : '#7c3aed'
-  const bColorSoft = isStudioPaper ? 'rgba(223,255,0,0.18)' : 'rgba(124,58,237,0.18)'
-  const bColorBorder = isStudioPaper ? 'rgba(223,255,0,0.6)' : 'rgba(124,58,237,0.6)'
-  const bColorText = isStudioPaper ? '#dfff00' : '#a78bfa'
+  // B-side accents — per-theme tokens in design-system.css (--compare-b*)
+  const bColor = 'var(--compare-b)'
+  const bColorSoft = 'var(--compare-b-soft)'
+  const bColorText = 'var(--compare-b-text)'
 
   // Compute loop range from current selection
   const loopRange = useMemo<LoopRange | null>(() => {
@@ -1437,12 +1423,11 @@ export default function CompareMode({
 
   // ── Structure: sections as ribbons with playhead ─────────────────────────
   function SectionRibbon({
-    sections, side, bSectionBg, bSectionBorder, bSectionText,
+    sections, side, bSectionBg, bSectionText,
   }: {
     sections: Section[]
     side: 'A' | 'B'
     bSectionBg: string
-    bSectionBorder: string
     bSectionText: string
   }) {
     const isA = side === 'A'
@@ -1493,7 +1478,9 @@ export default function CompareMode({
                 left: `${leftPct}%`,
                 right: `${Math.max(0, rightPct)}%`,
                 background: isA ? 'var(--lime-soft)' : bSectionBg,
-                borderLeft: isA ? '1px solid color-mix(in oklch, var(--lime) 60%, transparent)' : bSectionBorder,
+                borderLeft: isA
+                  ? '1px solid color-mix(in oklch, var(--lime) 60%, transparent)'
+                  : '1px solid color-mix(in oklch, var(--compare-b) 60%, transparent)',
                 borderRight: '1px solid var(--background)',
               }}
             >
@@ -1546,7 +1533,7 @@ export default function CompareMode({
                         : ''
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
-                style={isActive && mode === 'b' ? { background: bColor, color: 'var(--primary-foreground, #fff)' } : undefined}
+                style={isActive && mode === 'b' ? { background: 'var(--compare-b)', color: 'var(--compare-b-foreground)' } : undefined}
               >
                 {label === 'Sync' ? (
                   <span className="flex items-center gap-1">
@@ -1723,7 +1710,6 @@ export default function CompareMode({
                 sections={sectionsA}
                 side="A"
                 bSectionBg={bColorSoft}
-                bSectionBorder={bColorBorder}
                 bSectionText={bColorText}
               />
             </div>
@@ -1736,7 +1722,6 @@ export default function CompareMode({
                 sections={sectionsB}
                 side="B"
                 bSectionBg={bColorSoft}
-                bSectionBorder={bColorBorder}
                 bSectionText={bColorText}
               />
             </div>

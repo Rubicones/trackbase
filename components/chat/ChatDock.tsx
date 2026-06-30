@@ -20,6 +20,7 @@ import { useBandChat, type ChatMember } from '@/components/chat/useBandChat'
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { IconBranch, IconNote } from '@/components/chat/ContextIcons'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionNameLabel } from '@/components/VersionChipSelector'
 
 // ─── Inline icons (match the app's lightweight SVG convention) ─────────────────
 
@@ -911,7 +912,7 @@ function ContextPopover({
           className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface transition"
         >
           <span className="text-lime"><IconBranch /></span>
-          <span className="truncate">{getVersionDisplayName(v)}</span>
+          <VersionNameLabel version={v} className="truncate" />
           {v.type === 'main' && <span className="ml-auto text-[8px] uppercase tracking-widest text-muted-foreground">Master</span>}
         </button>
       ))}

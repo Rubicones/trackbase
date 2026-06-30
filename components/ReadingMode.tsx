@@ -14,6 +14,7 @@ import { WaveformBarsPlayhead, playedPctStyle } from '@/components/WaveformBars'
 import { fetchPreviewMixBuffer } from '@/lib/previewMixClient'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 import { getVersionDisplayName } from '@/lib/versionSort'
+import { VersionNameLabel } from '@/components/VersionChipSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -166,7 +167,7 @@ function VersionDrawer({
                   isActive ? 'bg-lime' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
                 }`}
               />
-              <span className="flex-1 truncate">{getVersionDisplayName(v)}</span>
+              <VersionNameLabel version={v} className="flex-1 truncate" />
               {v.type === 'main' && (
                 <span className="text-[9px] uppercase tracking-widest text-lime border border-lime/40 px-1.5 shrink-0">
                   Master
@@ -545,7 +546,7 @@ export function ReadingMode({
                           : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                     }`}
                   >
-                    {getVersionDisplayName(v)}
+                    <VersionNameLabel version={v} />
                   </button>
                 )
               })}
