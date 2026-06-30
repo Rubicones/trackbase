@@ -503,7 +503,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           />
         )}
 
-        <div className="relative mb-10 flex flex-wrap items-center gap-4">
+        <div className="relative flex flex-wrap items-center gap-4">
           <LimeTag>PRIVATE BETA · OPEN · V0.1</LimeTag>
         </div>
 
