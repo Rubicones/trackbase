@@ -14,7 +14,7 @@ import { WaveformBarsPlayhead, playedPctStyle } from '@/components/WaveformBars'
 import { fetchPreviewMixBuffer } from '@/lib/previewMixClient'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 import { getVersionDisplayName } from '@/lib/versionSort'
-import { VersionNameLabel } from '@/components/VersionChipSelector'
+import { VersionListName } from '@/components/VersionListName'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ function VersionDrawer({
                   isActive ? 'bg-lime' : v.merged_at ? 'bg-online' : 'bg-muted-foreground'
                 }`}
               />
-              <VersionNameLabel version={v} className="flex-1 truncate" />
+              <VersionListName version={v} className="flex-1 truncate" />
               {v.type === 'main' && (
                 <span className="text-[9px] uppercase tracking-widest text-lime border border-lime/40 px-1.5 shrink-0">
                   Master
@@ -405,7 +405,6 @@ export function ReadingMode({
   }
 
   const isLoadingTracks = player.total > 0 && player.loaded < player.total
-  const isReady = player.total === 0 || player.playbackReady
   const awaitingPlayback = player.total > 0 && !player.playbackReady
 
   const shellClass = embedded
@@ -546,7 +545,7 @@ export function ReadingMode({
                           : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
                     }`}
                   >
-                    <VersionNameLabel version={v} />
+                    <VersionListName version={v} />
                   </button>
                 )
               })}
@@ -661,13 +660,21 @@ export function ReadingMode({
       >
         <button
           type="button"
-          onClick={() => ((player.playing || isCounting) ? player.pause() : player.play())}
-          disabled={!isReady || player.total === 0}
-          className="row-span-2 size-12 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed self-center"
+          onClick={() => {
+            if (awaitingPlayback) return
+            if (player.playing || isCounting) player.pause()
+            else player.play()
+          }}
+          disabled={player.total === 0}
+          className={`row-span-2 size-12 grid place-items-center shrink-0 self-center ${
+            awaitingPlayback
+              ? 'border border-border bg-background cursor-wait'
+              : 'bg-lime text-primary-foreground active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed'
+          }`}
           aria-label={(player.playing || isCounting) ? 'Pause' : awaitingPlayback ? 'Loading' : 'Play'}
         >
           {awaitingPlayback ? (
-            <Spinner size={16} tone="white" />
+            <Spinner size={16} tone="lime" />
           ) : (
             <span className="text-base translate-x-px">{(player.playing || isCounting) ? '❚❚' : '▶'}</span>
           )}

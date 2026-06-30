@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react'
 import type { Version } from '@/lib/types'
-import { sortMobileVersions, getVersionDisplayName } from '@/lib/versionSort'
-import { VersionNameLabel } from '@/components/VersionChipSelector'
+import { sortMobileVersions } from '@/lib/versionSort'
+import { VersionListName } from '@/components/VersionListName'
 
 export function CommentToggleBtn({
   active, count, onClick, className = 'size-8', variant = 'icon', showCount = true, tourId,
@@ -96,7 +96,7 @@ export function MobileMixerVersionBar({
               {v.type === 'main' && '● '}
               {v.merged_at && '✓ '}
               {v.type === 'branch' && !v.merged_at && '⌥ '}
-              <VersionNameLabel version={v} />
+              <VersionListName version={v} />
             </button>
           )
         })}

@@ -20,12 +20,12 @@ import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { SeededWaveform } from "@/components/WaveformBars";
 import {
   Users, Tag, Activity, BarChart3,
-  GitBranch, GitMerge, History, Undo2,
+  GitBranch, GitMerge, History,
   AudioWaveform, Volume2, Mic, Timer, MessageSquare,
   LayoutGrid, Music2, Layers, ListMusic,
-  Piano, Boxes, MousePointer2,
-  Paperclip, Link2, FileText, Compass, CheckSquare,
-  Smartphone, Maximize2, Repeat,
+  GitCompare, Headphones, Play,
+  Paperclip, Link2, FileText, Compass, CheckSquare, Pin,
+  Smartphone, SlidersHorizontal, Repeat,
   FileAudio, Share2, Eye, Hash,
   Disc3, KeyRound, Zap, Lightbulb, Check, Sparkles,
   Lock, Unlock, Plug,
@@ -1666,10 +1666,9 @@ function FeatureIndex() {
     {
       n: "06.2", t: "VERSIONING", accent: "var(--lime)",
       items: [
-        { label: "Versions for safe experiments", icon: GitBranch },
-        { label: "Apply with change review", icon: GitMerge },
-        { label: "Full version history · author, status, date", icon: History },
-        { label: "Restore any version, any time", icon: Undo2 },
+        { label: "Branch off for experiments — master mix stays untouched", icon: GitBranch },
+        { label: "Compare any version to master · review overlaps · apply changes", icon: GitMerge },
+        { label: "Full version history · creation date and tags", icon: History },
       ],
     },
     {
@@ -1680,41 +1679,43 @@ function FeatureIndex() {
         { label: "Record straight into the project", icon: Mic },
         { label: "Metronome · count-in · loop section", icon: Timer },
         { label: "Range comments with threads", icon: MessageSquare },
+        { label: "MIDI editor · draw & select · snap-to-grid · undo/redo", icon: MessageSquare },
       ],
     },
     {
       n: "06.4", t: "STRUCTURE & CHORDS", accent: "var(--wave-amber)",
       items: [
-        { label: "Section editor over bars", icon: LayoutGrid },
+        { label: "Mark every part of the track — chorus, bridge, or super-mega-breakdown", icon: LayoutGrid },
         { label: "Chord-per-section · auto-detect", icon: Music2 },
         { label: "Structure overlay above waveforms", icon: Layers },
         { label: "Chord chart for rehearsal", icon: ListMusic },
       ],
     },
     {
-      n: "06.5", t: "MIDI", accent: "var(--wave-sky)",
+      n: "06.5", t: "A/B VERSION COMPARISON", accent: "var(--wave-sky)",
       items: [
-        { label: "Built-in piano roll · draw & select", icon: Piano },
-        { label: "GM instrument bank", icon: Boxes },
-        { label: "Snap-to-grid · undo / redo", icon: MousePointer2 },
+        { label: "Side-by-side version comparison", icon: GitCompare },
+        { label: "Solo individual tracks while comparing", icon: Headphones },
+        { label: "Synced playback — hear both versions at once", icon: Play },
       ],
     },
     {
       n: "06.6", t: "RESOURCES", accent: "var(--wave-coral)",
       items: [
         { label: "Attach PDFs, DAW projects, anything", icon: Paperclip },
-        { label: "External links", icon: Link2 },
+        { label: "Links attachment", icon: Link2 },
+        { label: "Pin resources to a branch or track", icon: Pin },
         { label: "Lyrics editor", icon: FileText },
         { label: "Roadmap stages · current status", icon: Compass },
         { label: "Checklist with assignments", icon: CheckSquare },
       ],
     },
     {
-      n: "06.7", t: "REHEARSAL VIEW · MOBILE", accent: "var(--lime-bright)",
+      n: "06.7", t: "MOBILE", accent: "var(--lime-bright)",
       items: [
-        { label: "Portrait · full mix + structure + chords", icon: Smartphone },
-        { label: "Landscape · full mixer", icon: Maximize2 },
-        { label: "Metronome & loop on the phone", icon: Repeat },
+        { label: "Rehearsal view · preview mix, chords, and structure on the go", icon: Smartphone },
+        { label: "Mixer · work on tracks anytime, anywhere", icon: SlidersHorizontal },
+        { label: "Recording with built-in mic", icon: Mic },
       ],
     },
     {
