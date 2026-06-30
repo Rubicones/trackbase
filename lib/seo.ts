@@ -1,14 +1,22 @@
 import type { Metadata } from 'next'
 import { PRODUCTION_SITE_URL } from '@/lib/site-url'
 
-export const SITE_NAME = 'Trackbase Studio'
-export const SITE_SHORT_NAME = 'Trackbase'
+export const SITE_NAME = 'sonicdesk.'
+export const SITE_SHORT_NAME = 'sonicdesk'
 
 export const SEO_DEFAULT_TITLE =
-  'Trackbase Studio — Version control for music bands'
+  'sonicdesk. — Version control for music bands'
 
 export const SEO_DEFAULT_DESCRIPTION =
-  'Collaborative workspace for bands and studios. Branch demos, merge arrangements, structure songs, chat in context, and rehearse together — git-like versioning built for musicians.'
+  'sonicdesk.studio is the collaborative workspace for bands and studios. Branch demos, merge arrangements, structure songs, chat in context, and rehearse together — git-like versioning built for musicians.'
+
+export const OPEN_GRAPH_IMAGE = {
+  url: '/opengraph-image',
+  width: 1200,
+  height: 630,
+  alt: SEO_DEFAULT_TITLE,
+  type: 'image/png',
+} as const
 
 export const SEO_KEYWORDS = [
   'music collaboration',
@@ -75,8 +83,12 @@ export function buildRootMetadata(): Metadata {
       title: SEO_DEFAULT_TITLE,
       description: SEO_DEFAULT_DESCRIPTION,
       url: getCanonicalUrl(),
+      images: [OPEN_GRAPH_IMAGE],
     },
-    twitter: sharedTwitter,
+    twitter: {
+      ...sharedTwitter,
+      images: [OPEN_GRAPH_IMAGE.url],
+    },
     alternates: {
       canonical: getCanonicalUrl(),
     },
@@ -94,13 +106,28 @@ export const homeMetadata: Metadata = {
   alternates: {
     canonical: getCanonicalUrl('/'),
   },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
   openGraph: {
     ...sharedOpenGraph,
     title: SEO_DEFAULT_TITLE,
     description: SEO_DEFAULT_DESCRIPTION,
     url: getCanonicalUrl('/'),
+    images: [OPEN_GRAPH_IMAGE],
   },
-  twitter: sharedTwitter,
+  twitter: {
+    ...sharedTwitter,
+    images: [OPEN_GRAPH_IMAGE.url],
+  },
 }
 
 /** Metadata for authenticated / utility routes that should not be indexed. */
@@ -130,6 +157,7 @@ export function buildHomeJsonLd(): JsonLd[] {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: SITE_NAME,
+    alternateName: SITE_SHORT_NAME,
     url,
     description: SEO_DEFAULT_DESCRIPTION,
     inLanguage: 'en-US',

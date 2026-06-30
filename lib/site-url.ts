@@ -1,5 +1,5 @@
 /** Canonical production origin (custom domain). */
-export const PRODUCTION_SITE_URL = 'https://trackbase.studio'
+export const PRODUCTION_SITE_URL = 'https://sonicdesk.studio'
 
 const LOCAL_SITE_URL = 'http://localhost:3000'
 

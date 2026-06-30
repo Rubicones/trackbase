@@ -7,7 +7,7 @@ type SpinnerProps = {
   tone?: 'lime' | 'foreground' | 'muted' | 'white'
 }
 
-/** Brutalist 8-tick rotor — matches trackbase-uikit spinner. */
+/** Brutalist 8-tick rotor — matches sonicdesk-uikit spinner. */
 export function Spinner({ size = 20, className, label, tone = 'lime' }: SpinnerProps) {
   const color =
     tone === 'lime' ? 'var(--lime)'

@@ -1232,7 +1232,7 @@ export default function BandPage() {
           <div className="min-w-0">
             {band && (
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
-                ON TRACKBASE SINCE {formatFoundedHero(band.created_at)}
+                ON sonicdesk SINCE {formatFoundedHero(band.created_at)}
               </div>
             )}
             {dataLoading && <Skeleton width={120} height={10} className="mb-1" />}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { trackEvent } from '@/lib/analytics'
 import Link from 'next/link'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
+import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
 import { ChatLauncherButton } from '@/components/chat/ChatDock'
@@ -120,12 +121,7 @@ export function MobileExperience({
       {/* Slim top bar — logo, nav path, account */}
       <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
         <div className="flex-1 min-w-0 flex items-center gap-2">
-          <Link
-            href="/dashboard"
-            className="font-display text-sm font-bold tracking-tight text-lime shrink-0 no-underline"
-          >
-            TRACKBASE
-          </Link>
+          <SonicdeskWordmark href="/dashboard" className="text-sm" />
           <nav
             aria-label="Breadcrumb"
             className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"

@@ -10,13 +10,7 @@ import { GoogleAnalytics } from '@next/third-parties/google'
 
 const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
 
-// export const metadata: Metadata = buildRootMetadata()
-export const metadata = {
-  robots: {
-    index: false,
-    follow: false,
-  },
-}
+export const metadata = buildRootMetadata()
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,

@@ -5,7 +5,7 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
     {
       target: null,
       title: 'Welcome to {PROJECT_NAME}',
-      body: 'Trackbase on your phone has two modes — Rehearsal for playing along, and Mixer for editing tracks. We\'ll start in Rehearsal.',
+      body: 'sonicdesk on your phone has two modes — Rehearsal for playing along, and Mixer for editing tracks. We\'ll start in Rehearsal.',
     },
     {
       target: 'mobile-mode-switch',

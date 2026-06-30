@@ -368,7 +368,7 @@ function TopBar({
             <span
               className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl"
             >
-              TRACKBASE
+              sonicdesk.
             </span>
             <span className="hidden font-mono-tb text-[10px] text-muted-foreground sm:inline">
               // v0.1
@@ -509,10 +509,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
 
         <h1 className="relative font-display-tb font-bold leading-[0.82] tracking-[-0.045em]">
           <span className="block text-[clamp(3.2rem,13vw,12rem)] text-lime">
-            TRACKBASE
-          </span>
-          <span className="mt-1 block text-[clamp(1.6rem,6vw,5rem)] tracking-[-0.03em] text-muted-foreground/70">
-            STUDIO
+            sonicdesk.
           </span>
         </h1>
 
@@ -523,7 +520,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
         <div className="relative mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
           <p className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]">
             A track doesn't arrive finished. It moves through dozens of iterations, arguments,
-            voice memos and renamed exports. TrackBase is the collaborative surface where bands
+            voice memos and renamed exports. sonicdesk is the collaborative surface where bands
             think, branch and decide together — versioned, structured, indexed.
           </p>
 
@@ -602,7 +599,7 @@ function Philosophy() {
     {
       n: "03",
       t: "Conflict is a choice",
-      d: "Two solos? Two arrangements? That's not a problem to hide — it's a decision to make. TrackBase makes it visible.",
+      d: "Two solos? Two arrangements? That's not a problem to hide — it's a decision to make. sonicdesk makes it visible.",
     },
   ];
   return (
@@ -2665,7 +2662,7 @@ function Roadmap() {
         kicker="ROADMAP"
         title="WHAT'S NEXT."
         accent="SHIPPING SOON."
-        description="TrackBase Studio is built in public. Private beta is live now; every following release unlocks a new room in the studio."
+        description="sonicdesk. is built in public. Private beta is live now; every following release unlocks a new room in the studio."
       />
 
       <div
@@ -2808,7 +2805,7 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="text-lime">FINAL_V3_FINAL.zip</span>
         </h2>
         <p className="mx-auto mt-8 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
-          Bring your band, your roster, your class. TrackBase is free during beta — every workspace
+          Bring your band, your roster, your class. sonicdesk is free during beta — every workspace
           ships with branches, a mixer, structure, chords, chat and the rehearsal view from day one.
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -2834,7 +2831,7 @@ function Footer() {
             className="font-display-tb font-bold tracking-tight text-lime text-xl"
 
           >
-            TRACKBASE<span className="text-foreground">.</span>
+            sonicdesk<span className="text-foreground">.</span>
           </div>
           <p className="mt-3 max-w-sm font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
             Built for musicians, indexed for engineers. Version control for music.
@@ -2891,7 +2888,7 @@ function Footer() {
             <span className="text-(--signal)">● SYS OK</span>
           </span>
           <span>
-            TRACKBASE <span className="text-foreground">// v0.1</span> · © 2026
+            sonicdesk. <span className="text-foreground">// v0.1</span> · © 2026
           </span>
         </div>
       </div>

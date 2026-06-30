@@ -15,6 +15,7 @@ import { fetchPreviewMixBuffer } from '@/lib/previewMixClient'
 import type { Track, Section, Version, Project, ProjectResource } from '@/lib/types'
 import { getVersionDisplayName } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
+import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -431,12 +432,7 @@ export function ReadingMode({
             </button>
 
             <div className="flex-1 min-w-0 flex items-center gap-2">
-              <Link
-                href="/dashboard"
-                className="font-display text-sm font-bold tracking-tight text-lime shrink-0 no-underline"
-              >
-                TRACKBASE
-              </Link>
+              <SonicdeskWordmark href="/dashboard" className="text-sm" />
               <nav
                 aria-label="Breadcrumb"
                 className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"

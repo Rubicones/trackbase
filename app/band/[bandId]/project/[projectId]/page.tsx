@@ -18,6 +18,7 @@ import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
 import { ResourcesCard } from '@/components/ResourcesCard'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
@@ -2089,12 +2090,12 @@ function usePlayer(
   const setVolume = useCallback((v: number) => {
     setVolumeState(v)
     if (masterGainRef.current) masterGainRef.current.gain.value = v
-    if (typeof window !== 'undefined') localStorage.setItem('trackbase_volume', String(v))
+    if (typeof window !== 'undefined') localStorage.setItem('sonicdesk_volume', String(v))
   }, [])
 
   // Restore persisted volume after mount — must not read localStorage during SSR init.
   useEffect(() => {
-    const saved = parseFloat(localStorage.getItem('trackbase_volume') ?? '')
+    const saved = parseFloat(localStorage.getItem('sonicdesk_volume') ?? '')
     if (isNaN(saved)) return
     setVolume(Math.max(0, Math.min(1, saved)))
   }, [setVolume])
@@ -4044,7 +4045,7 @@ function MobilePortraitSkeleton() {
       {/* Slim top bar — matches MobileExperience header */}
       <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
         <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span className="font-display text-sm font-bold tracking-tight text-lime shrink-0">TRACKBASE</span>
+          <SonicdeskWordmark href="/dashboard" className="text-sm" />
           <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
             <span className="shrink-0">Bands</span>
             <span className="text-border shrink-0">/</span>

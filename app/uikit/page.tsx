@@ -502,7 +502,7 @@ function UikitContent() {
           <div>
             <PageTag>● BRANDBOOK v0.9</PageTag>
             <h1 className="tb-hero-title">
-              <span className="tb-hero-title-brand">Trackbase</span>
+              <span className="tb-hero-title-brand">sonicdesk.</span>
               {' / '}
               <span className="tb-hero-title-accent">UI Kit</span>
             </h1>
@@ -554,11 +554,11 @@ function UikitContent() {
             <Section title="Logotype" id="logotype" tag="01.01">
               <div className="grid sm:grid-cols-2 gap-4">
                 <Tile>
-                  <div className="font-display text-3xl font-bold tracking-tight text-lime">TRACKBASE</div>
+                  <div className="font-display text-3xl font-bold tracking-tight text-lime">sonicdesk.</div>
                   <Caption>Primary wordmark · Archivo Bold · lime</Caption>
                 </Tile>
                 <Tile>
-                  <div className="font-display text-3xl font-bold tracking-tight text-foreground">TRACKBASE<span className="text-lime">.</span></div>
+                  <div className="font-display text-3xl font-bold tracking-tight text-foreground">sonicdesk<span className="text-lime">.</span></div>
                   <Caption>Inline lockup · use in dense headers</Caption>
                 </Tile>
               </div>

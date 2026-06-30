@@ -51,18 +51,7 @@ export default function OpenGraphImage() {
               color: '#FF4D00',
             }}
           >
-            TRACKBASE
-          </div>
-          <div
-            style={{
-              fontSize: 56,
-              fontWeight: 700,
-              lineHeight: 0.95,
-              letterSpacing: '-0.03em',
-              color: '#A3A3A3',
-            }}
-          >
-            STUDIO
+            sonicdesk.
           </div>
           <div
             style={{
@@ -84,7 +73,7 @@ export default function OpenGraphImage() {
             color: '#737373',
           }}
         >
-          trackbase.studio
+          sonicdesk.studio
         </div>
       </div>
     ),

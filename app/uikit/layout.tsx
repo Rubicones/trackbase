@@ -5,7 +5,7 @@ import './uikit.css'
 
 export const metadata = noIndexMetadata(
   'UI Kit & Brandbook',
-  'The full Trackbase design system: themes, color tokens, typography, components, motion, and brand voice.',
+  'The full sonicdesk design system: themes, color tokens, typography, components, motion, and brand voice.',
 )
 
 export default function UikitLayout({ children }: { children: ReactNode }) {

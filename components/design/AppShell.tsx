@@ -1,43 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useEffect, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { PushBellButton } from '@/components/push/PushBellButton'
-
-function TrackbaseLogo() {
-  const [launched, setLaunched] = useState(false)
-
-  useEffect(() => {
-    const t = setTimeout(() => setLaunched(true), 50)
-    return () => clearTimeout(t)
-  }, [])
-
-  return (
-    <Link
-      href="/dashboard"
-      className="group flex items-center gap-2.5 no-underline shrink-0"
-    >
-      <div className="w-4 h-8 flex items-center justify-center shrink-0">
-        <div
-          className={`w-4 rounded-full bg-lime transition-all ease-out ${
-            launched ? 'h-2 group-hover:h-8 duration-200' : 'h-8 duration-700'
-          }`}
-        />
-      </div>
-      <span className="font-display text-lg md:text-xl lg:text-2xl font-bold tracking-tight text-lime">
-        TRACKBASE
-      </span>
-    </Link>
-  )
-}
+import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 
 export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?: ReactNode; left?: ReactNode }) {
   return (
     <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md">
       <div className="flex items-center gap-4 min-w-0">
         {left}
-        <TrackbaseLogo />
+        <SonicdeskWordmark href="/dashboard" />
         <div className="hidden md:flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground min-w-0">
           <Link href="/dashboard" className="hover:text-foreground transition-colors no-underline text-muted-foreground">
             Bands
@@ -78,7 +52,7 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
         >
           UI Kit
         </Link>
-        <span className="text-foreground font-bold tracking-widest hidden sm:inline">TRACKBASE // v0.9</span>
+        <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk. // v0.9</span>
       </div>
     </footer>
   )

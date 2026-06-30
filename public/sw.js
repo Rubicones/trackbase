@@ -1,5 +1,5 @@
 self.addEventListener('push', event => {
-  let payload = { title: 'Trackbase', body: '', url: '/', icon: '/icon.svg' }
+  let payload = { title: 'sonicdesk.', body: '', url: '/', icon: '/icon.svg' }
   try {
     if (event.data) payload = { ...payload, ...event.data.json() }
   } catch {

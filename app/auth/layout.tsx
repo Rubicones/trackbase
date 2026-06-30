@@ -3,7 +3,7 @@ import { noIndexMetadata } from '@/lib/seo'
 
 export const metadata = noIndexMetadata(
   'Sign in',
-  'Sign in to Trackbase Studio to access your band workspace.',
+  'Sign in to sonicdesk. to access your band workspace.',
 )
 
 export default function AuthLayout({ children }: { children: ReactNode }) {

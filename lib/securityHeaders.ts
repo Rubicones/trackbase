@@ -1,7 +1,7 @@
 /**
  * Security response headers (CSP, clickjacking, MIME sniffing, etc.).
  *
- * CSP is tuned for Trackbase: inline boot scripts in layout, Vercel Analytics,
+ * CSP is tuned for sonicdesk: inline boot scripts in layout, Vercel Analytics,
  * direct R2 presigned uploads/downloads (preview mix MP3 + track blobs), the push SW, the
  * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM),
  * soundfont-player MIDI samples (gleitz.github.io), and Google Analytics 4.

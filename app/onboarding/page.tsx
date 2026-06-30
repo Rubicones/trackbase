@@ -279,9 +279,9 @@ function OnboardingContent() {
 
   const stepSubtitle =
     step === 1
-      ? 'Pick a look for Trackbase — you can change this anytime in settings.'
+      ? 'Pick a look for sonicdesk — you can change this anytime in settings.'
       : step === 2
-        ? 'This is how your bandmates will see you across Trackbase.'
+        ? 'This is how your bandmates will see you across sonicdesk.'
         : 'Start your own collective or request to join one with an invite code.'
 
   return (

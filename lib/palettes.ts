@@ -30,7 +30,7 @@ export const PALETTE_OPTIONS: PaletteMeta[] = [
   { id: 'green', label: 'Green', swatch: '#8FB996', swatchAlt: '#B5D4BC' },
 ]
 
-export const PALETTE_STORAGE_KEY = 'trackbase-palette'
+export const PALETTE_STORAGE_KEY = 'sonicdesk-palette'
 
 export function isPaletteId(value: string | null | undefined): value is PaletteId {
   return PALETTE_OPTIONS.some(p => p.id === value)
