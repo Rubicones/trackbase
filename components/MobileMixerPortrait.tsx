@@ -1043,30 +1043,33 @@ function MobileMixerPortraitInner({
 
         {recordingSlot}
 
-        <div className="px-3 py-2 space-y-2">
-          <button
-            type="button"
-            onClick={onAddTrack}
-            disabled={storageFull}
-            data-tour="mobile-mixer-add-track"
-            className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime hover:border-lime flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
-          >
-            <span className="text-base leading-none">+</span>
-            {storageFull ? 'Storage full' : 'Add audio / MIDI / loop'}
-          </button>
-          <button
-            type="button"
-            onClick={onAddRecording}
-            disabled={storageFull}
-            data-tour="mobile-mixer-recording"
-            className="w-full border border-dashed border-border px-3 py-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-destructive hover:border-destructive flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
-          >
-            <span className="inline-block size-2 rounded-full bg-destructive shrink-0" />
-            Record track
-          </button>
-        </div>
+        <div className="h-24" />
+      </div>
 
-        <div className="h-40" />
+      <div
+        data-tour="mobile-mixer-add-material"
+        className="shrink-0 border-t border-border bg-background px-3 py-2 space-y-2"
+      >
+        <button
+          type="button"
+          onClick={onAddTrack}
+          disabled={storageFull}
+          data-tour="mobile-mixer-add-track"
+          className="w-full border border-dashed border-border px-3 py-4 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime hover:border-lime flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
+        >
+          <span className="text-base leading-none">+</span>
+          {storageFull ? 'Storage full' : 'Add audio / MIDI / loop'}
+        </button>
+        <button
+          type="button"
+          onClick={onAddRecording}
+          disabled={storageFull}
+          data-tour="mobile-mixer-recording"
+          className="w-full border border-dashed border-border px-3 py-3 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-destructive hover:border-destructive flex items-center justify-center gap-2 bg-background disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:border-border"
+        >
+          <span className="inline-block size-2 rounded-full bg-destructive shrink-0" />
+          Record track
+        </button>
       </div>
 
       {/* Bottom transport */}

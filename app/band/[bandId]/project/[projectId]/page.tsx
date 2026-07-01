@@ -9,6 +9,13 @@ import type { TrackComment, CommentReply, Track, Version, Project, Section, Midi
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
+import {
+  buildOnboardingDisplayVersions,
+  isOnboardingDemoId,
+  isOnboardingDemoActive,
+  seedOnboardingDemoWaveforms,
+  clearOnboardingDemoWaveforms,
+} from '@/lib/onboardingDemo'
 import { allTracksLoaded } from '@/lib/transportStatus'
 import { barOffsetToMs } from '@/lib/commentTimecodes'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
@@ -1218,7 +1225,7 @@ function usePlayer(
   ), [duration])
 
   // Only load audio tracks from the server; MIDI is offline-rendered client-side.
-  const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+  const audioTracks = tracks.filter(t => t.file_type !== 'midi' && !isOnboardingDemoId(t.id))
   const audioTrackIdsKey = useMemo(
     () => audioTracks.map(t => t.id).sort().join('|'),
     [audioTracks],
@@ -4745,8 +4752,43 @@ export default function ProjectPage() {
   const versionSwitchLocked = loading || versionContentLoading
   versionSwitchLockedRef.current = versionSwitchLocked
 
-  const activeVersion = versions.find(v => v.id === activeVersionId)
+  const onboardingDemoActive = isOnboardingDemoActive(profile?.onboarding, {
+    showDesktopTour: showTour,
+    showMobileTour: showMobileTour,
+  })
+
+  const displayVersions = useMemo(
+    () => buildOnboardingDisplayVersions(versions, projectId, onboardingDemoActive),
+    [versions, projectId, onboardingDemoActive],
+  )
+
+  function exitOnboardingTourView() {
+    clearOnboardingDemoWaveforms(displayVersions)
+    const main = versions.find(v => v.type === 'main')
+    if (main && (isOnboardingDemoId(activeVersionId) || !versions.some(v => v.id === activeVersionId))) {
+      setActiveVersionId(main.id)
+    }
+    setResourceFilterTrackId(null)
+    setCommentMode(false)
+    setActiveCommentInput(null)
+  }
+
+  useEffect(() => {
+    seedOnboardingDemoWaveforms(displayVersions)
+    return () => clearOnboardingDemoWaveforms(displayVersions)
+  }, [displayVersions])
+
+  const activeVersion = displayVersions.find(v => v.id === activeVersionId)
+    ?? versions.find(v => v.id === activeVersionId)
   const activeTracks = activeVersion?.tracks ?? []
+  useEffect(() => {
+    if (versions.length === 0) return
+    if (isOnboardingDemoId(activeVersionId) && !displayVersions.some(v => v.id === activeVersionId)) {
+      const main = versions.find(v => v.type === 'main')
+      if (main) setActiveVersionId(main.id)
+    }
+  }, [displayVersions, activeVersionId, versions])
+
   const resourceFilterTrackName = useMemo(() => {
     if (!resourceFilterTrackId) return null
     const track = activeTracks.find(t => t.id === resourceFilterTrackId)
@@ -4786,6 +4828,7 @@ export default function ProjectPage() {
     const assignments: { id: string; color: string }[] = []
 
     activeTracks.forEach((t, i) => {
+      if (isOnboardingDemoId(t.id)) return
       let color = t.icon_color
       if (!color || needsTrackIconColor(color) || used.has(color)) {
         color = pickTrackIconColor(Array.from(used), i)
@@ -5964,7 +6007,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         <MobileExperience
           project={project}
           bandId={bandId}
-          versions={versions}
+          versions={displayVersions}
           activeVersionId={activeVersionId}
           onVersionChange={selectVersion}
           versionSwitchDisabled={versionSwitchLocked}
@@ -6104,12 +6147,14 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           showTour={showMobileTour}
           onTourFinish={() => {
             setShowMobileTour(false)
+            exitOnboardingTourView()
             updateOnboarding('mobile_project_tour_completed', true)
             setToast("You're all set! Tap ? anytime for a refresher.")
             setTimeout(() => setToast(null), 4000)
           }}
           onTourSkip={() => {
             setShowMobileTour(false)
+            exitOnboardingTourView()
             updateOnboarding('mobile_project_tour_skipped', true)
           }}
           storageFull={storageFull}
@@ -6198,7 +6243,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
 
       {isMobileLandscape && (
         <MobileMixerVersionBar
-          versions={versions}
+          versions={displayVersions}
           activeId={activeVersionId}
           onSelect={selectVersion}
           onNewBranch={() => setShowBranchModal(true)}
@@ -6266,7 +6311,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           aria-hidden
         />
         <Sidebar
-          versions={versions} activeId={activeVersionId}
+          versions={displayVersions} activeId={activeVersionId}
           onSelect={id => { selectVersion(id); if (window.innerWidth < 1024) setSidebarOpen(false) }}
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
@@ -6809,7 +6854,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         <>
         <div className="flex flex-1 overflow-hidden">
           <Sidebar
-            versions={versions}
+            versions={displayVersions}
             activeId={activeVersionId}
             onSelect={selectVersion}
             onNewBranch={() => setShowBranchModal(true)}
@@ -6923,12 +6968,14 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         show={showTour && isDesktopMixer}
         onFinish={() => {
           setShowTour(false)
+          exitOnboardingTourView()
           updateOnboarding('project_tour_completed', true)
           setToast("You're all set! Click the ? icon anytime for a refresher.")
           setTimeout(() => setToast(null), 4000)
         }}
         onSkip={() => {
           setShowTour(false)
+          exitOnboardingTourView()
           updateOnboarding('project_tour_skipped', true)
         }}
       />

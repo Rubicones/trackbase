@@ -750,29 +750,34 @@ export default function BandPage() {
   }
 
   async function loadBand(signal?: AbortSignal) {
-    // Serve from cache on back-navigation — avoids refetch for data that hasn't changed.
-    // TTL prevents stale data after project creation or other cross-page mutations.
-    const entry = bandDataCache.get(bandId)
-    if (entry && Date.now() - entry.cachedAt < BAND_CACHE_TTL_MS) {
-      applyBandData(entry.data as Record<string, unknown>)
-      return
-    }
+    try {
+      // Serve from cache on back-navigation — avoids refetch for data that hasn't changed.
+      // TTL prevents stale data after project creation or other cross-page mutations.
+      const entry = bandDataCache.get(bandId)
+      if (entry && Date.now() - entry.cachedAt < BAND_CACHE_TTL_MS) {
+        applyBandData(entry.data as Record<string, unknown>)
+        return
+      }
 
-    const res = await fetch(`/api/bands/${bandId}`, signal ? { signal } : undefined)
-    if (!res.ok) {
+      const res = await fetch(`/api/bands/${bandId}`, signal ? { signal } : undefined)
+      if (!res.ok) {
+        if (signal?.aborted) return
+        if (res.status === 401) return  // auth redirect effect handles nav
+        const body = await res.json().catch(() => ({}))
+        if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
+        else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
+        else setError('unknown')
+        setLoading(false)
+        return
+      }
       if (signal?.aborted) return
-      if (res.status === 401) return  // auth redirect effect handles nav
-      const body = await res.json().catch(() => ({}))
-      if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
-      else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
-      else setError('unknown')
-      setLoading(false)
-      return
+      const data = await res.json()
+      bandDataCache.set(bandId, { data, cachedAt: Date.now() })
+      applyBandData(data)
+    } catch (err) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
+      throw err
     }
-    if (signal?.aborted) return
-    const data = await res.json()
-    bandDataCache.set(bandId, { data, cachedAt: Date.now() })
-    applyBandData(data)
   }
 
   // Invalidates the cache entry for this band (call after any mutation that

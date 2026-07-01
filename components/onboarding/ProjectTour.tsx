@@ -225,7 +225,10 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
       return
     }
 
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.scrollIntoView({
+      behavior: 'smooth',
+      block: step.target.startsWith('mobile-') ? 'nearest' : 'center',
+    })
     await new Promise(r => setTimeout(r, 320))
 
     const rect = el.getBoundingClientRect()

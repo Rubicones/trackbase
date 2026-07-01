@@ -40,7 +40,7 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
       body: 'Each row is a track with mute/solo, waveform, and per-track actions. Swipe the section pills to jump around the song.',
     },
     {
-      target: 'mobile-mixer-add-track',
+      target: 'mobile-mixer-add-material',
       title: 'Add material',
       body: 'Upload WAV, MP3, or MIDI — or add a loop. Each file becomes its own track in the project.',
     },
