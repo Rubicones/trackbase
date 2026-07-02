@@ -91,7 +91,7 @@ function CommentTooltip({
   const author = comment.author_username ?? 'unknown'
 
   return (
-    <FloatingPopover left={left} top={anchorTop} width={W} onMouseLeave={onHide}>
+    <FloatingPopover left={left} top={anchorTop} width={W} transform="translateY(4px)" onMouseLeave={onHide}>
       <div className="px-3 py-2.5" data-comment-ui>
         <div className="flex items-center gap-2 mb-1">
           <UserAvatar seed={author} size={18} kind="user" />
@@ -185,8 +185,8 @@ function CommentRangeMarker({
     const r = rangeRef.current?.getBoundingClientRect()
     if (!r) return { left: 0, top: 0 }
     return isNarrow
-      ? { left: r.left, top: r.top }
-      : { left: r.left + r.width / 2, top: r.top }
+      ? { left: r.left, top: r.bottom }
+      : { left: r.left + r.width / 2, top: r.bottom }
   }
 
   return (
@@ -269,7 +269,7 @@ function CommentInputBubble({
   }
 
   const W = 248
-  const { waveformLeft, waveformWidth, waveformTop, startXPercent, endXPercent, startMs, endMs } = input
+  const { waveformLeft, waveformWidth, waveformTop, waveformHeight, startXPercent, endXPercent, startMs, endMs } = input
   const centerPct = (startXPercent + endXPercent) / 2
   const lineX = waveformLeft + centerPct * waveformWidth
   let left = lineX - W / 2
@@ -277,7 +277,7 @@ function CommentInputBubble({
   if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
 
   return (
-    <FloatingPopover left={left} top={waveformTop - 8} width={W}>
+    <FloatingPopover left={left} top={waveformTop + waveformHeight} width={W} transform="translateY(4px)">
       <div ref={bubbleRef} className="p-3" data-comment-ui>
         {currentUser && (
           <div className="flex items-center gap-2 mb-2">

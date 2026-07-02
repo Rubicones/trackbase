@@ -493,7 +493,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
         />
         <div className="relative z-10">
           <div className="relative overflow-hidden">
-            <motion.div style={parallaxStyle} className="relative px-4 pt-16 pb-10 md:px-8 md:pt-24 md:pb-14">
+            <motion.div style={parallaxStyle} className="relative px-4 pt-14 pb-10 md:px-8 md:pt-24 md:pb-14">
         {mounted && !reduce && (
           <motion.div
             className="pointer-events-none absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-[color-mix(in_oklab,var(--lime)_60%,transparent)] to-transparent"
@@ -503,7 +503,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           />
         )}
 
-        <div className="relative flex flex-wrap items-center gap-4">
+        <div className="relative -mt-1 mb-5 flex flex-wrap items-center gap-4 md:mt-0 md:mb-0">
           <LimeTag>PRIVATE BETA · OPEN · V0.1</LimeTag>
         </div>
 
@@ -513,7 +513,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           </span>
         </h1>
 
-        <p className="relative mt-8 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground">
+        <p className="relative mt-5 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground md:mt-8">
           Music is a <span className="text-lime">process</span>. Not a file.
         </p>
 

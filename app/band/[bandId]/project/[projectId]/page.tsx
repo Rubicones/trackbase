@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, memo, type ReactNode } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, memo, Fragment, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
@@ -74,6 +74,7 @@ import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from 
 import { ChevronsLeftRightEllipsis } from 'lucide-react'
 import { getVersionDisplayName } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
+import { VersionToolbarDropdown } from '@/components/VersionToolbarDropdown'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -343,6 +344,37 @@ function TbBtn({
   )
 }
 
+function MixerToolbarSeparator() {
+  return (
+    <div className="flex items-center self-center shrink-0" aria-hidden>
+      <div className="w-px h-5 bg-border" />
+    </div>
+  )
+}
+
+function MixerToolbarGroup({
+  label,
+  children,
+  className = '',
+  padX = 'px-3',
+}: {
+  label: string
+  children: ReactNode
+  className?: string
+  padX?: string
+}) {
+  return (
+    <div className={`flex flex-col gap-1 py-2 shrink-0 ${padX} ${className}`}>
+      <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground leading-none">
+        {label}
+      </span>
+      <div className="flex items-center gap-1.5 flex-wrap min-h-[28px]">
+        {children}
+      </div>
+    </div>
+  )
+}
+
 // ─── Theme toggle ─────────────────────────────────────────────────────────────
 
 function ThemeToggle() {
@@ -419,7 +451,7 @@ function CommentTooltip({
   const author = comment.author_username ?? 'unknown'
 
   return (
-    <FloatingPopover left={left} top={anchorTop} width={W} onMouseLeave={onHide} onMouseEnter={onShow}>
+    <FloatingPopover left={left} top={anchorTop} width={W} transform="translateY(4px)" onMouseLeave={onHide} onMouseEnter={onShow}>
       <div className="px-3 py-2.5">
         <div className="flex items-center gap-2 mb-1">
           <UserAvatar seed={author} size={18} kind="user" />
@@ -576,8 +608,8 @@ function CommentRangeMarker({ comment, durationMs, dotTopOffset, commentMode, on
     const r = rangeRef.current?.getBoundingClientRect()
     if (!r) return { left: 0, top: 0 }
     return isNarrow
-      ? { left: r.left, top: r.top }
-      : { left: r.left + r.width / 2, top: r.top }
+      ? { left: r.left, top: r.bottom }
+      : { left: r.left + r.width / 2, top: r.bottom }
   }
 
   const replyCount = comment.replies?.length ?? 0
@@ -694,7 +726,7 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
   }
 
   const W = 248
-  const { waveformLeft, waveformWidth, waveformTop, startXPercent, endXPercent, startMs, endMs } = input
+  const { waveformLeft, waveformWidth, waveformTop, waveformHeight, startXPercent, endXPercent, startMs, endMs } = input
   const centerPct = (startXPercent + endXPercent) / 2
   const lineX = waveformLeft + centerPct * waveformWidth
 
@@ -704,7 +736,7 @@ function CommentInputBubble({ input, onSubmit, onClose, currentUser }: {
   if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
 
   return (
-    <FloatingPopover left={left} top={waveformTop - 8} width={W}>
+    <FloatingPopover left={left} top={waveformTop + waveformHeight} width={W} transform="translateY(4px)">
       <div ref={bubbleRef} className="p-3">
         {currentUser && (
           <div className="flex items-center gap-2 mb-2">
@@ -5931,26 +5963,6 @@ function uploadFileType(file: File): 'audio' | 'midi' {
 
   const headerActions = (
     <>
-      <TbBtn variant="ghost" className="hidden lg:inline-flex" onClick={handleShare} data-tour="share-button">
-        {shareCopied ? 'Copied!' : 'Share'}
-      </TbBtn>
-      <TbBtn
-        variant="ghost"
-        className="hidden lg:inline-flex"
-        disabled={!canSaveVersion}
-        onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
-        data-tour="save-version-button"
-        title={canSaveVersion ? 'Apply this version' : 'Switch to a version to apply changes'}
-      >
-        Save Version
-      </TbBtn>
-      <a
-        href={`/api/versions/${activeVersionId}/export`}
-        onClick={() => trackEvent('export_wav_clicked')}
-        className="hidden sm:inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-lime hover:text-primary-foreground transition no-underline items-center"
-      >
-        Export WAV
-      </a>
       {isMobileLandscape && (
         <CommentToggleBtn
           active={commentMode}
@@ -6418,44 +6430,6 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     stageSince={roadmap.stageSince}
                   />
                 )}
-                <div className="flex items-center gap-1.5 flex-wrap shrink-0 ml-auto">
-                <button
-                  type="button"
-                  onClick={togglePlanOpen}
-                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
-                    planOpen
-                      ? 'bg-lime text-primary-foreground border-lime'
-                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
-                  }`}
-                >
-                  {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleEditStructure}
-                  disabled={activeTracks.length === 0}
-                  data-tour="edit-structure-button"
-                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
-                    editStructure || sections.length > 0
-                      ? 'border-lime text-lime bg-lime-soft'
-                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
-                  }`}
-                >
-                  {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleCommentMode}
-                  data-tour="comments-toggle"
-                  className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition ${
-                    commentMode
-                      ? 'bg-lime text-primary-foreground border-lime'
-                      : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
-                  }`}
-                >
-                  {commentMode ? '● Comment mode' : `Comment mode${totalComments > 0 ? ` (${totalComments})` : ''}`}
-                </button>
-                </div>
               </div>
 
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 tabular-nums">
@@ -6472,59 +6446,118 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               </div>
 
               <div className="flex min-w-0 items-stretch">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none flex-nowrap touch-pan-x overscroll-x-contain [&::-webkit-scrollbar]:hidden">
-                  {versions.map(v => {
-                    const isActive = v.id === activeVersionId
-                    const switchBlocked = versionSwitchLocked && !isActive
-                    return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        disabled={switchBlocked}
-                        onClick={() => selectVersion(v.id)}
-                        className={`shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition whitespace-nowrap ${
-                          isActive
-                            ? 'bg-lime text-primary-foreground border-lime'
-                            : switchBlocked
-                              ? 'border-border text-muted-foreground opacity-40 cursor-not-allowed'
-                              : v.merged_at
-                                ? 'border-border text-muted-foreground opacity-50'
-                                : 'border-border hover:border-lime hover:text-lime text-muted-foreground'
-                        }`}
-                      >
-                        {v.type === 'main' && '● '}
-                        {v.merged_at && '✓ '}
-                        {v.type === 'branch' && !v.merged_at && '⌥ '}
-                        <VersionListName version={v} />
-                      </button>
-                    )
-                  })}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowBranchModal(true)}
-                  data-tour="new-branch-button"
-                  className="shrink-0 self-stretch ml-1.5 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
-                >
-                  + New Version
-                </button>
-                {versions.length >= 2 && (
+                <MixerToolbarGroup label="Version" padX="pl-0 pr-3">
+                  <VersionToolbarDropdown
+                    versions={versions}
+                    activeId={activeVersionId}
+                    onSelect={selectVersion}
+                    versionSwitchDisabled={versionSwitchLocked}
+                  />
                   <button
                     type="button"
-                    onClick={() => {
-                      const other = versions.find(v => v.id !== activeVersionId)
-                      if (other) {
-                        setCompareVersionBId(other.id)
-                        setCompareActive(true)
-                        if (player.playing) player.pause()
-                      }
-                    }}
-                    className="shrink-0 self-stretch ml-1.5 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+                    onClick={() => setShowBranchModal(true)}
+                    data-tour="new-branch-button"
+                    className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
                   >
-                    <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
-                    Compare
+                    + New Version
                   </button>
-                )}
+                  {versions.length >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const other = versions.find(v => v.id !== activeVersionId)
+                        if (other) {
+                          setCompareVersionBId(other.id)
+                          setCompareActive(true)
+                          if (player.playing) player.pause()
+                        }
+                      }}
+                      className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+                    >
+                      <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                      Compare
+                    </button>
+                  )}
+                </MixerToolbarGroup>
+
+                <MixerToolbarSeparator />
+
+                <MixerToolbarGroup label="Mode">
+                  <button
+                    type="button"
+                    onClick={toggleEditStructure}
+                    disabled={activeTracks.length === 0}
+                    data-tour="edit-structure-button"
+                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition disabled:opacity-40 ${
+                      editStructure || sections.length > 0
+                        ? 'border-lime text-lime bg-lime-soft'
+                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
+                    }`}
+                  >
+                    {editStructure ? 'Done editing' : sections.length > 0 ? 'Edit structure' : '+ Add structure'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleCommentMode}
+                    data-tour="comments-toggle"
+                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border transition inline-flex items-center gap-1.5 ${
+                      commentMode
+                        ? 'bg-lime text-primary-foreground border-lime'
+                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
+                    }`}
+                  >
+                    {commentMode ? '● Add comment' : 'Add comment'}
+                    {totalComments > 0 && (
+                      <span
+                        className={`inline-flex items-center justify-center min-w-4 h-4 px-1 text-[9px] font-bold leading-none ${
+                          commentMode
+                            ? 'bg-primary-foreground text-lime'
+                            : 'bg-lime text-primary-foreground'
+                        }`}
+                      >
+                        {totalComments}
+                      </span>
+                    )}
+                  </button>
+                </MixerToolbarGroup>
+
+                <MixerToolbarSeparator />
+
+                <MixerToolbarGroup label="Plan">
+                  <button
+                    type="button"
+                    onClick={togglePlanOpen}
+                    className={`text-[10px] uppercase tracking-widest px-2.5 py-1.5 border inline-flex items-center gap-1.5 transition ${
+                      planOpen
+                        ? 'bg-lime text-primary-foreground border-lime'
+                        : 'border-border text-muted-foreground hover:border-lime hover:text-lime'
+                    }`}
+                  >
+                    {planOpen ? 'Hide plan' : 'Roadmap & checklist'}
+                  </button>
+                </MixerToolbarGroup>
+
+                <MixerToolbarGroup label="Actions" padX="pl-3 pr-0" className="ml-auto">
+                  <TbBtn variant="ghost" onClick={handleShare} data-tour="share-button">
+                    {shareCopied ? 'Copied!' : 'Share'}
+                  </TbBtn>
+                  <TbBtn
+                    variant="ghost"
+                    disabled={!canSaveVersion}
+                    onClick={() => canSaveVersion && handleMergeClick(activeVersionId)}
+                    data-tour="save-version-button"
+                    title={canSaveVersion ? 'Apply this version' : 'Switch to a version to apply changes'}
+                  >
+                    Save Version
+                  </TbBtn>
+                  <a
+                    href={`/api/versions/${activeVersionId}/export`}
+                    onClick={() => trackEvent('export_wav_clicked')}
+                    className="inline-flex bg-foreground text-background px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest hover:bg-lime hover:text-primary-foreground transition no-underline items-center"
+                  >
+                    Export WAV
+                  </a>
+                </MixerToolbarGroup>
               </div>
             </div>
           </section>
@@ -6876,18 +6909,6 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               <div className="px-4 sm:px-6 py-3 flex flex-col gap-2">
                 <div className="flex items-center gap-3 flex-wrap min-w-0">
                   <Skeleton width={260} height={28} />
-                  {/* Roadmap, Edit structure, Comment mode — state-independent buttons */}
-                  <div className="flex items-center gap-1.5 flex-wrap shrink-0 ml-auto">
-                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed inline-flex items-center">
-                      Roadmap &amp; checklist
-                    </button>
-                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed">
-                      Edit structure
-                    </button>
-                    <button disabled className="text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground opacity-40 cursor-not-allowed">
-                      Comment mode
-                    </button>
-                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <Skeleton width={64} height={12} />
@@ -6895,17 +6916,34 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   <Skeleton width={44} height={12} />
                   <Skeleton width={72} height={12} />
                 </div>
+                <div className="flex min-w-0 items-stretch">
+                  {(['Version', 'Mode', 'Plan', 'Actions'] as const).map((label, i) => (
+                    <Fragment key={label}>
+                      <div
+                        className={`flex flex-col gap-1 py-2 shrink-0 ${
+                          i === 0 ? 'pl-0 pr-3' : i === 3 ? 'pl-3 pr-0 ml-auto' : 'px-3'
+                        }`}
+                      >
+                        <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground leading-none">
+                          {label}
+                        </span>
+                        <div className="flex items-center gap-1.5 min-h-[28px]">
+                          <Skeleton width={label === 'Version' ? 88 : label === 'Actions' ? 52 : 96} height={28} />
+                          {label === 'Version' && <Skeleton width={88} height={28} />}
+                          {label === 'Actions' && (
+                            <>
+                              <Skeleton width={72} height={28} />
+                              <Skeleton width={76} height={28} />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {i < 2 && <MixerToolbarSeparator />}
+                    </Fragment>
+                  ))}
+                </div>
               </div>
             </section>
-            {/* Version tabs bar — tab skeletons + real + New Version */}
-            <div className="border-b border-border bg-surface/20 shrink-0 px-2 flex items-center gap-1 h-9 overflow-x-hidden">
-              {[48, 40, 40, 52, 62, 40, 44].map((w, i) => (
-                <Skeleton key={i} width={w} height={22} />
-              ))}
-              <button disabled className="shrink-0 self-stretch ml-auto bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 border-l border-border text-muted-foreground opacity-40 cursor-not-allowed whitespace-nowrap">
-                + New Version
-              </button>
-            </div>
             {/* CHANNEL + STRUCTURE rows — real labels, matching StructureEditor layout */}
             <div className="flex items-stretch border-b border-border shrink-0">
               <div
