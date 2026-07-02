@@ -75,6 +75,12 @@ import { ChevronsLeftRightEllipsis } from 'lucide-react'
 import { getVersionDisplayName } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
 import { VersionToolbarDropdown } from '@/components/VersionToolbarDropdown'
+import { MasterEditConfirmModal } from '@/components/MasterEditConfirmModal'
+import {
+  MasterEditGuardCancelled,
+  isMasterEditGuardSuppressed,
+  suppressMasterEditGuard24h,
+} from '@/lib/masterEditGuard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2698,7 +2704,18 @@ const TrackRow = React.memo(function TrackRow({
     if (startBar === (track.start_bar ?? 0)) return
     try {
       await onStartBarUpdate(track.id, startBar)
-    } catch { /* ignore */ }
+    } catch (err) {
+      if (err instanceof MasterEditGuardCancelled) {
+        const origBar = track.start_bar ?? 0
+        dragPreviewBarRef.current = null
+        setDragPreviewBar(null)
+        if (waveformClipRef.current) {
+          waveformClipRef.current.style.left = trackClipRowLeft(labelColW, totalBars, origBar)
+        }
+        syncSnapIndicator(origBar)
+        resetLabelColOpacity()
+      }
+    }
   }
 
   function syncSnapIndicator(newBar: number) {
@@ -2909,9 +2926,14 @@ const TrackRow = React.memo(function TrackRow({
     setDeleting(true)
     try {
       await onDeleteTrack(track.id)
-    } catch {
-      setDeleteError(true)
+      setConfirmDelete(false)
+    } catch (err) {
       setDeleting(false)
+      if (err instanceof MasterEditGuardCancelled) {
+        setConfirmDelete(false)
+        return
+      }
+      setDeleteError(true)
       setTimeout(() => { setDeleteError(false); setConfirmDelete(false) }, 1500)
     }
   }
@@ -4410,6 +4432,10 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   const [showBranchModal, setShowBranchModal] = useState(false)
+  const [masterEditModal, setMasterEditModal] = useState<{
+    pending: () => void | Promise<void>
+    onDismiss?: () => void
+  } | null>(null)
   const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mobileReplaceInputRef = useRef<HTMLInputElement>(null)
@@ -4849,6 +4875,18 @@ export default function ProjectPage() {
     return () => { cancelled = true }
   }, [midiTracksNeedingDataKey])
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
+  const isOnMainVersion = activeVersion?.type === 'main'
+
+  const guardMasterEdit = useCallback((
+    pending: () => void | Promise<void>,
+    onDismiss?: () => void,
+  ) => {
+    if (!isOnMainVersion || isMasterEditGuardSuppressed()) {
+      void pending()
+      return
+    }
+    setMasterEditModal({ pending, onDismiss })
+  }, [isOnMainVersion])
 
   // Assign vivid palette colors — backfill legacy defaults and dedupe batch-upload collisions.
   const backfillingColorsRef = useRef(false)
@@ -5241,7 +5279,7 @@ export default function ProjectPage() {
     if (!commentMode) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      if (showBranchModal || mergeModal || showTour || showMobileTour) return
+      if (showBranchModal || masterEditModal || mergeModal || showTour || showMobileTour) return
       const el = e.target as HTMLElement
       if (el.closest('[role="dialog"]')) return
       setCommentMode(false)
@@ -5249,7 +5287,7 @@ export default function ProjectPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [commentMode, showBranchModal, mergeModal, showTour, showMobileTour])
+  }, [commentMode, showBranchModal, masterEditModal, mergeModal, showTour, showMobileTour])
 
   const durationMs = player.duration * 1000
   // Total bars: max(start_bar + durationBars) across ALL tracks.
@@ -5507,6 +5545,24 @@ export default function ProjectPage() {
       }
       throw err
     }
+  }
+
+  const requestStartBarUpdate = (trackId: string, startBar: number) => {
+    return new Promise<void>((resolve, reject) => {
+      guardMasterEdit(
+        () => handleStartBarUpdate(trackId, startBar).then(resolve).catch(reject),
+        () => reject(new MasterEditGuardCancelled()),
+      )
+    })
+  }
+
+  const requestDeleteTrack = (trackId: string) => {
+    return new Promise<void>((resolve, reject) => {
+      guardMasterEdit(
+        () => handleDeleteTrack(trackId).then(resolve).catch(reject),
+        () => reject(new MasterEditGuardCancelled()),
+      )
+    })
   }
 
   // ── Upload state helpers ────────────────────────────────────────────────────
@@ -5835,8 +5891,20 @@ function uploadFileType(file: File): 'audio' | 'midi' {
   }
 
   function promptReplaceTrack(track: Track) {
-    replaceTrackRef.current = track
-    mobileReplaceInputRef.current?.click()
+    return new Promise<void>((resolve, reject) => {
+      guardMasterEdit(
+        () => {
+          replaceTrackRef.current = track
+          mobileReplaceInputRef.current?.click()
+          resolve()
+        },
+        () => reject(new MasterEditGuardCancelled()),
+      )
+    })
+  }
+
+  function requestReplaceTrack(track: Track, file: File) {
+    guardMasterEdit(() => { void handleReplaceTrack(track, file) })
   }
 
   function handleMobileReplaceFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -5943,11 +6011,15 @@ function uploadFileType(file: File): 'audio' | 'midi' {
   }, [])
 
   const toggleEditStructure = useCallback(() => {
-    setEditStructure(p => {
-      if (!p) trackEvent('structure_edit_opened')
-      return !p
+    if (editStructure) {
+      setEditStructure(false)
+      return
+    }
+    guardMasterEdit(() => {
+      trackEvent('structure_edit_opened')
+      setEditStructure(true)
     })
-  }, [])
+  }, [editStructure, guardMasterEdit])
 
   const togglePlanOpen = useCallback(() => {
     setPlanOpen(o => {
@@ -6100,7 +6172,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             onAddRecording: handleAddRecordingTrack,
             storageFull,
             onReplaceTrack: promptReplaceTrack,
-            onDeleteTrack: handleDeleteTrack,
+            onDeleteTrack: requestDeleteTrack,
             onColorUpdate: handleColorUpdate,
             onRecordTransport: () => { void handleMobileRecordTransport() },
             recordingTransportState: (() => {
@@ -6695,16 +6767,16 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   onToggleSolo={() => player.toggleSolo(t.id)}
                   trackGain={player.trackGains.get(t.id) ?? 1}
                   onTrackGainChange={gain => player.setTrackGain(t.id, gain)}
-                  onReplace={f => handleReplaceTrack(t, f)}
+                  onReplace={f => requestReplaceTrack(t, f)}
                   onCommentPlace={setActiveCommentInput}
                   onCommentDelete={handleCommentDelete}
                   onCommentCreate={handleCommentCreate}
                   onCloseInput={() => setActiveCommentInput(null)}
-                  onDeleteTrack={handleDeleteTrack}
+                  onDeleteTrack={requestDeleteTrack}
                   onRenameTrack={handleRenameTrack}
                   onColorUpdate={handleColorUpdate}
                   onMidiDataUpdate={handleMidiDataUpdate}
-                  onStartBarUpdate={handleStartBarUpdate}
+                  onStartBarUpdate={requestStartBarUpdate}
                   onDragStartOffset={() => setDraggingTrackId(t.id)}
                   onDragEndOffset={() => setDraggingTrackId(null)}
                   otherTrackDragging={draggingTrackId !== null && draggingTrackId !== t.id}
@@ -7018,6 +7090,26 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         }}
       />
 
+      {masterEditModal && (
+        <MasterEditConfirmModal
+          onConfirm={suppress24h => {
+            if (suppress24h) suppressMasterEditGuard24h()
+            const { pending } = masterEditModal
+            setMasterEditModal(null)
+            void pending()
+          }}
+          onNewVersion={suppress24h => {
+            if (suppress24h) suppressMasterEditGuard24h()
+            masterEditModal.onDismiss?.()
+            setMasterEditModal(null)
+            setShowBranchModal(true)
+          }}
+          onCancel={() => {
+            masterEditModal.onDismiss?.()
+            setMasterEditModal(null)
+          }}
+        />
+      )}
       {showBranchModal && <NewBranchModal onConfirm={handleNewBranch} onCancel={() => setShowBranchModal(false)} />}
 
       {mergeModal && (

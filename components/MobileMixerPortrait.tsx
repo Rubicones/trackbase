@@ -418,8 +418,8 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onOpenColorPicker: (id: string) => void
   onColorUpdate: (id: string, color: string) => void
   onCloseColorPicker: () => void
-  onReplace: (track: Track) => void
-  onDelete: (id: string) => void
+  onReplace: (track: Track) => void | Promise<void>
+  onDelete: (id: string) => void | Promise<void>
 }) {
   const isMidi = track.file_type === 'midi'
   const badgeLetter = (track.name?.[0] ?? 'T').toUpperCase()
@@ -565,7 +565,11 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
           <div className="absolute right-2 top-12 z-30 w-44 border border-border bg-popover shadow-2xl text-[11px]">
             <button
               type="button"
-              onClick={() => { onReplace(track); onToggleMenu(track.id) }}
+              onClick={() => {
+                void Promise.resolve(onReplace(track))
+                  .then(() => onToggleMenu(track.id))
+                  .catch(() => {})
+              }}
               className="w-full text-left px-3 py-2 hover:bg-surface"
             >
               Replace track
@@ -580,7 +584,11 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             </button>
             <button
               type="button"
-              onClick={() => { onDelete(track.id); onToggleMenu(track.id) }}
+              onClick={() => {
+                void Promise.resolve(onDelete(track.id))
+                  .then(() => onToggleMenu(track.id))
+                  .catch(() => {})
+              }}
               className="w-full text-left px-3 py-2 hover:bg-surface text-destructive"
             >
               Delete
@@ -655,8 +663,8 @@ export type MobileMixerPortraitProps = {
   onAddTrack: () => void
   onAddRecording: () => void
   storageFull?: boolean
-  onReplaceTrack: (track: Track) => void
-  onDeleteTrack: (id: string) => void
+  onReplaceTrack: (track: Track) => void | Promise<void>
+  onDeleteTrack: (id: string) => void | Promise<void>
   onColorUpdate: (trackId: string, color: string) => void
   onRecordTransport: () => void
   recordingTransportState: RecordState | 'none' | 'idle'
