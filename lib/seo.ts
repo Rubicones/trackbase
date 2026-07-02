@@ -8,7 +8,7 @@ export const SEO_DEFAULT_TITLE =
   'sonicdesk. — Version control for music bands'
 
 export const SEO_DEFAULT_DESCRIPTION =
-  'sonicdesk.studio is the collaborative workspace for bands and studios. Branch demos, merge arrangements, structure songs, chat in context, and rehearse together — git-like versioning built for musicians.'
+  'sonicdesk.studio is the band workspace for music version control. Branch and merge takes, drop comments on bars, auto-detect chords, chat with the band, and rehearse from your phone.'
 
 export const OPEN_GRAPH_IMAGE = {
   url: '/opengraph-image',
@@ -21,14 +21,47 @@ export const OPEN_GRAPH_IMAGE = {
 export const SEO_KEYWORDS = [
   'music collaboration',
   'band workflow',
+  'band workspace',
   'music version control',
+  'version control for music',
   'demo versioning',
   'collaborative DAW',
   'music production tool',
   'band project management',
   'audio branching',
   'music rehearsal tool',
+  'rehearsal mode app',
   'studio collaboration',
+  'comments on bars',
+  'timestamped track comments',
+  'chord detection',
+  'automatic chord detection',
+  'band chat app',
+  'checklist with assignments',
+  'roadmap tool for bands',
+  'mobile mixer',
+  'song structure editor',
+]
+
+/**
+ * Plain-language, one-line-per-feature summary used in the homepage's
+ * screen-reader/crawler content block. Keep this in sync with the feature
+ * groups rendered in FeatureIndex (components/LandingPage.tsx) — it exists
+ * so every target keyword phrase (version control, comments on bars, chord
+ * detection, band chat, etc.) appears as real, accurate on-page text even
+ * though the visible design expresses them stylistically.
+ */
+export const SEO_FEATURE_SUMMARY = [
+  'Version control for music — branch, merge, and compare versions of a track without losing the original mix.',
+  'Comments on bars — drop timestamped feedback anchored to an exact bar or time range.',
+  'Song structure editor — mark intro, verse, chorus, bridge, and breakdown sections.',
+  'Chord detection — automatic chord-per-section detection plus a chord chart for rehearsal.',
+  'Mobile mixer — mix, mute, solo, and record tracks from a phone.',
+  'Rehearsal mode — chords, structure, and loop sections built for the practice room.',
+  'Band chat — project and band-wide chat with @mentions, version links, and track references.',
+  'Roadmap — custom stages so the whole band can see what stage a song is at.',
+  'Checklist with assignments — task lists assigned to specific band members.',
+  'Band workspace — bands, invite codes, custom role tags, and a shared activity feed.',
 ]
 
 export function getMetadataBase(): URL {
@@ -187,11 +220,13 @@ export function buildHomeJsonLd(): JsonLd[] {
       description: 'Free during private beta',
     },
     featureList: [
-      'Git-like branching for music demos',
-      'In-browser mixer and rehearsal view',
-      'Song structure and chord tools',
-      'Band chat in project context',
-      'Collaborative roadmap and decisions',
+      'Version control for music — branching, merging, and version comparison',
+      'Comments on bars — timestamped feedback anchored to a bar or time range',
+      'Song structure editor with automatic chord detection',
+      'Mobile mixer and rehearsal mode',
+      'Band chat with @mentions, version links, and track references',
+      'Roadmap stages and checklist with assignments',
+      'Band workspace with invite codes and role tags',
     ],
   }
 

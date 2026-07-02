@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
-import { SEO_DEFAULT_DESCRIPTION, SITE_NAME } from '@/lib/seo'
+import { SEO_DEFAULT_DESCRIPTION, SEO_DEFAULT_TITLE } from '@/lib/seo'
 
-export const alt = SITE_NAME
+export const alt = SEO_DEFAULT_TITLE
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 

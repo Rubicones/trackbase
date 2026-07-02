@@ -203,12 +203,15 @@ function SectionHeader({
   title,
   accent,
   description,
+  seoNote,
 }: {
   index: string;
   kicker: string;
   title: string;
   accent?: string;
   description?: string;
+  /** Visually hidden but crawlable — spells out the plain-language feature name inside the H2 for search engines and screen readers, without touching the stylized visible heading. */
+  seoNote?: string;
 }) {
   return (
     <div className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] pb-8">
@@ -224,6 +227,7 @@ function SectionHeader({
       >
         {title}{" "}
         {accent && <span className="text-lime">{accent}</span>}
+        {seoNote && <span className="sr-only"> — {seoNote}</span>}
       </h2>
       {description && (
         <p className="mt-6 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
@@ -511,6 +515,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="block text-[clamp(3.2rem,13vw,12rem)] text-lime">
             sonicdesk.
           </span>
+          <span className="sr-only"> — the band workspace with version control, comments on bars, chord detection, and rehearsal mode for music bands</span>
         </h1>
 
         <p className="relative mt-5 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground md:mt-8">
@@ -1010,6 +1015,7 @@ function BranchShowcase() {
         title="BRANCH IT."
         accent="MERGE IT. CHAT IT."
         description="Try the bolder bridge without breaking what already works. Every version is a real artifact with date, author and status — not another file called final_v3_FINAL.wav."
+        seoNote="Version control for music: branch, merge, and compare takes without losing the original mix"
       />
 
       <div className="mt-12 grid min-w-0 gap-6 lg:grid-cols-[280px_1fr]">
@@ -1631,6 +1637,7 @@ function ProcessShowcase() {
         title="ROADMAP, CHAT,"
         accent="DECISIONS — IN BAND."
         description="Stop pinning voice memos in Telegram and stop renaming Drive folders. Everything that decides a track lives where the track lives."
+        seoNote="Band chat, project roadmap, and checklist with assignments in one band workspace"
       />
 
       <div className="mt-12 grid items-stretch gap-6 lg:grid-cols-3">
@@ -1733,6 +1740,7 @@ function FeatureIndex() {
         kicker="SYSTEM"
         title="THE FULL"
         accent="STUDIO SURFACE."
+        seoNote="Comments on bars, automatic chord detection, song structure tools, and a mobile mixer"
       />
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-2 lg:grid-cols-4">
         {groups.map((g, gi) => (
@@ -1824,6 +1832,7 @@ function RehearsalDeepDive() {
         title="THE PHONE IS"
         accent="THE STUDIO."
         description="A mode built for the rehearsal room, the practice corner, and the back-of-the-tour-bus moment. No DAW, no cables, no excuses for losing the idea."
+        seoNote="Rehearsal mode app with chord charts, loop sections, and range comments from your phone"
       />
 
       <div className="mt-12 grid gap-8 lg:grid-cols-[420px_1fr] lg:items-stretch">
