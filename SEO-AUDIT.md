@@ -1,7 +1,42 @@
 # sonicdesk. — SEO Audit & On-Page Fixes
 
-**Date:** 2026-07-02
-**Scope:** Technical/on-page audit of the homepage (the site's only indexable page) + implemented fixes. Dedicated per-feature landing pages were explicitly out of scope for this round.
+**Date:** 2026-07-02, updated 2026-07-03
+**Scope:** Technical/on-page audit of the homepage (the site's only indexable page) + implemented fixes. Dedicated per-feature landing pages were explicitly out of scope for both rounds.
+
+## Round 2 — 2026-07-03
+
+### 🔴 Critical: production canonical/OG points at the wrong domain
+
+Fetching the live site (`https://sonicdesk.studio`) shows every canonical, Open Graph, and Twitter URL tag pointing at **`https://trackbase.studio`** instead — e.g. `<link rel="canonical" href="https://trackbase.studio">` and `og:url: https://trackbase.studio`. `trackbase.studio` returns an empty page (no app deployed there).
+
+This is not a code bug — `lib/site-url.ts` and `.env.example` both correctly default to `https://sonicdesk.studio`, and there's no reference to `trackbase.studio` anywhere in the repo. The only explanation is that the **`NEXT_PUBLIC_SITE_URL` environment variable on the production host (Vercel) is still set to the pre-rebrand domain** (`trackbase` is this project's old/internal name — the folder, Supabase project, and R2 bucket are all still named `trackbase`).
+
+**Effect:** Google indexes pages under their self-declared canonical URL. Right now every crawl of sonicdesk.studio is telling Google "the real version of this page lives at trackbase.studio" — a domain that serves nothing. This can suppress indexing of sonicdesk.studio entirely or split any authority between two URLs, one of which is dead.
+
+**Action needed (cannot be fixed from code):**
+1. In the Vercel project settings for the production deployment, set `NEXT_PUBLIC_SITE_URL=https://sonicdesk.studio` and redeploy.
+2. If `trackbase.studio` is a domain you control, point it at a 301 redirect to `sonicdesk.studio` rather than leaving it empty — catches any stray links/bookmarks instead of losing them to a dead page.
+3. After redeploying, re-fetch the homepage and confirm canonical/OG/Twitter URLs all read `sonicdesk.studio`, then (re)submit the domain and sitemap in Google Search Console.
+
+This is the highest-priority item in this whole audit — every other fix here is close to worthless until it ships.
+
+### Fixed this round
+- **`/invite/[token]` was indexable.** It's a client-rendered legacy redirect (forwards to `/onboarding`) with no `metadata` export and no parent layout, so it silently inherited the homepage's indexable title/description. Added `app/invite/layout.tsx` with `noIndexMetadata('Invite')`, matching the pattern already used for `/auth`, `/dashboard`, `/band`, `/onboarding`, `/uikit`. (It was already disallowed in `robots.ts`, so this is defense-in-depth, not a reversal of an indexed page.)
+- **Visible FAQ section + `FAQPage` JSON-LD** — the #3 "biggest remaining gap" from round 1. Built a real, visible FAQ section (`FAQ` in `components/LandingPage.tsx`, `SEO_FAQS` in `lib/seo.ts`) covering "what is version control for music," bar comments, chord detection, mobile mixer/rehearsal mode, a direct BandLab/SyncMuse/OmMuse comparison question, and pricing, mirrored into `FAQPage` structured data via `buildHomeJsonLd()`.
+  **Update, same day:** hidden per your request — the `FAQ()` component, its `#faq` nav entry, and the `FAQPage` JSON-LD are all commented out (not deleted). `SEO_FAQS` content is still in `lib/seo.ts`, ready to go. To bring it back: uncomment the `FAQ()` block near the bottom of `LandingPage.tsx`, restore its render call + nav entry, restore the `SEO_FAQS` import, and uncomment the `faq` JSON-LD block in `buildHomeJsonLd()`.
+- Verified `app/robots.ts` and `app/sitemap.ts` (added round 1) are present and correctly scoped — `robots.ts` disallows all authenticated/utility prefixes, `sitemap.ts` lists only the homepage (correct for a single-page site today).
+- Verified OG image, favicon/icon, and web app manifest (`app/opengraph-image.tsx`, `app/icon.svg`, `app/manifest.ts`) all exist and reference the site correctly — no changes needed.
+
+### Competitor check (verified live, 2026-07-03)
+Confirms round 1's read: **SyncMuse** (syncmuse.co) is the direct threat — "async music collaboration," version snapshots, timestamped comments, and critically a page-per-intent architecture (`/features`, `/blog`, comparison posts like "SyncMuse vs. Dropbox vs. Splice"). **OmMuse** (ommuse.com) overlaps less — it's storage + AI mastering + royalty splits, not really a version-control play. **BandLab** wins purely on domain authority/brand search volume, not narrow feature-phrase targeting. sonicdesk's one-page architecture is still the structural ceiling on how many of these phrases it can rank for at once (see "Biggest remaining gap" below, unchanged from round 1 — still out of scope for this round per your instruction).
+
+### Files changed this round
+- `lib/seo.ts` — `SEO_FAQS`, `FAQPage` JSON-LD in `buildHomeJsonLd()`
+- `components/LandingPage.tsx` — new `FAQ` section, `#faq` nav entry
+- `app/invite/layout.tsx` — new, `noindex`
+
+I couldn't run a production build to verify (sandbox has no free disk space) — run `npm run build` / `tsc --noEmit` locally before deploying. Changes are additive (new component, new exported constants/route, no removed exports), so risk is low.
+
 
 ## Competitor snapshot
 
@@ -61,11 +96,12 @@ I wasn't able to run a production build to verify (the sandbox has no free disk 
 
 Google generally ranks **one page per distinct search intent**. "Version control for music," "comments on bars," and "band chat app" are three different intents — SyncMuse already has separate pages/sections for a couple of these plus comparison pages against Splice/Dropbox/BandLab. Right now sonicdesk has exactly one indexable URL competing for all of them at once, which caps how many of these phrases it can realistically rank for simultaneously, no matter how well-optimized that one page is.
 
-You explicitly scoped this round to on-page fixes only, so this wasn't built — but it's the highest-leverage next step. When you're ready:
+You've scoped both rounds to on-page/technical fixes, not new routes — but dedicated pages are the highest-leverage next step. Priority order:
 
+0. **Fix the `NEXT_PUBLIC_SITE_URL` production env var (see Round 2 above) — do this first, before anything else below matters.**
 1. **Dedicated feature pages** (`/features/version-control`, `/features/comments`, `/features/chord-detection`, `/features/band-chat`, `/features/rehearsal-mode`) — each targeting one phrase, interlinked from the homepage and each other.
 2. **Comparison pages** — `/vs/bandlab`, `/vs/syncmuse` — these convert well and SyncMuse is already doing this against you indirectly (their "vs Dropbox vs Splice" post).
-3. **A visible FAQ section + `FAQPage` JSON-LD** on the homepage — cheap to add without a new route, and Google requires FAQ markup to match visible content, so it'd need real visible copy, not just hidden schema.
+3. ~~A visible FAQ section + `FAQPage` JSON-LD on the homepage~~ — **done in Round 2** (2026-07-03).
 4. **Get out of "private beta" messaging** where possible for SEO-facing pages, or add a waitlist-focused CTA — beta framing can suppress click-through on commercial-intent queries.
 5. **Backlinks / content** — SyncMuse's free tools (`/tools/diff`, `/tools/loudness`) exist specifically to earn links and traffic; a simple free utility (e.g., a BPM/key detector) could do the same for sonicdesk.
-6. **Search Console** — confirm `sonicdesk.studio` is verified and the sitemap is submitted once these changes ship.
+6. **Search Console** — confirm `sonicdesk.studio` is verified and the sitemap is submitted once the domain fix ships.

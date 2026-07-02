@@ -7,6 +7,9 @@ export const metadata = homeMetadata
 /** Static marketing page — full HTML for crawlers without auth cookies. */
 export const dynamic = 'force-static'
 
+// buildHomeJsonLd() includes FAQPage schema mirroring the visible FAQ section
+// in LandingPage.tsx (see lib/seo.ts#SEO_FAQS) — kept in sync there.
+
 export default function Home() {
   return (
     <>

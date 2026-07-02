@@ -64,6 +64,44 @@ export const SEO_FEATURE_SUMMARY = [
   'Band workspace — bands, invite codes, custom role tags, and a shared activity feed.',
 ]
 
+/**
+ * Visible FAQ content — rendered as a real, on-page FAQ section (see FAQ in
+ * components/LandingPage.tsx) and mirrored into FAQPage JSON-LD via
+ * buildFaqJsonLd(). Google requires FAQ structured data to match visible
+ * page content, so this is the single source of truth for both.
+ */
+export const SEO_FAQS: { question: string; answer: string }[] = [
+  {
+    question: 'What is version control for music?',
+    answer:
+      "It's the same idea as Git, applied to a track instead of code: every take, mix, or arrangement change is saved as a real version with a date and author, so you can branch off to try something and merge it back — or roll back — without overwriting the original.",
+  },
+  {
+    question: 'Can I leave a comment on a specific bar or timestamp in a track?',
+    answer:
+      'Yes. Comments on bars let you drop timestamped feedback anchored to an exact bar or time range on the waveform, so the whole band knows exactly which second or section a note refers to — no more "the part around 1:40-ish."',
+  },
+  {
+    question: 'Does sonicdesk detect chords automatically?',
+    answer:
+      'Yes — automatic chord detection runs per section and builds a chord chart you can use for rehearsal, on top of the song structure editor (intro, verse, chorus, bridge, breakdown).',
+  },
+  {
+    question: 'Is there a mobile mixer or rehearsal mode app?',
+    answer:
+      'Yes. The mobile mixer lets you mix, mute, solo, and record tracks from a phone, and rehearsal mode surfaces chords, structure, and loopable sections built for the practice room — no laptop or DAW required.',
+  },
+  {
+    question: 'How is sonicdesk different from BandLab, SyncMuse, or OmMuse?',
+    answer:
+      'sonicdesk is a band workspace built around version control first: branching, merging, and comparing takes, plus comments on bars, chord detection, a roadmap with checklists, and band chat, all in one place — rather than a general-purpose DAW or file-storage tool with collaboration bolted on.',
+  },
+  {
+    question: 'Is sonicdesk free?',
+    answer: 'Yes — sonicdesk is free to use during private beta, with every workspace including branches, the mixer, structure, chords, chat, and rehearsal view from day one.',
+  },
+]
+
 export function getMetadataBase(): URL {
   return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? PRODUCTION_SITE_URL)
 }
@@ -229,6 +267,21 @@ export function buildHomeJsonLd(): JsonLd[] {
       'Band workspace with invite codes and role tags',
     ],
   }
+
+  // FAQPage JSON-LD is intentionally omitted while the visible FAQ section
+  // in components/LandingPage.tsx is hidden — Google requires FAQ structured
+  // data to match visible page content. Re-add this alongside re-enabling
+  // that section (SEO_FAQS below already has the content ready):
+  //
+  // const faq: JsonLd = {
+  //   '@context': 'https://schema.org',
+  //   '@type': 'FAQPage',
+  //   mainEntity: SEO_FAQS.map(({ question, answer }) => ({
+  //     '@type': 'Question',
+  //     name: question,
+  //     acceptedAnswer: { '@type': 'Answer', text: answer },
+  //   })),
+  // }
 
   return [website, organization, software]
 }

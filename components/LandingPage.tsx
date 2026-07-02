@@ -5,19 +5,18 @@ import {
   useScroll,
   useTransform,
   useReducedMotion,
+  useInView,
   AnimatePresence,
 } from "motion/react";
-import { useEffect, useRef, useState, useCallback, Fragment, type ReactNode, type ComponentType, type ComponentProps } from "react";
+import { useEffect, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
 import { UserAvatar } from "@/components/ui/avatar";
 import { MetronomeIcon } from "@/components/design/TransportIcons";
-import { ChordPlaybackRow } from "@/components/ChordPlaybackRow";
 import { sectionLabel } from "@/components/StructureEditor";
-import { MobileMixerVersionBar } from "@/components/MobileMixerVersionBar";
-import { formatChordsDisplay } from "@/lib/chords";
-import { findSectionRangeAtTime } from "@/lib/sectionPlayback";
-import type { Section, Version } from "@/lib/types";
+import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { SeededWaveform } from "@/components/WaveformBars";
+// SEO_FAQS import removed while the FAQ section is hidden — see the commented
+// FAQ() block near the bottom of this file to re-enable.
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History,
@@ -25,9 +24,9 @@ import {
   LayoutGrid, Music2, Layers, ListMusic,
   GitCompare, Headphones, Play,
   Paperclip, Link2, FileText, Compass, CheckSquare, Pin,
-  Smartphone, SlidersHorizontal, Repeat,
+  Smartphone, SlidersHorizontal,
   FileAudio, Share2, Eye, Hash,
-  Disc3, KeyRound, Zap, Lightbulb, Check, Sparkles,
+  Check, Sparkles,
   Lock, Unlock, Plug,
 } from "lucide-react";
 
@@ -356,12 +355,13 @@ function TopBar({
   const navItems: Array<[string, string]> = [
     ["#top", "HOME"],
     ["#versioning", "VERSIONING"],
-    ["#workflow", "WORKFLOW"],
+    ["#features", "FEATURES"],
+    ["#mobile", "MOBILE"],
     ["#philosophy", "PHILOSOPHY"],
     ["#themes", "THEMES"],
-    ["#rehearsal", "REHEARSAL"],
     ["#system", "SYSTEM"],
     ["#roadmap", "ROADMAP"],
+    // FAQ nav entry disabled with the FAQ section below — see FAQ() comment.
   ];
 
   return (
@@ -479,6 +479,64 @@ function TopBar({
  * HERO
  * ============================================================ */
 
+function HeroMixerMock() {
+  const [time, setTime] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTime((t) => (t + 1) % 199), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const mm = Math.floor(time / 60);
+  const ss = (time % 60).toString().padStart(2, "0");
+  const tracks = [
+    { n: "GTR", color: "var(--wave-violet)", seed: 3.2 },
+    { n: "DRM", color: "var(--wave-mint)", seed: 5.4 },
+    { n: "BAS", color: "var(--wave-amber)", seed: 7.6 },
+    { n: "VOX", color: "var(--wave-coral)", seed: 9.1, rec: true },
+  ];
+  return (
+    <div className="relative overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] sm:px-4">
+        <span className="truncate text-muted-foreground">
+          ACTIVE · <span className="text-foreground">MASTER</span> · 4 TRACKS
+        </span>
+        <span className="shrink-0 text-lime">142 BPM · A#m</span>
+      </div>
+      <div className="flex gap-2 p-3 sm:gap-3 sm:p-4">
+        <div className="flex shrink-0 flex-col justify-center gap-2" style={{ width: 52 }}>
+          {tracks.map((t) => (
+            <div key={t.n} className="flex h-7 items-center gap-1.5">
+              {t.rec ? (
+                <span className="tb-rec size-1.5 rounded-full" style={{ background: t.color }} />
+              ) : (
+                <span className="size-1.5 rounded-full" style={{ background: t.color }} />
+              )}
+              <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-foreground">{t.n}</span>
+            </div>
+          ))}
+        </div>
+        <div className="relative min-w-0 flex-1 space-y-2">
+          <div
+            aria-hidden
+            className="tb-playhead pointer-events-none absolute top-0 bottom-0"
+            style={{ width: 1, background: "var(--lime)", boxShadow: "0 0 8px var(--lime)" }}
+          />
+          {tracks.map((t) => (
+            <div key={t.n} className="h-7 min-w-0">
+              <Waveform seed={t.seed} bars={64} color={t.color} height={28} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-2 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:px-4">
+        <span className="truncate">
+          {mm}:{ss} <span className="text-foreground">▶ NORTHERN ROOM / v04</span>
+        </span>
+        <span className="shrink-0">3:18</span>
+      </div>
+    </div>
+  );
+}
+
 function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const mounted = useMounted();
@@ -487,6 +545,13 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
   const opacity = useTransform(scrollYProgress, [0, 1], [1, 0.3]);
   const reduce = useReducedMotion();
   const parallaxStyle = mounted && !reduce ? { y, opacity } : undefined;
+
+  const pills: Array<[string, string]> = [
+    ["▲", "Versions & diff"],
+    ["◆", "Comments on bars"],
+    ["●", "Structure + chords"],
+    ["◐", "Mobile companion"],
+  ];
 
   return (
     <section ref={ref} id="top" className="relative">
@@ -518,35 +583,49 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="sr-only"> — the band workspace with version control, comments on bars, chord detection, and rehearsal mode for music bands</span>
         </h1>
 
-        <p className="relative mt-5 max-w-3xl font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground md:mt-8">
-          Music is a <span className="text-lime">process</span>. Not a file.
-        </p>
-
-        <div className="relative mt-10 grid gap-10 lg:grid-cols-[1.3fr_1fr]">
-          <p className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]">
-            A track doesn't arrive finished. It moves through dozens of iterations, arguments,
-            voice memos and renamed exports. sonicdesk is the collaborative surface where bands
-            think, branch and decide together — versioned, structured, indexed.
-          </p>
-
-          <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <MonoLabel>ACTIVE PROJECT · MAIN</MonoLabel>
-              <MonoLabel className="text-lime">142 BPM · A#m</MonoLabel>
+        <div className="relative mt-8 grid gap-10 lg:grid-cols-2 lg:items-end md:mt-12">
+          <div className="min-w-0">
+            <motion.p
+              initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+              className="font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground"
+            >
+              An ultimate workspace <span className="text-lime">for your music.</span>
+            </motion.p>
+            <motion.p
+              initial={mounted && !reduce ? { opacity: 0 } : false}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 1, delay: 0.2 }}
+              className="mt-5 max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]"
+            >
+              Branch a mix like code. Comment on bar 34. Map the structure, write the chords,
+              rehearse from your phone. Everything your band needs — in one place, versioned
+              end-to-end.
+            </motion.p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              {pills.map(([icon, label], i) => (
+                <motion.span
+                  key={label}
+                  initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 + i * 0.08 }}
+                  className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+                >
+                  <span className="text-lime">{icon}</span>
+                  {label}
+                </motion.span>
+              ))}
             </div>
-            <Waveform seed={3.1} bars={56} color="var(--lime)" height={64} />
-            <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              <span>0:00</span>
-              <span className="truncate text-foreground">
-                ▶ NORTHERN ROOM / v04 — pending merge
-              </span>
-              <span>3:18</span>
+            <div className="relative mt-8 flex flex-wrap items-center gap-3">
+              <GhostButton variant="lime" href={signInHref}>+ Start a band</GhostButton>
+              <GhostButton variant="outline" href="#versioning">See how it works</GhostButton>
             </div>
           </div>
-        </div>
 
-        <div className="relative mt-10">
-          <GhostButton variant="lime" href={signInHref}>+ Start a band</GhostButton>
+          <div className="min-w-0">
+            <HeroMixerMock />
+          </div>
         </div>
           </motion.div>
         </div>
@@ -610,12 +689,42 @@ function Philosophy() {
   return (
     <section id="philosophy" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="03"
+        index="04"
         kicker="PHILOSOPHY"
         title="THREE THINGS"
         accent="WE BELIEVE."
         description="The product is the consequence of three convictions about how music actually gets made between humans."
       />
+
+      <div className="relative mt-12">
+        <div className="relative">
+          <div className="select-none font-display-tb text-[100px] leading-none text-[color-mix(in_oklab,var(--lime)_20%,transparent)]">
+            &ldquo;
+          </div>
+          <motion.p
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-15%" }}
+            transition={{ duration: 0.9 }}
+            className="-mt-6 font-display-tb text-[clamp(2.2rem,6vw,4.5rem)] font-bold leading-[1.05] tracking-[-0.02em] text-foreground"
+          >
+            Music is a{" "}
+            <span className="relative isolate inline-block">
+              <span
+                aria-hidden
+                className="tb-drift pointer-events-none absolute -inset-4 rounded-full bg-[color-mix(in_oklab,var(--lime)_28%,transparent)] blur-2xl"
+                style={{ zIndex: -1 }}
+              />
+              <span className="relative text-lime" style={{ zIndex: 1 }}>process.</span>
+            </span>{" "}
+            Not a file.
+          </motion.p>
+          <div className="mt-6 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            — Signed, the sonicdesk team
+          </div>
+        </div>
+      </div>
+
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-3">
         {pillars.map((p, i) => (
           <LandingHoverCard
@@ -685,462 +794,319 @@ const LANDING_MOCK_SECTIONS: Section[] = [
   landingMockSection("s-chorus2", "chorus", 60, 72, "C G Am F", 5),
 ];
 
-const LANDING_MOBILE_MIXER_SECTIONS = LANDING_MOCK_SECTIONS.filter(
-  (s) => s.id !== "s-pre" && s.id !== "s-chorus2",
-);
+const VERSION_TRACKS = [
+  { name: "GTR-RHYTHM", color: "var(--wave-violet)", seed: 2.3 },
+  { name: "DRUMS", color: "var(--wave-mint)", seed: 4.7 },
+  { name: "BASS", color: "var(--wave-amber)", seed: 6.1 },
+  { name: "GTR-SOLO", color: "var(--wave-coral)", seed: 8.4 },
+];
 
-const LANDING_MOCK_VERSIONS: Version[] = [
+type VersionChange = {
+  /** index into VERSION_TRACKS */
+  track: number;
+  kind: "comment" | "indent" | "replace";
+  label: string;
+} | null;
+
+const VERSIONS: Array<{
+  name: string;
+  author: string;
+  date: string;
+  tag: string;
+  color: string;
+  chip: string;
+  change: VersionChange;
+}> = [
+  { name: "master", author: "elias", date: "JUN 11", tag: "CURRENT", color: "var(--lime)", chip: "Current master", change: null },
   {
-    id: "v-main",
-    project_id: "landing",
-    parent_id: null,
-    name: "MAIN",
-    type: "main",
-    created_at: "",
-    merged_at: null,
-    merged_into_id: null,
-    tag: null,
-    tracks: [],
+    name: "alt-bridge",
+    author: "marek",
+    date: "JUN 12",
+    tag: "EXP",
+    color: "var(--wave-violet)",
+    chip: "Solo rewrite · bar 48–56",
+    change: { track: 3, kind: "indent", label: "Bar 48–56 · rewrite" },
   },
   {
-    id: "v-alt",
-    project_id: "landing",
-    parent_id: "v-main",
-    name: "ALT-BRIDGE",
-    type: "branch",
-    created_at: "",
-    merged_at: null,
-    merged_into_id: null,
-    tag: null,
-    tracks: [],
+    name: "darker-mix",
+    author: "ava",
+    date: "JUN 14",
+    tag: "FIX",
+    color: "var(--wave-coral)",
+    chip: "Bass re-amped · -3dB verbs",
+    change: { track: 2, kind: "comment", label: "-3dB verbs" },
   },
   {
-    id: "v-dark",
-    project_id: "landing",
-    parent_id: "v-main",
-    name: "DARKER-MIX",
-    type: "branch",
-    created_at: "",
-    merged_at: "2024-06-14T00:00:00Z",
-    merged_into_id: "v-main",
-    tag: null,
-    tracks: [],
-  },
-  {
-    id: "v-new",
-    project_id: "landing",
-    parent_id: "v-main",
-    name: "NEW",
-    type: "branch",
-    created_at: "",
-    merged_at: null,
-    merged_into_id: null,
-    tag: null,
-    tracks: [],
+    name: "half-time",
+    author: "jules",
+    date: "JUN 14",
+    tag: "ARR",
+    color: "var(--wave-sky)",
+    chip: "Chorus 2× · new arrangement",
+    change: { track: 1, kind: "replace", label: "New arrangement" },
   },
 ];
 
-function landingSectionTimeRange(startBar: number, endBar: number, barDurationMs: number) {
-  const fmt = (secs: number) => {
-    const s = Math.floor(secs);
-    return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
-  };
-  const start = fmt((startBar * barDurationMs) / 1000);
-  const end = fmt((endBar * barDurationMs) / 1000);
-  return `${start}–${end}`;
-}
-
-function landingSectionStartTime(startBar: number, barDurationMs: number) {
-  const s = Math.floor((startBar * barDurationMs) / 1000);
-  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
-}
-
-function landingActiveSectionIdx(
-  sections: Section[],
-  currentTimeMs: number,
-  barDurationMs: number,
-): number {
-  const sorted = [...sections].sort((a, b) => a.start_bar - b.start_bar);
-  const match = findSectionRangeAtTime(
-    sorted.map((s) => ({ id: s.id, start_bar: s.start_bar, end_bar: s.end_bar })),
-    currentTimeMs / 1000,
-    barDurationMs / 1000,
-  );
-  if (!match) return 0;
-  const idx = sections.findIndex((s) => s.id === match.id);
-  return idx >= 0 ? idx : 0;
-}
-
-function LandingMobileSectionChords({
-  sections,
-  currentTimeMs = LANDING_PLAYHEAD_MS,
-  flush = false,
-}: {
-  sections: Section[];
-  currentTimeMs?: number;
-  /** Full-bleed strip inside a padded card mock (`-mx-3`, interior `px-3`). */
-  flush?: boolean;
-}) {
-  const activeSectionIdx = landingActiveSectionIdx(sections, currentTimeMs, LANDING_BAR_MS);
-  const active = sections[activeSectionIdx];
-  const bleed = flush ? "-mx-3" : "";
-  const pad = "px-3";
-  const border = "border-[color-mix(in_oklab,var(--border)_80%,transparent)]";
-
-  return (
-    <div className={`mb-3 min-w-0 overflow-hidden ${bleed}`}>
-      <div className={`bg-[color-mix(in_oklab,var(--card)_30%,transparent)] py-2 shrink-0`}>
-        <div className={`mb-1.5 flex items-center justify-between gap-2 ${pad}`}>
-          <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Section</span>
-          {active && (
-            <span className="truncate text-[9px] tabular-nums text-lime">
-              ● <span className="tb-section-name uppercase tracking-widest">{sectionLabel(active)}</span>
-              <span className="font-mono"> · {landingSectionTimeRange(active.start_bar, active.end_bar, LANDING_BAR_MS)}</span>
-            </span>
-          )}
-        </div>
-        <div
-          className={`flex gap-1.5 overflow-x-auto pb-1 scrollbar-none ${flush ? "-mx-3 px-3" : pad}`}
+function BranchTrackChange({ change, color }: { change: NonNullable<VersionChange>; color: string }) {
+  if (change.kind === "comment") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.35 }}
+        className="pointer-events-none absolute inset-y-0 left-[18%] right-[46%] border-l-2 border-r-2"
+        style={{ borderColor: color, background: `color-mix(in oklab, ${color} 12%, transparent)` }}
+      >
+        <span
+          className="absolute -top-4 left-0 whitespace-nowrap font-mono-tb text-[9px] uppercase tracking-[0.18em]"
+          style={{ color }}
         >
-          {sections.map((s, i) => (
-            <div
-              key={s.id}
-              className={`shrink-0 border px-2.5 py-1.5 text-[10px] uppercase tracking-widest ${
-                i === activeSectionIdx
-                  ? "border-lime bg-lime text-primary-foreground"
-                  : "border-border bg-background text-muted-foreground"
-              }`}
-            >
-              <div className="tb-section-name">{sectionLabel(s)}</div>
-              <div className="truncate font-mono text-[8px] tabular-nums opacity-80">
-                {landingSectionTimeRange(s.start_bar, s.end_bar, LANDING_BAR_MS)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {sections.some((s) => s.chords?.trim()) && (
-        <div
-          className={`border-t border-b ${border} bg-[color-mix(in_oklab,var(--card)_20%,transparent)] shrink-0 min-w-0`}
+          💬 {change.label}
+        </span>
+      </motion.div>
+    );
+  }
+  if (change.kind === "indent") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, scaleX: 0.85 }}
+        animate={{ opacity: 1, scaleX: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.35 }}
+        className="pointer-events-none absolute inset-y-0 left-[54%] right-[6%] border border-dashed"
+        style={{ borderColor: color, transformOrigin: "left" }}
+      >
+        <span
+          className="absolute -top-4 right-0 whitespace-nowrap font-mono-tb text-[9px] uppercase tracking-[0.18em]"
+          style={{ color }}
         >
-          <div className="flex min-h-[40px] min-w-0 items-stretch">
-            <div
-              className={`flex shrink-0 items-center self-stretch border-r border-[color-mix(in_oklab,var(--border)_50%,transparent)] ${pad}`}
-            >
-              <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Chords</span>
-            </div>
-            <ChordPlaybackRow
-              sections={sections}
-              currentTimeMs={currentTimeMs}
-              barDurationMs={LANDING_BAR_MS}
-              compact
-              className="min-w-0 flex-1 self-stretch"
-            />
-          </div>
-        </div>
-      )}
-    </div>
+          {change.label}
+        </span>
+      </motion.div>
+    );
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0, scaleX: 0 }}
+      animate={{ opacity: 1, scaleX: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      style={{ transformOrigin: "left", borderColor: color, background: `color-mix(in oklab, ${color} 10%, transparent)` }}
+      className="pointer-events-none absolute inset-0 flex items-center justify-center border border-dashed"
+    >
+      <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em]" style={{ color }}>
+        ⇄ Replaced · {change.label}
+      </span>
+    </motion.div>
   );
 }
 
-function LandingStructureStrip() {
-  const totalBars = 72;
-  const barGridStep = 4;
-  const RULER_H = 40;
-  const RIBBON_H = 32;
-  const CHORDS_H = 44;
-  const tp = (bar: number) => bar / totalBars;
-  const sectionBorder = "1px solid color-mix(in oklab, var(--border) 85%, var(--lime) 15%)";
-  const playheadPct = (LANDING_PLAYHEAD_MS / LANDING_BAR_MS / totalBars) * 100;
-
+function BranchApplyRibbon({ version }: { version: (typeof VERSIONS)[number] }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    setStep(0);
+    const ids = [
+      setTimeout(() => setStep(1), 400),
+      setTimeout(() => setStep(2), 1400),
+      setTimeout(() => setStep(3), 2600),
+    ];
+    return () => ids.forEach(clearTimeout);
+  }, [version.name]);
   return (
-    <>
-      <div className="mb-3 sm:hidden">
-        <LandingMobileSectionChords
-          sections={LANDING_MOBILE_MIXER_SECTIONS}
-        />
-      </div>
-      <div className="mb-3 hidden items-stretch border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:flex">
-        {/* Label column — aligned with track rows below */}
-        <div className="hidden w-[160px] shrink-0 flex-col border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] sm:flex">
-          <div
-            className="flex flex-col justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3"
-            style={{ height: RULER_H }}
-          >
-            <span className="pt-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              CHANNEL
-            </span>
-            <span className="pb-1.5 font-mono text-[9px] font-normal normal-case tracking-normal text-foreground/60">
-              {totalBars} bars · 4/4
-            </span>
-          </div>
-          <div
-            className="flex flex-col justify-center bg-lime-soft/40 px-3"
-            style={{ height: RIBBON_H }}
-          >
-            <span className="text-[9px] font-bold uppercase tracking-widest text-lime">
-              STRUCTURE
-            </span>
-          </div>
-          <div
-            className="flex items-center justify-center border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] px-3"
-            style={{ height: CHORDS_H }}
-          >
-            <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              Chords
-            </span>
-          </div>
+    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-4 sm:gap-4 sm:px-4">
+      <motion.div
+        animate={{ x: step >= 1 ? 0 : -8, opacity: step >= 1 ? 1 : 0.4 }}
+        transition={{ duration: 0.4 }}
+        className="flex min-w-0 items-center gap-2 border px-3 py-2"
+        style={{ borderColor: version.color }}
+      >
+        <span className="size-2 shrink-0" style={{ background: version.color }} />
+        <span className="truncate font-mono-tb text-[10px] uppercase tracking-[0.18em]">{version.name}</span>
+      </motion.div>
+      <motion.div
+        animate={{ opacity: step >= 2 ? 1 : 0.3 }}
+        className="flex items-center gap-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime"
+      >
+        <span>APPLY</span>
+        <span className="h-px w-6 bg-lime" />
+        <span>→</span>
+      </motion.div>
+      <motion.div
+        animate={{ scale: step >= 3 ? 1 : 0.96, opacity: step >= 3 ? 1 : 0.5 }}
+        transition={{ duration: 0.4 }}
+        className="flex min-w-0 items-center justify-between gap-2 border border-lime px-3 py-2"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="size-2 shrink-0 bg-lime" />
+          <span className="truncate font-mono-tb text-[10px] uppercase tracking-[0.18em] text-foreground">master · updated</span>
         </div>
-
-        {/* Timeline — bar ruler + structure + chords */}
-        <div className="relative min-w-0 flex-1 bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
-          <div
-            className="absolute top-0 z-[15] w-px -ml-px bg-foreground/70 pointer-events-none"
-            style={{ left: `${playheadPct}%`, height: RULER_H + RIBBON_H }}
-          />
-
-          <div
-            className="relative overflow-hidden border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]"
-            style={{ height: RULER_H }}
-          >
-            {[0, 16, 32, 48, 64].map((bar) => (
-              <span
-                key={bar}
-                className={`pointer-events-none absolute top-0.5 font-mono text-[9px] tabular-nums ${
-                  bar % 16 === 0 ? "font-medium text-foreground" : "text-muted-foreground/80"
-                }`}
-                style={{ left: `${tp(bar) * 100}%`, paddingLeft: bar === 0 ? 2 : 4 }}
-              >
-                {bar + 1}
-              </span>
-            ))}
-            {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
-              const bar = idx * barGridStep;
-              const isTact = bar % 4 === 0;
-              return (
-                <div
-                  key={`ruler-${bar}`}
-                  className="pointer-events-none absolute bottom-0 w-px"
-                  style={{
-                    left: `${tp(bar) * 100}%`,
-                    height: isTact ? 12 : 6,
-                    background: isTact
-                      ? "color-mix(in oklab, var(--foreground) 45%, transparent)"
-                      : "var(--border)",
-                  }}
-                />
-              );
-            })}
-          </div>
-
-          <div className="relative overflow-hidden bg-lime-soft/40" style={{ height: RIBBON_H }}>
-            {Array.from({ length: Math.ceil(totalBars / barGridStep) }, (_, idx) => {
-              const bar = idx * barGridStep;
-              const isTact = bar % 4 === 0;
-              return (
-                <div
-                  key={`grid-${bar}`}
-                  className="pointer-events-none absolute top-0 bottom-0 w-px"
-                  style={{
-                    left: `${tp(bar) * 100}%`,
-                    background: isTact ? "var(--border)" : "color-mix(in oklab, var(--border) 55%, transparent)",
-                    opacity: isTact ? 0.55 : 0.35,
-                  }}
-                />
-              );
-            })}
-
-            {LANDING_MOCK_SECTIONS.map((s) => (
-              <div
-                key={s.id}
-                className="absolute inset-y-0 flex items-center overflow-hidden px-2"
-                style={{
-                  left: `${tp(s.start_bar) * 100}%`,
-                  width: `${(tp(s.end_bar) - tp(s.start_bar)) * 100}%`,
-                  borderLeft: sectionBorder,
-                  borderRight: sectionBorder,
-                  background: "color-mix(in oklab, var(--lime) 12%, transparent)",
-                }}
-              >
-                <span className="tb-section-name pointer-events-none w-full truncate text-[9px] uppercase tracking-widest leading-tight text-lime">
-                  {sectionLabel(s)}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="relative overflow-hidden border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)]"
-            style={{ minHeight: CHORDS_H }}
-          >
-            <ChordPlaybackRow
-              sections={LANDING_MOCK_SECTIONS}
-              currentTimeMs={LANDING_PLAYHEAD_MS}
-              barDurationMs={LANDING_BAR_MS}
-              className="h-full w-full min-w-0"
-            />
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function LandingMixerScrubBar({ progress = 0, className = "" }: { progress?: number; className?: string }) {
-  const pct = Math.max(0, Math.min(100, progress));
-  return (
-    <div className={`relative h-2 w-full bg-[color-mix(in_oklab,var(--card)_70%,transparent)] ${className}`}>
-      <div className="absolute inset-y-0 left-0 bg-lime" style={{ width: `${pct}%` }} />
-      <div
-        className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-foreground"
-        style={{ left: `${pct}%` }}
-      />
+        <motion.span
+          animate={{ opacity: step >= 3 ? 1 : 0, scale: step >= 3 ? 1 : 0.5 }}
+          transition={{ duration: 0.3 }}
+          className="shrink-0 text-sm text-lime"
+        >
+          ✓
+        </motion.span>
+      </motion.div>
     </div>
   );
 }
 
 function BranchShowcase() {
-  const branches = [
-    { name: "main", color: "var(--lime)", date: "JUN 11", note: "live · 4 tracks · 2:59" },
-    { name: "alt-bridge", color: "var(--wave-violet)", date: "JUN 12", note: "experiment · solo rewrite" },
-    { name: "darker-mix", color: "var(--wave-coral)", date: "JUN 14", note: "ready for review" },
-    { name: "new", color: "var(--wave-mint)", date: "JUN 14", note: "draft" },
-  ];
+  const [active, setActive] = useState(1);
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    if (pinned) return;
+    const id = setInterval(() => setActive((a) => (a + 1) % VERSIONS.length), 3600);
+    return () => clearInterval(id);
+  }, [pinned]);
+  const v = VERSIONS[active];
+
   return (
     <section id="versioning" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="01"
-        kicker="VERSIONING"
+        kicker="VERSIONS & DIFF"
         title="BRANCH IT."
-        accent="MERGE IT. CHAT IT."
-        description="Try the bolder bridge without breaking what already works. Every version is a real artifact with date, author and status — not another file called final_v3_FINAL.wav."
+        accent="BREAK IT. MERGE IT BACK."
+        description="Copy master into a new version. Experiment freely — new take, alt chorus, half-time bridge. When it clicks, apply back to master with a visible diff. Nothing lost, ever."
         seoNote="Version control for music: branch, merge, and compare takes without losing the original mix"
       />
 
-      <div className="mt-12 grid min-w-0 gap-6 lg:grid-cols-[280px_1fr]">
-        {/* Version rail */}
-        <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <MonoLabel>VERSION HISTORY</MonoLabel>
-            <MonoLabel className="text-lime">4</MonoLabel>
+      <div className="mt-12 grid min-w-0 gap-6 lg:grid-cols-[300px_1fr]">
+        {/* Version tree */}
+        <div className="min-w-0 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+          <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <span>VERSION TREE</span>
+            <span>{VERSIONS.length} · AUTO-ROTATING</span>
           </div>
-          <ul className="space-y-2">
-            {branches.map((b, i) => (
-              <motion.li
-                key={b.name}
-                initial={{ opacity: 0, x: -12 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.08 }}
-                className="group flex items-start gap-3 border border-transparent p-3 transition-colors hover:border-border hover:bg-background"
+          <div>
+            {VERSIONS.map((ver, i) => (
+              <button
+                key={ver.name}
+                type="button"
+                onMouseEnter={() => { setActive(i); setPinned(true); }}
+                onMouseLeave={() => setPinned(false)}
+                onClick={() => { setActive(i); setPinned(true); }}
+                className={`grid w-full grid-cols-[16px_1fr_auto] items-center gap-3 border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-3 py-3 text-left transition-colors last:border-b-0 ${
+                  i === active ? "bg-[color-mix(in_oklab,var(--lime)_8%,transparent)]" : "hover:bg-background"
+                }`}
               >
-                <span className="mt-1 size-2.5 shrink-0" style={{ background: b.color }} />
-                <div className="min-w-0 flex-1">
-                  <div
-                    className="font-display-tb text-sm font-semibold text-foreground"
-
-                  >
-                    {b.name}
-                  </div>
-                  <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                    {b.date} · {b.note}
-                  </div>
-                </div>
-              </motion.li>
+                <span
+                  className="size-2.5"
+                  style={{ background: ver.color, boxShadow: i === active ? `0 0 10px ${ver.color}` : undefined }}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate font-display-tb text-sm font-semibold text-foreground">{ver.name}</span>
+                  <span className="block font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                    {ver.author} · {ver.date}
+                  </span>
+                </span>
+                <span
+                  className={`border px-1.5 py-0.5 font-mono-tb text-[9px] uppercase tracking-[0.18em] ${
+                    i === active ? "border-lime text-lime" : "border-border text-muted-foreground"
+                  }`}
+                >
+                  {ver.tag}
+                </span>
+              </button>
             ))}
-          </ul>
-          <div className="landing-new-branch-btn mt-4 w-full border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] px-3 py-2 text-left font-mono-tb text-[10px] uppercase tracking-[0.22em] transition-colors">
-            <span className="landing-new-branch-btn-icon opacity-60">⌥</span> + NEW VERSION
+          </div>
+          <div className="p-2">
+            <div className="w-full border border-dashed border-[color-mix(in_oklab,var(--lime)_40%,transparent)] py-2 text-center font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime">
+              ⌥ + New version from master
+            </div>
           </div>
         </div>
 
-        {/* Mixer board */}
-        <div className="relative flex min-w-0 flex-col overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-4 md:p-6">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <MonoLabel>PROJECT · NORTHERN ROOM</MonoLabel>
-            <div className="min-w-0 sm:ml-auto sm:max-w-md sm:flex-1">
-              <MobileMixerVersionBar
-                versions={LANDING_MOCK_VERSIONS}
-                activeId="v-main"
-                onSelect={() => {}}
-                switchOnly
-              />
-            </div>
-          </div>
-
-          <LandingStructureStrip />
-
-          {/* Tracks */}
-          {[
-            { name: "GTR-RHYTHM", file: "northern 1-Audio.wav · 8.3 MB", color: "var(--wave-violet)", seed: 2.3 },
-            { name: "DRUMS", file: "northern 2-Group.wav · 16.2 MB", color: "var(--wave-mint)", seed: 4.7 },
-            { name: "BASS", file: "northern 3-Audio.wav · 5.5 MB", color: "var(--wave-amber)", seed: 6.1 },
-            { name: "GTR-SOLO", file: "northern 4-Audio.wav · 7.3 MB", color: "var(--wave-coral)", seed: 8.4 },
-          ].map((t, i) => (
-            <motion.div
-              key={t.name}
-              initial={{ opacity: 0, y: 12 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.2 }}
-              transition={{ delay: i * 0.08 }}
-              className="group grid min-w-0 grid-cols-1 items-center gap-2 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] py-3 first:border-t-0 sm:grid-cols-[160px_1fr] sm:gap-3"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="grid size-7 place-items-center font-mono-tb text-[11px] font-bold text-primary-foreground"
-                    style={{ background: t.color }}
-                  >
-                    {t.name[0]}
-                  </span>
-                  <div className="min-w-0">
-                    <div
-                      className="font-display-tb text-xs font-semibold tracking-tight"
-
-                    >
-                      {t.name}
-                    </div>
-                    <div className="truncate font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {t.file}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-2 flex gap-1">
-                  {["M", "S"].map((b) => (
-                    <span
-                      key={b}
-                      className="grid size-5 place-items-center border border-border font-mono-tb text-[9px]"
-                    >
-                      {b}
-                    </span>
-                  ))}
-                </div>
+        {/* A/B diff board */}
+        <div className="min-w-0">
+          <div className="relative overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+            <div className="flex items-center justify-between gap-2 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] sm:px-4">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="size-2 shrink-0" style={{ background: v.color }} />
+                <span className="truncate text-foreground">{v.name}</span>
+                <span className="hidden text-muted-foreground sm:inline">· {v.chip}</span>
               </div>
-              <div className="min-w-0 overflow-hidden">
-                <Waveform seed={t.seed} bars={48} color={t.color} height={56} />
-              </div>
-            </motion.div>
-          ))}
-
-          <div className="mt-4 flex items-center justify-between border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
-            <div className="flex items-center gap-3">
-              <span className="grid size-9 place-items-center bg-lime text-primary-foreground">▶</span>
-              <span className="font-mono-tb text-[11px] text-muted-foreground">1:00 / 2:59</span>
+              <span className="shrink-0 text-lime">WHAT CHANGED</span>
             </div>
-            <div className="hidden gap-2 md:flex">
-              {["METRO", "COUNT-IN", "LOOP", "COMMENT MODE"].map((b) => (
-                <span
-                  key={b}
-                  className="border border-border px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+
+            <div className="relative p-3 sm:p-6">
+              <div className="relative space-y-3">
+                <div
+                  aria-hidden
+                  className="tb-sweep pointer-events-none absolute inset-y-0 w-[3px]"
+                  style={{ background: "var(--lime)", boxShadow: "0 0 20px var(--lime)" }}
+                />
+                {VERSION_TRACKS.map((t, idx) => {
+                  const change = v.change && v.change.track === idx ? v.change : null;
+                  return (
+                    <div key={t.name} className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="grid size-6 shrink-0 place-items-center font-mono-tb text-[10px] font-bold text-primary-foreground"
+                          style={{ background: t.color }}
+                        >
+                          {t.name[0]}
+                        </span>
+                        <span className="truncate font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                          {t.name}
+                        </span>
+                        <div className="ml-auto flex gap-1">
+                          {["M", "S"].map((b) => (
+                            <span
+                              key={b}
+                              className="grid size-4 place-items-center border border-border font-mono-tb text-[8px] text-muted-foreground"
+                            >
+                              {b}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="relative h-9 min-w-0">
+                        <Waveform seed={t.seed} bars={72} color={t.color} height={36} />
+                        <AnimatePresence>
+                          {change && <BranchTrackChange key={v.name} change={change} color={v.color} />}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={v.name + "chip"}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.4, delay: 0.15 }}
+                  className="mt-4 inline-flex items-center gap-2 border px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em]"
+                  style={{ borderColor: v.color, color: v.color }}
                 >
-                  {b}
-                </span>
-              ))}
+                  <span className="size-1.5" style={{ background: v.color }} />
+                  {v.chip}
+                </motion.div>
+              </AnimatePresence>
             </div>
+
+            <BranchApplyRibbon version={v} />
           </div>
 
-          <LandingMixerScrubBar progress={100 / 3} className="mt-3" />
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+            {[
+              ["∞", "VERSIONS"],
+              ["0", "LOST TAKES"],
+              ["1-CLICK", "APPLY"],
+              ["VISUAL", "DIFF"],
+            ].map(([k, l]) => (
+              <div key={l} className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
+                <div className="font-display-tb text-2xl font-bold tracking-tight text-lime">{k}</div>
+                <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{l}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -1150,162 +1116,6 @@ function BranchShowcase() {
 /* ============================================================
  * Roadmap + Chat + Rehearsal
  * ============================================================ */
-
-function LandingRoadmapCheck({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path
-        d="M2 7l3.5 3.5L12 3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function LandingRoadmapConnector({ filled }: { filled: boolean }) {
-  return (
-    <div className="h-px w-full bg-border" aria-hidden>
-      <div className={`h-full bg-lime transition-all duration-300 ${filled ? "w-full" : "w-0"}`} />
-    </div>
-  );
-}
-
-function LandingRoadmapChevronLeft({ size = 13 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path d="M9 2L5 7l4 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function LandingRoadmapChevronRight({ size = 11 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path d="M5 2l4 5-4 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function LandingWorkflowCard({
-  kicker,
-  meta,
-  badge,
-  caption,
-  children,
-}: {
-  kicker: string;
-  meta?: string;
-  badge?: string;
-  caption: string;
-  children: ReactNode;
-}) {
-  return (
-    <LandingHoverCard
-      lift={2}
-      className="flex h-full flex-col landing-hover-surface landing-hover-border-soft border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-5 transition-colors hover:border-[color-mix(in_oklab,var(--lime)_40%,transparent)]"
-    >
-      <header className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <MonoLabel>{kicker}</MonoLabel>
-          {meta && (
-            <span className="whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-widest text-muted-foreground">
-              {meta}
-            </span>
-          )}
-        </div>
-        {badge && <MonoLabel className="shrink-0 text-lime">{badge}</MonoLabel>}
-      </header>
-
-      <div className="flex flex-1 flex-col justify-center">{children}</div>
-
-      <p className="mt-4 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">{caption}</p>
-    </LandingHoverCard>
-  );
-}
-
-function LandingRoadmapMock() {
-  const steps = [
-    { name: "Write the song" },
-    { name: "Tracking week" },
-    { name: "Mix & master" },
-  ];
-  const completedCount = 1;
-  const current = steps[1];
-
-  return (
-    <LandingWorkflowCard
-      kicker="QUICK PEEK · ROADMAP"
-      meta="STAGE 2 / 3"
-      caption="Custom stages per song — the whole band sees what's done, what's now, and what's next."
-    >
-      <div className="mx-auto w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background">
-        <header className="flex items-center justify-end gap-1 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2.5">
-          <button
-            type="button"
-            aria-label="Move back one stage"
-            className="grid size-7 place-items-center border border-border text-muted-foreground transition hover:border-lime hover:text-lime"
-          >
-            <LandingRoadmapChevronLeft />
-          </button>
-          <button
-            type="button"
-            aria-label="Advance to next stage"
-            className="tb-btn-accent inline-flex h-7 items-center gap-1 border border-lime bg-lime px-2.5 text-[10px] font-bold uppercase text-primary-foreground transition"
-          >
-            Advance <LandingRoadmapChevronRight />
-          </button>
-        </header>
-
-        <div className="flex w-full items-start px-4 py-5">
-          {steps.map((step, i) => {
-            const state =
-              i < completedCount ? "done" : i === completedCount ? "current" : "ahead";
-            return (
-              <Fragment key={step.name}>
-                {i > 0 && (
-                  <div className="mt-3.5 min-w-[4px] flex-1 self-start">
-                    <LandingRoadmapConnector filled={i <= completedCount} />
-                  </div>
-                )}
-                <div className="flex w-[4.5rem] shrink-0 flex-col items-center">
-                  <div
-                    className={`relative z-10 grid size-7 place-items-center border text-[10px] font-bold ${
-                      state === "done"
-                        ? "border-lime bg-lime text-primary-foreground"
-                        : state === "current"
-                          ? "border-lime bg-background text-lime ring-2 ring-lime/30"
-                          : "border-border bg-background text-muted-foreground"
-                    }`}
-                  >
-                    {state === "done" ? <LandingRoadmapCheck size={12} /> : i + 1}
-                  </div>
-                  <span
-                    className={`mt-2 line-clamp-3 w-full break-words px-0.5 text-center text-[9px] font-bold uppercase leading-tight tracking-wide ${
-                      state === "ahead" ? "text-muted-foreground" : "text-foreground"
-                    }`}
-                  >
-                    {step.name.toUpperCase()}
-                  </span>
-                </div>
-              </Fragment>
-            );
-          })}
-        </div>
-
-        <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2.5 text-[10px] uppercase tracking-widest">
-          <span className="inline-flex items-center gap-1.5 font-bold text-foreground">
-            <span className="size-1.5 shrink-0 rounded-full bg-chart-4" aria-hidden />
-            {current.name}
-          </span>
-          <span className="ml-auto text-chart-4">Since 5d ago · Holding steady.</span>
-        </footer>
-      </div>
-    </LandingWorkflowCard>
-  );
-}
 
 function LandingChatBranchIcon({ size = 12 }: { size?: number }) {
   return (
@@ -1412,80 +1222,6 @@ function LandingChatChannelTab({
   );
 }
 
-function LandingChatMock() {
-  const messages: Array<{
-    user: string;
-    time: string;
-    body: ReactNode;
-    branch?: string;
-    track?: string;
-    timecode?: string;
-  }> = [
-    {
-      user: "marek",
-      time: "21:14",
-      body: <>the bridge is finally landing. listen at 1:42</>,
-      branch: "alt-bridge",
-      track: "gtr-solo",
-      timecode: "1:42",
-    },
-    {
-      user: "ava",
-      time: "21:18",
-      body: (
-        <>
-          <LandingChatMention>@marek</LandingChatMention>
-          {" agree — keep the dry guitar, drop the reverb tail"}
-        </>
-      ),
-      track: "gtr-rhythm",
-    },
-    {
-      user: "jules",
-      time: "21:22",
-      body: <>merging into main tonight after tracking</>,
-      branch: "main",
-    },
-  ];
-
-  return (
-    <LandingWorkflowCard
-      kicker="CHAT"
-      caption="Project chat with @mentions, version links, track refs, and timecodes — decisions stay where the song lives."
-    >
-      <div className="mx-auto w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background">
-        <div className="bg-background">
-          <LandingChatChannelTab label="# northern-room" hint="4 members · 12M" />
-        </div>
-        <div className="space-y-3 p-4">
-          {messages.map((m, i) => (
-            <motion.div
-              key={m.user}
-              initial={{ opacity: 0, y: 8 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: i * 0.1 }}
-              className="flex gap-2.5"
-            >
-              <UserAvatar seed={m.user} size={28} kind="user" className="mt-0.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2 text-[10px] leading-none">
-                  <span className="font-bold text-lime">@{m.user}</span>
-                  <span className="font-mono tabular-nums text-muted-foreground">{m.time}</span>
-                </div>
-                <div className="mt-1 text-[12px] leading-relaxed text-foreground">{m.body}</div>
-                {(m.branch || m.track || m.timecode) && (
-                  <LandingChatLinkBadge branch={m.branch} track={m.track} time={m.timecode} />
-                )}
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </LandingWorkflowCard>
-  );
-}
-
 function LandingMobilePlayIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -1542,110 +1278,417 @@ function LandingMobileTransportBtn({
   );
 }
 
-function LandingRehearsalMock() {
-  const listSections = LANDING_MOBILE_MIXER_SECTIONS;
+/* ============================================================
+ * Features (comments · structure & chords · social)
+ * ============================================================ */
 
+function FeaturePanel({
+  side,
+  eyebrow,
+  title,
+  copy,
+  chips,
+  demo,
+}: {
+  side: "left" | "right";
+  eyebrow: string;
+  title: string;
+  copy: string;
+  chips: string[];
+  demo: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: "-15%" });
   return (
-    <LandingWorkflowCard
-      kicker="REHEARSAL VIEW · MOBILE"
-      badge="LIVE"
-      caption="Open the phone at the rehearsal room. Full mix, structure, chords, click — no laptop, no DAW."
-    >
-      <div className="mx-auto w-full max-w-[320px] border-2 border-border bg-background">
-        <div className="p-3">
-          <div className="mb-3 flex items-center justify-between">
-            <MonoLabel className="text-lime">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="size-1.5 bg-lime tb-blink" /> REHEARSAL
-              </span>
-            </MonoLabel>
-            <MonoLabel>142 BPM · Am</MonoLabel>
-          </div>
-          <Waveform seed={5.6} bars={42} color="var(--lime)" height={70} />
-          <div className="mt-2 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
-            <span>{landingSectionStartTime(8, LANDING_BAR_MS)}</span>
-            <span>{landingSectionStartTime(24, LANDING_BAR_MS)}</span>
-          </div>
-
-          <div className="mt-3">
-            <MobileMixerVersionBar
-              versions={LANDING_MOCK_VERSIONS}
-              activeId="v-main"
-              onSelect={() => {}}
-              switchOnly
-            />
-          </div>
-
-          <LandingMobileSectionChords
-            sections={listSections}
-            flush
-          />
-
-          <div className="mt-3 border border-border">
-            <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Structure & chords
-            </div>
-            <div className="divide-y divide-border">
-              {listSections.map((section) => (
-                <div
-                  key={section.id}
-                  className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left"
-                >
-                  <div className="tb-section-name w-14 shrink-0 pt-0.5 text-[9px] uppercase tracking-widest text-lime">
-                    {sectionLabel(section)}
-                  </div>
-                  <div className="min-w-0 flex-1 truncate text-left text-xs leading-relaxed text-foreground">
-                    {formatChordsDisplay(section.chords)}
-                  </div>
-                  <div className="shrink-0 pt-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-                    {landingSectionStartTime(section.start_bar, LANDING_BAR_MS)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-border bg-[color-mix(in_oklab,var(--card)_30%,transparent)] px-3 pb-2.5 pt-1.5">
-          <div className="grid grid-cols-3 items-center gap-1.5">
-            <LandingMobileTransportBtn label="Metronome">
-              <MetronomeIcon size={16} />
-            </LandingMobileTransportBtn>
-            <button
-              type="button"
-              aria-label="Play"
-              className="mx-auto grid size-12 place-items-center bg-lime text-primary-foreground transition active:scale-95"
+    <div ref={ref} className="grid items-center gap-6 lg:grid-cols-2 lg:gap-12">
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={inView ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.7 }}
+        className={`min-w-0 ${side === "right" ? "lg:order-2" : ""}`}
+      >
+        <MonoLabel className="text-lime">{eyebrow}</MonoLabel>
+        <h3 className="mt-4 font-display-tb text-3xl font-bold leading-[0.95] tracking-tight text-foreground md:text-5xl">
+          {title}
+        </h3>
+        <p className="mt-5 max-w-md font-mono-tb text-sm leading-relaxed text-muted-foreground">{copy}</p>
+        <div className="mt-6 flex flex-wrap gap-2">
+          {chips.map((c) => (
+            <span
+              key={c}
+              className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
             >
-              <LandingMobilePlayIcon />
-            </button>
-            <LandingMobileTransportBtn label="Loop section" active>
-              <LandingMobileLoopIcon />
-            </LandingMobileTransportBtn>
-          </div>
+              {c}
+            </span>
+          ))}
         </div>
-      </div>
-    </LandingWorkflowCard>
+      </motion.div>
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={inView ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.9, delay: 0.15 }}
+        className={`min-w-0 ${side === "right" ? "lg:order-1" : ""}`}
+      >
+        {demo}
+      </motion.div>
+    </div>
   );
 }
 
-function ProcessShowcase() {
+/* --- 02.1 comments demo --- */
+
+const COMMENT_REPLIES = [
+  "Yeah bar 34 has a tempo bump — mine drifts",
+  "Moving the crash 1/8 later fixes it, pushing v1.5",
+  "Confirmed on my end. Resolving.",
+];
+const COMMENT_REPLY_AUTHORS = ["ava", "elias", "jules"];
+
+function CommentsDemo() {
+  const [count, setCount] = useState(0);
+  const [typed, setTyped] = useState("");
+  useEffect(() => {
+    if (count >= COMMENT_REPLIES.length) return;
+    const text = COMMENT_REPLIES[count];
+    let i = 0;
+    setTyped("");
+    const iv = setInterval(() => {
+      i++;
+      setTyped(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(iv);
+        setTimeout(() => setCount((c) => (c + 1) % (COMMENT_REPLIES.length + 1)), 1400);
+      }
+    }, 28);
+    return () => clearInterval(iv);
+  }, [count]);
+  const shown = COMMENT_REPLIES.slice(0, count);
+
   return (
-    <section id="workflow" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+      <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+        <span className="text-muted-foreground">NORTHERN ROOM · GTR-SOLO · v1.4</span>
+        <span className="text-lime">COMMENT MODE</span>
+      </div>
+      <div className="relative p-4 sm:p-5">
+        <div className="relative h-14 border-b border-dashed border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
+          <Waveform seed={13} bars={72} color="var(--wave-coral)" height={56} />
+          <div className="absolute inset-y-0 left-[26%] right-[52%] border-l-2 border-r-2 border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)]">
+            <span className="absolute -top-4 left-0 font-mono-tb text-[9px] uppercase tracking-[0.18em] text-lime">
+              1:14 → 2:12
+            </span>
+          </div>
+        </div>
+        <div className="mt-6 border border-[color-mix(in_oklab,var(--lime)_40%,transparent)] bg-[color-mix(in_oklab,var(--lime)_4%,transparent)] p-3 sm:p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <UserAvatar seed="marek" size={24} kind="user" />
+            <span className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-foreground">marek</span>
+            <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">now</span>
+            <span className="ml-auto font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+              3 replies
+            </span>
+          </div>
+          <div className="text-[13px] text-foreground">
+            This section feels slightly off — anyone else hearing it drift on the second half?
+          </div>
+          <div className="mt-3 space-y-2 border-l border-[color-mix(in_oklab,var(--border)_80%,transparent)] pl-4">
+            {shown.map((r, i) => (
+              <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2">
+                <UserAvatar seed={COMMENT_REPLY_AUTHORS[i]} size={20} kind="user" className="shrink-0" />
+                <div className="text-[12px] text-foreground/90">{r}</div>
+              </motion.div>
+            ))}
+            {count < COMMENT_REPLIES.length && (
+              <div className="flex items-center gap-2">
+                <UserAvatar seed={COMMENT_REPLY_AUTHORS[count]} size={20} kind="user" className="shrink-0" />
+                <div className="text-[12px] text-foreground/90">
+                  {typed}
+                  <span className="tb-caret ml-0.5 inline-block h-3 w-1.5 align-middle bg-lime" />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] pt-3 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <span>@mention · attach · link version</span>
+            <span className="text-lime">↵ reply</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --- 02.2 structure & chords demo --- */
+
+const STRUCTURE_DEMO_CELLS = LANDING_MOCK_SECTIONS.map((s) => ({
+  section: s,
+  chords: (s.chords ?? "").trim().split(/\s+/).filter(Boolean),
+}));
+const STRUCTURE_DEMO_TOTAL = STRUCTURE_DEMO_CELLS.reduce((a, c) => a + c.chords.length, 0);
+const STRUCTURE_DEMO_CHORUS = (() => {
+  let acc = 0;
+  for (const c of STRUCTURE_DEMO_CELLS) {
+    if (c.section.type === "chorus") return { start: acc, len: c.chords.length };
+    acc += c.chords.length;
+  }
+  return { start: 0, len: STRUCTURE_DEMO_TOTAL };
+})();
+
+function StructureDemo() {
+  const [loop, setLoop] = useState(false);
+  const [pos, setPos] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPos((p) => {
+        if (loop) {
+          const rel = (p - STRUCTURE_DEMO_CHORUS.start + 1 + STRUCTURE_DEMO_CHORUS.len) % STRUCTURE_DEMO_CHORUS.len;
+          return STRUCTURE_DEMO_CHORUS.start + rel;
+        }
+        return (p + 1) % STRUCTURE_DEMO_TOTAL;
+      });
+    }, 600);
+    return () => clearInterval(id);
+  }, [loop]);
+
+  let acc = 0;
+  let curSection = 0;
+  let curChord = 0;
+  for (let i = 0; i < STRUCTURE_DEMO_CELLS.length; i++) {
+    if (pos < acc + STRUCTURE_DEMO_CELLS[i].chords.length) {
+      curSection = i;
+      curChord = pos - acc;
+      break;
+    }
+    acc += STRUCTURE_DEMO_CELLS[i].chords.length;
+  }
+  return (
+    <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+      <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+        <span className="text-muted-foreground">STRUCTURE · AUTO-DETECTED</span>
+        <button
+          type="button"
+          onClick={() => setLoop((v) => !v)}
+          className={`border px-2 py-0.5 transition-colors ${
+            loop ? "border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] text-lime" : "border-border text-foreground"
+          }`}
+        >
+          {loop ? "● LOOPING CHORUS" : "↻ LOOP CHORUS"}
+        </button>
+      </div>
+      <div className="p-3 sm:p-4">
+        <div className="flex border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
+          {STRUCTURE_DEMO_CELLS.map((c, i) => (
+            <div
+              key={c.section.id}
+              style={{ flex: c.chords.length }}
+              className={`relative border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2 py-2 transition-colors last:border-r-0 ${
+                curSection === i
+                  ? "bg-[color-mix(in_oklab,var(--lime)_15%,transparent)]"
+                  : c.section.type === "chorus"
+                    ? "bg-[color-mix(in_oklab,var(--lime)_5%,transparent)]"
+                    : ""
+              }`}
+            >
+              <div
+                className={`tb-section-name font-mono-tb text-[9px] uppercase tracking-[0.18em] ${
+                  curSection === i ? "text-lime" : "text-foreground/70"
+                }`}
+              >
+                {sectionLabel(c.section)}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
+          {STRUCTURE_DEMO_CELLS.map((c, i) => (
+            <div key={c.section.id} style={{ flex: c.chords.length }} className="flex border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-r-0">
+              {c.chords.map((chord, j) => {
+                const isCurrent = curSection === i && curChord === j;
+                return (
+                  <div
+                    key={j}
+                    className={`flex-1 py-2 text-center font-mono-tb text-[11px] transition-all ${
+                      isCurrent ? "scale-[1.06] bg-lime text-primary-foreground" : "text-foreground/70"
+                    }`}
+                  >
+                    {chord}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --- 02.3 social demo --- */
+
+const SOCIAL_TASKS = [
+  { t: "Final vocal take", who: "ava", color: "var(--wave-sky)" },
+  { t: "Re-amp bass DI", who: "elias", color: "var(--wave-amber)" },
+  { t: "Master pass 1", who: "jules", color: "var(--wave-coral)" },
+];
+
+const SOCIAL_MESSAGES: Array<{
+  who: string;
+  body: ReactNode;
+  branch?: string;
+  track?: string;
+  timecode?: string;
+}> = [
+  { who: "marek", body: <>Bridge is landing. Listen at 1:42</>, branch: "alt-bridge", track: "gtr-solo", timecode: "1:42" },
+  {
+    who: "ava",
+    body: (
+      <>
+        <LandingChatMention>@marek</LandingChatMention>
+        {" agree — keep the dry gtr, drop the reverb tail"}
+      </>
+    ),
+    track: "gtr-rhythm",
+  },
+];
+
+const SOCIAL_MEMBERS = [
+  { who: "marek", role: "Guitar", color: "var(--lime)" },
+  { who: "ava", role: "Vocals", color: "var(--wave-sky)" },
+  { who: "elias", role: "Bass", color: "var(--wave-amber)" },
+  { who: "jules", role: "Drums", color: "var(--wave-coral)" },
+];
+
+function SocialDemo() {
+  const [checked, setChecked] = useState<number[]>([0]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setChecked((c) => (c.length >= SOCIAL_TASKS.length ? [0] : [...c, c.length]));
+    }, 1800);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="grid gap-3">
+      {/* roadmap */}
+      <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-4">
+        <div className="mb-3 flex items-center justify-between font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+          <span className="text-lime">ROADMAP · NORTHERN ROOM</span>
+          <span className="text-muted-foreground">STAGE 2 / 3</span>
+        </div>
+        <div className="space-y-2">
+          {SOCIAL_TASKS.map((task, i) => {
+            const done = checked.includes(i);
+            return (
+              <div key={task.t} className="flex items-center gap-3">
+                <span
+                  className={`grid size-4 place-items-center border text-[10px] transition-colors ${
+                    done ? "border-lime bg-lime text-primary-foreground" : "border-border text-transparent"
+                  }`}
+                >
+                  ✓
+                </span>
+                <span className={`text-[12px] ${done ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                  {task.t}
+                </span>
+                <UserAvatar seed={task.who} size={20} kind="user" className="ml-auto shrink-0" />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* chat */}
+      <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+        <LandingChatChannelTab label="# northern-room" hint="4 members · live" />
+        <div className="space-y-3 p-3">
+          {SOCIAL_MESSAGES.map((m, i) => (
+            <motion.div
+              key={m.who}
+              initial={{ opacity: 0, y: 8 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.2 }}
+              className="flex gap-2"
+            >
+              <UserAvatar seed={m.who} size={28} kind="user" className="shrink-0" />
+              <div className="min-w-0">
+                <div className="font-mono-tb text-[10px]">
+                  <span className="text-lime">@{m.who}</span> <span className="text-muted-foreground">now</span>
+                </div>
+                <div className="text-[12px] text-foreground">{m.body}</div>
+                {(m.branch || m.track || m.timecode) && (
+                  <LandingChatLinkBadge branch={m.branch} track={m.track} time={m.timecode} />
+                )}
+              </div>
+            </motion.div>
+          ))}
+          <div className="flex items-center gap-2">
+            <UserAvatar seed="jules" size={28} kind="user" className="shrink-0" />
+            <div className="flex items-center gap-1 font-mono-tb text-[10px] text-muted-foreground">
+              TYPING
+              <span className="tb-typing ml-1 inline-flex gap-0.5">
+                <span>·</span>
+                <span>·</span>
+                <span>·</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* members */}
+      <div className="grid grid-cols-4 gap-3 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-3">
+        {SOCIAL_MEMBERS.map((m) => (
+          <div key={m.who} className="flex flex-col items-center gap-1.5">
+            <div className="relative">
+              <UserAvatar seed={m.who} size={40} kind="user" />
+              <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background bg-lime" />
+            </div>
+            <div className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">{m.role}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Features() {
+  return (
+    <section id="features" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
         index="02"
-        kicker="WORKFLOW"
-        title="ROADMAP, CHAT,"
-        accent="DECISIONS — IN BAND."
-        description="Stop pinning voice memos in Telegram and stop renaming Drive folders. Everything that decides a track lives where the track lives."
-        seoNote="Band chat, project roadmap, and checklist with assignments in one band workspace"
+        kicker="FEATURES"
+        title="NOT A TOOL."
+        accent="A WORKSPACE."
+        description="The pieces your band actually uses — comments that stick to bars, a real structure editor, chords in sync with playback, and the social layer that keeps decisions in one place."
+        seoNote="Threaded comments on bars, a structure and chord editor, and band chat with a roadmap in one workspace"
       />
 
-      <div className="mt-12 grid items-stretch gap-6 lg:grid-cols-3">
-        <LandingRoadmapMock />
-
-        <LandingChatMock />
-
-        <LandingRehearsalMock />
+      <div className="mt-16 space-y-16 md:space-y-24">
+        <FeaturePanel
+          side="left"
+          eyebrow="02.1 · COMMENTS"
+          title="Drop a thought on bar 34."
+          copy="Tag a bandmate. Reply in a thread. Every note lives on the exact region it's about — never lost in Slack again."
+          chips={["@mentions", "Threaded replies", "Resolve & pin", "Link to version"]}
+          demo={<CommentsDemo />}
+        />
+        <FeaturePanel
+          side="right"
+          eyebrow="02.2 · STRUCTURE & CHORDS"
+          title="Map the song. Know the changes."
+          copy="Write the chords — or let us detect them. Loop any section for practice. See the chord that's playing, right now, on every device."
+          chips={["Auto chord detect", "Section loop", "Drag to resize", "Synced to playhead"]}
+          demo={<StructureDemo />}
+        />
+        <FeaturePanel
+          side="left"
+          eyebrow="02.3 · SOCIAL"
+          title="Your band lives here too."
+          copy="Roadmaps, checklists, chat with mentions and deep-links to any version or track. No context lost between rehearsals."
+          chips={["Roadmap & checklist", "@mentions", "Deep-link to bar", "Per-track threads"]}
+          demo={<SocialDemo />}
+        />
       </div>
     </section>
   );
@@ -1796,174 +1839,254 @@ function FeatureIndex() {
  * Rehearsal Mode deep-dive
  * ============================================================ */
 
-function RehearsalDeepDive() {
-  const scenarios = [
-    {
-      icon: KeyRound,
-      kicker: "FORGOT THE CHANGES",
-      title: "Chords on the second.",
-      body: "Open the project, scroll to the bridge, the chord chart for that bar is already there. No more squinting at a printed sheet or interrupting the take to ask.",
-    },
-    {
-      icon: Repeat,
-      kicker: "PRACTICE THE HARD PART",
-      title: "Loop any section.",
-      body: "Tap a section, tap loop. The chorus runs on its own while you nail the run. Metronome locks to the project's BPM — no separate app, no laptop on the floor.",
-    },
-    {
-      icon: Mic,
-      kicker: "A#m",
-      title: "Capture before it leaves.",
-      body: "A riff arrives between takes. Hit record. It lands in the project — versioned, timestamped, attached to the song it came from. Not buried in a voice-memo graveyard.",
-    },
-    {
-      icon: Lightbulb,
-      kicker: "ON THE SPOT",
-      title: "Decide together, instantly.",
-      body: "Drop a range comment on bar 32 from the rehearsal room. By soundcheck, the bassist has already replied — with an alt take pushed to a new version.",
-    },
+function MobilePhoneFrame({ children, accent }: { children: ReactNode; accent: string }) {
+  return (
+    <div className="relative w-[260px] shrink-0 sm:w-[280px]" style={{ perspective: 1000 }}>
+      <div
+        className="rounded-[36px] border-2 border-[color-mix(in_oklab,var(--border)_90%,transparent)] bg-background p-2"
+        style={{ boxShadow: `0 30px 80px -20px ${accent}22, 0 0 0 1px ${accent}20` }}
+      >
+        <div className="absolute top-3 left-1/2 z-10 h-5 w-24 -translate-x-1/2 rounded-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-background" />
+        <div className="relative h-[520px] overflow-hidden rounded-[28px] bg-background">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function MobileMixerMock() {
+  const tracks = [
+    { n: "GTR", color: "var(--wave-violet)", seed: 3.2 },
+    { n: "DRM", color: "var(--wave-mint)", seed: 5.4 },
+    { n: "BAS", color: "var(--wave-amber)", seed: 7.6 },
+    { n: "VOX", color: "var(--wave-coral)", seed: 9.1 },
   ];
+  return (
+    <div className="flex h-full flex-col text-foreground">
+      <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 pb-3 pt-10 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+        <span className="text-muted-foreground">v1.4 · master</span>
+        <span className="text-lime">142 BPM</span>
+      </div>
+      <div className="flex-1 space-y-2 overflow-hidden p-3">
+        {tracks.map((t) => (
+          <div key={t.n} className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] p-2">
+            <div className="mb-1 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full" style={{ background: t.color }} />
+                <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em]">{t.n}</span>
+              </div>
+              <div className="flex gap-1 font-mono-tb text-[8px]">
+                <span className="grid size-4 place-items-center border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">M</span>
+                <span className="grid size-4 place-items-center border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">S</span>
+              </div>
+            </div>
+            <div className="relative h-6">
+              <div
+                aria-hidden
+                className="tb-playhead pointer-events-none absolute top-0 bottom-0"
+                style={{ width: 1, background: "var(--lime)" }}
+              />
+              <Waveform seed={t.seed} bars={44} color={t.color} height={24} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-around border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
+        <LandingMobileTransportBtn label="Metronome">
+          <MetronomeIcon size={16} />
+        </LandingMobileTransportBtn>
+        <button
+          type="button"
+          aria-label="Play"
+          className="mx-auto grid size-11 place-items-center bg-lime text-primary-foreground transition active:scale-95"
+        >
+          <LandingMobilePlayIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="Record"
+          className="mx-auto grid size-9 place-items-center border border-[color-mix(in_oklab,var(--wave-coral)_60%,transparent)] text-[color-mix(in_oklab,var(--wave-coral)_90%,transparent)] transition active:scale-95"
+        >
+          <span className="tb-rec size-2 rounded-full" style={{ background: "var(--wave-coral)" }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const MOBILE_REHEARSAL_CHORDS = ["Ebm", "B", "Gb", "Db", "Ebm", "B", "Ab", "Db"];
+
+function MobileRehearsalMock() {
+  const [chordIdx, setChordIdx] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setChordIdx((c) => (c + 1) % MOBILE_REHEARSAL_CHORDS.length), 900);
+    return () => clearInterval(id);
+  }, []);
+  const chord = MOBILE_REHEARSAL_CHORDS[chordIdx];
+  const next = MOBILE_REHEARSAL_CHORDS[(chordIdx + 1) % MOBILE_REHEARSAL_CHORDS.length];
+  const bar = chordIdx + 1;
 
   return (
-    <section id="rehearsal" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+    <div className="flex h-full flex-col text-foreground">
+      <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 pb-3 pt-10 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+        <span style={{ color: "var(--wave-sky)" }}>● rehearsal</span>
+        <span className="text-muted-foreground">rubicon · v1.4</span>
+      </div>
+      <div className="flex items-center gap-2 px-4 py-3">
+        {["INTRO", "VERSE", "CHORUS", "BRIDGE"].map((s, i) => (
+          <span
+            key={s}
+            className={`border px-2 py-1 font-mono-tb text-[9px] uppercase tracking-[0.18em] ${
+              i === 2 ? "border-lime bg-lime text-primary-foreground" : "border-[color-mix(in_oklab,var(--border)_80%,transparent)] text-muted-foreground"
+            }`}
+          >
+            {s}
+          </span>
+        ))}
+      </div>
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6">
+        <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Now</div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={chord + bar}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            transition={{ duration: 0.25 }}
+            className="font-display-tb text-[88px] font-bold leading-none tracking-tight text-lime"
+          >
+            {chord}
+          </motion.div>
+        </AnimatePresence>
+        <div className="mt-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          Bar {bar} / 16
+        </div>
+        <div className="mt-8 flex items-center gap-3 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2">
+          <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Next</span>
+          <span className="font-display-tb text-2xl font-bold tracking-tight text-foreground">{next}</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
+        <button className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          ◷ 142
+        </button>
+        <button className="bg-lime py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-primary-foreground">
+          ▶ loop
+        </button>
+        <button className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          ⤴ next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const MOBILE_COMPARISON_ROWS: Array<[string, boolean, boolean, boolean]> = [
+  ["Versions & diff", true, true, false],
+  ["Multitrack mixer", true, true, false],
+  ["Record via mic", true, true, false],
+  ["Comment on bars", true, true, false],
+  ["Structure editor", true, true, true],
+  ["Chord chart", true, true, true],
+  ["Section loop", true, true, true],
+  ["Metronome", true, true, true],
+];
+
+function MobileSection() {
+  return (
+    <section id="mobile" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="05"
-        kicker="REHEARSAL MODE"
-        title="THE PHONE IS"
-        accent="THE STUDIO."
-        description="A mode built for the rehearsal room, the practice corner, and the back-of-the-tour-bus moment. No DAW, no cables, no excuses for losing the idea."
-        seoNote="Rehearsal mode app with chord charts, loop sections, and range comments from your phone"
+        index="03"
+        kicker="MOBILE"
+        title="MOBILE VERSION IS"
+        accent="YOUR COMPANION."
+        description="Same engine as desktop, two modes built for how bands actually work — refining on the couch, rehearsing in the room. It's a second product, not a downgrade."
+        seoNote="Mobile mixer mode and rehearsal mode apps for bands, with the same engine as desktop"
       />
 
-      <div className="mt-12 grid gap-8 lg:grid-cols-[420px_1fr] lg:items-stretch">
-        {/* Phone mock */}
+      <div className="mt-14 grid items-center gap-8 lg:grid-cols-[1fr_auto_1fr] lg:gap-6">
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-          className="relative mx-auto h-full w-full max-w-[360px] lg:mx-0 lg:max-w-none"
+          viewport={{ once: true, margin: "-10%" }}
+          transition={{ duration: 0.8 }}
+          className="flex flex-col items-center"
         >
-          <div className="relative flex h-full flex-col border border-border bg-card p-4">
-            <div className="mb-3 flex shrink-0 items-center justify-between">
-              <MonoLabel className="text-lime">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="size-1.5 bg-lime tb-blink" /> REHEARSAL
-                </span>
-              </MonoLabel>
-              <MonoLabel>142 BPM · A#m</MonoLabel>
-            </div>
-
-            <div className="flex shrink-0 flex-col border border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-[color-mix(in_oklab,var(--background)_60%,transparent)] p-3">
-              <Waveform seed={7.3} bars={48} color="var(--lime)" height={84} />
-              <div className="mt-2 flex items-center justify-between font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                <span>0:42</span>
-                <motion.span
-                  animate={{ opacity: [0.6, 1, 0.6] }}
-                  transition={{ duration: 1.8, repeat: Infinity }}
-                  className="text-lime"
-                >
-                  ● LOOP · CHORUS
-                </motion.span>
-                <span>1:08</span>
-              </div>
-            </div>
-
-            <div className="mt-3 grid shrink-0 grid-cols-4 gap-1">
-              {["INTRO", "VERSE", "CHORUS", "BRIDGE"].map((s, i) => (
-                <motion.span
-                  key={s}
-                  whileHover={{ y: -2 }}
-                  className={`cursor-pointer px-1 py-1.5 text-center font-mono-tb text-[9px] uppercase tracking-[0.18em] transition-colors ${
-                    i === 2
-                      ? "bg-lime text-primary-foreground"
-                      : "border border-border text-muted-foreground hover:border-[color-mix(in_oklab,var(--lime)_60%,transparent)] hover:text-lime"
-                  }`}
-                >
-                  {s}
-                </motion.span>
-              ))}
-            </div>
-
-            <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] pt-3">
-              <div className="mb-1 shrink-0 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-lime">CHORUS</div>
-              <div className="flex flex-1 flex-wrap content-start gap-1.5">
-                {["Bb", "Gm", "Eb", "F", "Bb", "Gm", "Cm", "F"].map((c, i) => (
-                  <motion.span
-                    key={i}
-                    initial={{ opacity: 0, y: 4 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: 0.4 + i * 0.05 }}
-                    className={`grid h-8 min-w-[34px] place-items-center border px-1.5 font-mono-tb text-[11px] font-bold ${
-                      i === 2
-                        ? "border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] text-lime"
-                        : "border-border text-foreground"
-                    }`}
-                  >
-                    {c}
-                  </motion.span>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-3 grid shrink-0 grid-cols-3 gap-1.5">
-              <button className="tb-btn-accent flex items-center justify-center gap-1.5 bg-lime py-2 text-[10px] uppercase text-primary-foreground transition-colors">
-                ▶ PLAY
-              </button>
-              <button className="flex items-center justify-center gap-1.5 border border-border py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:border-lime hover:text-lime">
-                <Timer size={11} /> METRO
-              </button>
-              <motion.button
-                whileTap={{ scale: 0.94 }}
-                className="group/rec flex items-center justify-center gap-1.5 border border-destructive py-2 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground"
-              >
-                <motion.span
-                  animate={{ scale: [1, 1.4, 1], opacity: [1, 0.4, 1] }}
-                  transition={{ duration: 1.4, repeat: Infinity }}
-                  className="size-1.5 rounded-full bg-destructive group-hover/rec:bg-destructive-foreground"
-                />
-                REC
-              </motion.button>
-            </div>
+          <MobilePhoneFrame accent="var(--lime)">
+            <MobileMixerMock />
+          </MobilePhoneFrame>
+          <div className="mt-6 max-w-xs text-center">
+            <div className="font-display-tb text-xl font-bold tracking-tight text-lime">Mixer mode</div>
+            <p className="mt-2 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">
+              Refine a version, record a new idea with the built-in mic, comment on the fly.
+            </p>
           </div>
         </motion.div>
 
-        {/* Scenarios */}
-        <div className="grid h-full gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2">
-          {scenarios.map((s, i) => {
-            const Icon = s.icon;
-            return (
-              <LandingHoverCard
-                key={s.kicker}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.3 }}
-                transition={{ delay: i * 0.08, duration: 0.5 }}
-                lift={3}
-                className="group relative landing-hover-surface h-full overflow-hidden bg-background p-6 transition-colors hover:bg-card"
-              >
-                <span className="landing-hover-bar absolute inset-x-0 top-0 h-[2px] bg-lime transition-transform duration-500" />
-                <div className="mb-4 flex items-center justify-between">
-                  <span className="landing-hover-icon grid size-10 place-items-center border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] text-lime transition-[color,background-color,border-color] duration-300 group-hover:border-lime group-hover:bg-lime group-hover:!text-primary-foreground">
-                    <Icon size={18} className="transition-colors duration-300" />
-                  </span>
-                  <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                    {s.kicker}
-                  </span>
-                </div>
-                <h3
-                  className="font-display-tb font-bold leading-tight tracking-tight text-xl md:text-2xl"
+        <div className="hidden flex-col items-center gap-4 self-center lg:flex">
+          <div className="h-24 w-px bg-[color-mix(in_oklab,var(--border)_80%,transparent)]" />
+          <div className="rotate-90 whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime">
+            Two modes · one project
+          </div>
+          <div className="h-24 w-px bg-[color-mix(in_oklab,var(--border)_80%,transparent)]" />
+        </div>
 
-                >
-                  {s.title}
-                </h3>
-                <p className="mt-3 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">
-                  {s.body}
-                </p>
-              </LandingHoverCard>
-            );
-          })}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-10%" }}
+          transition={{ duration: 0.8, delay: 0.15 }}
+          className="flex flex-col items-center"
+        >
+          <MobilePhoneFrame accent="var(--wave-sky)">
+            <MobileRehearsalMock />
+          </MobilePhoneFrame>
+          <div className="mt-6 max-w-xs text-center">
+            <div className="font-display-tb text-xl font-bold tracking-tight" style={{ color: "var(--wave-sky)" }}>
+              Rehearsal mode
+            </div>
+            <p className="mt-2 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">
+              No laptop. No DAW. Just structure, chords, and a metronome you can trust.
+            </p>
+          </div>
+        </motion.div>
+      </div>
+
+      <div className="mt-16 border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
+        <table className="w-full table-fixed font-mono-tb text-[9px] sm:text-[11px]">
+          <thead>
+            <tr className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] uppercase tracking-[0.1em] text-muted-foreground sm:tracking-[0.18em]">
+              <th className="w-[34%] px-1.5 py-2 text-left font-normal sm:w-auto sm:px-4 sm:py-3">Capability</th>
+              <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3">Desktop</th>
+              <th className="px-1 py-2 text-center font-normal text-lime sm:px-4 sm:py-3">
+                <span className="sm:hidden">Mixer</span>
+                <span className="hidden sm:inline">Mobile · Mixer</span>
+              </th>
+              <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3" style={{ color: "var(--wave-sky)" }}>
+                <span className="sm:hidden">Rehearsal</span>
+                <span className="hidden sm:inline">Mobile · Rehearsal</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {MOBILE_COMPARISON_ROWS.map(([label, desktop, mixer, rehearsal], i) => (
+              <tr key={i} className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-b-0 hover:bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+                <td className="truncate px-1.5 py-2 uppercase tracking-[0.1em] text-foreground sm:px-4 sm:py-2.5 sm:tracking-[0.18em]">
+                  {label}
+                </td>
+                {[desktop, mixer, rehearsal].map((v, j) => (
+                  <td key={j} className={`px-1 py-2 text-center sm:px-4 sm:py-2.5 ${v ? "text-lime" : "text-muted-foreground/40"}`}>
+                    {v ? "✓" : "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-8 border-l-2 border-lime pl-4 sm:pl-6">
+        <div className="font-display-tb text-2xl font-bold tracking-tight text-foreground md:text-3xl">
+          Your studio in your pocket. <span className="text-lime">It never lets you down.</span>
         </div>
       </div>
     </section>
@@ -2157,7 +2280,7 @@ function ThemingSection() {
   return (
     <section id="themes" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="04"
+        index="05"
         kicker="THEMING"
         title="ONE STUDIO."
         accent="SEVEN ROOMS."
@@ -2792,6 +2915,50 @@ function Roadmap() {
 }
 
 /* ============================================================
+ * FAQ (currently hidden — not rendered in LandingPage() below).
+ * Uncomment the block below, restore the "#faq" nav entry above, and
+ * restore the `<FAQ />` render call (before `<CTA .../>`) to bring it back.
+ * If re-enabled, also restore the FAQPage JSON-LD in lib/seo.ts#buildHomeJsonLd
+ * (Google requires FAQ structured data to match visible page content).
+ *
+ * import { SEO_FAQS } from "@/lib/seo";
+ *
+ * function FAQ() {
+ *   return (
+ *     <section id="faq" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+ *       <SectionHeader
+ *         index="08"
+ *         kicker="FAQ"
+ *         title="QUESTIONS,"
+ *         accent="ANSWERED."
+ *         description="What sonicdesk actually does, in plain language — version control, comments on bars, chord detection, and how it compares to the alternatives."
+ *       />
+ *
+ *       <div className="mt-14 grid grid-cols-1 gap-x-10 gap-y-10 md:grid-cols-2">
+ *         {SEO_FAQS.map((item, i) => (
+ *           <motion.div
+ *             key={item.question}
+ *             initial={{ opacity: 0, y: 16 }}
+ *             whileInView={{ opacity: 1, y: 0 }}
+ *             viewport={{ once: true, amount: 0.4 }}
+ *             transition={{ delay: (i % 2) * 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+ *             className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] pb-8"
+ *           >
+ *             <h3 className="font-display-tb text-lg font-bold leading-snug tracking-tight text-foreground md:text-xl">
+ *               {item.question}
+ *             </h3>
+ *             <p className="mt-3 font-mono-tb text-[13px] leading-relaxed text-muted-foreground md:text-sm">
+ *               {item.answer}
+ *             </p>
+ *           </motion.div>
+ *         ))}
+ *       </div>
+ *     </section>
+ *   );
+ * }
+ * ============================================================ */
+
+/* ============================================================
  * Final CTA
  * ============================================================ */
 
@@ -2919,12 +3086,13 @@ export default function LandingPage() {
           <TopBar authHref={authHref} authLabel={authLabel} />
           <Hero signInHref={authHref} />
           <BranchShowcase />
-          <ProcessShowcase />
+          <Features />
+          <MobileSection />
           <Philosophy />
           <ThemingSection />
-          <RehearsalDeepDive />
           <FeatureIndex />
           <Roadmap />
+          {/* FAQ section hidden for now — see FAQ() below to re-enable. */}
           <CTA signInHref={authHref} />
           <Footer />
         </main>
