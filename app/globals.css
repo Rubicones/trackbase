@@ -2244,6 +2244,15 @@ html:has(.landing-page) body {
   animation: tb-drift 14s ease-in-out infinite;
 }
 
+/* Slow teleprompter-style scroll for lyrics skeleton lines (Mobile · Rehearsal mode) */
+@keyframes tb-lyrics-scroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+.tb-lyrics-scroll {
+  animation: tb-lyrics-scroll 16s linear infinite;
+}
+
 /* Collapsible panels (sidebar resources, etc.) */
 .tb-accordion-panel {
   display: grid;

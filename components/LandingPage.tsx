@@ -1424,64 +1424,84 @@ const STRUCTURE_DEMO_CELLS = LANDING_MOCK_SECTIONS.map((s) => ({
   section: s,
   chords: (s.chords ?? "").trim().split(/\s+/).filter(Boolean),
 }));
-const STRUCTURE_DEMO_TOTAL = STRUCTURE_DEMO_CELLS.reduce((a, c) => a + c.chords.length, 0);
-const STRUCTURE_DEMO_CHORUS = (() => {
+/** Fewer, wider sections for small phones — drops pre-chorus and the repeat chorus so labels don't wrap/cramp. */
+const STRUCTURE_DEMO_CELLS_COMPACT = STRUCTURE_DEMO_CELLS.filter(
+  (c) => c.section.id !== "s-pre" && c.section.id !== "s-chorus2",
+);
+
+function structureDemoTotals(cells: typeof STRUCTURE_DEMO_CELLS) {
+  const total = cells.reduce((a, c) => a + c.chords.length, 0);
   let acc = 0;
-  for (const c of STRUCTURE_DEMO_CELLS) {
-    if (c.section.type === "chorus") return { start: acc, len: c.chords.length };
+  let chorus = { start: 0, len: total };
+  for (const c of cells) {
+    if (c.section.type === "chorus") {
+      chorus = { start: acc, len: c.chords.length };
+      break;
+    }
     acc += c.chords.length;
   }
-  return { start: 0, len: STRUCTURE_DEMO_TOTAL };
-})();
+  return { total, chorus };
+}
 
-function StructureDemo() {
+const STRUCTURE_DEMO_FULL_TOTALS = structureDemoTotals(STRUCTURE_DEMO_CELLS);
+const STRUCTURE_DEMO_COMPACT_TOTALS = structureDemoTotals(STRUCTURE_DEMO_CELLS_COMPACT);
+
+function StructureBoard({
+  cells,
+  total,
+  chorus,
+}: {
+  cells: typeof STRUCTURE_DEMO_CELLS;
+  total: number;
+  chorus: { start: number; len: number };
+}) {
   const [loop, setLoop] = useState(false);
   const [pos, setPos] = useState(0);
   useEffect(() => {
     const id = setInterval(() => {
       setPos((p) => {
         if (loop) {
-          const rel = (p - STRUCTURE_DEMO_CHORUS.start + 1 + STRUCTURE_DEMO_CHORUS.len) % STRUCTURE_DEMO_CHORUS.len;
-          return STRUCTURE_DEMO_CHORUS.start + rel;
+          const rel = (p - chorus.start + 1 + chorus.len) % chorus.len;
+          return chorus.start + rel;
         }
-        return (p + 1) % STRUCTURE_DEMO_TOTAL;
+        return (p + 1) % total;
       });
     }, 600);
     return () => clearInterval(id);
-  }, [loop]);
+  }, [loop, total, chorus.start, chorus.len]);
 
   let acc = 0;
   let curSection = 0;
   let curChord = 0;
-  for (let i = 0; i < STRUCTURE_DEMO_CELLS.length; i++) {
-    if (pos < acc + STRUCTURE_DEMO_CELLS[i].chords.length) {
+  for (let i = 0; i < cells.length; i++) {
+    if (pos < acc + cells[i].chords.length) {
       curSection = i;
       curChord = pos - acc;
       break;
     }
-    acc += STRUCTURE_DEMO_CELLS[i].chords.length;
+    acc += cells[i].chords.length;
   }
   return (
     <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
-      <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
+      <div className="flex items-center justify-between gap-2 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[9px] uppercase tracking-[0.14em] sm:text-[10px] sm:tracking-[0.18em]">
         <span className="text-muted-foreground">STRUCTURE · AUTO-DETECTED</span>
         <button
           type="button"
           onClick={() => setLoop((v) => !v)}
-          className={`border px-2 py-0.5 transition-colors ${
+          className={`shrink-0 border px-2 py-0.5 transition-colors ${
             loop ? "border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] text-lime" : "border-border text-foreground"
           }`}
         >
           {loop ? "● LOOPING CHORUS" : "↻ LOOP CHORUS"}
         </button>
       </div>
-      <div className="p-3 sm:p-4">
+      <div className="p-2 sm:p-4">
         <div className="flex border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
-          {STRUCTURE_DEMO_CELLS.map((c, i) => (
+          {cells.map((c, i) => (
             <div
               key={c.section.id}
               style={{ flex: c.chords.length }}
-              className={`relative border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2 py-2 transition-colors last:border-r-0 ${
+              className={`relative min-w-0 border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-1 py-1.5 transition-colors last:border-r-0 sm:px-2 sm:py-2 ${
                 curSection === i
                   ? "bg-[color-mix(in_oklab,var(--lime)_15%,transparent)]"
                   : c.section.type === "chorus"
@@ -1490,7 +1510,7 @@ function StructureDemo() {
               }`}
             >
               <div
-                className={`tb-section-name font-mono-tb text-[9px] uppercase tracking-[0.18em] ${
+                className={`tb-section-name truncate font-mono-tb text-[8px] uppercase tracking-[0.1em] sm:text-[9px] sm:tracking-[0.18em] ${
                   curSection === i ? "text-lime" : "text-foreground/70"
                 }`}
               >
@@ -1500,14 +1520,14 @@ function StructureDemo() {
           ))}
         </div>
         <div className="mt-2 flex border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
-          {STRUCTURE_DEMO_CELLS.map((c, i) => (
-            <div key={c.section.id} style={{ flex: c.chords.length }} className="flex border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-r-0">
+          {cells.map((c, i) => (
+            <div key={c.section.id} style={{ flex: c.chords.length }} className="flex min-w-0 border-r border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-r-0">
               {c.chords.map((chord, j) => {
                 const isCurrent = curSection === i && curChord === j;
                 return (
                   <div
                     key={j}
-                    className={`flex-1 py-2 text-center font-mono-tb text-[11px] transition-all ${
+                    className={`min-w-0 flex-1 py-1.5 text-center font-mono-tb text-[9px] transition-all sm:py-2 sm:text-[11px] ${
                       isCurrent ? "scale-[1.06] bg-lime text-primary-foreground" : "text-foreground/70"
                     }`}
                   >
@@ -1520,6 +1540,27 @@ function StructureDemo() {
         </div>
       </div>
     </div>
+  );
+}
+
+function StructureDemo() {
+  return (
+    <>
+      <div className="sm:hidden">
+        <StructureBoard
+          cells={STRUCTURE_DEMO_CELLS_COMPACT}
+          total={STRUCTURE_DEMO_COMPACT_TOTALS.total}
+          chorus={STRUCTURE_DEMO_COMPACT_TOTALS.chorus}
+        />
+      </div>
+      <div className="hidden sm:block">
+        <StructureBoard
+          cells={STRUCTURE_DEMO_CELLS}
+          total={STRUCTURE_DEMO_FULL_TOTALS.total}
+          chorus={STRUCTURE_DEMO_FULL_TOTALS.chorus}
+        />
+      </div>
+    </>
   );
 }
 
@@ -1914,6 +1955,8 @@ function MobileMixerMock() {
 }
 
 const MOBILE_REHEARSAL_CHORDS = ["Ebm", "B", "Gb", "Db", "Ebm", "B", "Ab", "Db"];
+// Placeholder line-length pattern for the not-yet-built lyrics view (skeleton, not real text).
+const LYRICS_SKELETON_WIDTHS = ["72%", "88%", "54%", "94%", "63%", "80%", "46%", "70%"];
 
 function MobileRehearsalMock() {
   const [chordIdx, setChordIdx] = useState(0);
@@ -1943,38 +1986,65 @@ function MobileRehearsalMock() {
           </span>
         ))}
       </div>
-      <div className="relative flex flex-1 flex-col items-center justify-center px-6">
-        <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Now</div>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={chord + bar}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.05 }}
-            transition={{ duration: 0.25 }}
-            className="font-display-tb text-[88px] font-bold leading-none tracking-tight text-lime"
-          >
-            {chord}
-          </motion.div>
-        </AnimatePresence>
-        <div className="mt-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          Bar {bar} / 16
+      <div className="flex min-h-0 flex-1 flex-col">
+        {/* now / next chord — top half */}
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6">
+          <div className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Now</div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={chord + bar}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.05 }}
+              transition={{ duration: 0.25 }}
+              className="font-display-tb text-[56px] font-bold leading-none tracking-tight text-lime"
+            >
+              {chord}
+            </motion.div>
+          </AnimatePresence>
+          <div className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+            Bar {bar} / 16
+          </div>
+          <div className="mt-2 flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-1.5">
+            <span className="font-mono-tb text-[8px] uppercase tracking-[0.18em] text-muted-foreground">Next</span>
+            <span className="font-display-tb text-lg font-bold tracking-tight text-foreground">{next}</span>
+          </div>
         </div>
-        <div className="mt-8 flex items-center gap-3 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2">
-          <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">Next</span>
-          <span className="font-display-tb text-2xl font-bold tracking-tight text-foreground">{next}</span>
+
+        {/* lyrics — bottom half, teleprompter-style auto-scroll (placeholder skeleton; real lyrics feature not built yet) */}
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-6 py-3">
+          <div className="mb-2 shrink-0 font-mono-tb text-[8px] uppercase tracking-[0.18em] text-muted-foreground">
+            Lyrics
+          </div>
+          <div
+            className="relative min-h-0 flex-1 overflow-hidden"
+            style={{
+              WebkitMaskImage: "linear-gradient(to bottom, black 55%, transparent 92%)",
+              maskImage: "linear-gradient(to bottom, black 55%, transparent 92%)",
+            }}
+          >
+            <div className="tb-lyrics-scroll absolute inset-x-0 top-0 flex flex-col gap-3">
+              {[...LYRICS_SKELETON_WIDTHS, ...LYRICS_SKELETON_WIDTHS].map((w, i) => (
+                <div key={i} className="h-2 shrink-0 rounded-full bg-muted-foreground/15" style={{ width: w }} />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-2 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
-        <button className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          ◷ 142
+      <div className="flex items-center justify-around border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
+        <LandingMobileTransportBtn label="Metronome">
+          <MetronomeIcon size={16} />
+        </LandingMobileTransportBtn>
+        <button
+          type="button"
+          aria-label="Play"
+          className="mx-auto grid size-11 place-items-center bg-lime text-primary-foreground transition active:scale-95"
+        >
+          <LandingMobilePlayIcon />
         </button>
-        <button className="bg-lime py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-primary-foreground">
-          ▶ loop
-        </button>
-        <button className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          ⤴ next
-        </button>
+        <LandingMobileTransportBtn label="Loop">
+          <LandingMobileLoopIcon size={16} />
+        </LandingMobileTransportBtn>
       </div>
     </div>
   );
