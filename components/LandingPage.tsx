@@ -3080,7 +3080,7 @@ function Footer() {
             sonicdesk<span className="text-foreground">.</span>
           </div>
           <p className="mt-3 max-w-sm font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
-            Built for musicians, indexed for engineers. Version control for music.
+            Music is a process. Not a file.
           </p>
         </div>
         {[
