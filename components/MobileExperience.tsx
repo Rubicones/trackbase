@@ -7,10 +7,9 @@ import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 import { ReadingMode, type ReadingModePlayer } from '@/components/ReadingMode'
 import { MobileMixerPortrait, type MobileMixerPortraitProps } from '@/components/MobileMixerPortrait'
-import { ChatLauncherButton } from '@/components/chat/ChatDock'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import { buildMobileProjectTourSteps } from '@/components/onboarding/mobileProjectTourSteps'
-import type { Project, Section, Track, Version } from '@/lib/types'
+import type { Project, Section, Version } from '@/lib/types'
 
 // ─── Mobile experience shell ──────────────────────────────────────────────────
 
@@ -24,9 +23,7 @@ export type MobileExperienceProps = {
   player: ReadingModePlayer
   sections: Section[]
   projectId: string
-  activeTracks: Track[]
   barDurationMs: number
-  isMainVersion: boolean
   sectionLoopOn: boolean
   sectionLoopEnabled: boolean
   onToggleSectionLoop: () => void
@@ -45,7 +42,6 @@ export type MobileExperienceProps = {
   showTour?: boolean
   onTourFinish?: () => void
   onTourSkip?: () => void
-  storageFull?: boolean
 }
 
 export function MobileExperience({
@@ -58,9 +54,7 @@ export function MobileExperience({
   player,
   sections,
   projectId,
-  activeTracks,
   barDurationMs,
-  isMainVersion,
   sectionLoopOn,
   sectionLoopEnabled,
   onToggleSectionLoop,
@@ -79,9 +73,9 @@ export function MobileExperience({
   showTour = false,
   onTourFinish,
   onTourSkip,
-  storageFull = false,
 }: MobileExperienceProps) {
   const [mode, setMode] = useState<'rehearse' | 'mixer'>('rehearse')
+  const [fullscreen, setFullscreen] = useState(false)
   const [localTourOpen, setLocalTourOpen] = useState(false)
   const modeRef = useRef(mode)
   modeRef.current = mode
@@ -102,7 +96,10 @@ export function MobileExperience({
   }, [mode])
 
   useEffect(() => {
-    if (tourOpen && !prevTourOpenRef.current) setMode('rehearse')
+    if (tourOpen && !prevTourOpenRef.current) {
+      setMode('rehearse')
+      setFullscreen(false)
+    }
     prevTourOpenRef.current = tourOpen
   }, [tourOpen])
 
@@ -116,73 +113,71 @@ export function MobileExperience({
     onTourSkip?.()
   }
 
+  const showChrome = !(fullscreen && mode === 'rehearse')
+
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-background overflow-hidden">
-      {/* Slim top bar — logo, nav path, account */}
-      <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <SonicdeskWordmark href="/dashboard" className="text-sm" />
-          <nav
-            aria-label="Breadcrumb"
-            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
-          >
-            <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
-              Bands
-            </Link>
-            <span className="text-border shrink-0">/</span>
-            <Link
-              href={`/band/${bandId}`}
-              className="tb-type-name text-xs hover:text-foreground no-underline truncate min-w-0"
+      {/* Slim top bar — logo, nav path, account — hidden in fullscreen rehearsal */}
+      {showChrome && (
+        <header className="h-11 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-background">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <SonicdeskWordmark href="/dashboard" className="text-sm" />
+            <nav
+              aria-label="Breadcrumb"
+              className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
             >
-              {project.band_name ?? 'Band'}
-            </Link>
-            <span className="text-border shrink-0">/</span>
-            <span className="tb-type-name text-xs text-foreground truncate min-w-0">{project.name}</span>
-          </nav>
-        </div>
-
-        <TourHelpButton onClick={() => setLocalTourOpen(true)} />
-        <AvatarDropdown />
-      </header>
-
-      {/* Chat bar + mode switch */}
-      <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
-        {onOpenChat && (
-          <div data-tour="mobile-chat">
-            <ChatLauncherButton
-              variant="bar"
-              unread={chatUnread}
-              onClick={onOpenChat}
-            />
-          </div>
-        )}
-        <div className="grid grid-cols-2 border border-border bg-background" data-tour="mobile-mode-switch">
-          {(['rehearse', 'mixer'] as const).map(m => {
-            const active = mode === m
-            return (
-              <button
-                key={m}
-                type="button"
-                onClick={() => {
-                  if (mode === 'rehearse' && m === 'mixer') {
-                    trackEvent('mixer_opened_from_rehearsal')
-                  }
-                  if (mode === 'mixer' && m === 'rehearse') {
-                    trackEvent('rehearsal_mode_entered')
-                  }
-                  setMode(m)
-                }}
-                data-tour={m === 'rehearse' ? 'mobile-mode-rehearse' : 'mobile-mode-mixer'}
-                className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
-                  active ? 'bg-lime text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-                }`}
+              <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
+                Bands
+              </Link>
+              <span className="text-border shrink-0">/</span>
+              <Link
+                href={`/band/${bandId}`}
+                className="tb-type-name text-xs hover:text-foreground no-underline truncate min-w-0"
               >
-                {m === 'rehearse' ? '● Rehearsal' : '≡ Mixer'}
-              </button>
-            )
-          })}
+                {project.band_name ?? 'Band'}
+              </Link>
+              <span className="text-border shrink-0">/</span>
+              <span className="tb-type-name text-xs text-foreground truncate min-w-0">{project.name}</span>
+            </nav>
+          </div>
+
+          <TourHelpButton onClick={() => setLocalTourOpen(true)} />
+          <AvatarDropdown />
+        </header>
+      )}
+
+      {/* Mode switch — hidden in fullscreen rehearsal */}
+      {showChrome && (
+        <div className="px-3 pt-3 pb-2 border-b border-border bg-surface/40 shrink-0 space-y-2">
+          <div className="grid grid-cols-2 border border-border bg-background" data-tour="mobile-mode-switch">
+            {(['rehearse', 'mixer'] as const).map(m => {
+              const active = mode === m
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    if (mode === 'rehearse' && m === 'mixer') {
+                      trackEvent('mixer_opened_from_rehearsal')
+                    }
+                    if (mode === 'mixer' && m === 'rehearse') {
+                      trackEvent('rehearsal_mode_entered')
+                    }
+                    setMode(m)
+                    setFullscreen(false)
+                  }}
+                  data-tour={m === 'rehearse' ? 'mobile-mode-rehearse' : 'mobile-mode-mixer'}
+                  className={`py-2.5 text-[10px] font-bold uppercase tracking-widest transition ${
+                    active ? 'bg-lime text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {m === 'rehearse' ? '● Rehearsal' : '≡ Mixer'}
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
         {mode === 'rehearse' ? (
@@ -198,9 +193,9 @@ export function MobileExperience({
             versionSwitchDisabled={versionSwitchDisabled}
             projectId={projectId}
             bandId={bandId}
-            activeTracks={activeTracks}
             barDurationMs={barDurationMs}
-            isMainVersion={isMainVersion}
+            fullscreen={fullscreen}
+            onToggleFullscreen={() => setFullscreen(f => !f)}
             sectionLoopOn={sectionLoopOn}
             sectionLoopEnabled={sectionLoopEnabled}
             onToggleSectionLoop={onToggleSectionLoop}
@@ -209,7 +204,6 @@ export function MobileExperience({
             isCounting={isCounting}
             onToggleMetronome={onToggleMetronome}
             onToggleCountdown={onToggleCountdown}
-            storageFull={storageFull}
           />
         ) : (
           <MobileMixerPortrait {...mixer} />

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { PRODUCTION_SITE_URL } from '@/lib/site-url'
+import { getSeoOrigin } from '@/lib/site-url'
 
 export const SITE_NAME = 'sonicdesk.'
 export const SITE_SHORT_NAME = 'sonicdesk'
@@ -103,7 +103,7 @@ export const SEO_FAQS: { question: string; answer: string }[] = [
 ]
 
 export function getMetadataBase(): URL {
-  return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? PRODUCTION_SITE_URL)
+  return new URL(getSeoOrigin())
 }
 
 export function getCanonicalUrl(path = '/'): string {

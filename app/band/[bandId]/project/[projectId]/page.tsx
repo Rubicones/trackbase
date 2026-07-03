@@ -6111,9 +6111,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           }}
           sections={sections}
           projectId={projectId}
-          activeTracks={activeTracks}
           barDurationMs={projBarDurationMs}
-          isMainVersion={activeVersion?.type === 'main'}
           sectionLoopOn={player.sectionLoopOn}
           sectionLoopEnabled={sectionLoopButtonEnabled}
           onToggleSectionLoop={handleToggleSectionLoop}
@@ -6241,7 +6239,6 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             exitOnboardingTourView()
             updateOnboarding('mobile_project_tour_skipped', true)
           }}
-          storageFull={storageFull}
         />
       )}
 

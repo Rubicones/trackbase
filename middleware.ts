@@ -9,6 +9,7 @@ import {
 } from '@/lib/auth/session'
 import { authCookieOptions } from '@/lib/auth/cookie-options'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
+import { PRODUCTION_SITE_URL, REDIRECT_TO_CANONICAL_HOSTS } from '@/lib/site-url'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -34,6 +35,13 @@ function applyRefreshedCookies(res: NextResponse, session: RefreshedSession) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const host = request.headers.get('host')?.split(':')[0] ?? ''
+
+  // www + pre-rebrand domains → canonical host (301 so Google consolidates signals).
+  if (REDIRECT_TO_CANONICAL_HOSTS.has(host)) {
+    const dest = new URL(pathname + request.nextUrl.search, PRODUCTION_SITE_URL)
+    return NextResponse.redirect(dest, 301)
+  }
 
   if (
     pathname.startsWith('/_next') ||
@@ -43,9 +51,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Legacy invite links — send to join flow
+  // Legacy invite links — send to join flow (301: URL pattern permanently moved).
   if (pathname.startsWith('/invite/')) {
-    return NextResponse.redirect(new URL('/onboarding?step=3', request.url))
+    return NextResponse.redirect(new URL('/onboarding?step=3', request.url), 301)
   }
 
   let verified: VerifiedUser | null = null
