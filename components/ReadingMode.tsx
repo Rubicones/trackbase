@@ -384,8 +384,9 @@ export function ReadingMode({
   // fractional remainder every frame and can get stuck at 0 forever.
   useEffect(() => {
     if (!autoscrollOn || !lyricsPlaying || lyricsSpeed <= 0) return
-    const el = lyricsRef.current
-    if (!el) return
+    const maybeEl = lyricsRef.current
+    if (!maybeEl) return
+    const el: HTMLDivElement = maybeEl
 
     let raf = 0
     let lastTs: number | null = null
