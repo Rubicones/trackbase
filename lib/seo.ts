@@ -92,7 +92,7 @@ export const SEO_FAQS: { question: string; answer: string }[] = [
       'Yes. The mobile mixer lets you mix, mute, solo, and record tracks from a phone, and rehearsal mode surfaces chords, structure, and loopable sections built for the practice room — no laptop or DAW required.',
   },
   {
-    question: 'How is sonicdesk different from BandLab, SyncMuse, or OmMuse?',
+    question: 'How is sonicdesk different from other music collaboration tools?',
     answer:
       'sonicdesk is a band workspace built around version control first: branching, merging, and comparing takes, plus comments on bars, chord detection, a roadmap with checklists, and band chat, all in one place — rather than a general-purpose DAW or file-storage tool with collaboration bolted on.',
   },
@@ -201,6 +201,42 @@ export const homeMetadata: Metadata = {
   },
 }
 
+/**
+ * Metadata for the marketing "slice" pages (/features/*, /audience/*).
+ * Inherits the root title template (`%s · sonicdesk.`) and robots defaults.
+ */
+export function buildSlicePageMetadata({
+  title,
+  description,
+  path,
+}: {
+  title: string
+  description: string
+  path: string
+}): Metadata {
+  return {
+    title,
+    description,
+    alternates: {
+      canonical: getCanonicalUrl(path),
+    },
+    openGraph: {
+      ...sharedOpenGraph,
+      type: 'article',
+      title: `${title} · ${SITE_NAME}`,
+      description,
+      url: getCanonicalUrl(path),
+      images: [OPEN_GRAPH_IMAGE],
+    },
+    twitter: {
+      ...sharedTwitter,
+      title: `${title} · ${SITE_NAME}`,
+      description,
+      images: [OPEN_GRAPH_IMAGE.url],
+    },
+  }
+}
+
 /** Metadata for authenticated / utility routes that should not be indexed. */
 export function noIndexMetadata(title: string, description?: string): Metadata {
   return {
@@ -220,6 +256,59 @@ export function noIndexMetadata(title: string, description?: string): Metadata {
 }
 
 type JsonLd = Record<string, unknown>
+
+/**
+ * JSON-LD for marketing slice pages (/features/*, /audience/*, /vs/*):
+ * a BreadcrumbList (Home → page) plus a WebPage node tied to the site.
+ * Helps Google understand the page hierarchy now that the site is no
+ * longer a single indexable URL.
+ */
+export function buildSlicePageJsonLd({
+  title,
+  description,
+  path,
+}: {
+  title: string
+  description: string
+  path: string
+}): JsonLd[] {
+  const url = getCanonicalUrl(path)
+
+  const breadcrumbs: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: SITE_NAME,
+        item: getCanonicalUrl('/'),
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: title,
+        item: url,
+      },
+    ],
+  }
+
+  const webPage: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: `${title} · ${SITE_NAME}`,
+    url,
+    description,
+    inLanguage: 'en-US',
+    isPartOf: {
+      '@type': 'WebSite',
+      name: SITE_NAME,
+      url: getCanonicalUrl('/'),
+    },
+  }
+
+  return [breadcrumbs, webPage]
+}
 
 export function buildHomeJsonLd(): JsonLd[] {
   const url = getCanonicalUrl('/')

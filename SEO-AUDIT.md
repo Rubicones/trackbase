@@ -1,7 +1,49 @@
 # sonicdesk. — SEO Audit & On-Page Fixes
 
-**Date:** 2026-07-02, updated 2026-07-03
-**Scope:** Technical/on-page audit of the homepage (the site's only indexable page) + implemented fixes. Dedicated per-feature landing pages were explicitly out of scope for both rounds.
+**Date:** 2026-07-02, updated 2026-07-05
+**Scope:** Rounds 1–2: technical/on-page audit of the homepage. Round 3: page-per-intent architecture — new feature pages + competitor comparison pages.
+
+## Round 3 — 2026-07-05
+
+### ⚠️ Same-day rollback: /vs/* and /features/workflow REMOVED per user request — no competitor names allowed in metadata/content (legal). Stubs left (couldn't delete files); run: `rm -rf app/vs app/features/workflow components/landing/ComparisonPage.tsx components/landing/WorkflowFeaturePage.tsx`. Grep-verified: no competitor names remain in shipped source. Sections below mentioning /vs pages are historical.
+
+### ✅ Round 2's critical domain bug is FIXED in production
+Verified live: `https://sonicdesk.studio` now serves `canonical`, `og:url` and Twitter URLs pointing at **sonicdesk.studio** (not trackbase.studio). All round 1–2 on-page work confirmed live. Remaining from that fix: confirm `trackbase.studio` 301-redirects to sonicdesk.studio, and (re)submit the sitemap in Google Search Console.
+
+### Context: slice pages already existed
+Since round 2, `/features/{versions,structure,mobile}` and `/audience/{cover-band,indie-band,producer}` were built (SliceChrome pattern, `buildSlicePageMetadata`, in sitemap, footer-linked). Round 3 filled the gaps.
+
+### Shipped this round
+
+1. **Two new feature pages** (each targets one search intent, `force-static`, unique metadata):
+   - `/features/comments` — "comments on bars", "timestamped track comments", "feedback tool for music". New `components/landing/CommentsFeaturePage.tsx` (waveform + range-selection + thread mock).
+   - `/features/workflow` — "band chat app", "roadmap tool for bands", "checklist with assignments". New `components/landing/WorkflowFeaturePage.tsx` (chat-with-deep-links, roadmap + assigned checklist mocks).
+
+2. **Three comparison pages** — factual & fair tone, all competitor claims verified against their live public sites on 2026-07-05 (SyncMuse free tier limits + Pro $12.99/mo; OmMuse tiers 100GB free/$9.99 Major/Enterprise + Dolby.io mastering; BandLab claims kept conservative — their marketing pages are client-rendered and serve empty HTML to crawlers, which is itself an SEO weakness of theirs):
+   - `/vs/bandlab` — positions as different category (workspace vs free DAW + social).
+   - `/vs/syncmuse` — closest competitor; overlap acknowledged (versions, timestamped comments, A/B), differentiation on branching/merging, bar-anchored comments, chords/structure/rehearsal/band layer.
+   - `/vs/ommuse` — workspace vs storage + AI mastering.
+   - Shared data-driven `components/landing/ComparisonPage.tsx` ("choose them if / choose us if" columns, feature table with notes, "credit where due" section, freshness disclaimer).
+
+3. **Keyword-tuned existing slice metadata.** `/features/versions` title now "Version control for music — branch, merge & A/B compare" (was "Versions & A/B compare"); `/features/structure` now "Song structure editor & automatic chord detection"; `/features/mobile` now "Mobile mixer & rehearsal mode app for bands"; audience page titles extended with keyword-bearing suffixes.
+
+4. **JSON-LD for all slice pages.** New `buildSlicePageJsonLd()` in `lib/seo.ts` (BreadcrumbList + WebPage) injected on all 8 feature/audience pages and 3 vs pages via existing `JsonLd` component.
+
+5. **Discovery wiring.** `app/sitemap.ts` +5 URLs (11 slice pages total); homepage footer: DEEP DIVES column gained comments + workflow links, new COMPARE column (vs BandLab/SyncMuse/OmMuse), grid widened to 6 columns on lg. `SliceKind` extended with `"compare"` in SliceChrome. `SEO_KEYWORDS` +3 ("BandLab alternative", "SyncMuse alternative", "OmMuse alternative"). robots.ts already allowed `/vs/` (allow-all with disallow prefixes).
+
+### Files changed (round 3)
+- New: `app/features/comments/page.tsx`, `app/features/workflow/page.tsx`, `app/vs/{bandlab,syncmuse,ommuse}/page.tsx`, `components/landing/CommentsFeaturePage.tsx`, `components/landing/WorkflowFeaturePage.tsx`, `components/landing/ComparisonPage.tsx`
+- Modified: `lib/seo.ts` (buildSlicePageJsonLd, keywords), `app/sitemap.ts`, `components/LandingPage.tsx` (footer), `components/landing/SliceChrome.tsx` (compare kind), all 6 existing slice `page.tsx` files (metadata + JSON-LD)
+
+**Not verified by build** — sandbox had no disk space again. Run `npm run build` / `tsc --noEmit` before deploying. Changes are additive.
+
+### Remaining backlog (priority order)
+1. **Google Search Console** — verify domain, submit sitemap, and after the domain fix, watch for trackbase.studio ghosts. Highest remaining leverage, zero code.
+2. **301 redirect trackbase.studio → sonicdesk.studio** (if you control the domain).
+3. **Re-enable FAQ section + FAQPage JSON-LD** (built, commented out in `LandingPage.tsx` / `lib/seo.ts` — was hidden per your request; rich-result eligibility is free once visible).
+4. **Beta messaging** — "PRIVATE BETA" framing on commercial-intent pages can suppress CTR; consider a waitlist CTA on slice pages.
+5. **Free backlink-bait tool** (SyncMuse has /tools/diff + /tools/loudness) — e.g. a free BPM/key/chord detector at /tools/chord-detector.
+6. **Blog/content** for long-tail ("how to organize band demos", "git for musicians").
 
 ## Round 2 — 2026-07-03
 

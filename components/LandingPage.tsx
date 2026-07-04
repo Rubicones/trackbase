@@ -953,7 +953,8 @@ function BranchApplyRibbon({ version }: { version: (typeof VERSIONS)[number] }) 
   );
 }
 
-function BranchShowcase() {
+/** Version tree + "what changed" diff board. Exported — reused on /features/versions. */
+export function BranchBoard({ className = "" }: { className?: string }) {
   const [active, setActive] = useState(1);
   const [pinned, setPinned] = useState(false);
   useEffect(() => {
@@ -964,17 +965,7 @@ function BranchShowcase() {
   const v = VERSIONS[active];
 
   return (
-    <section id="versioning" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
-      <SectionHeader
-        index="01"
-        kicker="VERSIONS & DIFF"
-        title="BRANCH IT."
-        accent="BREAK IT. MERGE IT BACK."
-        description="Copy master into a new version. Experiment freely — new take, alt chorus, half-time bridge. When it clicks, apply back to master with a visible diff. Nothing lost, ever."
-        seoNote="Version control for music: branch, merge, and compare takes without losing the original mix"
-      />
-
-      <div className="mt-12 grid min-w-0 gap-6 lg:grid-cols-[300px_1fr]">
+    <div className={`grid min-w-0 gap-6 lg:grid-cols-[300px_1fr] ${className}`}>
         {/* Version tree */}
         <div className="min-w-0 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
           <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -1108,7 +1099,23 @@ function BranchShowcase() {
             ))}
           </div>
         </div>
-      </div>
+    </div>
+  );
+}
+
+function BranchShowcase() {
+  return (
+    <section id="versioning" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
+      <SectionHeader
+        index="01"
+        kicker="VERSIONS & DIFF"
+        title="BRANCH IT."
+        accent="BREAK IT. MERGE IT BACK."
+        description="Copy master into a new version. Experiment freely — new take, alt chorus, half-time bridge. When it clicks, apply back to master with a visible diff. Nothing lost, ever."
+        seoNote="Version control for music: branch, merge, and compare takes without losing the original mix"
+      />
+
+      <BranchBoard className="mt-12" />
     </section>
   );
 }
@@ -1543,7 +1550,8 @@ function StructureBoard({
   );
 }
 
-function StructureDemo() {
+/** Structure + chord board demo (responsive pair). Exported — reused on /features/structure. */
+export function StructureDemo() {
   return (
     <>
       <div className="sm:hidden">
@@ -1880,7 +1888,8 @@ function FeatureIndex() {
  * Rehearsal Mode deep-dive
  * ============================================================ */
 
-function MobilePhoneFrame({ children, accent }: { children: ReactNode; accent: string }) {
+/** Phone bezel around a mobile mock. Exported — reused on /features/mobile. */
+export function MobilePhoneFrame({ children, accent }: { children: ReactNode; accent: string }) {
   return (
     <div className="relative w-[260px] shrink-0 sm:w-[280px]" style={{ perspective: 1000 }}>
       <div
@@ -1894,7 +1903,8 @@ function MobilePhoneFrame({ children, accent }: { children: ReactNode; accent: s
   );
 }
 
-function MobileMixerMock() {
+/** Mobile mixer-mode mock. Exported — reused on /features/mobile. */
+export function MobileMixerMock() {
   const tracks = [
     { n: "GTR", color: "var(--wave-violet)", seed: 3.2 },
     { n: "DRM", color: "var(--wave-mint)", seed: 5.4 },
@@ -1958,7 +1968,8 @@ const MOBILE_REHEARSAL_CHORDS = ["Ebm", "B", "Gb", "Db", "Ebm", "B", "Ab", "Db"]
 // Placeholder line-length pattern for the not-yet-built lyrics view (skeleton, not real text).
 const LYRICS_SKELETON_WIDTHS = ["72%", "88%", "54%", "94%", "63%", "80%", "46%", "70%"];
 
-function MobileRehearsalMock() {
+/** Mobile rehearsal-mode mock. Exported — reused on /features/mobile. */
+export function MobileRehearsalMock() {
   const [chordIdx, setChordIdx] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setChordIdx((c) => (c + 1) % MOBILE_REHEARSAL_CHORDS.length), 900);
@@ -2061,6 +2072,44 @@ const MOBILE_COMPARISON_ROWS: Array<[string, boolean, boolean, boolean]> = [
   ["Metronome", true, true, true],
 ];
 
+/** Desktop vs mobile capability table. Exported — reused on /features/mobile. */
+export function MobileComparisonTable({ className = "" }: { className?: string }) {
+  return (
+    <div className={`border border-[color-mix(in_oklab,var(--border)_80%,transparent)] ${className}`}>
+      <table className="w-full table-fixed font-mono-tb text-[9px] sm:text-[11px]">
+        <thead>
+          <tr className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] uppercase tracking-[0.1em] text-muted-foreground sm:tracking-[0.18em]">
+            <th className="w-[34%] px-1.5 py-2 text-left font-normal sm:w-auto sm:px-4 sm:py-3">Capability</th>
+            <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3">Desktop</th>
+            <th className="px-1 py-2 text-center font-normal text-lime sm:px-4 sm:py-3">
+              <span className="sm:hidden">Mixer</span>
+              <span className="hidden sm:inline">Mobile · Mixer</span>
+            </th>
+            <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3" style={{ color: "var(--wave-sky)" }}>
+              <span className="sm:hidden">Rehearsal</span>
+              <span className="hidden sm:inline">Mobile · Rehearsal</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {MOBILE_COMPARISON_ROWS.map(([label, desktop, mixer, rehearsal], i) => (
+            <tr key={i} className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-b-0 hover:bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
+              <td className="truncate px-1.5 py-2 uppercase tracking-[0.1em] text-foreground sm:px-4 sm:py-2.5 sm:tracking-[0.18em]">
+                {label}
+              </td>
+              {[desktop, mixer, rehearsal].map((v, j) => (
+                <td key={j} className={`px-1 py-2 text-center sm:px-4 sm:py-2.5 ${v ? "text-lime" : "text-muted-foreground/40"}`}>
+                  {v ? "✓" : "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function MobileSection() {
   return (
     <section id="mobile" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
@@ -2121,38 +2170,7 @@ function MobileSection() {
         </motion.div>
       </div>
 
-      <div className="mt-16 border border-[color-mix(in_oklab,var(--border)_80%,transparent)]">
-        <table className="w-full table-fixed font-mono-tb text-[9px] sm:text-[11px]">
-          <thead>
-            <tr className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] uppercase tracking-[0.1em] text-muted-foreground sm:tracking-[0.18em]">
-              <th className="w-[34%] px-1.5 py-2 text-left font-normal sm:w-auto sm:px-4 sm:py-3">Capability</th>
-              <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3">Desktop</th>
-              <th className="px-1 py-2 text-center font-normal text-lime sm:px-4 sm:py-3">
-                <span className="sm:hidden">Mixer</span>
-                <span className="hidden sm:inline">Mobile · Mixer</span>
-              </th>
-              <th className="px-1 py-2 text-center font-normal sm:px-4 sm:py-3" style={{ color: "var(--wave-sky)" }}>
-                <span className="sm:hidden">Rehearsal</span>
-                <span className="hidden sm:inline">Mobile · Rehearsal</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {MOBILE_COMPARISON_ROWS.map(([label, desktop, mixer, rehearsal], i) => (
-              <tr key={i} className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] last:border-b-0 hover:bg-[color-mix(in_oklab,var(--card)_30%,transparent)]">
-                <td className="truncate px-1.5 py-2 uppercase tracking-[0.1em] text-foreground sm:px-4 sm:py-2.5 sm:tracking-[0.18em]">
-                  {label}
-                </td>
-                {[desktop, mixer, rehearsal].map((v, j) => (
-                  <td key={j} className={`px-1 py-2 text-center sm:px-4 sm:py-2.5 ${v ? "text-lime" : "text-muted-foreground/40"}`}>
-                    {v ? "✓" : "—"}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <MobileComparisonTable className="mt-16" />
 
       <div className="mt-8 border-l-2 border-lime pl-4 sm:pl-6">
         <div className="font-display-tb text-2xl font-bold tracking-tight text-foreground md:text-3xl">
@@ -3071,7 +3089,7 @@ function Footer() {
   return (
     <footer className="landing-full-bleed px-4 py-10 md:px-8">
       <div className="mx-auto w-full max-w-[1920px]">
-        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
         <div>
           <div
             className="font-display-tb font-bold tracking-tight text-lime text-xl"
@@ -3102,6 +3120,18 @@ function Footer() {
               { label: "Schools", href: "#join" },
               { label: "Labels", href: "#join" },
               { label: "Producer centers", href: "#join" },
+            ],
+          ],
+          [
+            "DEEP DIVES",
+            [
+              { label: "Versions & A/B", href: "/features/versions" },
+              { label: "Comments on bars", href: "/features/comments" },
+              { label: "Structure & chords", href: "/features/structure" },
+              { label: "Mobile", href: "/features/mobile" },
+              { label: "For cover bands", href: "/audience/cover-band" },
+              { label: "For indie bands", href: "/audience/indie-band" },
+              { label: "For producers", href: "/audience/producer" },
             ],
           ],
           [
