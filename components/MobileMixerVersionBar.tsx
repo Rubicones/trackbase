@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { Version } from '@/lib/types'
 import { sortMobileVersions } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
@@ -54,6 +54,7 @@ export function CommentToggleBtn({
 
 export function MobileMixerVersionBar({
   versions, activeId, onSelect, onNewBranch,
+  onRenameVersion, onDeleteVersion,
   commentMode, commentCount, onToggleCommentMode,
   switchOnly = false,
   versionSwitchDisabled = false,
@@ -62,6 +63,8 @@ export function MobileMixerVersionBar({
   activeId: string
   onSelect: (id: string) => void
   onNewBranch?: () => void
+  onRenameVersion?: (id: string, name: string) => void
+  onDeleteVersion?: (id: string) => void
   commentMode?: boolean
   commentCount?: number
   onToggleCommentMode?: () => void
@@ -70,6 +73,25 @@ export function MobileMixerVersionBar({
   versionSwitchDisabled?: boolean
 }) {
   const sortedVersions = useMemo(() => sortMobileVersions(versions), [versions])
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const activeVersion = versions.find(v => v.id === activeId)
+
+  function startRename(v: Version) {
+    if (!onRenameVersion || v.type === 'main') return
+    setRenamingId(v.id)
+    setRenameValue(v.name)
+    setTimeout(() => { renameInputRef.current?.focus(); renameInputRef.current?.select() }, 0)
+  }
+
+  function commitRename() {
+    const id = renamingId
+    setRenamingId(null)
+    if (!id) return
+    const trimmed = renameValue.trim()
+    if (trimmed) onRenameVersion?.(id, trimmed)
+  }
 
   return (
     <div className={`flex items-stretch shrink-0 h-10 ${switchOnly ? 'bg-background' : 'border-b border-border bg-surface/40'}`}>
@@ -77,12 +99,36 @@ export function MobileMixerVersionBar({
         {sortedVersions.map(v => {
           const isActive = v.id === activeId
           const switchBlocked = versionSwitchDisabled && !isActive
+          const isRenaming = renamingId === v.id
+
+          if (isRenaming) {
+            return (
+              <input
+                key={v.id}
+                ref={renameInputRef}
+                value={renameValue}
+                onChange={e => setRenameValue(e.target.value.slice(0, 60))}
+                onBlur={commitRename}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitRename()
+                  if (e.key === 'Escape') setRenamingId(null)
+                }}
+                className="shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border border-lime bg-background text-foreground max-w-[160px] outline-none"
+              />
+            )
+          }
+
           return (
             <button
               key={v.id}
               type="button"
               disabled={switchBlocked}
-              onClick={() => onSelect(v.id)}
+              onClick={() => {
+                // Tapping the already-active branch again opens rename — mirrors
+                // the "tap selected section again" pattern in the structure editor.
+                if (isActive && v.type === 'branch' && onRenameVersion) startRename(v)
+                else onSelect(v.id)
+              }}
               className={`shrink-0 text-[10px] uppercase tracking-widest px-2 py-1 border transition overflow-hidden text-ellipsis whitespace-nowrap max-w-[160px] ${
                 isActive
                   ? 'bg-lime text-primary-foreground border-lime'
@@ -108,6 +154,18 @@ export function MobileMixerVersionBar({
           className="shrink-0 self-stretch border-l border-border px-2.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:border-lime hover:text-lime hover:bg-surface/60 transition"
         >
           + Version
+        </button>
+      )}
+      {!switchOnly && onDeleteVersion && activeVersion?.type === 'branch' && (
+        <button
+          type="button"
+          onClick={() => onDeleteVersion(activeVersion.id)}
+          aria-label="Delete version"
+          className="shrink-0 self-stretch border-l border-destructive px-2.5 text-destructive hover:bg-destructive/10 transition"
+        >
+          <svg width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <path d="M1.5 3h9M4.5 3V2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1M10 3l-.75 7.5a.5.5 0 0 1-.5.5h-5.5a.5.5 0 0 1-.5-.5L2 3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" />
+          </svg>
         </button>
       )}
       {!switchOnly && onToggleCommentMode && (

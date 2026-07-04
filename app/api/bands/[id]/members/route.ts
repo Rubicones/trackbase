@@ -27,21 +27,35 @@ export async function GET(
       process.env.SUPABASE_SERVICE_KEY!,
     )
 
-    const { data: members, error } = await adminSupabase
+    // Fetch membership rows and profiles as two plain queries and join in JS —
+    // relying on PostgREST's embedded `profiles(...)` join here previously
+    // silently 500'd (no FK relationship for it to auto-detect), which left
+    // the checklist assignee picker with an empty member list.
+    const { data: members, error: membersErr } = await adminSupabase
       .from('band_members')
-      .select('user_id, profiles(id, username, display_name)')
+      .select('user_id')
       .eq('band_id', bandId)
+    if (membersErr) throw membersErr
 
-    if (error) throw error
+    const memberUserIds = (members ?? []).map((m: { user_id: string }) => m.user_id)
 
-    const result = (members ?? []).map((m: {
-      user_id: string
-      profiles: { id: string; username: string; display_name: string | null }[] | { id: string; username: string; display_name: string | null } | null
-    }) => {
-      const profile = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles
+    const { data: profiles, error: profilesErr } = memberUserIds.length
+      ? await adminSupabase
+          .from('profiles')
+          .select('id, username, display_name')
+          .in('id', memberUserIds)
+      : { data: [] as { id: string; username: string; display_name: string | null }[], error: null }
+    if (profilesErr) throw profilesErr
+
+    const profileMap = new Map(
+      (profiles ?? []).map(p => [p.id, p]),
+    )
+
+    const result = memberUserIds.map(userId => {
+      const profile = profileMap.get(userId)
       return {
-        user_id: m.user_id,
-        username: profile?.username ?? m.user_id,
+        user_id: userId,
+        username: profile?.username ?? userId,
         display_name: profile?.display_name ?? null,
       }
     })

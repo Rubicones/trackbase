@@ -4,7 +4,7 @@ type SpinnerProps = {
   size?: number
   className?: string
   label?: string
-  tone?: 'lime' | 'foreground' | 'muted' | 'white'
+  tone?: 'lime' | 'foreground' | 'muted' | 'white' | 'amber'
 }
 
 /** Brutalist 8-tick rotor — matches sonicdesk-uikit spinner. */
@@ -13,6 +13,7 @@ export function Spinner({ size = 20, className, label, tone = 'lime' }: SpinnerP
     tone === 'lime' ? 'var(--lime)'
       : tone === 'muted' ? 'var(--muted-foreground)'
       : tone === 'white' ? '#fff'
+      : tone === 'amber' ? 'var(--amber)'
       : 'var(--foreground)'
   return (
     <span

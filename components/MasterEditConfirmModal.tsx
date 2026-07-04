@@ -50,21 +50,30 @@ export function MasterEditConfirmModal({
           later. You can create a new version of the main branch instead.
         </p>
 
-        <div className="flex flex-wrap gap-2 justify-end mt-6">
+        <div className="flex flex-col gap-2 mt-6">
           <button
             type="button"
             onClick={() => onNewVersion(suppress24h)}
-            className="inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
+            className="w-full inline-flex items-center justify-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
           >
             + New Version
           </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(suppress24h)}
-            className="text-[10px] uppercase tracking-widest px-3 py-1.5 border border-lime bg-lime text-primary-foreground font-display font-bold transition"
-          >
-            I&apos;m sure
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition"
+            >
+              Undo Changes
+            </button>
+            <button
+              type="button"
+              onClick={() => onConfirm(suppress24h)}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-lime bg-lime text-primary-foreground font-display font-bold transition"
+            >
+              I&apos;m sure
+            </button>
+          </div>
         </div>
 
         <button

@@ -71,7 +71,7 @@ import {
   takePreloadedPreviewAudio,
 } from '@/lib/previewMixClient'
 import { RecordingTrackRow, type RecordingTrackControl, type RecordState } from '@/components/RecordingTrackRow'
-import { ChevronsLeftRightEllipsis } from 'lucide-react'
+import { ChevronsLeftRightEllipsis, Trash2 } from 'lucide-react'
 import { getVersionDisplayName } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
 import { VersionToolbarDropdown } from '@/components/VersionToolbarDropdown'
@@ -2498,8 +2498,11 @@ const TrackRow = React.memo(function TrackRow({
   compact = false,
   resourceFilterActive = false,
   onResourceFilter,
+  isReplacing = false,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
+  /** True while a new file is being uploaded/processed to replace this track. */
+  isReplacing?: boolean
   /** Ref updated every rAF frame — read directly by DOM updates, never triggers re-render. */
   currentTimeRef: React.RefObject<number>; commentMode: boolean
   activeInput: ActiveCommentInput | null; audioReady: boolean
@@ -3030,8 +3033,18 @@ const TrackRow = React.memo(function TrackRow({
             )}
             {!compact && (
             <div className="mt-0.5">
-              {changed ? (
-                <span className="text-[9px] uppercase tracking-widest text-amber">Modified</span>
+              {isReplacing ? (
+                <span className="inline-flex items-center gap-1.5 text-amber">
+                  <Spinner size={10} tone="amber" />
+                  <span className="text-[9px] uppercase tracking-widest">Replacing…</span>
+                </span>
+              ) : changed ? (
+                <>
+                  <span className="text-[9px] text-muted-foreground truncate block font-mono">
+                    {track.original_filename ?? '—'}
+                  </span>
+                  <span className="text-[9px] uppercase tracking-widest text-amber">Modified</span>
+                </>
               ) : isMidi && track.midi_data ? (
                 <span className="text-[9px] text-muted-foreground truncate block font-mono">
                   {midiRendering
@@ -3139,9 +3152,11 @@ const TrackRow = React.memo(function TrackRow({
             />
             <button
               type="button"
-              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors"
+              disabled={isReplacing || deleting}
+              className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 border-r border-border/40 text-muted-foreground hover:bg-surface hover:text-lime transition-colors disabled:opacity-40 disabled:pointer-events-none"
               style={{ animationDelay: '40ms' }}
               onClick={() => { fileRef.current?.click(); setShowTools(false); setConfirmDelete(false) }}
+              title={isReplacing ? 'Replacing…' : deleting ? 'Deleting…' : undefined}
             >
               <ReplaceIcon size={16} />
               <span className="text-[8px] uppercase tracking-[0.08em]">Replace</span>
@@ -3188,9 +3203,11 @@ const TrackRow = React.memo(function TrackRow({
             ) : (
               <button
                 type="button"
-                className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors"
+                disabled={isReplacing || deleting}
+                className="track-drawer-item flex flex-col items-center justify-center gap-2 w-20 text-muted-foreground hover:bg-surface hover:text-destructive transition-colors disabled:opacity-40 disabled:pointer-events-none"
                 style={{ animationDelay: '160ms' }}
                 onClick={() => setConfirmDelete(true)}
+                title={isReplacing ? 'Replacing…' : undefined}
               >
                 <TrashIcon size={16} />
                 <span className="text-[8px] uppercase tracking-[0.08em]">Delete</span>
@@ -3712,9 +3729,10 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack, versionSwitchDisabled = false }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameVersion, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack, versionSwitchDisabled = false }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
+  onRenameVersion?: (id: string, name: string) => void
   storageUsed: number
   storageLimit: number
   storageFull: boolean
@@ -3732,6 +3750,24 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
   versionSwitchDisabled?: boolean
 }) {
   const [hideMerged, setHideMerged] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  function startRename(v: Version) {
+    if (!onRenameVersion || v.type === 'main') return
+    setRenamingId(v.id)
+    setRenameValue(getVersionDisplayName(v))
+    setTimeout(() => { renameInputRef.current?.focus(); renameInputRef.current?.select() }, 0)
+  }
+
+  function commitRename() {
+    const id = renamingId
+    setRenamingId(null)
+    if (!id) return
+    const trimmed = renameValue.trim()
+    if (trimmed) onRenameVersion?.(id, trimmed)
+  }
   const main = versions.find(v => v.type === 'main')
   const branches = versions.filter(v => v.type === 'branch')
   const listedVersions = [main, ...branches].filter(Boolean).filter(
@@ -3792,13 +3828,25 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
               const switchBlocked = versionSwitchDisabled && !isActive
               const comments = commentCounts[v!.id] ?? 0
               const tagStyle = versionTagStyle(v!.tag, isDark)
+              const isRenaming = renamingId === v!.id
               return (
-                <button
+                <div
                   key={v!.id}
-                  type="button"
-                  disabled={switchBlocked}
-                  onClick={() => onSelect(v!.id)}
-                  className={`group w-full text-left flex items-center gap-2 px-1.5 py-0.5 transition-colors ${
+                  role="button"
+                  tabIndex={switchBlocked ? -1 : 0}
+                  aria-disabled={switchBlocked}
+                  onClick={() => {
+                    if (switchBlocked || isRenaming) return
+                    // Tapping the already-active branch again opens rename — works as a
+                    // touch-friendly alternative to double-click (mirrors the structure editor).
+                    if (isActive && v!.type === 'branch' && onRenameVersion) startRename(v!)
+                    else onSelect(v!.id)
+                  }}
+                  onKeyDown={e => {
+                    if (switchBlocked || isRenaming) return
+                    if (e.key === 'Enter' || e.key === ' ') onSelect(v!.id)
+                  }}
+                  className={`group w-full text-left flex items-center gap-2 px-1.5 py-0.5 transition-colors cursor-pointer ${
                     isActive ? 'bg-lime/10' : switchBlocked
                       ? 'opacity-40 cursor-not-allowed'
                       : 'hover:bg-surface-2'
@@ -3818,11 +3866,30 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                   />
                   {/* Version name + sub-info */}
                   <span className="flex-1 min-w-0">
-                    {compact ? (
-                      <VersionListName version={v!} className="block text-[10px] font-bold text-foreground truncate leading-tight" />
+                    {isRenaming ? (
+                      <input
+                        ref={renameInputRef}
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value.slice(0, 60))}
+                        onClick={e => e.stopPropagation()}
+                        onDoubleClick={e => e.stopPropagation()}
+                        onBlur={commitRename}
+                        onKeyDown={e => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') commitRename()
+                          if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                        className="w-full bg-background border border-lime px-1 py-0.5 text-[11px] font-bold text-foreground outline-none"
+                      />
+                    ) : compact ? (
+                      <span onDoubleClick={e => { e.stopPropagation(); startRename(v!) }}>
+                        <VersionListName version={v!} className="block text-[10px] font-bold text-foreground truncate leading-tight" />
+                      </span>
                     ) : (
                       <>
-                        <VersionListName version={v!} className="block text-[11px] font-bold text-foreground truncate" />
+                        <span onDoubleClick={e => { e.stopPropagation(); startRename(v!) }}>
+                          <VersionListName version={v!} className="block text-[11px] font-bold text-foreground truncate" />
+                        </span>
                         <span className="block text-[9px] text-muted-foreground uppercase tracking-widest mt-0.5 truncate">
                           {fmtDate(v!.created_at)}{comments > 0 ? ` · ${comments} CMT` : ''}
                         </span>
@@ -3845,7 +3912,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, storageUs
                       {tagStyle.label}
                     </span>
                   )}
-                </button>
+                </div>
               )
             })}
           </div>
@@ -4056,6 +4123,49 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Delete version modal ─────────────────────────────────────────────────────
+
+function DeleteVersionModal({
+  name, deleting, onCancel, onConfirm,
+}: {
+  name: string
+  deleting: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm border border-border bg-popover p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        onClick={e => e.stopPropagation()}
+      >
+        <p className="font-display text-lg uppercase tracking-tight text-foreground mb-3 m-0">
+          Delete &ldquo;{name}&rdquo;?
+        </p>
+        <p className="text-sm text-muted-foreground leading-relaxed m-0">
+          This permanently deletes this version and its tracks, sections, and comments. This can&apos;t be undone.
+        </p>
+        <div className="flex gap-2 justify-end mt-6">
+          <TbBtn onClick={onCancel} disabled={deleting}>Cancel</TbBtn>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={deleting}
+            className="text-[10px] uppercase tracking-widest px-3 py-1.5 border border-destructive bg-destructive text-destructive-foreground font-display font-bold transition disabled:opacity-50"
+          >
+            {deleting ? 'Deleting…' : 'Delete version'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -4437,6 +4547,7 @@ export default function ProjectPage() {
     onDismiss?: () => void
   } | null>(null)
   const [uploading, setUploading] = useState(false)  // for handleReplaceTrack only
+  const [replacingTrackId, setReplacingTrackId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mobileReplaceInputRef = useRef<HTMLInputElement>(null)
   const replaceTrackRef = useRef<Track | null>(null)
@@ -4447,6 +4558,8 @@ export default function ProjectPage() {
   const [versionContentLoading, setVersionContentLoading] = useState(false)
   const versionSwitchLockedRef = useRef(false)
   const [mergeModal, setMergeModal] = useState<{ branchId: string } | null>(null)
+  const [deleteVersionModal, setDeleteVersionModal] = useState<{ id: string; name: string } | null>(null)
+  const [deletingVersion, setDeletingVersion] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
   const [storageLimit, setStorageLimit] = useState(BAND_STORAGE_LIMIT_BYTES)
@@ -4730,12 +4843,14 @@ export default function ProjectPage() {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.members) {
+          // /api/bands/[id]/members already returns { user_id, username, display_name }
+          // flat (no nested `profiles`) — unlike the full band payload used elsewhere.
           setChecklistMembers(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (d.members as any[]).map((m: any) => ({
               user_id: m.user_id,
-              username: m.profiles?.username ?? m.user_id,
-              display_name: m.profiles?.display_name ?? null,
+              username: m.username ?? m.user_id,
+              display_name: m.display_name ?? null,
             }))
           )
         }
@@ -4897,10 +5012,18 @@ export default function ProjectPage() {
     const used = new Set<string>()
     const assignments: { id: string; color: string }[] = []
 
+    const swatchCount = getTrackIconSwatches().length
+
     activeTracks.forEach((t, i) => {
       if (isOnboardingDemoId(t.id)) return
       let color = t.icon_color
-      if (!color || needsTrackIconColor(color) || used.has(color)) {
+      // Only treat a repeated color as a collision while the palette still has
+      // spare swatches — once every swatch is in use, repeats are expected
+      // (pickTrackIconColor itself rotates through the palette by index past
+      // that point), so reassigning here would just churn a track's color
+      // every time the track list changes shape, e.g. on file replace.
+      const isCollision = used.has(color ?? '') && used.size < swatchCount
+      if (!color || needsTrackIconColor(color) || isCollision) {
         color = pickTrackIconColor(Array.from(used), i)
       }
       used.add(color)
@@ -5557,6 +5680,9 @@ export default function ProjectPage() {
   }
 
   const requestDeleteTrack = (trackId: string) => {
+    // Don't let a track be deleted mid-replace — the row is about to be
+    // swapped out for the newly-processed track anyway.
+    if (replacingTrackId === trackId) return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
       guardMasterEdit(
         () => handleDeleteTrack(trackId).then(resolve).catch(reject),
@@ -5827,12 +5953,16 @@ function uploadFileType(file: File): 'audio' | 'midi' {
   }
 
   async function handleReplaceTrack(track: Track, file: File) {
+    // Don't let a second replace stack on top of one already in flight for
+    // this track (e.g. a stray double-trigger from the mobile picker).
+    if (replacingTrackId === track.id) return
     if (storageFull) {
       alert(storageQuotaError(storageUsed, storageLimit))
       return
     }
     if (!activeVersionId) return
     setUploading(true)
+    setReplacingTrackId(track.id)
     try {
       const presignRes = await fetch(`/api/versions/${activeVersionId}/tracks/presign`, {
         method: 'POST',
@@ -5887,10 +6017,14 @@ function uploadFileType(file: File): 'audio' | 'midi' {
       alert(err instanceof Error ? err.message : 'Replace failed')
     } finally {
       setUploading(false)
+      setReplacingTrackId(null)
     }
   }
 
   function promptReplaceTrack(track: Track) {
+    // Already replacing this track — ignore the extra tap instead of
+    // stacking a second concurrent upload for the same row.
+    if (replacingTrackId === track.id) return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
       guardMasterEdit(
         () => {
@@ -5949,6 +6083,61 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     const msg = `✓ "${branchName}" applied to ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
+  }
+
+  async function handleRenameVersion(id: string, name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const version = versions.find(v => v.id === id)
+    if (!version || version.type === 'main' || trimmed === version.name) return
+    try {
+      const res = await fetch(`/api/versions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      if (res.ok) {
+        const { version: updated } = await res.json()
+        setVersions(prev => prev.map(v => v.id === id ? { ...v, name: updated.name } : v))
+        trackEvent('version_renamed')
+      } else {
+        const msg = (await res.json().catch(() => ({}))).error
+        if (msg) alert(msg)
+      }
+    } catch { /* ignore */ }
+  }
+
+  function requestDeleteVersion(id: string) {
+    const version = versions.find(v => v.id === id)
+    if (!version || version.type === 'main') return
+    setDeleteVersionModal({ id, name: getVersionDisplayName(version) })
+  }
+
+  async function handleDeleteVersionConfirm() {
+    if (!deleteVersionModal) return
+    const { id } = deleteVersionModal
+    setDeletingVersion(true)
+    try {
+      const res = await fetch(`/api/versions/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const msg = (await res.json().catch(() => ({}))).error ?? 'Failed to delete version'
+        throw new Error(msg)
+      }
+      cache.invalidate(id)
+      const main = versions.find(v => v.type === 'main')
+      setVersions(prev => prev.filter(v => v.id !== id))
+      if (activeVersionIdRef.current === id && main) {
+        setActiveVersionId(main.id)
+        setCommentMode(false)
+        setActiveCommentInput(null)
+      }
+      trackEvent('version_deleted')
+      setDeleteVersionModal(null)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete version')
+    } finally {
+      setDeletingVersion(false)
+    }
   }
 
   async function handleReplyCreate(commentId: string, content: string) {
@@ -6132,6 +6321,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             onVersionChange: selectVersion,
             versionSwitchDisabled: versionSwitchLocked,
             onNewBranch: () => setShowBranchModal(true),
+            onRenameVersion: handleRenameVersion,
+            onDeleteVersion: requestDeleteVersion,
             sections,
             onSectionsChange: setSections,
             sectionRanges,
@@ -6171,6 +6362,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             storageFull,
             onReplaceTrack: promptReplaceTrack,
             onDeleteTrack: requestDeleteTrack,
+            replacingTrackId,
             onColorUpdate: handleColorUpdate,
             onRecordTransport: () => { void handleMobileRecordTransport() },
             recordingTransportState: (() => {
@@ -6328,6 +6520,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           activeId={activeVersionId}
           onSelect={selectVersion}
           onNewBranch={() => setShowBranchModal(true)}
+          onRenameVersion={handleRenameVersion}
+          onDeleteVersion={requestDeleteVersion}
           commentMode={commentMode}
           commentCount={totalComments}
           onToggleCommentMode={toggleCommentMode}
@@ -6396,6 +6590,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           onSelect={id => { selectVersion(id); if (window.innerWidth < 1024) setSidebarOpen(false) }}
           onNewBranch={() => setShowBranchModal(true)}
           onMerge={handleMergeClick}
+          onRenameVersion={handleRenameVersion}
           storageUsed={storageUsed}
           storageLimit={storageLimit}
           storageFull={storageFull}
@@ -6545,6 +6740,17 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     >
                       <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
                       Compare
+                    </button>
+                  )}
+                  {activeVersion?.type === 'branch' && (
+                    <button
+                      type="button"
+                      onClick={() => requestDeleteVersion(activeVersion.id)}
+                      data-tour="delete-version-button"
+                      className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-destructive text-destructive hover:bg-destructive/10 transition"
+                    >
+                      <Trash2 size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                      Delete
                     </button>
                   )}
                 </MixerToolbarGroup>
@@ -6751,6 +6957,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   key={t.id} track={t} index={i}
                   muted={player.mutedTracks.has(t.id) || player.midiRenderingTracks.has(t.id)}
                   soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
+                  isReplacing={replacingTrackId === t.id}
                   currentTimeRef={player.currentTimeRef}
                   commentMode={commentMode} activeInput={activeCommentInput}
                   audioReady={
@@ -7116,6 +7323,15 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           versions={versions}
           onClose={() => setMergeModal(null)}
           onMerged={handleMergeComplete}
+        />
+      )}
+
+      {deleteVersionModal && (
+        <DeleteVersionModal
+          name={deleteVersionModal.name}
+          deleting={deletingVersion}
+          onCancel={() => setDeleteVersionModal(null)}
+          onConfirm={handleDeleteVersionConfirm}
         />
       )}
 

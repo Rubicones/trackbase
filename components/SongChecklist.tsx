@@ -93,6 +93,14 @@ function IconUser({ size = 10 }: { size?: number }) {
   )
 }
 
+function IconChevronDown({ size = 8 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" fill="none" aria-hidden>
+      <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // ─── Checklist progress ───────────────────────────────────────────────────────
 
 function progress(items: ChecklistItem[]) {
@@ -103,6 +111,56 @@ function progress(items: ChecklistItem[]) {
 }
 
 // ─── Assignee picker ──────────────────────────────────────────────────────────
+
+/** Shared styled dropdown menu — used by both the per-task picker and the add-row picker. */
+function AssigneeMenu({
+  assigneeId,
+  members,
+  onAssign,
+  onClose,
+  direction = 'down',
+}: {
+  assigneeId: string | null
+  members: ChecklistMember[]
+  onAssign: (assigneeId: string | null) => void
+  onClose: () => void
+  /** Opens below the trigger by default; 'up' opens above (for rows near the bottom of the panel). */
+  direction?: 'down' | 'up'
+}) {
+  return (
+    <>
+      <span className="fixed inset-0 z-30" onClick={onClose} />
+      <div
+        className={`absolute z-40 left-0 w-44 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden ${
+          direction === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+        }`}
+      >
+        <TbMenuButton
+          active={!assigneeId}
+          className="justify-between"
+          onClick={() => { onAssign(null); onClose() }}
+        >
+          <span className="text-muted-foreground">Unassigned</span>
+          {!assigneeId && <IconCheck size={11} />}
+        </TbMenuButton>
+        {members.map(m => (
+          <TbMenuButton
+            key={m.user_id}
+            active={assigneeId === m.user_id}
+            className="gap-2"
+            onClick={() => { onAssign(m.user_id); onClose() }}
+          >
+            <span className="size-5 bg-surface-2 border border-border grid place-items-center text-[9px] font-bold shrink-0">
+              {initials(m.username)}
+            </span>
+            <span className="flex-1 truncate text-left">{m.display_name ?? `@${m.username}`}</span>
+            {assigneeId === m.user_id && <IconCheck size={11} />}
+          </TbMenuButton>
+        ))}
+      </div>
+    </>
+  )
+}
 
 function AssigneePicker({
   item,
@@ -129,33 +187,12 @@ function AssigneePicker({
         </span>
       </button>
       {open && (
-        <>
-          <span className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute z-40 top-full left-0 mt-1 w-44 border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
-            <TbMenuButton
-              active={!item.assignee_id}
-              className="justify-between"
-              onClick={() => { onAssign(null); setOpen(false) }}
-            >
-              <span className="text-muted-foreground">Unassigned</span>
-              {!item.assignee_id && <IconCheck size={11} />}
-            </TbMenuButton>
-            {members.map(m => (
-              <TbMenuButton
-                key={m.user_id}
-                active={item.assignee_id === m.user_id}
-                className="gap-2"
-                onClick={() => { onAssign(m.user_id); setOpen(false) }}
-              >
-                <span className="size-5 bg-surface-2 border border-border grid place-items-center text-[9px] font-bold shrink-0">
-                  {initials(m.username)}
-                </span>
-                <span className="flex-1 truncate text-left">{m.display_name ?? `@${m.username}`}</span>
-                {item.assignee_id === m.user_id && <IconCheck size={11} />}
-              </TbMenuButton>
-            ))}
-          </div>
-        </>
+        <AssigneeMenu
+          assigneeId={item.assignee_id}
+          members={members}
+          onAssign={onAssign}
+          onClose={() => setOpen(false)}
+        />
       )}
     </span>
   )
@@ -290,6 +327,8 @@ function AddRow({
 }) {
   const [text, setText] = useState('')
   const [assigneeId, setAssigneeId] = useState<string | null>(null)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const assignee = members.find(m => m.user_id === assigneeId) ?? null
 
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
@@ -315,19 +354,28 @@ function AddRow({
         className="flex-1 min-w-0 bg-transparent text-xs focus:outline-none placeholder:text-muted-foreground/70"
       />
       {members.length > 0 && (
-        <select
-          value={assigneeId ?? ''}
-          onChange={e => setAssigneeId(e.target.value || null)}
-          className="bg-surface border border-border text-[10px] uppercase tracking-widest px-1.5 py-1 hidden sm:block"
-          title="Assign"
-        >
-          <option value="">UNASSIGNED</option>
-          {members.map(m => (
-            <option key={m.user_id} value={m.user_id}>
-              {m.display_name ?? m.username}
-            </option>
-          ))}
-        </select>
+        <span className="relative hidden sm:inline-flex shrink-0">
+          <button
+            type="button"
+            onClick={() => setAssignOpen(o => !o)}
+            className="inline-flex items-center gap-1 bg-surface border border-border text-[10px] uppercase tracking-widest px-1.5 py-1 hover:border-lime hover:text-lime transition"
+            title="Assign band member"
+          >
+            <span className="max-w-[100px] truncate">
+              {assignee ? (assignee.display_name ?? `@${assignee.username}`) : 'Unassigned'}
+            </span>
+            <IconChevronDown />
+          </button>
+          {assignOpen && (
+            <AssigneeMenu
+              assigneeId={assigneeId}
+              members={members}
+              onAssign={setAssigneeId}
+              onClose={() => setAssignOpen(false)}
+              direction="up"
+            />
+          )}
+        </span>
       )}
       <button
         type="submit"

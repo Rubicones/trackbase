@@ -15,7 +15,7 @@ export async function logActivity({
   bandId: string
   userId: string | null
   action:
-    | 'merge' | 'branch' | 'comment' | 'comment_remove' | 'upload' | 'track_remove' | 'export'
+    | 'merge' | 'branch' | 'branch_rename' | 'branch_remove' | 'comment' | 'comment_remove' | 'upload' | 'track_remove' | 'export'
     | 'structure' | 'structure_remove' | 'resource' | 'resource_update' | 'resource_remove'
     | 'project_remove' | 'meta'
   subject: string

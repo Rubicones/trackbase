@@ -7,6 +7,7 @@ const DELETE_ACTIONS = new Set([
   'structure_remove',
   'comment_remove',
   'resource_remove',
+  'branch_remove',
 ])
 
 export function isDeleteAction(action: string): boolean {
@@ -30,6 +31,7 @@ function activityColorToken(action: string): ActivityColorToken {
     case 'merge':
       return 'lime'
     case 'branch':
+    case 'branch_rename':
       return 'chart-3'
     case 'comment':
       return 'chart-5'
@@ -91,6 +93,7 @@ export function activityVerb(action: string): string {
   switch (action) {
     case 'merge':     return 'applied'
     case 'branch':    return 'created version'
+    case 'branch_rename': return 'renamed version'
     case 'comment':   return 'commented on'
     case 'upload':    return 'uploaded'
     case 'structure': return 'submitted'
@@ -162,6 +165,8 @@ export function formatActivityLine(
       return subject.replace(' → ', ' applied to ') + proj
     case 'branch':
       return `version '${subject}' created` + proj
+    case 'branch_rename':
+      return subject.replace(' → ', ' renamed to ') + proj
     case 'comment':
       return detail ? `comment in '${subject}' at ${detail}` : `comment in '${subject}'`
     case 'upload':

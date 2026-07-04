@@ -388,6 +388,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onCloseColorPicker,
   onReplace,
   onDelete,
+  isReplacing = false,
 }: {
   track: Track
   color: string
@@ -420,6 +421,8 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   onCloseColorPicker: () => void
   onReplace: (track: Track) => void | Promise<void>
   onDelete: (id: string) => void | Promise<void>
+  /** True while a new file is being uploaded/processed to replace this track. */
+  isReplacing?: boolean
 }) {
   const isMidi = track.file_type === 'midi'
   const badgeLetter = (track.name?.[0] ?? 'T').toUpperCase()
@@ -427,6 +430,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   // Download state: null = idle, -1 = active/indeterminate, 0–100 = determinate %.
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const downloading = downloadPct !== null
+  const [deleting, setDeleting] = useState(false)
 
   async function handleDownload() {
     onToggleMenu(track.id)
@@ -570,9 +574,10 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
                   .then(() => onToggleMenu(track.id))
                   .catch(() => {})
               }}
-              className="w-full text-left px-3 py-2 hover:bg-surface"
+              disabled={isReplacing || deleting}
+              className="w-full text-left px-3 py-2 hover:bg-surface disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Replace track
+              {isReplacing ? 'Replacing…' : 'Replace track'}
             </button>
             <button
               type="button"
@@ -585,13 +590,16 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             <button
               type="button"
               onClick={() => {
+                setDeleting(true)
                 void Promise.resolve(onDelete(track.id))
                   .then(() => onToggleMenu(track.id))
                   .catch(() => {})
+                  .finally(() => setDeleting(false))
               }}
-              className="w-full text-left px-3 py-2 hover:bg-surface text-destructive"
+              disabled={isReplacing || deleting}
+              className="w-full text-left px-3 py-2 hover:bg-surface text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Delete
+              {deleting ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         </>
@@ -647,6 +655,8 @@ export type MobileMixerPortraitProps = {
   onVersionChange: (id: string) => void
   versionSwitchDisabled?: boolean
   onNewBranch: () => void
+  onRenameVersion?: (id: string, name: string) => void
+  onDeleteVersion?: (id: string) => void
   sections: Section[]
   onSectionsChange: Dispatch<SetStateAction<Section[]>>
   sectionRanges: SectionRange[]
@@ -665,6 +675,8 @@ export type MobileMixerPortraitProps = {
   storageFull?: boolean
   onReplaceTrack: (track: Track) => void | Promise<void>
   onDeleteTrack: (id: string) => void | Promise<void>
+  /** Track id currently being replaced (upload/process in flight) — disables replace/delete for that row. */
+  replacingTrackId?: string | null
   onColorUpdate: (trackId: string, color: string) => void
   onRecordTransport: () => void
   recordingTransportState: RecordState | 'none' | 'idle'
@@ -703,6 +715,8 @@ function MobileMixerPortraitInner({
   onVersionChange,
   versionSwitchDisabled = false,
   onNewBranch,
+  onRenameVersion,
+  onDeleteVersion,
   sections,
   onSectionsChange,
   sectionRanges,
@@ -721,6 +735,7 @@ function MobileMixerPortraitInner({
   storageFull = false,
   onReplaceTrack,
   onDeleteTrack,
+  replacingTrackId = null,
   onColorUpdate,
   onRecordTransport,
   recordingTransportState,
@@ -927,6 +942,8 @@ function MobileMixerPortraitInner({
           activeId={activeVersionId}
           onSelect={onVersionChange}
           onNewBranch={onNewBranch}
+          onRenameVersion={onRenameVersion}
+          onDeleteVersion={onDeleteVersion}
           commentMode={commentMode}
           commentCount={commentCount}
           onToggleCommentMode={onToggleCommentMode}
@@ -1044,6 +1061,7 @@ function MobileMixerPortraitInner({
               onCloseColorPicker={handleCloseColorPicker}
               onReplace={onReplaceTrack}
               onDelete={onDeleteTrack}
+              isReplacing={replacingTrackId === t.id}
               waveformsInteractive={waveformsInteractive}
             />
           )
