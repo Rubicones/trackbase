@@ -18,6 +18,9 @@ const PUBLIC_PREFIXES = [
   '/api/auth',
   '/features',
   '/audience',
+  // Standalone SEO tools — no login required, no app shell.
+  '/tools',
+  '/api/tools',
 ]
 const PUBLIC_EXACT = ['/']
 

@@ -310,6 +310,95 @@ export function buildSlicePageJsonLd({
   return [breadcrumbs, webPage]
 }
 
+/**
+ * Visible FAQ content for /tools/chord-detector — targets long-tail queries
+ * ("chord detector free", "how to find the chords of a song", etc.) as real
+ * on-page copy. Mirrored into FAQPage JSON-LD by buildChordDetectorJsonLd();
+ * keep these in sync since Google requires FAQ structured data to match
+ * visible page content (same rule the homepage FAQ follows — see
+ * buildHomeJsonLd's commented-out FAQPage block below).
+ */
+export const CHORD_DETECTOR_FAQS: { question: string; answer: string }[] = [
+  {
+    question: 'Is this chord detector really free?',
+    answer:
+      'Yes. Upload a track and get its chords, key, and bar positions back with no sign-up and no credit card — up to 5 free analyses per hour per person.',
+  },
+  {
+    question: 'How do I find the chords of a song?',
+    answer:
+      'Upload an MP3, WAV, FLAC, OGG, or M4A file (up to 10 MB), enter the track’s BPM, and the detector returns a chord-by-chord timeline with timestamps, bar numbers, and the song’s key.',
+  },
+  {
+    question: 'Does it detect the key of the song too?',
+    answer:
+      'Yes — alongside the chord timeline, it returns the detected root note and major/minor scale (e.g. "C major") for the whole track.',
+  },
+  {
+    question: 'What kind of audio works best for chord recognition?',
+    answer:
+      'Recordings with clear harmonic content — piano, guitar, keys, or pads — analyze most accurately. Melody-only lines, heavy drums, and dense bass can reduce accuracy; a shorter 30–90 second clip with a stems-only version (if you have one) works best.',
+  },
+  {
+    question: 'What audio formats and file sizes are supported?',
+    answer: 'MP3, WAV, FLAC, OGG, and M4A files up to 10 MB.',
+  },
+]
+
+/**
+ * JSON-LD for the standalone /tools/chord-detector page: BreadcrumbList,
+ * a SoftwareApplication node (so it can surface as a rich result for
+ * "chord detector" / "chord detector free" style queries), and FAQPage
+ * mirroring CHORD_DETECTOR_FAQS.
+ */
+export function buildChordDetectorJsonLd(): JsonLd[] {
+  const path = '/tools/chord-detector'
+  const url = getCanonicalUrl(path)
+
+  const breadcrumbs: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: SITE_NAME, item: getCanonicalUrl('/') },
+      { '@type': 'ListItem', position: 2, name: 'Free Chord Detector', item: url },
+    ],
+  }
+
+  const software: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Free Chord Detector',
+    url,
+    description:
+      'Upload an audio file and instantly detect the chords and key of any song. Free, no sign-up required.',
+    applicationCategory: 'MultimediaApplication',
+    operatingSystem: 'Web',
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+      description: 'Free — 5 analyses per hour, no account required',
+    },
+    isPartOf: {
+      '@type': 'WebSite',
+      name: SITE_NAME,
+      url: getCanonicalUrl('/'),
+    },
+  }
+
+  const faqPage: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: CHORD_DETECTOR_FAQS.map(({ question, answer }) => ({
+      '@type': 'Question',
+      name: question,
+      acceptedAnswer: { '@type': 'Answer', text: answer },
+    })),
+  }
+
+  return [breadcrumbs, software, faqPage]
+}
+
 export function buildHomeJsonLd(): JsonLd[] {
   const url = getCanonicalUrl('/')
 

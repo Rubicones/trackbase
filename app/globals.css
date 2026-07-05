@@ -1922,10 +1922,14 @@ html:has(.landing-page) {
   scroll-behavior: smooth;
   scroll-padding-top: 3.5rem;
   overflow-x: clip;
+  /* Match landing bg so rubber-band overscroll never flashes app/light theme. */
+  background-color: oklch(0.13 0 0);
+  color-scheme: dark;
 }
 
 html:has(.landing-page) body {
   overflow-x: clip;
+  background-color: oklch(0.13 0 0);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -15,6 +15,7 @@ const ffmpegRoutes = [
   '/api/projects/[id]/mix',
   '/api/projects/[id]/preview-mix',
   '/api/projects/[id]/preview-mix/recompute',
+  '/api/tools/chord-detector',
 ] as const
 
 const nextConfig: NextConfig = {
@@ -39,7 +40,9 @@ const nextConfig: NextConfig = {
     ]
   },
   // Keep native/binary packages out of the webpack bundle so __dirname paths stay valid.
-  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'web-push'],
+  // essentia.js ships a multi-MB Emscripten WASM bundle (server-side chord/key detection,
+  // see lib/serverEssentia.ts) — external so webpack doesn't try to parse/minify it.
+  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'web-push', 'essentia.js'],
   outputFileTracingIncludes: Object.fromEntries(
     ffmpegRoutes.map(route => [route, ffmpegTracing]),
   ),
