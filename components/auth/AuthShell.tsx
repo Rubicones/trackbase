@@ -10,7 +10,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md shrink-0">
         <SonicdeskWordmark />
         <span className="hidden sm:inline text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          Git-like versioning for music demos
+          An ultimate workspace for your music
         </span>
       </header>
 

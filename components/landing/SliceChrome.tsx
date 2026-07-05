@@ -37,7 +37,7 @@ export function SlicePage({ children }: { children: ReactNode }) {
  * ============================================================ */
 
 export function SliceNav({ kind, label }: { kind: SliceKind; label: string }) {
-  const { authHref } = useLandingAuth();
+  const { authHref, authLabel } = useLandingAuth();
 
   return (
     <nav className="landing-full-bleed sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
@@ -61,7 +61,7 @@ export function SliceNav({ kind, label }: { kind: SliceKind; label: string }) {
             href={authHref}
             className="tb-btn-accent inline-flex items-center bg-lime px-3 py-1.5 text-[10px] uppercase text-primary-foreground transition-colors"
           >
-            Dashboard →
+            {authLabel}
           </Link>
         </div>
       </div>

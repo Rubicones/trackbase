@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { Project, Section, SectionType, Track } from '@/lib/types'
 import { ChordInput } from '@/components/ChordInput'
 import { ChordPlaybackRow } from '@/components/ChordPlaybackRow'
 import { detectChordsInAudio } from '@/lib/chordDetection'
 import { trackEvent } from '@/lib/analytics'
+import { trackAccentColor } from '@/lib/trackIcon'
 import { sectionBarCount, updateSectionChordDuration } from '@/lib/chords'
 import {
   barDurationSec,
@@ -281,6 +282,28 @@ function NamePickerPortal({
 
 type CellPos = { left: number; top: number; width: number; height: number }
 
+const POPOVER_VIEWPORT_GAP = 8
+
+function clampSectionEditPopoverPosition(
+  cellPos: CellPos,
+  popoverWidth: number,
+  popoverHeight: number,
+): { left: number; top: number } {
+  const gap = POPOVER_VIEWPORT_GAP
+  const left = Math.max(
+    gap,
+    Math.min(cellPos.left + cellPos.width / 2 - popoverWidth / 2, window.innerWidth - popoverWidth - gap),
+  )
+
+  const preferBelow = cellPos.top < popoverHeight + gap
+  let top = preferBelow
+    ? cellPos.top + cellPos.height + gap
+    : cellPos.top - gap - popoverHeight
+
+  top = Math.max(gap, Math.min(top, window.innerHeight - popoverHeight - gap))
+  return { left, top }
+}
+
 export function SectionEditPopover({
   section, cellPos, detectingChords, audioTracks, totalBars,
   onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onDelete, onClose,
@@ -314,12 +337,10 @@ export function SectionEditPopover({
   const [isDirty, setIsDirty] = useState(false)
   const wasDetectingRef = useRef(detectingChords)
   const [trackPickerOpen, setTrackPickerOpen] = useState(false)
-  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(
-    () => new Set(audioTracks.map(t => t.id)),
-  )
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
-    setSelectedTrackIds(new Set(audioTracks.map(t => t.id)))
+    setSelectedTrackIds(new Set())
     setTrackPickerOpen(false)
   }, [section.id, audioTracks.map(t => t.id).join('|')])
 
@@ -440,17 +461,49 @@ export function SectionEditPopover({
     onDetectChords(ids)
   }
 
-  const W = 320
-  const POPOVER_H = trackPickerOpen ? 460 : 380
-  const cellCx = cellPos.left + cellPos.width / 2
-  const pLeft = typeof window !== 'undefined'
-    ? Math.max(8, Math.min(cellCx - W / 2, window.innerWidth - W - 8))
-    : 8
-  const flippedEdit = cellPos.top < POPOVER_H + 8
-  const pTop = flippedEdit ? cellPos.top + cellPos.height + 8 : cellPos.top - 8
+  const isSheet = layout === 'sheet'
+
+  const [popoverCoords, setPopoverCoords] = useState<{ left: number; top: number }>(() => ({
+    left: Math.max(POPOVER_VIEWPORT_GAP, cellPos.left + cellPos.width / 2 - 160),
+    top: POPOVER_VIEWPORT_GAP,
+  }))
+
+  const repositionPopover = useCallback(() => {
+    if (typeof window === 'undefined' || isSheet) return
+    const popover = popoverRef.current
+    if (!popover) return
+    setPopoverCoords(
+      clampSectionEditPopoverPosition(cellPos, popover.offsetWidth, popover.offsetHeight),
+    )
+  }, [cellPos, isSheet])
+
+  useLayoutEffect(() => {
+    if (isSheet) return
+    repositionPopover()
+    const id = requestAnimationFrame(repositionPopover)
+    return () => cancelAnimationFrame(id)
+  }, [
+    isSheet,
+    repositionPopover,
+    trackPickerOpen,
+    customMode,
+    section.id,
+    chords,
+    detectingChords,
+    audioTracks.length,
+  ])
+
+  useEffect(() => {
+    if (isSheet) return
+    window.addEventListener('resize', repositionPopover)
+    window.addEventListener('scroll', repositionPopover, true)
+    return () => {
+      window.removeEventListener('resize', repositionPopover)
+      window.removeEventListener('scroll', repositionPopover, true)
+    }
+  }, [isSheet, repositionPopover])
 
   const barCount = sectionBarCount(section, totalBars)
-  const isSheet = layout === 'sheet'
   const { keyboardInset, viewportHeight } = useMobileKeyboardInset(isSheet)
 
   const sheetPanelStyle = isSheet
@@ -486,7 +539,7 @@ export function SectionEditPopover({
           ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto overscroll-contain border-t border-border bg-popover shadow-2xl animate-slide-in'
           : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in'
       }
-      style={isSheet ? sheetPanelStyle : { top: pTop, left: pLeft, transform: flippedEdit ? 'none' : 'translateY(-100%)' }}
+      style={isSheet ? sheetPanelStyle : { top: popoverCoords.top, left: popoverCoords.left }}
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -553,8 +606,15 @@ export function SectionEditPopover({
                 {!detectingChords && saveStatus === 'saved' && <span className="text-online"> · saved</span>}
               </div>
               {audioTracks.length > 0 && !trackPickerOpen && (
-                <button type="button" disabled={detectingChords} onClick={() => setTrackPickerOpen(true)}
-                  className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50">
+                <button
+                  type="button"
+                  disabled={detectingChords}
+                  onClick={() => {
+                    setSelectedTrackIds(new Set())
+                    setTrackPickerOpen(true)
+                  }}
+                  className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50"
+                >
                   Detect
                 </button>
               )}
@@ -568,17 +628,34 @@ export function SectionEditPopover({
               />
             </div>
             {trackPickerOpen && (
-              <div className="mt-2 p-2 border border-border bg-surface space-y-2">
+              <div className="mt-2 p-2 border border-border bg-surface">
                 <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Tracks to analyze</p>
-                <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
-                  {audioTracks.map(track => (
-                    <label key={track.id} className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer min-w-0">
-                      <input type="checkbox" checked={selectedTrackIds.has(track.id)} onChange={() => toggleTrack(track.id)} className="accent-lime shrink-0" />
-                      <span className="truncate">{trackLabel(track)}</span>
-                    </label>
-                  ))}
+                <div className="mt-3 max-h-[9.5rem] overflow-y-auto overscroll-contain flex flex-col gap-1.5">
+                  {audioTracks.map((track, index) => {
+                    const selected = selectedTrackIds.has(track.id)
+                    const accent = trackAccentColor(track.icon_color, index)
+                    return (
+                      <label
+                        key={track.id}
+                        className="block w-full shrink-0 cursor-pointer border px-3 py-1.5 text-[11px] font-mono transition-colors min-w-0"
+                        style={{
+                          borderColor: accent,
+                          backgroundColor: selected ? accent : 'transparent',
+                          color: selected ? '#fff' : accent,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleTrack(track.id)}
+                          className="sr-only"
+                        />
+                        <span className="block truncate">{trackLabel(track)}</span>
+                      </label>
+                    )
+                  })}
                 </div>
-                <div className="flex gap-2 justify-end">
+                <div className="mt-2 flex gap-2 justify-end">
                   <button type="button" onClick={() => setTrackPickerOpen(false)} className="text-[10px] uppercase tracking-widest border border-border px-2 py-1">Cancel</button>
                   <button type="button" disabled={selectedTrackIds.size === 0} onClick={handleRunDetection}
                     className="text-[10px] uppercase tracking-widest bg-foreground text-background px-2 py-1 disabled:opacity-40">Run</button>

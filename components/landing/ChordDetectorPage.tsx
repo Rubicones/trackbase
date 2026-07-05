@@ -1,18 +1,14 @@
 "use client";
 
 /**
- * /tools/chord-detector — free, client-side chord detector.
+ * /tools/chord-detector — free chord detector (server-side analysis).
  *
- * Runs the same Essentia engine as the real per-section detector
- * (lib/chordDetection.ts + public/workers/chordsWorker.js): the uploaded
- * file is decoded and analyzed entirely in the browser, nothing is
- * uploaded to a server.
+ * Uses the same Essentia pipeline as the structure editor's "Detect" button
+ * (lib/serverChordDetection.ts, backed by public/workers/chordsWorker.js).
+ * Uploaded audio is analyzed on the server and discarded — nothing is stored.
  *
- * Flow is intentionally different from a generic "drop file → instant
- * result" tool: chord detection is bar-quantized, so it needs a tempo and
- * time signature *before* analysis can start (that's how a "bar" is
- * defined). Time signature defaults to 4/4 if left as-is; tempo has no
- * safe default, so it's required.
+ * Flow: upload → confirm tempo + time signature → analyze → results.
+ * Time signature defaults to 4/4 when not changed.
  */
 
 import Link from "next/link";
@@ -29,11 +25,10 @@ import {
 } from "@/components/landing/SliceChrome";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { PROJECT_TIME_SIGNATURES, barDurationSec } from "@/lib/metronomeAudio";
-import { detectChordsInAudio } from "@/lib/chordDetection";
-import { parseChordsString, expandChordsToBarNames } from "@/lib/chords";
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
-const MAX_ANALYZE_SEC = 5 * 60; // cap analysis to the first 5 minutes
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const ACCEPTED_EXTENSIONS = ["mp3", "wav", "flac", "ogg", "m4a"];
+const ACCEPT_ATTR = ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(",");
 const ACCEPTED_HINT = "MP3, WAV, FLAC, OGG, M4A";
 
 export default function ChordDetectorPage() {
@@ -64,8 +59,8 @@ function Hero() {
         </>
       }
     >
-      Upload a track, confirm the tempo, get a chord-by-chord timeline with timestamps and bar
-      numbers. Runs in your browser — no sign-up, no upload to a server.
+      Upload a track, confirm the tempo and time signature, get a chord-by-chord timeline with
+      timestamps, bar numbers, and key. Free — no sign-up, up to 5 analyses per hour.
     </SliceHero>
   );
 }
@@ -76,26 +71,27 @@ function Hero() {
 
 type Stage = "idle" | "confirm" | "analyzing" | "ready";
 
-type Decoded = {
-  file: File;
-  mono: Float32Array;
-  sampleRate: number;
-  duration: number;
-  objectUrl: string;
-};
-
-type ChordGroup = {
+interface DetectedChord {
+  timestamp_ms: number;
   chord: string;
+}
+
+interface AnalysisResult {
+  key: string;
+  duration_seconds: number;
+  chords: DetectedChord[];
+  filename: string;
+  bpm: number;
+  timeSig: string;
+  audioUrl: string;
+}
+
+type ChordRow = {
+  startSec: number;
+  endSec: number;
   startBar: number;
   endBar: number;
-  start: number;
-  end: number;
-};
-
-type Result = {
-  groups: ChordGroup[];
-  barDurSec: number;
-  analyzedDurationSec: number;
+  chord: string;
 };
 
 function fmtTime(sec: number): string {
@@ -103,34 +99,41 @@ function fmtTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function downmixToMono(buffer: AudioBuffer): Float32Array {
-  const { numberOfChannels, length } = buffer;
-  if (numberOfChannels <= 1) return buffer.getChannelData(0).slice();
-  const out = new Float32Array(length);
-  for (let ch = 0; ch < numberOfChannels; ch++) {
-    const data = buffer.getChannelData(ch);
-    for (let i = 0; i < length; i++) out[i] += data[i] / numberOfChannels;
-  }
-  return out;
+function formatFileSize(bytes: number): string {
+  return bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(0)} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function groupBarChords(names: string[], barDurSec: number): ChordGroup[] {
-  const groups: ChordGroup[] = [];
-  let i = 0;
-  while (i < names.length) {
-    const name = names[i];
-    let j = i + 1;
-    while (j < names.length && names[j] === name) j += 1;
-    groups.push({
-      chord: name,
-      startBar: i + 1,
-      endBar: j,
-      start: i * barDurSec,
-      end: j * barDurSec,
-    });
-    i = j;
+function extOf(filename: string): string {
+  const idx = filename.lastIndexOf(".");
+  return idx === -1 ? "" : filename.slice(idx + 1).toLowerCase();
+}
+
+function validateFile(file: File): string | null {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    return "This file is too large. Please upload a file under 10 MB.";
   }
-  return groups;
+  if (!ACCEPTED_EXTENSIONS.includes(extOf(file.name))) {
+    return "Unsupported file type. Please use MP3, WAV, FLAC, OGG, or M4A.";
+  }
+  return null;
+}
+
+function barNumber(timestampSec: number, bpm: number, timeSig: string): number {
+  const barDurSec = barDurationSec(bpm, timeSig);
+  return Math.floor(timestampSec / barDurSec) + 1;
+}
+
+function buildRows(analysis: AnalysisResult): ChordRow[] {
+  const { chords, duration_seconds, bpm, timeSig } = analysis;
+  return chords.map((c, i) => {
+    const startSec = c.timestamp_ms / 1000;
+    const endSec = i + 1 < chords.length ? chords[i + 1].timestamp_ms / 1000 : duration_seconds;
+    const startBar = barNumber(startSec, bpm, timeSig);
+    const endBar = barNumber(Math.max(startSec, endSec - 0.001), bpm, timeSig);
+    return { startSec, endSec, startBar, endBar, chord: c.chord };
+  });
 }
 
 function parseBpmInput(raw: string): number | null {
@@ -168,12 +171,12 @@ function IconPause() {
 
 function Detector() {
   const [stage, setStage] = useState<Stage>("idle");
-  const [decoding, setDecoding] = useState(false);
-  const [decoded, setDecoded] = useState<Decoded | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [bpmInput, setBpmInput] = useState("");
   const [timeSig, setTimeSig] = useState<string>("4/4");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<Result | null>(null);
+  const [serverError, setServerError] = useState<{ message: string; showSignup?: boolean } | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const [playing, setPlaying] = useState(false);
@@ -185,15 +188,13 @@ function Detector() {
   const reduce = useReducedMotion();
 
   const bpmValue = parseBpmInput(bpmInput);
+  const rows = useMemo(() => (analysis ? buildRows(analysis) : []), [analysis]);
 
-  // Revokes the previous object URL whenever `decoded` changes (new file) and
-  // on unmount — the closure captures the `decoded` value from *this* render,
-  // so each cleanup revokes the right URL instead of a stale one.
   useEffect(() => {
     return () => {
-      if (decoded) URL.revokeObjectURL(decoded.objectUrl);
+      if (analysis?.audioUrl) URL.revokeObjectURL(analysis.audioUrl);
     };
-  }, [decoded]);
+  }, [analysis?.audioUrl]);
 
   useEffect(() => {
     if (!playing) return;
@@ -208,68 +209,61 @@ function Detector() {
     };
   }, [playing]);
 
-  async function handleFiles(files: FileList | null) {
+  function handleFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
+
+    const err = validateFile(file);
+    setServerError(null);
+    if (err) {
+      setErrorMessage(err);
+      setSelectedFile(null);
+      setStage("idle");
+      return;
+    }
+
     setErrorMessage(null);
-
-    if (!file.type.startsWith("audio/") && !/\.(mp3|wav|flac|ogg|m4a)$/i.test(file.name)) {
-      setErrorMessage(`Unsupported file — try ${ACCEPTED_HINT}.`);
-      return;
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      setErrorMessage(`That file is over ${Math.round(MAX_FILE_SIZE / 1024 / 1024)} MB — trim it down and try again.`);
-      return;
-    }
-
-    setDecoding(true);
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      let buffer: AudioBuffer;
-      try {
-        buffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-      } finally {
-        void ctx.close();
-      }
-      const mono = downmixToMono(buffer);
-      setDecoded({
-        file,
-        mono,
-        sampleRate: buffer.sampleRate,
-        duration: buffer.duration,
-        objectUrl: URL.createObjectURL(file),
-      });
-      setResult(null);
-      setT(0);
-      setPlaying(false);
-      setStage("confirm");
-    } catch {
-      setErrorMessage(`Couldn't decode that file — try ${ACCEPTED_HINT}.`);
-    } finally {
-      setDecoding(false);
-    }
+    setSelectedFile(file);
+    setAnalysis(null);
+    setT(0);
+    setPlaying(false);
+    setStage("confirm");
   }
 
   async function runAnalysis() {
-    if (!decoded || bpmValue === null) return;
+    if (!selectedFile || bpmValue === null) return;
     setStage("analyzing");
     setErrorMessage(null);
+    setServerError(null);
+
     try {
-      const barDurSec = barDurationSec(bpmValue, timeSig);
-      const analyzedDurationSec = Math.min(decoded.duration, MAX_ANALYZE_SEC);
-      const barCount = Math.max(1, Math.round(analyzedDurationSec / barDurSec));
-      const sampleCount = Math.min(decoded.mono.length, Math.round(analyzedDurationSec * decoded.sampleRate));
-      const slice = decoded.mono.subarray(0, sampleCount);
+      const fd = new FormData();
+      fd.set("file", selectedFile);
+      fd.set("bpm", String(bpmValue));
+      fd.set("time_signature", timeSig);
 
-      const chordString = await detectChordsInAudio(slice, {
-        sampleRate: decoded.sampleRate,
-        barDurationSec: barDurSec,
-        barCount,
-      });
+      const res = await fetch("/api/tools/chord-detector", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => ({}))) as {
+        key?: string;
+        duration_seconds?: number;
+        chords?: DetectedChord[];
+        error?: string;
+      };
 
-      if (!chordString.trim()) {
+      if (!res.ok) {
+        if (res.status === 429) {
+          setServerError({
+            message: data.error ?? "You've reached the limit of 5 analyses per hour.",
+            showSignup: true,
+          });
+        } else {
+          setErrorMessage(data.error ?? "Something went wrong during analysis. Please try again or try a different file.");
+        }
+        setStage("confirm");
+        return;
+      }
+
+      if (!data.chords?.length) {
         setErrorMessage(
           "Couldn't find clear chords in this clip — try a recording with more harmonic content (piano, guitar, keys), or trim it to 30–90s.",
         );
@@ -277,25 +271,36 @@ function Detector() {
         return;
       }
 
-      const names = expandChordsToBarNames(parseChordsString(chordString));
-      const groups = groupBarChords(names, barDurSec);
-      setResult({ groups, barDurSec, analyzedDurationSec });
+      if (analysis?.audioUrl) URL.revokeObjectURL(analysis.audioUrl);
+
+      setAnalysis({
+        key: data.key ?? "Unknown",
+        duration_seconds: data.duration_seconds ?? 0,
+        chords: data.chords,
+        filename: selectedFile.name,
+        bpm: bpmValue,
+        timeSig,
+        audioUrl: URL.createObjectURL(selectedFile),
+      });
       setStage("ready");
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "Something went wrong analyzing this file.");
+    } catch {
+      setErrorMessage("Something went wrong during analysis. Please try again or try a different file.");
       setStage("confirm");
     }
   }
 
   function reset() {
-    setDecoded(null);
-    setResult(null);
+    if (analysis?.audioUrl) URL.revokeObjectURL(analysis.audioUrl);
+    setSelectedFile(null);
+    setAnalysis(null);
     setStage("idle");
     setBpmInput("");
     setTimeSig("4/4");
     setErrorMessage(null);
+    setServerError(null);
     setPlaying(false);
     setT(0);
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   function seekTo(sec: number) {
@@ -317,10 +322,15 @@ function Detector() {
     }
   }
 
-  const activeGroupIdx = useMemo(() => {
-    if (!result) return -1;
-    return result.groups.findIndex((g) => t >= g.start && t < g.end);
-  }, [result, t]);
+  const activeRowIdx = useMemo(() => {
+    if (!rows.length) return -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (t >= rows[i].startSec) return i;
+    }
+    return -1;
+  }, [rows, t]);
+
+  const duration = analysis?.duration_seconds ?? 0;
 
   return (
     <SliceSection index="tool" tag="upload · confirm tempo · analyze">
@@ -336,6 +346,31 @@ function Detector() {
       </div>
 
       <div className="mx-auto max-w-3xl">
+        <AnimatePresence>
+          {serverError && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 overflow-hidden"
+            >
+              <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--destructive)_10%,transparent)] p-4">
+                <p className="font-mono-tb text-[11px] leading-relaxed text-[color-mix(in_oklab,var(--destructive)_80%,var(--foreground))]">
+                  {serverError.message}
+                </p>
+                {serverError.showSignup && (
+                  <Link
+                    href="/"
+                    className="font-mono-tb mt-2 inline-block text-[10px] uppercase tracking-[0.18em] text-lime underline-offset-4 hover:underline"
+                  >
+                    Sign up for unlimited access →
+                  </Link>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Idle — dropzone */}
         {stage === "idle" && (
           <motion.div
@@ -348,9 +383,9 @@ function Detector() {
             onDrop={(e) => {
               e.preventDefault();
               setDragOver(false);
-              void handleFiles(e.dataTransfer.files);
+              handleFiles(e.dataTransfer.files);
             }}
-            onClick={() => !decoding && inputRef.current?.click()}
+            onClick={() => inputRef.current?.click()}
             className={`relative cursor-pointer border border-dashed transition-colors ${
               dragOver
                 ? "border-lime bg-[color-mix(in_oklab,var(--lime)_8%,transparent)]"
@@ -360,10 +395,10 @@ function Detector() {
             <input
               ref={inputRef}
               type="file"
-              accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a"
+              accept={ACCEPT_ATTR}
               className="hidden"
               onChange={(e) => {
-                void handleFiles(e.target.files);
+                handleFiles(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -373,24 +408,14 @@ function Detector() {
                 transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
                 className="mx-auto mb-4 grid size-12 place-items-center rounded-full border border-lime text-lime"
               >
-                {decoding ? (
-                  <span className="size-5 animate-spin rounded-full border border-lime border-t-transparent" />
-                ) : (
-                  <IconUpload />
-                )}
+                <IconUpload />
               </motion.div>
               <div className="font-mono-tb text-[12px] text-muted-foreground">
-                {decoding ? (
-                  "reading file…"
-                ) : (
-                  <>
-                    Drag &amp; drop an audio file, or{" "}
-                    <span className="text-lime underline underline-offset-4">browse</span>
-                  </>
-                )}
+                Drag &amp; drop an audio file, or{" "}
+                <span className="text-lime underline underline-offset-4">browse</span>
               </div>
               <div className="mt-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Max {Math.round(MAX_FILE_SIZE / 1024 / 1024)} MB · {ACCEPTED_HINT}
+                Max {Math.round(MAX_FILE_SIZE_BYTES / 1024 / 1024)} MB · {ACCEPTED_HINT}
               </div>
             </div>
           </motion.div>
@@ -403,7 +428,7 @@ function Detector() {
         )}
 
         {/* Confirm — tempo + time signature before analysis */}
-        {stage === "confirm" && decoded && (
+        {stage === "confirm" && selectedFile && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -411,9 +436,9 @@ function Detector() {
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-4 sm:px-5">
               <div className="min-w-0">
-                <div className="truncate font-display-tb text-lg font-bold lowercase tracking-tight">{decoded.file.name}</div>
+                <div className="truncate font-display-tb text-lg font-bold lowercase tracking-tight">{selectedFile.name}</div>
                 <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {fmtTime(decoded.duration)} duration
+                  {formatFileSize(selectedFile.size)}
                 </div>
               </div>
               <button
@@ -487,7 +512,7 @@ function Detector() {
         )}
 
         {/* Analyzing */}
-        {stage === "analyzing" && decoded && (
+        {stage === "analyzing" && selectedFile && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -495,40 +520,40 @@ function Detector() {
           >
             <div className="mx-auto mb-4 size-10 animate-spin rounded-full border border-lime border-t-transparent" />
             <div className="font-mono-tb text-[12px] text-muted-foreground">
-              analyzing <span className="text-lime">{decoded.file.name}</span>…
+              analyzing <span className="text-lime">{selectedFile.name}</span>…
             </div>
             <div className="mt-3 flex justify-center gap-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               <span>segmenting bars</span>
               <span>·</span>
               <span>fitting chords</span>
             </div>
+            <p className="mt-4 font-mono-tb text-[10px] text-muted-foreground">Usually takes 10–30 seconds</p>
           </motion.div>
         )}
 
         {/* Ready — results */}
         <AnimatePresence>
-          {stage === "ready" && decoded && result && (
+          {stage === "ready" && analysis && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
               className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]"
             >
-              {/* Hidden audio element drives real playback */}
               <audio
                 ref={audioRef}
-                src={decoded.objectUrl}
+                src={analysis.audioUrl}
                 onEnded={() => setPlaying(false)}
                 className="hidden"
               />
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-4 sm:px-5">
                 <div className="min-w-0">
-                  <div className="truncate font-display-tb text-lg font-bold lowercase tracking-tight">{decoded.file.name}</div>
+                  <div className="truncate font-display-tb text-lg font-bold lowercase tracking-tight">{analysis.filename}</div>
                   <div className="mt-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                    {fmtTime(decoded.duration)} ·{" "}
+                    {fmtTime(duration)} ·{" "}
                     <span className="text-lime">
-                      {bpmValue} bpm · {timeSig}
+                      {analysis.bpm} bpm · {analysis.timeSig} · {analysis.key}
                     </span>
                   </div>
                 </div>
@@ -540,12 +565,6 @@ function Detector() {
                   analyze another file →
                 </button>
               </div>
-
-              {result.analyzedDurationSec < decoded.duration && (
-                <div className="border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:px-5">
-                  Showing chords for the first {fmtTime(result.analyzedDurationSec)} — trim longer files for full coverage.
-                </div>
-              )}
 
               {/* Transport */}
               <div className="flex items-center gap-4 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-4 sm:px-5">
@@ -562,45 +581,51 @@ function Detector() {
                     className="relative h-2 cursor-pointer bg-[color-mix(in_oklab,var(--border)_80%,transparent)]"
                     onClick={(e) => {
                       const r = e.currentTarget.getBoundingClientRect();
-                      seekTo(((e.clientX - r.left) / r.width) * decoded.duration);
+                      seekTo(((e.clientX - r.left) / r.width) * duration);
                     }}
                   >
-                    <div className="absolute inset-y-0 left-0 bg-lime" style={{ width: `${(t / decoded.duration) * 100}%` }} />
+                    <div className="absolute inset-y-0 left-0 bg-lime" style={{ width: `${duration > 0 ? (t / duration) * 100 : 0}%` }} />
                     <div
                       className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-lime shadow"
-                      style={{ left: `${(t / decoded.duration) * 100}%` }}
+                      style={{ left: `${duration > 0 ? (t / duration) * 100 : 0}%` }}
                     />
                   </div>
                 </div>
                 <div className="shrink-0 font-mono-tb text-[10px] uppercase tracking-[0.18em] tabular-nums text-muted-foreground">
-                  {fmtTime(t)} / {fmtTime(decoded.duration)}
+                  {fmtTime(t)} / {fmtTime(duration)}
                 </div>
               </div>
 
               {/* Chord list */}
               <div className="max-h-[420px] overflow-auto">
-                {result.groups.map((g, i) => {
-                  const active = i === activeGroupIdx;
-                  const barsLabel = g.startBar === g.endBar ? `Bar ${g.startBar}` : `Bars ${g.startBar}–${g.endBar}`;
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => seekTo(g.start)}
-                      className={`grid w-full grid-cols-[minmax(90px,auto)_minmax(90px,auto)_1fr] items-center gap-4 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-2.5 text-left transition-colors sm:px-5 ${
-                        active ? "bg-[color-mix(in_oklab,var(--lime)_10%,transparent)]" : "hover:bg-[color-mix(in_oklab,var(--card)_60%,transparent)]"
-                      }`}
-                    >
-                      <span className={`font-mono-tb text-[11px] tabular-nums ${active ? "text-lime" : "text-muted-foreground"}`}>
-                        {fmtTime(g.start)} — {fmtTime(g.end)}
-                      </span>
-                      <span className="font-mono-tb text-[11px] text-muted-foreground">{barsLabel}</span>
-                      <span className={`font-display-tb text-base font-bold ${active ? "text-lime" : "text-foreground"}`}>
-                        {g.chord}
-                      </span>
-                    </button>
-                  );
-                })}
+                {rows.length === 0 ? (
+                  <p className="px-4 py-6 font-mono-tb text-[11px] text-muted-foreground sm:px-5">
+                    No chords detected — try a clip with more harmonic content.
+                  </p>
+                ) : (
+                  rows.map((row, i) => {
+                    const active = i === activeRowIdx;
+                    const barsLabel = row.startBar === row.endBar ? `Bar ${row.startBar}` : `Bars ${row.startBar}–${row.endBar}`;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => seekTo(row.startSec)}
+                        className={`grid w-full grid-cols-[minmax(90px,auto)_minmax(90px,auto)_1fr] items-center gap-4 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] px-4 py-2.5 text-left transition-colors sm:px-5 ${
+                          active ? "bg-[color-mix(in_oklab,var(--lime)_10%,transparent)]" : "hover:bg-[color-mix(in_oklab,var(--card)_60%,transparent)]"
+                        }`}
+                      >
+                        <span className={`font-mono-tb text-[11px] tabular-nums ${active ? "text-lime" : "text-muted-foreground"}`}>
+                          {fmtTime(row.startSec)} — {fmtTime(row.endSec)}
+                        </span>
+                        <span className="font-mono-tb text-[11px] text-muted-foreground">{barsLabel}</span>
+                        <span className={`font-display-tb text-base font-bold ${active ? "text-lime" : "text-foreground"}`}>
+                          {row.chord}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-3 sm:px-5">
@@ -608,8 +633,10 @@ function Detector() {
                   type="button"
                   onClick={() =>
                     navigator.clipboard?.writeText(
-                      result.groups
-                        .map((g) => `${g.startBar === g.endBar ? `Bar ${g.startBar}` : `Bars ${g.startBar}-${g.endBar}`}  ${g.chord}`)
+                      rows
+                        .map((row) =>
+                          `${row.startBar === row.endBar ? `Bar ${row.startBar}` : `Bars ${row.startBar}-${row.endBar}`}  ${row.chord}`,
+                        )
                         .join("\n"),
                     )
                   }
@@ -618,7 +645,7 @@ function Detector() {
                   copy chord list
                 </button>
                 <span className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {result.groups.length} chord changes detected
+                  {rows.length} chord changes detected
                 </span>
               </div>
             </motion.div>
@@ -700,11 +727,11 @@ function WhyMore() {
 const TOOL_FAQ_ITEMS: { q: string; a: ReactNode }[] = [
   {
     q: "Is this chord detector really free?",
-    a: "Yes. Upload a track, confirm the tempo, get chords back with timestamps and bar numbers — no sign-up, no credit card.",
+    a: "Yes. Upload a track, confirm the tempo, get chords back with timestamps, bar numbers, and key — no sign-up, no credit card. Up to 5 free analyses per hour.",
   },
   {
     q: "How do I find the chords of a song?",
-    a: "Upload an MP3, WAV, FLAC, OGG or M4A (up to 25 MB), confirm the tempo (and time signature, if it's not 4/4), and you get a chord-by-chord timeline with timestamps and bar numbers.",
+    a: "Upload an MP3, WAV, FLAC, OGG or M4A (up to 10 MB), enter the track's BPM (and time signature if it's not 4/4), and you get a chord-by-chord timeline with timestamps, bar numbers, and detected key.",
   },
   {
     q: "Why do you ask for tempo before analyzing?",
@@ -715,12 +742,16 @@ const TOOL_FAQ_ITEMS: { q: string; a: ReactNode }[] = [
     a: "Leave it on 4/4 — that's the default and it's correct for the large majority of songs.",
   },
   {
+    q: "Does it detect the key of the song too?",
+    a: "Yes — alongside the chord timeline, it returns the detected root note and major/minor scale (e.g. \"C major\") for the whole track.",
+  },
+  {
     q: "What kind of audio works best?",
     a: "Recordings with clear harmonic content — piano, guitar, keys, pads — analyze most accurately. Melody-only lines, heavy drums, and dense bass can reduce accuracy. A 30–90 second clip works best.",
   },
   {
     q: "Do you keep my audio?",
-    a: "No. The file is decoded and analyzed entirely in your browser — nothing is uploaded to a server, and nothing is stored once you close the tab.",
+    a: "No. Your file is analyzed in memory on the server and discarded immediately — nothing is stored once the analysis finishes.",
   },
 ];
 

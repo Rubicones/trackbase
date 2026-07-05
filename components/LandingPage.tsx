@@ -9,6 +9,7 @@ import {
   AnimatePresence,
 } from "motion/react";
 import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
+import { usePathname } from "next/navigation";
 import { UserAvatar } from "@/components/ui/avatar";
 import { MetronomeIcon } from "@/components/design/TransportIcons";
 import { sectionLabel } from "@/components/StructureEditor";
@@ -303,13 +304,23 @@ function Waveform({
  * Top nav
  * ============================================================ */
 
-function TopBar({
+/**
+ * Reused as-is on standalone pages outside the landing page itself (e.g.
+ * /tools/*) so they share the exact same header. Nav items are hash anchors
+ * into sections of "/" — hrefFor() prefixes them with "/" when we're not
+ * already on the homepage, so they still resolve there instead of being a
+ * no-op on the current page.
+ */
+export function TopBar({
   authHref = "/auth",
   authLabel = "+ SIGN IN",
 }: {
   authHref?: string;
   authLabel?: string;
 }) {
+  const pathname = usePathname();
+  const isHome = pathname === "/";
+  const hrefFor = (hash: string) => (isHome ? hash : `/${hash}`);
   const [time, setTime] = useState("");
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -367,7 +378,7 @@ function TopBar({
     <div className="landing-full-bleed sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between gap-3 px-4 py-3 md:px-8">
         <div className="flex min-w-0 items-center gap-6 md:gap-10">
-          <a href="#top" className="flex shrink-0 items-center gap-2 text-foreground">
+          <a href={hrefFor("#top")} className="flex shrink-0 items-center gap-2 text-foreground">
             <span
               className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl"
             >
@@ -381,7 +392,7 @@ function TopBar({
             {navItems.map(([href, label]) => (
               <a
                 key={href}
-                href={href}
+                href={hrefFor(href)}
                 className="font-mono-tb text-[11px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-lime"
               >
                 {label}
@@ -445,7 +456,7 @@ function TopBar({
               {navItems.map(([href, label], i) => (
                 <motion.a
                   key={href}
-                  href={href}
+                  href={hrefFor(href)}
                   onClick={() => setOpen(false)}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}

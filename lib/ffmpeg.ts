@@ -147,3 +147,54 @@ export async function flacToWav(flacBuffer: Buffer): Promise<Buffer> {
     await unlink(outPath).catch(() => {})
   }
 }
+
+/** Sample rate the chord/key detection pipeline expects (matches the browser worker's Web Audio decode). */
+export const CHORD_DETECTION_SAMPLE_RATE = 44100
+
+/**
+ * Decode an arbitrary audio buffer (mp3/wav/flac/ogg/m4a) into mono 32-bit
+ * float PCM at CHORD_DETECTION_SAMPLE_RATE — the format the in-browser
+ * Essentia worker normally gets from Web Audio's decodeAudioData(). Used by
+ * the server-side chord detection route so the same analysis pipeline can
+ * run on an uploaded file without a browser.
+ *
+ * Input is never written anywhere but a temp file that's deleted in the
+ * `finally` block — nothing persists after this function returns.
+ */
+export async function decodeAudioToPcmFloat32(
+  buffer: Buffer,
+  inputExt: 'mp3' | 'wav' | 'flac' | 'ogg' | 'm4a',
+): Promise<{ pcm: Float32Array; durationSeconds: number }> {
+  ensureFfmpegConfigured()
+  const id = randomUUID()
+  const inPath = path.join(tmpdir(), `${id}.${inputExt}`)
+  const outPath = path.join(tmpdir(), `${id}.pcm`)
+
+  try {
+    await writeFile(inPath, buffer)
+
+    const probedDurationSec = await new Promise<number>((resolve) => {
+      ffmpeg.ffprobe(inPath, (_err, meta) => {
+        resolve(_err ? 0 : (meta?.format?.duration ?? 0))
+      })
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inPath)
+        .outputOptions(['-f', 'f32le', '-ac', '1', '-ar', String(CHORD_DETECTION_SAMPLE_RATE)])
+        .output(outPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .run()
+    })
+
+    const raw = await readFile(outPath)
+    const pcm = new Float32Array(raw.buffer, raw.byteOffset, Math.floor(raw.byteLength / 4))
+    const durationSeconds = probedDurationSec > 0 ? probedDurationSec : pcm.length / CHORD_DETECTION_SAMPLE_RATE
+
+    return { pcm, durationSeconds }
+  } finally {
+    await unlink(inPath).catch(() => {})
+    await unlink(outPath).catch(() => {})
+  }
+}

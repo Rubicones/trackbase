@@ -363,16 +363,46 @@ export function ReadingMode({
   const lyricsUserScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lyricsProgrammaticScrollRef = useRef(false)
   const lyricsWasActiveRef = useRef(false)
+  const autoscrollWasOnRef = useRef(autoscrollOn)
   const lyricsPlaying = player.playing || isCounting
+  const scrollableRehearsal = embedded
+  const bodyScrollRef = useRef<HTMLDivElement>(null)
+  const lyricsSectionRef = useRef<HTMLElement>(null)
 
-  // Reset scroll to top when playback restarts from the beginning.
+  function scrollBodyToLyrics() {
+    const body = bodyScrollRef.current
+    const section = lyricsSectionRef.current
+    if (!body || !section) return
+    const bodyRect = body.getBoundingClientRect()
+    const sectionRect = section.getBoundingClientRect()
+    body.scrollTop += sectionRect.top - bodyRect.top
+  }
+
+  // Reset teleprompter on playback restart; on mobile, also snap page to lyrics.
   useEffect(() => {
-    const el = lyricsRef.current
-    if (el && !lyricsWasActiveRef.current && lyricsPlaying && player.currentTime < 1) {
-      el.scrollTop = 0
-    }
+    const wasPlaying = lyricsWasActiveRef.current
     lyricsWasActiveRef.current = lyricsPlaying
-  }, [lyricsPlaying, player.currentTime])
+
+    const el = lyricsRef.current
+    if (el && !wasPlaying && lyricsPlaying && player.currentTime < 1) {
+      el.scrollTop = 0
+      if (scrollableRehearsal && bodyScrollRef.current) {
+        bodyScrollRef.current.scrollTop = 0
+      }
+    }
+
+    if (scrollableRehearsal && autoscrollOn && !wasPlaying && lyricsPlaying) {
+      requestAnimationFrame(scrollBodyToLyrics)
+    }
+  }, [lyricsPlaying, player.currentTime, scrollableRehearsal, autoscrollOn])
+
+  useEffect(() => {
+    const wasOn = autoscrollWasOnRef.current
+    autoscrollWasOnRef.current = autoscrollOn
+    if (scrollableRehearsal && !wasOn && autoscrollOn && lyricsPlaying) {
+      requestAnimationFrame(scrollBodyToLyrics)
+    }
+  }, [autoscrollOn, scrollableRehearsal, lyricsPlaying])
 
   // Teleprompter-style scroll — enabled by the Autoscroll toggle, but only actually
   // moves while the track is playing (paused whenever playback is paused/stopped).
@@ -454,6 +484,7 @@ export function ReadingMode({
 
   const showChrome = !fullscreen
   const transportBottom = embedded || fullscreen ? 'bottom-0' : 'bottom-[52px]'
+  const bodyPadBottom = embedded || fullscreen ? 'pb-28' : 'pb-[7.5rem]'
 
   return (
     <div className={shellClass}>
@@ -483,10 +514,16 @@ export function ReadingMode({
         </header>
       )}
 
-      {/* Body — Now-playing is natural height; Lyrics flex-fills whatever's left,
-          down to the fixed transport bar, and scrolls internally. Nothing here
-          double-scrolls the whole page anymore. */}
-      <div className={`flex-1 min-h-0 flex flex-col ${embedded || fullscreen ? 'pb-28' : 'pb-[7.5rem]'}`}>
+      {/* Body — on mobile embedded, the whole column scrolls (meta can scroll away).
+          Lyrics still autoscroll inside their panel. Desktop keeps flex-fill layout. */}
+      <div
+        ref={scrollableRehearsal ? bodyScrollRef : undefined}
+        className={
+          scrollableRehearsal
+            ? `flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-none ${bodyPadBottom}`
+            : `flex-1 min-h-0 flex flex-col ${bodyPadBottom}`
+        }
+      >
 
         {/* Project header — hidden in fullscreen */}
         {showChrome && (
@@ -560,7 +597,7 @@ export function ReadingMode({
           {sections.length === 0 || timeline.length === 0 ? (
             <p className="text-[11px] text-muted-foreground py-6 text-center">No structure added yet</p>
           ) : chordView === 'big' ? (
-            <div className="px-4 py-5 flex flex-col gap-4 min-h-[16rem] sm:min-h-[18rem]">
+            <div className={`px-4 py-5 flex flex-col gap-4 ${scrollableRehearsal ? 'min-h-[10rem]' : 'min-h-[16rem] sm:min-h-[18rem]'}`}>
               <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-widest">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="tb-section-name px-2 py-1 bg-lime text-primary-foreground font-bold truncate">
@@ -677,10 +714,16 @@ export function ReadingMode({
           )}
         </section>
 
-        {/* Lyrics — autoscroll teleprompter. Flex-fills whatever's left below
-            Now-playing, down to the transport bar — no arbitrary vh guess, so the
-            field is exactly as tall as the space actually available. */}
-        <section className="flex-1 min-h-0 flex flex-col">
+        {/* Lyrics — autoscroll teleprompter. On mobile embedded, the section is tall
+            enough that scrolling the page reveals a larger lyrics viewport. */}
+        <section
+          ref={lyricsSectionRef}
+          className={
+            scrollableRehearsal
+              ? 'flex flex-col border-t border-border'
+              : 'flex-1 min-h-0 flex flex-col'
+          }
+        >
           <div className="shrink-0 px-4 py-2 flex items-center justify-between border-b border-border bg-surface/20">
             <div className="flex items-center gap-2">
               <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Lyrics</span>
@@ -724,7 +767,11 @@ export function ReadingMode({
             onWheel={markLyricsUserScroll}
             onTouchStart={markLyricsUserScroll}
             onScroll={handleLyricsScrollEvent}
-            className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-5 py-4"
+            className={
+              scrollableRehearsal
+                ? 'h-[50vh] overflow-y-auto scrollbar-none px-5 py-4'
+                : 'flex-1 min-h-0 overflow-y-auto scrollbar-none px-5 py-4'
+            }
             style={{ scrollBehavior: 'auto' }}
           >
             {lyricsLines.length === 0 ? (

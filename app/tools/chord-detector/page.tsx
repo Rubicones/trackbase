@@ -5,7 +5,7 @@ import { buildSlicePageMetadata, buildSlicePageJsonLd } from '@/lib/seo'
 const seo = {
   title: 'Free Chord Detector — Find the Chords of Any Song',
   description:
-    'Free online chord detector. Upload an audio file, confirm the tempo, and get a chord-by-chord timeline with timestamps and bar numbers. Runs in your browser — no sign-up.',
+    'Free online chord detector. Upload an audio file, confirm the tempo and time signature, and get a chord-by-chord timeline with timestamps, bar numbers, and key — no sign-up.',
   path: '/tools/chord-detector',
 }
 

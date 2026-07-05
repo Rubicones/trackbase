@@ -13,7 +13,15 @@ import { PRODUCTION_SITE_URL, REDIRECT_TO_CANONICAL_HOSTS } from '@/lib/site-url
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
-const PUBLIC_PREFIXES = ['/auth', '/api/auth']
+const PUBLIC_PREFIXES = [
+  '/auth',
+  '/api/auth',
+  '/features',
+  '/audience',
+  // Standalone SEO tools — no login required, no app shell.
+  '/tools',
+  '/api/tools',
+]
 const PUBLIC_EXACT = ['/']
 
 const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
