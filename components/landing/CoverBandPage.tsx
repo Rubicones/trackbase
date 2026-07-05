@@ -49,7 +49,7 @@ function Hero() {
 
 /* --- 01 · the problem, visualized --- */
 
-const BOOKS = [
+const SHEETS = [
   { who: "guitarist", chord: "Bbm", color: "var(--wave-coral)" },
   { who: "bassist", chord: "Bb", color: "var(--wave-violet)" },
   { who: "keys", chord: "B", color: "var(--wave-sky)" },
@@ -64,14 +64,14 @@ function Problem() {
   return (
     <SliceSection index="01" tag="The problem, visualized">
       <SliceHeadline>
-        THREE BOOKS. <span className="text-[var(--wave-coral)]">THREE CHORDS.</span> ONE BRIDGE.
+        THREE SHEETS. <span className="text-[var(--wave-coral)]">THREE CHORDS.</span> ONE BRIDGE.
       </SliceHeadline>
       <SliceMono className="mt-6 max-w-xl">
-        Each player brings their own songbook to rehearsal. Everyone is technically right. No one
+        Each player brings their own sheet to rehearsal. Everyone is technically right. No one
         is playing the same song.
       </SliceMono>
       <div className="relative mt-10 flex min-h-[240px] items-center justify-center">
-        {BOOKS.map((b, i) => (
+        {SHEETS.map((b, i) => (
           <motion.div
             key={b.who}
             animate={
@@ -84,7 +84,7 @@ function Problem() {
             style={{ borderColor: b.color }}
           >
             <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em]" style={{ color: b.color }}>
-              {b.who}&apos;s book
+              {b.who}&apos;s sheet
             </div>
             <div className="mt-2 font-display-tb text-5xl font-bold tracking-tight" style={{ color: b.color }}>
               {b.chord}
@@ -107,9 +107,6 @@ function Problem() {
             Bridge · bar 33 · agreed
           </div>
         </motion.div>
-      </div>
-      <div className="mt-4 text-center font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-        ↻ Auto-merges every 4s
       </div>
     </SliceSection>
   );

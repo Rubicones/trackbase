@@ -26,7 +26,7 @@ export async function POST(
 
   const { data: project, error: projErr } = await supabase
     .from('projects')
-    .insert({ name: name.trim(), band_id: bandId, bpm: bpm ?? null, key: key ?? null })
+    .insert({ name: name.trim(), band_id: bandId, bpm: bpm ?? 120, key: key ?? null })
     .select()
     .single()
   if (projErr) return NextResponse.json({ error: projErr.message }, { status: 500 })

@@ -100,17 +100,16 @@ function Theatre() {
         </div>
 
         {/* waveform + highlighted range */}
-        <div className="relative px-4 py-5">
-          <div className="h-10">
+        <div className="px-4 py-5">
+          <div className="relative h-10">
             <SeededWaveform seed={7} bars={90} color="var(--lime)" height={40} progress={0.42} />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 left-[38%] w-[16%] border-x border-lime bg-[color-mix(in_oklab,var(--lime)_12%,transparent)]"
+            />
           </div>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-y-3 left-[38%] w-[16%] border-x border-lime bg-[color-mix(in_oklab,var(--lime)_12%,transparent)]"
-          />
           <div className="mt-2 flex justify-between font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
             <span>1:14</span>
-            <span className="text-lime">BAR 34 – 38 · SELECTED</span>
             <span>2:12</span>
           </div>
         </div>

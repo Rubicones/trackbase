@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       .insert({
         name: name.trim(),
         band_id: resolvedBandId,
-        bpm: bpm ?? null,
+        bpm: bpm ?? 120,
         key: key ?? null,
       })
       .select()
