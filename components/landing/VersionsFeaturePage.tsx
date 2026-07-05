@@ -26,7 +26,7 @@ export default function VersionsFeaturePage() {
   return (
     <SlicePage>
       <SliceNav kind="feature" label="versions" />
-      <ScopeBanner kind="feature">Version control is one of many tools inside sonicdesk.</ScopeBanner>
+      <ScopeBanner kind="feature">Version control is one of many tools inside sonicdesk</ScopeBanner>
       <Hero />
       <Theatre />
       <Compare />

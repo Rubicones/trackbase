@@ -22,7 +22,7 @@ export default function StructureFeaturePage() {
   return (
     <SlicePage>
       <SliceNav kind="feature" label="structure & chords" />
-      <ScopeBanner kind="feature">The song map — one of many tools inside sonicdesk.</ScopeBanner>
+      <ScopeBanner kind="feature">The song map — one of many tools inside sonicdesk</ScopeBanner>
       <Hero />
       <Timeline />
       <Details />

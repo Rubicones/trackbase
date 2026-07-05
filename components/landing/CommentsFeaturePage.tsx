@@ -25,7 +25,7 @@ export default function CommentsFeaturePage() {
   return (
     <SlicePage>
       <SliceNav kind="feature" label="comments" />
-      <ScopeBanner kind="feature">Comments on bars are one of many tools inside sonicdesk.</ScopeBanner>
+      <ScopeBanner kind="feature">Comments on bars are one of many tools inside sonicdesk</ScopeBanner>
       <Hero />
       <Theatre />
       <HowItWorks />
@@ -200,7 +200,7 @@ function Different() {
       </SliceHeadline>
       <SliceMono className="mt-6 max-w-2xl">
         Plenty of tools can pin a note to 1:41. But your band doesn&apos;t think in seconds — it
-        thinks in bars, sections and chords. In sonicdesk. a comment on bar 34 knows it&apos;s in
+        thinks in bars, sections and chords. In sonicdesk, a comment on bar 34 knows it&apos;s in
         the second chorus, over an F, in version 1.4.
       </SliceMono>
       <SliceCardGrid

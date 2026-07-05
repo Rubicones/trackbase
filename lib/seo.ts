@@ -41,6 +41,9 @@ export const SEO_KEYWORDS = [
   'roadmap tool for bands',
   'mobile mixer',
   'song structure editor',
+  'free chord detector',
+  'find chords of a song',
+  'chord finder',
 ]
 
 /**
@@ -67,38 +70,82 @@ export const SEO_FEATURE_SUMMARY = [
 /**
  * Visible FAQ content — rendered as a real, on-page FAQ section (see FAQ in
  * components/LandingPage.tsx) and mirrored into FAQPage JSON-LD via
- * buildFaqJsonLd(). Google requires FAQ structured data to match visible
- * page content, so this is the single source of truth for both.
+ * buildHomeJsonLd(). Google requires FAQ structured data to match visible
+ * page content, so this is the single source of truth for both. `tag` drives
+ * the on-page filter chips — keep it one of FAQ_TAGS in LandingPage.tsx.
  */
-export const SEO_FAQS: { question: string; answer: string }[] = [
+export const SEO_FAQS: { tag: string; question: string; answer: string }[] = [
   {
-    question: 'What is version control for music?',
+    tag: 'basics',
+    question: 'wait — is this a DAW?',
     answer:
-      "It's the same idea as Git, applied to a track instead of code: every take, mix, or arrangement change is saved as a real version with a date and author, so you can branch off to try something and merge it back — or roll back — without overwriting the original.",
+      "no. sonicdesk isn't where you make the sound — it's where the sound lives. a workspace and collaboration room that sits around your DAW: versions, comments, structure, chords, chat, resources. bring the bounce, we handle everything else.",
   },
   {
-    question: 'Can I leave a comment on a specific bar or timestamp in a track?',
+    tag: 'solo',
+    question: "i'm a solo musician. does sonicdesk still make sense?",
     answer:
-      'Yes. Comments on bars let you drop timestamped feedback anchored to an exact bar or time range on the waveform, so the whole band knows exactly which second or section a note refers to — no more "the part around 1:40-ish."',
+      "absolutely. keep demos, sheets, references and voice memos in one place. leave notes for future-you when the idea is still hot. and when a producer, mix engineer or label finally joins in — you invite them into the same room, nothing to migrate.",
   },
   {
-    question: 'Does sonicdesk detect chords automatically?',
+    tag: 'pricing',
+    question: 'is it free?',
     answer:
-      'Yes — automatic chord detection runs per section and builds a chord chart you can use for rehearsal, on top of the song structure editor (intro, verse, chorus, bridge, breakdown).',
+      'yes — the free plan covers 1 band, up to 3 members and 1 GB of storage. plenty for a first project or a small duo. paid plans lift the limits when your world gets bigger.',
   },
   {
-    question: 'Is there a mobile mixer or rehearsal mode app?',
+    tag: 'pricing',
+    question: 'on a paid plan, does every band member pay?',
     answer:
-      'Yes. The mobile mixer lets you mix, mute, solo, and record tracks from a phone, and rehearsal mode surfaces chords, structure, and loopable sections built for the practice room — no laptop or DAW required.',
+      'no — only one person pays. they open the band, upgrade it, then invite everyone else into a room that already has the bigger limits. bandmates never see a paywall.',
   },
   {
-    question: 'How is sonicdesk different from other music collaboration tools?',
+    tag: 'versioning',
+    question: 'what happens if two versions overlap or conflict?',
     answer:
-      'sonicdesk is a band workspace built around version control first: branching, merging, and comparing takes, plus comments on bars, chord detection, a roadmap with checklists, and band chat, all in one place — rather than a general-purpose DAW or file-storage tool with collaboration bolted on.',
+      "if we can merge them cleanly, we do it silently. if we can't — say two people rewrote the same bar — we stop and ask you: side-by-side diff, you pick what stays and what goes. nothing gets overwritten behind your back.",
   },
   {
-    question: 'Is sonicdesk free?',
-    answer: 'Yes — sonicdesk is free to use during private beta, with every workspace including branches, the mixer, structure, chords, chat, and rehearsal view from day one.',
+    tag: 'versioning',
+    question: 'how many versions can i create per project?',
+    answer:
+      "as many as you want. seriously — unlimited. branch a chorus, branch the branch, keep the weird one from tuesday night. storage counts against the plan, version count doesn't.",
+  },
+  {
+    tag: 'files',
+    question: 'what file formats can i upload?',
+    answer:
+      'WAV, MP3 and MIDI today. more coming — stems, project files, notation formats — as we polish each one.',
+  },
+  {
+    tag: 'files',
+    question: 'do you compress my audio?',
+    answer:
+      'no. everything is transcoded to FLAC and kept lossless. the sound you upload is the sound we store — nothing lost, nothing "optimised" behind your back.',
+  },
+  {
+    tag: 'files',
+    question: 'can i download my files in original quality?',
+    answer:
+      'yes. the file you download is byte-for-byte the file you uploaded. no re-encodes, no watermarks, no surprises.',
+  },
+  {
+    tag: 'versioning',
+    question: "what's versioning and how does it actually work?",
+    answer:
+      "every project starts with one Master. want to try a wilder chorus or a slower bridge? spin up a new version — it's a full copy of Master, safe to break. Master stays untouched. when the new take clearly wins, apply it back into Master. experiment freely, never lose the good one.",
+  },
+  {
+    tag: 'security',
+    question: 'is it safe to upload my unreleased demos?',
+    answer:
+      'we treat unreleased music like the fragile thing it is. tracks are private by default — only your bandmates can play or download them. no public URLs, no discovery, no leaks.',
+  },
+  {
+    tag: 'mobile',
+    question: 'is there a mobile app?',
+    answer:
+      'the web app installs to your phone as a PWA today — full mixer and rehearsal mode included. a native Android app lands with the public launch, iOS follows later this year.',
   },
 ]
 
@@ -357,20 +404,18 @@ export function buildHomeJsonLd(): JsonLd[] {
     ],
   }
 
-  // FAQPage JSON-LD is intentionally omitted while the visible FAQ section
-  // in components/LandingPage.tsx is hidden — Google requires FAQ structured
-  // data to match visible page content. Re-add this alongside re-enabling
-  // that section (SEO_FAQS below already has the content ready):
-  //
-  // const faq: JsonLd = {
-  //   '@context': 'https://schema.org',
-  //   '@type': 'FAQPage',
-  //   mainEntity: SEO_FAQS.map(({ question, answer }) => ({
-  //     '@type': 'Question',
-  //     name: question,
-  //     acceptedAnswer: { '@type': 'Answer', text: answer },
-  //   })),
-  // }
+  // Google requires FAQPage structured data to match visible page content —
+  // SEO_FAQS above is the single source of truth for both the JSON-LD here
+  // and the visible FAQ section rendered in components/LandingPage.tsx.
+  const faq: JsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: SEO_FAQS.map(({ question, answer }) => ({
+      '@type': 'Question',
+      name: question,
+      acceptedAnswer: { '@type': 'Answer', text: answer },
+    })),
+  }
 
-  return [website, organization, software]
+  return [website, organization, software, faq]
 }

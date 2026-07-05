@@ -281,7 +281,7 @@ function OnboardingContent() {
     step === 1
       ? 'Pick a look for sonicdesk — you can change this anytime in settings.'
       : step === 2
-        ? 'This is how your bandmates will see you across sonicdesk.'
+        ? 'This is how your bandmates will see you across sonicdesk'
         : 'Start your own collective or request to join one with an invite code.'
 
   return (

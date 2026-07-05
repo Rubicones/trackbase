@@ -27,7 +27,7 @@ export default function MobileFeaturePage() {
   return (
     <SlicePage>
       <SliceNav kind="feature" label="mobile" />
-      <ScopeBanner kind="feature">Rehearsal + mixer on your phone — one part of sonicdesk.</ScopeBanner>
+      <ScopeBanner kind="feature">Rehearsal + mixer on your phone — one part of sonicdesk</ScopeBanner>
       <Hero />
       <DualModes />
       <FeatureGrid />

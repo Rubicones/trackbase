@@ -349,6 +349,9 @@ html[data-theme] a.tb-btn-accent {
   font-synthesis: none;
 }
 
+button.tb-no-press-scale:active { transform: none !important; }
+
+
 /* Structure section labels — Verse, Chorus, Bridge, etc. */
 .tb-section-name {
   font-family: var(--tb-font-display), 'Archivo', ui-sans-serif, system-ui, sans-serif;

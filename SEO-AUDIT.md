@@ -1,7 +1,24 @@
 # sonicdesk. — SEO Audit & On-Page Fixes
 
-**Date:** 2026-07-02, updated 2026-07-05
-**Scope:** Rounds 1–2: technical/on-page audit of the homepage. Round 3: page-per-intent architecture — new feature pages + competitor comparison pages.
+**Date:** 2026-07-02, updated 2026-07-06
+**Scope:** Rounds 1–2: technical/on-page audit of the homepage. Round 3: page-per-intent architecture — new feature pages + competitor comparison pages. Round 4: re-enabled FAQ + new free tool.
+
+## Round 4 — 2026-07-06
+
+Ports a design exploration (redesigned FAQ + chord-detector tool) into sonicdesk's own code style — rewritten, not copied, and reusing real components/design tokens throughout.
+
+1. **FAQ section re-enabled** (backlog item from Round 2) — `FAQ()` in `components/LandingPage.tsx` is back, rebuilt with a sticky intro column, tag filter chips (basics/solo/pricing/versioning/files/security/mobile), and a single-open accordion (spring-rotated "+", height-animated panels). `#faq` nav entry restored. `SEO_FAQS` in `lib/seo.ts` expanded from 6 to 9 entries with a `tag` field (single source of truth for both the visible section and `FAQPage` JSON-LD, which is uncommented in `buildHomeJsonLd()`). Content was fact-checked against the codebase, not invented — e.g. file formats (WAV/MP3/MIDI) confirmed against the tracks presign route, private-by-default confirmed against `lib/bandAccess.ts`, mobile/PWA phrasing kept consistent with the existing Roadmap section (native apps are upcoming, not shipped).
+
+2. **New free tool: `/tools/chord-detector`** (backlog item from Round 3, "free backlink-bait tool"). `app/tools/chord-detector/page.tsx` (force-static, `SliceKind: "feature"`) + `components/landing/ChordDetectorPage.tsx`. This is a real, working client-side tool — not a mock demo — reusing the existing per-section detection engine (`lib/chordDetection.ts` → `public/workers/chordsWorker.js`, Essentia via WASM). The file is decoded and analyzed entirely in the browser; nothing is uploaded to a server.
+   - Flow deliberately differs from a generic "drop file → instant result" pattern: since chord detection is bar-quantized, the user confirms **tempo (required) and time signature (defaults to 4/4)** before analysis starts, not after. No hardcoded 4/4 — the field is a real, editable `PROJECT_TIME_SIGNATURES` select.
+   - Does **not** claim key detection — the real engine only returns bar-quantized chords, no root/scale estimate, so the SEO copy and FAQ intentionally avoid "key finder" claims the tool can't back up.
+   - Added to `app/sitemap.ts`, linked from the homepage footer ("Free chord detector" under DEEP DIVES), and a few tool-specific keywords added to `SEO_KEYWORDS`.
+
+**Not verified by build** — sandbox had no free disk space again. Run `npm run build` / `tsc --noEmit` before deploying.
+
+### Files changed (round 4)
+- New: `app/tools/chord-detector/page.tsx`, `components/landing/ChordDetectorPage.tsx`
+- Modified: `components/LandingPage.tsx` (FAQ un-hidden + rebuilt, nav entry, footer link), `lib/seo.ts` (`SEO_FAQS` tag field + expanded content, FAQPage JSON-LD uncommented, `SEO_KEYWORDS`), `app/sitemap.ts`
 
 ## Round 3 — 2026-07-05
 
@@ -40,9 +57,9 @@ Since round 2, `/features/{versions,structure,mobile}` and `/audience/{cover-ban
 ### Remaining backlog (priority order)
 1. **Google Search Console** — verify domain, submit sitemap, and after the domain fix, watch for trackbase.studio ghosts. Highest remaining leverage, zero code.
 2. **301 redirect trackbase.studio → sonicdesk.studio** (if you control the domain).
-3. **Re-enable FAQ section + FAQPage JSON-LD** (built, commented out in `LandingPage.tsx` / `lib/seo.ts` — was hidden per your request; rich-result eligibility is free once visible).
+~~3. **Re-enable FAQ section + FAQPage JSON-LD**~~ — **done in Round 4** (2026-07-06).
 4. **Beta messaging** — "PRIVATE BETA" framing on commercial-intent pages can suppress CTR; consider a waitlist CTA on slice pages.
-5. **Free backlink-bait tool** (SyncMuse has /tools/diff + /tools/loudness) — e.g. a free BPM/key/chord detector at /tools/chord-detector.
+~~5. **Free backlink-bait tool** — e.g. a free BPM/chord detector at /tools/chord-detector.~~ — **done in Round 4** (2026-07-06), chord detector only (no BPM auto-detection — tempo is user-entered).
 6. **Blog/content** for long-tail ("how to organize band demos", "git for musicians").
 
 ## Round 2 — 2026-07-03

@@ -445,6 +445,12 @@ html.dark[data-palette="green"] .theme-avatar {
 
   button { cursor: pointer; border: none; background: none; }
   button:active { transform: scale(0.97); }
+
+  /* Opt-out for buttons that shouldn't get the global press-scale above
+     (accordion/filter triggers where the shrink reads as a layout glitch).
+     `!important` is required — Tailwind's `active:scale-100` utility lives in
+     a later cascade layer in theory, but doesn't reliably beat this rule in
+     practice, so don't rely on that alone. */
 }
 
 @layer components {

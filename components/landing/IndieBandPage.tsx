@@ -114,7 +114,7 @@ function Problem() {
           className="relative min-h-[280px] border border-lime bg-[color-mix(in_oklab,var(--lime)_5%,transparent)] p-4"
         >
           <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime">
-            sonicdesk. · northern room
+            sonicdesk · northern room
           </div>
           <div className="mt-3 space-y-1.5">
             {SORTED_VERSIONS.map((v) => (
@@ -142,11 +142,11 @@ function Problem() {
   );
 }
 
-/* --- 02 · how sonicdesk. fixes it --- */
+/* --- 02 · how sonicdesk fixes it --- */
 
 function Solution() {
   return (
-    <SliceSection index="02" tag="How sonicdesk. fixes it">
+    <SliceSection index="02" tag="How sonicdesk fixes it">
       <SliceHeadline>
         FROM SCATTERED <span className="text-lime">TO SORTED.</span>
       </SliceHeadline>

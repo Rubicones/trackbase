@@ -10,6 +10,7 @@ const SLICE_PATHS = [
   '/audience/cover-band',
   '/audience/indie-band',
   '/audience/producer',
+  '/tools/chord-detector',
 ] as const
 
 export default function sitemap(): MetadataRoute.Sitemap {

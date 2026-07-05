@@ -8,15 +8,14 @@ import {
   useInView,
   AnimatePresence,
 } from "motion/react";
-import { useEffect, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
 import { UserAvatar } from "@/components/ui/avatar";
 import { MetronomeIcon } from "@/components/design/TransportIcons";
 import { sectionLabel } from "@/components/StructureEditor";
 import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { SeededWaveform } from "@/components/WaveformBars";
-// SEO_FAQS import removed while the FAQ section is hidden — see the commented
-// FAQ() block near the bottom of this file to re-enable.
+import { SEO_FAQS } from "@/lib/seo";
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History,
@@ -361,7 +360,7 @@ function TopBar({
     ["#themes", "THEMES"],
     ["#system", "SYSTEM"],
     ["#roadmap", "ROADMAP"],
-    // FAQ nav entry disabled with the FAQ section below — see FAQ() comment.
+    ["#faq", "FAQ"],
   ];
 
   return (
@@ -2463,7 +2462,7 @@ function ThemingSection() {
                 type="button"
                 aria-expanded={isOpen}
                 onClick={() => setMobileThemeOpen(isOpen ? null : i)}
-                className="flex w-full items-center justify-between gap-3 p-4 text-left"
+                className="tb-no-press-scale flex w-full items-center justify-between gap-3 p-4 text-left"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="size-3 shrink-0" style={{ background: t.accent }} />
@@ -2882,7 +2881,7 @@ function Roadmap() {
         kicker="ROADMAP"
         title="WHAT'S NEXT."
         accent="SHIPPING SOON."
-        description="sonicdesk. is built in public. Private beta is live now; every following release unlocks a new room in the studio."
+        description="sonicdesk is built in public. Private beta is live now; every following release unlocks a new room in the studio."
       />
 
       <div
@@ -3003,48 +3002,160 @@ function Roadmap() {
 }
 
 /* ============================================================
- * FAQ (currently hidden — not rendered in LandingPage() below).
- * Uncomment the block below, restore the "#faq" nav entry above, and
- * restore the `<FAQ />` render call (before `<CTA .../>`) to bring it back.
- * If re-enabled, also restore the FAQPage JSON-LD in lib/seo.ts#buildHomeJsonLd
- * (Google requires FAQ structured data to match visible page content).
- *
- * import { SEO_FAQS } from "@/lib/seo";
- *
- * function FAQ() {
- *   return (
- *     <section id="faq" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
- *       <SectionHeader
- *         index="08"
- *         kicker="FAQ"
- *         title="QUESTIONS,"
- *         accent="ANSWERED."
- *         description="What sonicdesk actually does, in plain language — version control, comments on bars, chord detection, and how it compares to the alternatives."
- *       />
- *
- *       <div className="mt-14 grid grid-cols-1 gap-x-10 gap-y-10 md:grid-cols-2">
- *         {SEO_FAQS.map((item, i) => (
- *           <motion.div
- *             key={item.question}
- *             initial={{ opacity: 0, y: 16 }}
- *             whileInView={{ opacity: 1, y: 0 }}
- *             viewport={{ once: true, amount: 0.4 }}
- *             transition={{ delay: (i % 2) * 0.05, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
- *             className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] pb-8"
- *           >
- *             <h3 className="font-display-tb text-lg font-bold leading-snug tracking-tight text-foreground md:text-xl">
- *               {item.question}
- *             </h3>
- *             <p className="mt-3 font-mono-tb text-[13px] leading-relaxed text-muted-foreground md:text-sm">
- *               {item.answer}
- *             </p>
- *           </motion.div>
- *         ))}
- *       </div>
- *     </section>
- *   );
- * }
+ * FAQ — sticky intro + tag-filterable, single-open accordion.
+ * The left column stays pinned (`lg:sticky lg:top-24`) while the right-hand
+ * question list scrolls past it — that's the section's "scroll behavior".
  * ============================================================ */
+
+const FAQ_TAGS = ["all", "basics", "solo", "pricing", "versioning", "files", "security", "mobile"] as const;
+type FaqTag = (typeof FAQ_TAGS)[number];
+
+function FAQ() {
+  const [openIdx, setOpenIdx] = useState<number | null>(0);
+  const [filter, setFilter] = useState<FaqTag>("all");
+
+  const filtered = useMemo(
+    () =>
+      SEO_FAQS.map((item, i) => ({ ...item, i })).filter(
+        (item) => filter === "all" || item.tag === filter,
+      ),
+    [filter],
+  );
+
+  return (
+    <section id="faq" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] lg:gap-16">
+        <div className="lg:sticky lg:top-24 lg:self-start">
+          <MonoLabel>
+            <span className="text-lime">08</span> · FAQ
+          </MonoLabel>
+          <h2 className="mt-6 font-display-tb text-[2.6rem] font-bold leading-[0.95] tracking-[-0.02em] text-foreground md:text-[3.75rem]">
+            QUESTIONS, <span className="text-lime">ANSWERED.</span>
+          </h2>
+          <p className="mt-6 max-w-md font-mono-tb text-sm leading-relaxed text-muted-foreground">
+            The things people actually ask before they upload their first track. Still unsure?{" "}
+            <a href="mailto:hi@sonicdesk.studio" className="text-lime underline-offset-4 hover:underline">
+              hi@sonicdesk.studio
+            </a>
+            .
+          </p>
+
+          <div className="mt-8 flex flex-wrap gap-1.5">
+            {FAQ_TAGS.map((tag) => {
+              const active = filter === tag;
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => {
+                    setFilter(tag);
+                    setOpenIdx(null);
+                  }}
+                  className={`tb-no-press-scale border px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] transition-colors ${
+                    active
+                      ? "border-lime bg-lime text-primary-foreground"
+                      : "border-[color-mix(in_oklab,var(--border)_80%,transparent)] text-muted-foreground hover:border-lime hover:text-lime"
+                  }`}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)]">
+          <AnimatePresence mode="popLayout" initial={false}>
+            {filtered.map(({ question, answer, tag, i }, idx) => {
+              const isOpen = openIdx === i;
+              return (
+                <motion.div
+                  key={i}
+                  layout
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.35, delay: idx * 0.03 }}
+                  className="group border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenIdx(isOpen ? null : i)}
+                    aria-expanded={isOpen}
+                    aria-controls={`faq-panel-${i}`}
+                    className="tb-no-press-scale relative flex w-full cursor-pointer items-start gap-4 py-5 text-left sm:gap-6 sm:py-6"
+                  >
+                    <span className="w-8 shrink-0 pt-1.5 font-mono-tb text-[10px] uppercase tracking-[0.18em] tabular-nums text-muted-foreground">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="mb-1 flex items-center gap-2">
+                        <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-lime">
+                          / {tag}
+                        </span>
+                      </span>
+                      <span
+                        className={`block font-display-tb text-[clamp(1.2rem,2.6vw,1.9rem)] font-bold leading-[1.05] tracking-tight transition-colors ${
+                          isOpen ? "text-foreground" : "text-foreground/85 group-hover:text-lime"
+                        }`}
+                      >
+                        {question}
+                      </span>
+                    </span>
+                    <motion.span
+                      animate={{ rotate: isOpen ? 45 : 0 }}
+                      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+                      aria-hidden
+                      className={`mt-1.5 grid size-8 shrink-0 place-items-center border font-mono-tb text-lg leading-none sm:size-10 ${
+                        isOpen
+                          ? "border-lime text-lime"
+                          : "border-[color-mix(in_oklab,var(--border)_60%,transparent)] text-muted-foreground group-hover:border-lime group-hover:text-lime"
+                      }`}
+                    >
+                      +
+                    </motion.span>
+                  </button>
+
+                  <AnimatePresence initial={false}>
+                    {isOpen && (
+                      <motion.div
+                        id={`faq-panel-${i}`}
+                        key="panel"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ height: { duration: 0.35, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.25 } }}
+                        className="overflow-hidden"
+                      >
+                        <div className="-mt-1 pb-6 pl-12 pr-4 sm:pb-7 sm:pl-14 sm:pr-14">
+                          <motion.p
+                            initial={{ y: 8, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            exit={{ y: 4, opacity: 0 }}
+                            transition={{ duration: 0.3, delay: 0.05 }}
+                            className="max-w-2xl font-mono-tb text-[13px] leading-relaxed text-muted-foreground"
+                          >
+                            {answer}
+                          </motion.p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+
+          {filtered.length === 0 && (
+            <div className="py-10 font-mono-tb text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Nothing here yet — try another tag.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 /* ============================================================
  * Final CTA
@@ -3095,7 +3206,7 @@ function Footer() {
             className="font-display-tb font-bold tracking-tight text-lime text-xl"
 
           >
-            sonicdesk<span className="text-foreground">.</span>
+            sonicdesk
           </div>
           <p className="mt-3 max-w-sm font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
             Music is a process. Not a file.
@@ -3129,6 +3240,7 @@ function Footer() {
               { label: "Comments on bars", href: "/features/comments" },
               { label: "Structure & chords", href: "/features/structure" },
               { label: "Mobile", href: "/features/mobile" },
+              { label: "Free chord detector", href: "/tools/chord-detector" },
               { label: "For cover bands", href: "/audience/cover-band" },
               { label: "For indie bands", href: "/audience/indie-band" },
               { label: "For producers", href: "/audience/producer" },
@@ -3164,7 +3276,7 @@ function Footer() {
             <span className="text-(--signal)">● SYS OK</span>
           </span>
           <span>
-            sonicdesk. <span className="text-foreground">// v0.1</span> · © 2026
+            sonicdesk <span className="text-foreground">// v0.1</span> · © 2026
           </span>
         </div>
       </div>
@@ -3192,7 +3304,7 @@ export default function LandingPage() {
           <ThemingSection />
           <FeatureIndex />
           <Roadmap />
-          {/* FAQ section hidden for now — see FAQ() below to re-enable. */}
+          <FAQ />
           <CTA signInHref={authHref} />
           <Footer />
         </main>

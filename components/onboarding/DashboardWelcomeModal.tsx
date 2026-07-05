@@ -10,7 +10,7 @@ export function DashboardWelcomeModal({ onDismiss }: Props) {
   return (
     <OnboardingWelcomeShell
       icon={<FoldersIcon />}
-      title="Welcome to sonicdesk."
+      title="Welcome to sonicdesk"
       onDismiss={onDismiss}
     >
       <p className="text-sm text-muted-foreground leading-relaxed m-0">

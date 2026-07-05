@@ -43,7 +43,7 @@ export function SliceNav({ kind, label }: { kind: SliceKind; label: string }) {
     <nav className="landing-full-bleed sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1920px] items-center justify-between gap-4 px-4 md:px-8">
         <Link href="/" className="flex min-w-0 items-baseline gap-2 text-foreground">
-          <span className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg">
+          <span className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl">
             sonicdesk.
           </span>
           <span className="hidden font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:inline">
@@ -86,8 +86,8 @@ export function ScopeBanner({ kind, children }: { kind: SliceKind; children: Rea
           <span className="size-1.5 shrink-0 rounded-full bg-lime tb-blink" />
           <span className="truncate">
             {kind === "feature"
-              ? "You're viewing one feature — sonicdesk. is a full workspace"
-              : "You're viewing a slice — sonicdesk. is a full workspace for every band"}
+              ? "You're viewing one feature — sonicdesk is a full workspace"
+              : "You're viewing a slice — sonicdesk is a full workspace for every band"}
             . {children}
           </span>
         </span>
@@ -189,7 +189,7 @@ export function SlicePill({ children }: { children: ReactNode }) {
 }
 
 /* ============================================================
- * Card grid — the "how sonicdesk. fixes it" blocks
+ * Card grid — the "how sonicdesk fixes it" blocks
  * ============================================================ */
 
 export type SliceCardItem = {
@@ -273,7 +273,7 @@ export function SliceFooter({ kind, label }: { kind: SliceKind; label: string })
               href="/"
               className="tb-btn-accent inline-flex items-center bg-lime px-6 py-3 text-[11px] uppercase text-primary-foreground"
             >
-              Open sonicdesk. landing →
+              Open sonicdesk landing →
             </Link>
             <Link
               href={authHref}
@@ -287,7 +287,7 @@ export function SliceFooter({ kind, label }: { kind: SliceKind; label: string })
 
       <footer className="border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-8 sm:px-6">
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          <span>© sonicdesk. · v0.1 · built for musicians</span>
+          <span>© sonicdesk · v0.1 · built for musicians</span>
           <Link href="/" className="text-lime underline-offset-4 hover:underline">
             ← Back to landing
           </Link>

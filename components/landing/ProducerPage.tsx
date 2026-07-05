@@ -145,7 +145,7 @@ function Problem() {
         className="mt-6 border border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] p-6"
       >
         <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime">
-          ↳ sonicdesk. · one project · one URL
+          ↳ sonicdesk · one project · one URL
         </div>
         <div className="mt-2 font-display-tb text-3xl font-bold tracking-tight">
           Both of you working in <span className="text-lime">the same room.</span>
@@ -159,11 +159,11 @@ function Problem() {
   );
 }
 
-/* --- 02 · how sonicdesk. fixes it --- */
+/* --- 02 · how sonicdesk fixes it --- */
 
 function Solution() {
   return (
-    <SliceSection index="02" tag="How sonicdesk. fixes it">
+    <SliceSection index="02" tag="How sonicdesk fixes it">
       <SliceHeadline>
         ONE PROJECT. <span className="text-lime">ONE TRUTH.</span>
       </SliceHeadline>

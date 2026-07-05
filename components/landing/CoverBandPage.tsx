@@ -100,7 +100,7 @@ function Problem() {
           className="absolute border-2 border-lime bg-[color-mix(in_oklab,var(--lime)_10%,transparent)] px-8 py-10 text-center"
         >
           <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-lime">
-            sonicdesk. · project chart
+            sonicdesk · project chart
           </div>
           <div className="mt-2 font-display-tb text-6xl font-bold tracking-tight text-lime">Bbm</div>
           <div className="mt-2 font-mono-tb text-[9px] uppercase tracking-[0.18em] text-foreground">
@@ -115,11 +115,11 @@ function Problem() {
   );
 }
 
-/* --- 02 · how sonicdesk. fixes it --- */
+/* --- 02 · how sonicdesk fixes it --- */
 
 function Solution() {
   return (
-    <SliceSection index="02" tag="How sonicdesk. fixes it">
+    <SliceSection index="02" tag="How sonicdesk fixes it">
       <SliceHeadline>
         LESS ARGUING. <span className="text-lime">MORE PLAYING.</span>
       </SliceHeadline>

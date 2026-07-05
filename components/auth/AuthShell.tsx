@@ -24,7 +24,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <span className="uppercase tracking-widest">SYS OK</span>
         </div>
         <span className="hidden sm:inline text-foreground font-bold tracking-widest">
-          sonicdesk. // v0.9
+          sonicdesk // v0.9
         </span>
       </footer>
     </div>

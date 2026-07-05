@@ -52,7 +52,7 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
         >
           UI Kit
         </Link>
-        <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk. // v0.9</span>
+        <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk // v0.9</span>
       </div>
     </footer>
   )
