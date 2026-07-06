@@ -18,6 +18,7 @@
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2, uploadToR2 } from '@/lib/r2'
 import { ensureFfmpegConfigured } from '@/lib/ffmpeg'
+import { startBarToMs } from '@/lib/trackMerge'
 import ffmpeg from 'fluent-ffmpeg'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
@@ -30,19 +31,6 @@ export const PREVIEW_DEBOUNCE_SECONDS = 60
 export const PREVIEW_STUCK_LOCK_MS = 5 * 60 * 1000
 
 const previewR2Key = (projectId: string) => `previews/${projectId}/mix.mp3`
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Convert a track's start_bar to milliseconds.
- * Falls back to 4/4 if time_signature is missing.
- */
-function startBarToMs(startBar: number, bpm: number, timeSignature: string | null): number {
-  const sig = timeSignature ?? '4/4'
-  const beatsPerBar = parseInt(sig.split('/')[0], 10) || 4
-  const barDurationMs = (60000 / bpm) * beatsPerBar
-  return Math.round(startBar * barDurationMs)
-}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

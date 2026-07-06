@@ -22,6 +22,14 @@ export function sanitizeTrackStartBarForServer(startBar: number): number {
   return Math.max(TRACK_START_BAR_SERVER_MIN, Math.floor(startBar))
 }
 
+/** Convert a start_bar offset into milliseconds for a given tempo/time signature. */
+export function startBarToMs(startBar: number, bpm: number, timeSignature: string | null): number {
+  const sig = timeSignature ?? '4/4'
+  const beatsPerBar = parseInt(sig.split('/')[0], 10) || 4
+  const barDurationMs = (60000 / bpm) * beatsPerBar
+  return Math.round(startBar * barDurationMs)
+}
+
 /** Human-readable bar label (1-indexed for bar 1+; "Pre N" before bar 1). */
 export function formatTrackStartBar(startBar: number): string {
   if (startBar === 0) return 'Bar 1'

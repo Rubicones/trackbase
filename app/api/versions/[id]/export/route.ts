@@ -3,15 +3,13 @@ import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { flacToWav } from '@/lib/ffmpeg'
+import { trackStartBar, startBarToMs } from '@/lib/trackMerge'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
-import { writeFile, unlink, mkdir } from 'fs/promises'
+import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
-import { createReadStream } from 'fs'
-import { exec } from 'child_process'
-import { promisify } from 'util'
-
-const execAsync = promisify(exec)
+import { createReadStream, createWriteStream } from 'fs'
+import archiver from 'archiver'
 
 // GET /api/versions/[id]/export
 // Returns a zip archive of all tracks converted back to WAV.
@@ -38,15 +36,20 @@ export async function GET(
       return NextResponse.json({ error: 'No tracks found' }, { status: 404 })
     }
 
-    // Fetch version → project name for the filename
+    // Fetch version → project name/tempo (tempo needed to convert each track's
+    // start_bar offset into a silence-pad/trim duration for the exported WAV).
     const { data: version } = await supabase
       .from('versions')
-      .select('name, projects(name)')
+      .select('name, projects(name, bpm, time_signature)')
       .eq('id', versionId)
       .single()
 
-    const projectName = (version?.projects as unknown as { name: string } | null)?.name ?? 'project'
+    const project = version?.projects as unknown as
+      { name: string; bpm: number | null; time_signature: string | null } | null
+    const projectName = project?.name ?? 'project'
     const versionName = version?.name ?? 'export'
+    const bpm = project?.bpm ?? 120
+    const timeSignature = project?.time_signature ?? '4/4'
     const archiveName = `${projectName}-${versionName}.zip`
       .toLowerCase()
       .replace(/\s+/g, '-')
@@ -55,16 +58,33 @@ export async function GET(
 
     // Convert each FLAC back to WAV and write to tmpDir
     await Promise.all(
-      tracks.map(async (track: { storage_path: string; position: number; name: string }) => {
+      tracks.map(async (track: {
+        storage_path: string
+        position: number
+        name: string
+        start_bar?: number | null
+        midi_start_bar?: number | null
+      }) => {
         const flacBuffer = await downloadFromR2(track.storage_path)
-        const wavBuffer = await flacToWav(flacBuffer)
+        const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
+        const wavBuffer = await flacToWav(flacBuffer, delayMs)
         const filename = `${String(track.position).padStart(2, '0')}-${track.name.replace(/\//g, '_')}.wav`
         await writeFile(path.join(tmpDir, filename), wavBuffer)
       })
     )
 
+    // Build the zip in-process (no `zip` CLI — not available in the serverless runtime).
     const zipPath = path.join(tmpdir(), `${randomUUID()}.zip`)
-    await execAsync(`zip -j "${zipPath}" "${tmpDir}"/*.wav`)
+    await new Promise<void>((resolve, reject) => {
+      const output = createWriteStream(zipPath)
+      const archive = archiver('zip', { zlib: { level: 9 } })
+      output.on('close', () => resolve())
+      output.on('error', reject)
+      archive.on('error', reject)
+      archive.pipe(output)
+      archive.glob('*.wav', { cwd: tmpDir })
+      archive.finalize()
+    })
 
     // Stream zip back
     const stat = await import('fs').then((m) =>

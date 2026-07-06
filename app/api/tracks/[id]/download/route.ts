@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { flacToWav } from '@/lib/ffmpeg'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
+import { trackStartBar, startBarToMs } from '@/lib/trackMerge'
 
 // GET /api/tracks/[id]/download
 // Audio: fetches FLAC from R2, converts to WAV. MIDI: returns raw .mid from R2.
@@ -18,7 +19,7 @@ export async function GET(
 
     const { data: track, error } = await supabase
       .from('tracks')
-      .select('storage_path, original_filename, name, file_type')
+      .select('storage_path, original_filename, name, file_type, version_id, start_bar, midi_start_bar')
       .eq('id', trackId)
       .single()
     if (error) return NextResponse.json({ error: 'Track not found' }, { status: 404 })
@@ -38,8 +39,29 @@ export async function GET(
       })
     }
 
+    // Shift the WAV by the track's start_bar offset (silence-pad or trim) so a
+    // standalone download still lines up with the project timeline it plays on.
+    const { data: version } = await supabase
+      .from('versions')
+      .select('project_id')
+      .eq('id', track.version_id)
+      .maybeSingle()
+
+    let bpm = 120
+    let timeSignature = '4/4'
+    if (version) {
+      const { data: project } = await supabase
+        .from('projects')
+        .select('bpm, time_signature')
+        .eq('id', version.project_id)
+        .maybeSingle()
+      bpm = project?.bpm ?? 120
+      timeSignature = project?.time_signature ?? '4/4'
+    }
+
     const flacBuffer = await downloadFromR2(track.storage_path)
-    const wavBuffer = await flacToWav(flacBuffer)
+    const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
+    const wavBuffer = await flacToWav(flacBuffer, delayMs)
 
     const filename = `${baseName}.wav`
 

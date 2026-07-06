@@ -124,7 +124,13 @@ export async function audioToFlacFromFile(
   }
 }
 
-export async function flacToWav(flacBuffer: Buffer): Promise<Buffer> {
+/**
+ * Convert a FLAC buffer to WAV. `delayMs` applies the track's start_bar offset:
+ * positive pads the front with silence, negative trims that much off the start
+ * (pre-roll before bar 1) — mirrors the adelay/atrim logic in lib/previewMix.ts
+ * so exported/downloaded audio lines up with what plays in the app.
+ */
+export async function flacToWav(flacBuffer: Buffer, delayMs = 0): Promise<Buffer> {
   ensureFfmpegConfigured()
   const id = randomUUID()
   const inPath = path.join(tmpdir(), `${id}.flac`)
@@ -133,9 +139,17 @@ export async function flacToWav(flacBuffer: Buffer): Promise<Buffer> {
   try {
     await writeFile(inPath, flacBuffer)
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(inPath)
-        .audioCodec('pcm_s24le')
-        .audioFrequency(48000)
+      const cmd = ffmpeg(inPath).audioCodec('pcm_s24le').audioFrequency(48000)
+
+      const roundedDelay = Math.round(delayMs)
+      if (roundedDelay > 0) {
+        cmd.audioFilters(`adelay=${roundedDelay}:all=1`)
+      } else if (roundedDelay < 0) {
+        const trimSec = (-roundedDelay / 1000).toFixed(6)
+        cmd.audioFilters([`atrim=start=${trimSec}`, 'asetpts=PTS-STARTPTS'])
+      }
+
+      cmd
         .output(outPath)
         .on('end', () => resolve())
         .on('error', (err) => reject(err))
