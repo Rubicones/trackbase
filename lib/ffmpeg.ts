@@ -162,6 +162,127 @@ export async function flacToWav(flacBuffer: Buffer, delayMs = 0): Promise<Buffer
   }
 }
 
+// ─── Non-destructive track edit rendering ─────────────────────────────────────
+
+export interface RenderEditClip {
+  /** Bar offset into the source file's own bar grid. */
+  srcBar: number
+  lenBars: number
+}
+
+export interface RenderEditSegment {
+  /** Timeline bar where the segment starts (bar 0 = output file start). */
+  startBar: number
+  clips: RenderEditClip[]
+}
+
+/**
+ * Render a track edit session (bar-aligned segments referencing ranges of the
+ * source file) into a single FLAC covering bar 0 → end of content. Gaps
+ * between/before segments become silence; a clip that runs past the end of
+ * the source audio is padded with silence to fill its bar slot — identical to
+ * the in-browser Web Audio preview.
+ */
+export async function renderEditedFlac(
+  sourcePath: string,
+  segments: RenderEditSegment[],
+  barDurSec: number,
+): Promise<{ flac: Buffer; durationMs: number }> {
+  ensureFfmpegConfigured()
+  const id = randomUUID()
+  const outPath = path.join(tmpdir(), `${id}.flac`)
+
+  const sourceDurSec = await new Promise<number>((resolve) => {
+    ffmpeg.ffprobe(sourcePath, (_err, meta) => {
+      resolve(_err ? 0 : (meta?.format?.duration ?? 0))
+    })
+  })
+
+  const FMT = 'aformat=sample_fmts=s32:sample_rates=48000:channel_layouts=stereo'
+
+  // Flatten timeline into ordered pieces (silence gaps + source slices).
+  type Piece =
+    | { kind: 'silence'; durSec: number }
+    | { kind: 'clip'; startSec: number; endSec: number; slotSec: number }
+  const pieces: Piece[] = []
+
+  const sorted = [...segments].sort((a, b) => a.startBar - b.startBar)
+  let cursorBar = 0
+  for (const seg of sorted) {
+    if (seg.startBar > cursorBar) {
+      pieces.push({ kind: 'silence', durSec: (seg.startBar - cursorBar) * barDurSec })
+      cursorBar = seg.startBar
+    }
+    for (const clip of seg.clips) {
+      const slotSec = clip.lenBars * barDurSec
+      const srcStartSec = clip.srcBar * barDurSec
+      const audibleSec = Math.min(slotSec, Math.max(0, sourceDurSec - srcStartSec))
+      if (audibleSec <= 0.001) {
+        pieces.push({ kind: 'silence', durSec: slotSec })
+      } else {
+        pieces.push({ kind: 'clip', startSec: srcStartSec, endSec: srcStartSec + audibleSec, slotSec })
+      }
+      cursorBar += clip.lenBars
+    }
+  }
+  if (pieces.length === 0) throw new Error('Nothing to render')
+
+  // A filter input pad can only be consumed once — asplit the source when
+  // several pieces slice it.
+  const clipCount = pieces.filter(p => p.kind === 'clip').length
+  const filters: string[] = []
+  if (clipCount > 1) {
+    filters.push(
+      `[0:a]asplit=${clipCount}${Array.from({ length: clipCount }, (_, i) => `[in${i}]`).join('')}`,
+    )
+  }
+
+  const labels: string[] = []
+  let clipIdx = 0
+  pieces.forEach((piece, i) => {
+    const label = `p${i}`
+    if (piece.kind === 'silence') {
+      filters.push(
+        `anullsrc=r=48000:cl=stereo,atrim=duration=${piece.durSec.toFixed(6)},${FMT}[${label}]`,
+      )
+    } else {
+      const inLabel = clipCount > 1 ? `[in${clipIdx}]` : '[0:a]'
+      clipIdx += 1
+      filters.push(
+        `${inLabel}atrim=start=${piece.startSec.toFixed(6)}:end=${piece.endSec.toFixed(6)},` +
+        `asetpts=PTS-STARTPTS,${FMT},apad=whole_dur=${piece.slotSec.toFixed(6)}[${label}]`,
+      )
+    }
+    labels.push(`[${label}]`)
+  })
+
+  filters.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[out]`)
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(sourcePath)
+        .complexFilter(filters)
+        .outputOptions(['-map', '[out]'])
+        .audioCodec('flac')
+        .audioFrequency(48000)
+        .output(outPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .run()
+    })
+
+    const durationMs = await new Promise<number>((resolve) => {
+      ffmpeg.ffprobe(outPath, (_err, meta) => {
+        resolve(_err ? 0 : Math.round((meta?.format?.duration ?? 0) * 1000))
+      })
+    })
+
+    return { flac: await readFile(outPath), durationMs }
+  } finally {
+    await unlink(outPath).catch(() => {})
+  }
+}
+
 /** Sample rate the chord/key detection pipeline expects (matches the browser worker's Web Audio decode). */
 export const CHORD_DETECTION_SAMPLE_RATE = 44100
 

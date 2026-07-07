@@ -81,6 +81,36 @@ import {
   isMasterEditGuardSuppressed,
   suppressMasterEditGuard24h,
 } from '@/lib/masterEditGuard'
+import {
+  TrackEditArea,
+  TrackEditConfirmModal,
+  PencilIcon,
+  CheckIcon,
+  XIcon,
+} from '@/components/TrackEditArea'
+import {
+  type TrackEditSession,
+  type EditSelection,
+  type EditPreviewPiece,
+  createEditSession,
+  sessionCommit,
+  sessionUndo,
+  sessionRedo,
+  sessionIsDirty,
+  splitAtBar,
+  removeSelection,
+  duplicateSelection,
+  pasteAt,
+  moveSegment,
+  setSegmentStartEdge,
+  setSegmentEndEdge,
+  selectionClips,
+  clipsLenBars,
+  editStatePreviewPieces,
+  editStateToPayload,
+  editStateEndBar,
+  contentBarsFor,
+} from '@/lib/trackEdit'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1208,6 +1238,20 @@ function usePlayer(
   const playFnRef = useRef<(offset?: number) => Promise<void>>(async () => {})
   const skipPlaybackAnalyticsRef = useRef(false)
 
+  /** Live edit-mode preview: while set, this track plays its uncommitted
+   *  edit-session layout (bar-aligned slices of its buffer) instead of the
+   *  raw stored file. */
+  const editPreviewRef = useRef<{ trackId: string; pieces: EditPreviewPiece[] } | null>(null)
+
+  const setEditPreview = useCallback((preview: { trackId: string; pieces: EditPreviewPiece[] } | null) => {
+    editPreviewRef.current = preview
+    // Re-schedule sources so the change is audible immediately during playback.
+    if (playingRef.current) {
+      skipPlaybackAnalyticsRef.current = true
+      void playFnRef.current(offsetRef.current)
+    }
+  }, [])
+
   /** Metronome ignores solo/mute sets — only the Metro toggle controls it. */
   const gainForTrack = useCallback((
     trackId: string,
@@ -1961,6 +2005,34 @@ function usePlayer(
       const isPreviewMix = id === PREVIEW_MIX_TRACK_ID
       const trackMeta = isMetronome || isPreviewMix ? null : trackMetaMap.get(id)
       if (!isMetronome && !isPreviewMix && !trackMeta) return
+
+      // Edit-mode live preview: schedule the session's bar-aligned buffer
+      // slices instead of the whole file at start_bar.
+      const editPreview = editPreviewRef.current
+      if (editPreview && editPreview.trackId === id) {
+        const relevant = editPreview.pieces.filter(p => p.timelineSec + p.durSec > offset)
+        if (relevant.length === 0) return
+        const g = ctx.createGain()
+        const targetGain = effectiveGainForTrack(id, soloedTracksRef.current, mutedTracksRef.current)
+        g.gain.setValueAtTime(0, audioCtxPlayTime)
+        g.gain.linearRampToValueAtTime(targetGain, audioCtxPlayTime + RAMP_SECS)
+        g.connect(masterGainRef.current ?? ctx.destination)
+        newGains.set(id, g)
+        for (const piece of relevant) {
+          const src = ctx.createBufferSource()
+          src.buffer = buf
+          src.connect(g)
+          if (offset <= piece.timelineSec) {
+            src.start(audioCtxPlayTime + (piece.timelineSec - offset), piece.srcSec, piece.durSec)
+          } else {
+            const into = offset - piece.timelineSec
+            src.start(audioCtxPlayTime, piece.srcSec + into, piece.durSec - into)
+          }
+          sourcesRef.current.push(src)
+        }
+        return
+      }
+
       const trackOffsetSec = (isMetronome || isPreviewMix)
         ? 0
         : (trackMeta!.start_bar ?? trackMeta!.midi_start_bar ?? 0) * projBarDurSecP
@@ -2246,6 +2318,25 @@ function usePlayer(
     })
   }, [])
 
+  /** Re-fetch + decode one track's audio (after its file was replaced by an edit apply). */
+  const reloadTrack = useCallback(async (trackId: string) => {
+    bufsRef.current.delete(trackId)
+    const ctx = actxRef.current ?? getSharedAudioContext()
+    actxRef.current = ctx
+    const ab = await fetchTrackAudioBuffer(trackId)
+    if (!ab) return
+    try {
+      const decoded = await ctx.decodeAudioData(ab)
+      bufsRef.current.set(trackId, decoded)
+      noteTrackDuration(trackId, Math.round(decoded.duration * 1000))
+      recomputeTransportDuration()
+      if (playingRef.current) {
+        skipPlaybackAnalyticsRef.current = true
+        void playFnRef.current(offsetRef.current)
+      }
+    } catch { /* decode failed — track will reload on next version switch */ }
+  }, [noteTrackDuration, recomputeTransportDuration])
+
   return {
     playing, currentTime,
     duration: getTransportDuration(),
@@ -2272,6 +2363,8 @@ function usePlayer(
     /** Ref updated every rAF frame. Use for smooth DOM-direct visual updates. */
     currentTimeRef,
     noteTrackDuration,
+    setEditPreview,
+    reloadTrack,
   }
 }
 
@@ -2499,6 +2592,13 @@ const TrackRow = React.memo(function TrackRow({
   resourceFilterActive = false,
   onResourceFilter,
   isReplacing = false,
+  editable = false,
+  editing: editMode = false,
+  editBusy = false,
+  onRequestEdit,
+  onEditApply,
+  onEditCancel,
+  editArea,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   /** True while a new file is being uploaded/processed to replace this track. */
@@ -2544,6 +2644,17 @@ const TrackRow = React.memo(function TrackRow({
   compact?: boolean
   resourceFilterActive?: boolean
   onResourceFilter?: (trackId: string) => void
+  /** Desktop mixer + audio track — show the Edit (pencil) button. */
+  editable?: boolean
+  /** True while THIS track is in edit mode. */
+  editing?: boolean
+  /** True while an edit apply is rendering/uploading. */
+  editBusy?: boolean
+  onRequestEdit?: () => void
+  onEditApply?: () => void
+  onEditCancel?: () => void
+  /** Pre-built TrackEditArea element — replaces the waveform while editing. */
+  editArea?: ReactNode
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const accentColor = trackAccentColor(track.icon_color, index)
@@ -3084,6 +3195,46 @@ const TrackRow = React.memo(function TrackRow({
             activeClass="bg-chart-4 text-background border-chart-4"
             onClick={onToggleSolo}
           />
+          {editable && !isMidi && !compact && (
+            editMode ? (
+              <>
+                <HoverTooltip label={editBusy ? 'Rendering…' : 'Apply changes'}>
+                  <button
+                    type="button"
+                    onClick={onEditApply}
+                    disabled={editBusy}
+                    aria-label="Apply track edits"
+                    className="size-5 border grid place-items-center transition border-lime bg-lime text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <CheckIcon />
+                  </button>
+                </HoverTooltip>
+                <HoverTooltip label="Discard changes">
+                  <button
+                    type="button"
+                    onClick={onEditCancel}
+                    disabled={editBusy}
+                    aria-label="Cancel track edits"
+                    className="size-5 border grid place-items-center transition border-border text-muted-foreground hover:border-destructive hover:text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <XIcon />
+                  </button>
+                </HoverTooltip>
+              </>
+            ) : (
+              <HoverTooltip label={audioReady ? 'Edit track' : 'Loading audio…'}>
+                <button
+                  type="button"
+                  onClick={onRequestEdit}
+                  disabled={!audioReady || isReplacing}
+                  aria-label="Edit track"
+                  className="size-5 border text-[9px] grid place-items-center transition border-border hover:border-lime hover:text-lime text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground"
+                >
+                  <PencilIcon />
+                </button>
+              </HoverTooltip>
+            )
+          )}
           {isMidi && !compact && (
             <button
               type="button"
@@ -3224,7 +3375,7 @@ const TrackRow = React.memo(function TrackRow({
         className="relative flex-1 min-w-0 overflow-hidden border-l border-border/0"
         style={{ minHeight: rowH, opacity: waveformOpacity, transition: 'opacity 0.15s' }}
       >
-        {!commentMode && (
+        {!commentMode && !editMode && (
           <TactGrid
             totalBars={totalBars}
             barDurationMs={barDurationMsRow}
@@ -3235,7 +3386,11 @@ const TrackRow = React.memo(function TrackRow({
         )}
       </div>
 
+      {/* Edit mode — bar-snapped selection/segment editing replaces the normal clip */}
+      {editMode && editArea}
+
       {/* Waveform clip — row-relative so pre-roll extends under the label column */}
+      {!editMode && (
       <div
         ref={waveformClipRef}
         style={{
@@ -3280,6 +3435,7 @@ const TrackRow = React.memo(function TrackRow({
             )
           ) : (
             <Waveform
+                key={`${track.id}:${track.file_hash}`}
                 trackId={track.id} color={accentColor}
                 durationMs={trackOwnDurationMs} commentMode={commentMode}
                 barCount={displayBarCount}
@@ -3302,6 +3458,7 @@ const TrackRow = React.memo(function TrackRow({
               />
           )}
       </div>
+      )}
 
       {isOffsetDragging && (
         <>
@@ -4557,6 +4714,34 @@ export default function ProjectPage() {
   const [versionLoading, setVersionLoading] = useState(false)
   const [versionContentLoading, setVersionContentLoading] = useState(false)
   const versionSwitchLockedRef = useRef(false)
+
+  // ── Non-destructive track edit session (desktop mixer) ──────────────────────
+  const [editSession, setEditSession] = useState<TrackEditSession | null>(null)
+  const [editApplyStatus, setEditApplyStatus] = useState<'idle' | 'processing' | 'error'>('idle')
+  const [editApplyError, setEditApplyError] = useState<string | null>(null)
+  const [editConfirm, setEditConfirm] = useState<null | {
+    title: string
+    body: string
+    cancelLabel: string
+    confirmLabel: string
+    danger?: boolean
+    action: () => void
+  }>(null)
+  const editSessionRef = useRef<TrackEditSession | null>(null)
+  editSessionRef.current = editSession
+  const editApplyStatusRef = useRef(editApplyStatus)
+  editApplyStatusRef.current = editApplyStatus
+  /** Display name of the track being edited — for confirm dialog copy (set during render below). */
+  const editingTrackNameRef = useRef('')
+
+  /** Reset edit state + confirm dialog; the preview-sync effect clears the player preview. */
+  const discardEditSession = useCallback(() => {
+    setEditSession(null)
+    setEditApplyStatus('idle')
+    setEditApplyError(null)
+    setEditConfirm(null)
+  }, [])
+
   const [mergeModal, setMergeModal] = useState<{ branchId: string } | null>(null)
   const [deleteVersionModal, setDeleteVersionModal] = useState<{ id: string; name: string } | null>(null)
   const [deletingVersion, setDeletingVersion] = useState(false)
@@ -4786,7 +4971,7 @@ export default function ProjectPage() {
     versionDeepLinkApplied.current = false
   }, [projectId])
 
-  const selectVersion = useCallback((id: string) => {
+  const performSelectVersion = useCallback((id: string) => {
     if (id === activeVersionIdRef.current) return
     if (versionSwitchLockedRef.current) return
     trackEvent('version_switched')
@@ -4805,6 +4990,26 @@ export default function ProjectPage() {
     }
   }, [bandId, projectId, router, searchParams])
 
+  const selectVersion = useCallback((id: string) => {
+    if (id === activeVersionIdRef.current) return
+    // An active edit session must be applied or discarded before switching versions.
+    if (editSessionRef.current) {
+      setEditConfirm({
+        title: 'Unsaved track edits',
+        body: `Discard all changes to “${editingTrackNameRef.current}”? Switching versions ends the edit session.`,
+        cancelLabel: 'Keep editing',
+        confirmLabel: 'Discard changes',
+        danger: true,
+        action: () => {
+          discardEditSession()
+          performSelectVersion(id)
+        },
+      })
+      return
+    }
+    performSelectVersion(id)
+  }, [performSelectVersion, discardEditSession])
+
   const navigateResourceVersion = useCallback((versionId: string) => {
     selectVersion(versionId)
     if (window.innerWidth < 1024) setSidebarOpen(false)
@@ -4812,6 +5017,7 @@ export default function ProjectPage() {
 
   const navigateResourceTrack = useCallback((trackId: string, versionId: string) => {
     if (versionSwitchLockedRef.current && versionId !== activeVersionIdRef.current) return
+    if (editSessionRef.current && versionId !== activeVersionIdRef.current) return
     setActiveVersionId(versionId)
     setCommentMode(false)
     setActiveCommentInput(null)
@@ -5131,7 +5337,10 @@ export default function ProjectPage() {
       const bars = Math.ceil((dMs || 0) / barDurMs)
       return (t.start_bar ?? 0) + bars
     })
-    return Math.max(...endBars, minTimelineBars)
+    // An active edit session can extend the timeline (segments moved/pasted
+    // beyond the current project end) — same auto-extend as dragging a track.
+    const editEndBars = editSession ? editStateEndBar(editSession.state) : 0
+    return Math.max(...endBars, editEndBars, minTimelineBars)
   })()
 
   const totalProjectBars = Math.min(
@@ -5160,6 +5369,270 @@ export default function ProjectPage() {
   )
   const playerRef = useRef(player)
   playerRef.current = player
+
+  // ── Track edit session — handlers ────────────────────────────────────────────
+  const editBarDurSec = projBarDurationMs / 1000
+  const editBarDurSecRef = useRef(editBarDurSec)
+  editBarDurSecRef.current = editBarDurSec
+
+  const editingTrack = editSession
+    ? activeTracks.find(t => t.id === editSession.trackId) ?? null
+    : null
+  const editingTrackName = editingTrack
+    ? (editingTrack.display_name ?? editingTrack.name)
+    : ''
+  editingTrackNameRef.current = editingTrackName
+  const editDirty = editSession != null && sessionIsDirty(editSession)
+
+  // End the session if its track disappears (e.g. deleted from another tab).
+  useEffect(() => {
+    if (editSession && editingTrack === null && !loading && !versionContentLoading) {
+      discardEditSession()
+    }
+  }, [editSession, editingTrack, loading, versionContentLoading, discardEditSession])
+
+  // Keep the player's live preview in sync with the uncommitted edit state so
+  // playback always sounds like the rendered result would.
+  useEffect(() => {
+    if (!editSession) {
+      playerRef.current.setEditPreview(null)
+      return
+    }
+    const durMs = decodedDurationMs.get(editSession.trackId)
+      ?? playerRef.current.trackDurations.get(editSession.trackId)
+      ?? activeTracks.find(t => t.id === editSession.trackId)?.duration_ms
+      ?? 0
+    playerRef.current.setEditPreview({
+      trackId: editSession.trackId,
+      pieces: editStatePreviewPieces(editSession.state, editBarDurSec, durMs / 1000),
+    })
+    // activeTracks/decodedDurationMs are lookups only — session state drives resync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editSession, editBarDurSec])
+
+  // Warn before leaving the page with unsaved edit changes.
+  useEffect(() => {
+    if (!editDirty) return
+    const h = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', h)
+    return () => window.removeEventListener('beforeunload', h)
+  }, [editDirty])
+
+  // Intercept in-app link navigation (e.g. back to band) while edits are unsaved.
+  useEffect(() => {
+    if (!editDirty) return
+    const onClick = (e: MouseEvent) => {
+      const anchor = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!anchor) return
+      const href = anchor.getAttribute('href') ?? ''
+      if (!href.startsWith('/') || href.startsWith('/api/')) return
+      e.preventDefault()
+      e.stopPropagation()
+      setEditConfirm({
+        title: 'Unsaved track edits',
+        body: `Discard all changes to “${editingTrackNameRef.current}”?`,
+        cancelLabel: 'Keep editing',
+        confirmLabel: 'Discard & leave',
+        danger: true,
+        action: () => {
+          discardEditSession()
+          router.push(href)
+        },
+      })
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [editDirty, discardEditSession, router])
+
+  function beginEditSession(track: Track) {
+    const durMs = decodedDurationMs.get(track.id)
+      ?? playerRef.current.trackDurations.get(track.id)
+      ?? track.duration_ms
+      ?? 0
+    if (durMs <= 0 || editBarDurSec <= 0) return
+    setEditApplyStatus('idle')
+    setEditApplyError(null)
+    setEditSession(createEditSession(
+      track.id,
+      track.start_bar ?? 0,
+      contentBarsFor(durMs / 1000, editBarDurSec),
+    ))
+    trackEvent('track_edit_started')
+  }
+
+  function handleRequestEdit(track: Track) {
+    if (editApplyStatusRef.current === 'processing') return
+    const current = editSessionRef.current
+    if (current?.trackId === track.id) return
+    if (current) {
+      // Only one track can be in edit mode — confirm before switching.
+      setEditConfirm({
+        title: 'Switch tracks?',
+        body: `You're editing “${editingTrackNameRef.current}”. Discard those changes and edit “${track.display_name ?? track.name}” instead?`,
+        cancelLabel: 'Keep editing',
+        confirmLabel: 'Discard & edit',
+        danger: true,
+        action: () => {
+          discardEditSession()
+          guardMasterEdit(() => beginEditSession(track))
+        },
+      })
+      return
+    }
+    guardMasterEdit(() => beginEditSession(track))
+  }
+
+  // Bar-snapped playhead placement from the edit area.
+  function handleEditSeekBar(bar: number) {
+    playerRef.current.seek(bar * editBarDurSecRef.current)
+  }
+
+  function handleEditSelect(sel: EditSelection | null) {
+    setEditSession(prev => (prev ? { ...prev, selection: sel } : prev))
+  }
+
+  function handleEditSeparate(playheadBar: number) {
+    const prev = editSessionRef.current
+    if (!prev) return
+    const next = splitAtBar(prev.state, playheadBar)
+    if (!next) return
+    setEditSession(sessionCommit(prev, next, prev.selection))
+    trackEvent('track_edit_op', { op: 'separate' })
+  }
+
+  function handleEditRemove() {
+    const prev = editSessionRef.current
+    if (!prev?.selection) return
+    const next = removeSelection(prev.state, prev.selection)
+    if (!next) return
+    setEditSession(sessionCommit(prev, next, null))
+    trackEvent('track_edit_op', { op: 'remove' })
+  }
+
+  function handleEditDuplicate() {
+    const prev = editSessionRef.current
+    if (!prev?.selection) return
+    const res = duplicateSelection(prev.state, prev.selection)
+    if (!res) return
+    setEditSession(sessionCommit(prev, res.state, res.selection))
+    trackEvent('track_edit_op', { op: 'duplicate' })
+  }
+
+  function handleEditCopy() {
+    const prev = editSessionRef.current
+    if (!prev?.selection) return
+    const clips = selectionClips(prev.state, prev.selection)
+    if (!clips || clipsLenBars(clips) === 0) return
+    setEditSession({
+      ...prev,
+      clipboard: { clips, lenBars: prev.selection.endBar - prev.selection.startBar },
+    })
+  }
+
+  function handleEditPaste(playheadBar: number) {
+    const prev = editSessionRef.current
+    if (!prev?.clipboard) return
+    const res = pasteAt(prev.state, playheadBar, prev.clipboard)
+    if (!res) return
+    setEditSession(sessionCommit(prev, res.state, null))
+    // Playhead moves to the end of the pasted content.
+    playerRef.current.seek(res.endBar * editBarDurSecRef.current)
+    trackEvent('track_edit_op', { op: 'paste' })
+  }
+
+  function handleEditMoveSegment(segId: string, newStartBar: number) {
+    const prev = editSessionRef.current
+    if (!prev) return
+    setEditSession(sessionCommit(prev, moveSegment(prev.state, segId, newStartBar), prev.selection))
+  }
+
+  function handleEditTrimSegmentStart(segId: string, newStartBar: number) {
+    const prev = editSessionRef.current
+    if (!prev) return
+    const next = setSegmentStartEdge(prev.state, segId, newStartBar, prev.contentBars)
+    if (!next) return
+    setEditSession(sessionCommit(prev, next, null))
+    trackEvent('track_edit_op', { op: 'trim_start' })
+  }
+
+  function handleEditTrimSegmentEnd(segId: string, newEndBar: number) {
+    const prev = editSessionRef.current
+    if (!prev) return
+    const next = setSegmentEndEdge(prev.state, segId, newEndBar, prev.contentBars)
+    if (!next) return
+    setEditSession(sessionCommit(prev, next, null))
+    trackEvent('track_edit_op', { op: 'trim_end' })
+  }
+
+  function handleEditUndo() {
+    setEditSession(prev => (prev ? sessionUndo(prev) : prev))
+  }
+
+  function handleEditRedo() {
+    setEditSession(prev => (prev ? sessionRedo(prev) : prev))
+  }
+
+  async function performEditApply() {
+    const session = editSessionRef.current
+    if (!session) return
+    setEditApplyStatus('processing')
+    setEditApplyError(null)
+    try {
+      const res = await fetch(`/api/tracks/${session.trackId}/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editStateToPayload(session.state)),
+      })
+      if (!res.ok) {
+        const msg = (await res.json().catch(() => ({}))).error ?? 'Processing failed'
+        throw new Error(msg)
+      }
+      // The track row now points at the rendered file — drop every stale cache
+      // and reload both metadata and audio.
+      waveformBarsCache.delete(session.trackId)
+      audioArrayBufferCache.delete(session.trackId)
+      discardEditSession()
+      trackEvent('track_edit_applied')
+      cache.invalidate(activeVersionId)
+      await Promise.all([
+        playerRef.current.reloadTrack(session.trackId),
+        loadProject(true, true),
+      ])
+    } catch (err) {
+      // Keep the session alive so the user's work isn't lost; allow retry.
+      setEditApplyStatus('error')
+      setEditApplyError(err instanceof Error ? err.message : 'Apply failed')
+    }
+  }
+
+  function requestEditApply() {
+    if (!editSessionRef.current || editApplyStatusRef.current === 'processing') return
+    setEditConfirm({
+      title: 'Apply changes?',
+      body: `Apply changes to “${editingTrackNameRef.current}”? This will replace the current track with the edited version.`,
+      cancelLabel: 'Keep editing',
+      confirmLabel: 'Apply changes',
+      action: () => {
+        setEditConfirm(null)
+        void performEditApply()
+      },
+    })
+  }
+
+  function requestEditCancel() {
+    if (!editSessionRef.current || editApplyStatusRef.current === 'processing') return
+    setEditConfirm({
+      title: 'Discard changes?',
+      body: `Discard all changes to “${editingTrackNameRef.current}”?`,
+      cancelLabel: 'Keep editing',
+      confirmLabel: 'Discard changes',
+      danger: true,
+      action: () => discardEditSession(),
+    })
+  }
 
   const [activeLoopSectionId, setActiveLoopSectionId] = useState<string | null>(null)
   const sectionRanges = useMemo(() => buildSectionRanges(sections), [sections])
@@ -6730,11 +7203,27 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                       type="button"
                       onClick={() => {
                         const other = versions.find(v => v.id !== activeVersionId)
-                        if (other) {
+                        if (!other) return
+                        const enterCompare = () => {
                           setCompareVersionBId(other.id)
                           setCompareActive(true)
-                          if (player.playing) player.pause()
+                          if (playerRef.current.playing) playerRef.current.pause()
                         }
+                        if (editSessionRef.current) {
+                          setEditConfirm({
+                            title: 'Unsaved track edits',
+                            body: `Discard all changes to “${editingTrackNameRef.current}”? Compare mode ends the edit session.`,
+                            cancelLabel: 'Keep editing',
+                            confirmLabel: 'Discard changes',
+                            danger: true,
+                            action: () => {
+                              discardEditSession()
+                              enterCompare()
+                            },
+                          })
+                          return
+                        }
+                        enterCompare()
                       }}
                       className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
                     >
@@ -7005,6 +7494,40 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   compact={isMobileLandscape}
                   resourceFilterActive={resourceFilterTrackId === t.id}
                   onResourceFilter={setResourceFilterTrackId}
+                  editable={isDesktopMixer && t.file_type !== 'midi'}
+                  editing={editSession?.trackId === t.id}
+                  editBusy={editApplyStatus === 'processing' && editSession?.trackId === t.id}
+                  onRequestEdit={() => handleRequestEdit(t)}
+                  onEditApply={requestEditApply}
+                  onEditCancel={requestEditCancel}
+                  editArea={editSession?.trackId === t.id ? (
+                    <TrackEditArea
+                      session={editSession}
+                      color={trackAccentColor(t.icon_color, i)}
+                      labelW={TRACK_LABEL_W}
+                      rowH={TRACK_ROW_H}
+                      totalBars={totalProjectBars}
+                      barDurationMs={projBarDurationMs}
+                      totalDurationMs={totalProjectDurationMs}
+                      currentTimeRef={player.currentTimeRef}
+                      applyStatus={editApplyStatus}
+                      applyError={editApplyError}
+                      onSeekBar={handleEditSeekBar}
+                      onSelect={handleEditSelect}
+                      onSeparate={handleEditSeparate}
+                      onRemove={handleEditRemove}
+                      onDuplicate={handleEditDuplicate}
+                      onCopy={handleEditCopy}
+                      onPaste={handleEditPaste}
+                      onMoveSegment={handleEditMoveSegment}
+                      onTrimSegmentStart={handleEditTrimSegmentStart}
+                      onTrimSegmentEnd={handleEditTrimSegmentEnd}
+                      onUndo={handleEditUndo}
+                      onRedo={handleEditRedo}
+                      onRequestCancel={requestEditCancel}
+                      onRetryApply={() => { void performEditApply() }}
+                    />
+                  ) : undefined}
                 />
               ))}
               {recordingSessions.map(session => (
@@ -7315,6 +7838,22 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         />
       )}
       {showBranchModal && <NewBranchModal onConfirm={handleNewBranch} onCancel={() => setShowBranchModal(false)} />}
+
+      {editConfirm && (
+        <TrackEditConfirmModal
+          title={editConfirm.title}
+          body={editConfirm.body}
+          cancelLabel={editConfirm.cancelLabel}
+          confirmLabel={editConfirm.confirmLabel}
+          danger={editConfirm.danger}
+          onCancel={() => setEditConfirm(null)}
+          onConfirm={() => {
+            const { action } = editConfirm
+            setEditConfirm(null)
+            action()
+          }}
+        />
+      )}
 
       {mergeModal && (
         <MergeModal
