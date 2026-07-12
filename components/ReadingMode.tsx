@@ -356,6 +356,51 @@ export function ReadingMode({
     return fmt((startBar * barDurationMs) / 1000)
   }
 
+  // ─── Performance-note cue (now view) ──────────────────────────────────────
+  // Sticks for the entire section. On section change, notes swap like a picker
+  // wheel: the old one rolls up into a blur, the new one rolls in from below.
+  const [noteCue, setNoteCue] = useState<{ key: string; text: string } | null>(null)
+  const [leavingCue, setLeavingCue] = useState<{ key: string; text: string } | null>(null)
+  const noteCueRef = useRef(noteCue)
+  noteCueRef.current = noteCue
+  const leavingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastCueSectionRef = useRef<string | null>(null)
+  const currentSectionId = currentSection?.id ?? null
+  const currentSectionNote = currentSection?.note?.trim() || null
+
+  useEffect(() => {
+    const prev = noteCueRef.current
+
+    if (currentSectionId === lastCueSectionRef.current) {
+      // Same section — reflect live note edits in place, no animation
+      // (same key, so the entering element is not remounted).
+      if (currentSectionId && currentSectionNote) {
+        if (!prev || prev.text !== currentSectionNote) {
+          setNoteCue({ key: currentSectionId, text: currentSectionNote })
+        }
+      } else if (prev) {
+        setNoteCue(null)
+      }
+      return
+    }
+    lastCueSectionRef.current = currentSectionId
+
+    const next = currentSectionId && currentSectionNote
+      ? { key: currentSectionId, text: currentSectionNote }
+      : null
+    if (prev && prev.key !== next?.key) {
+      // Old note exits upward while (if present) the new one enters below it.
+      setLeavingCue(prev)
+      if (leavingTimerRef.current) clearTimeout(leavingTimerRef.current)
+      leavingTimerRef.current = setTimeout(() => setLeavingCue(null), 380)
+    }
+    setNoteCue(next)
+  }, [currentSectionId, currentSectionNote])
+
+  useEffect(() => () => {
+    if (leavingTimerRef.current) clearTimeout(leavingTimerRef.current)
+  }, [])
+
   // ─── Lyrics teleprompter autoscroll ───────────────────────────────────────
   const lyricsLines = useMemo(() => (lyrics?.content?.trim() ? lyrics.content.split('\n') : []), [lyrics])
   const lyricsRef = useRef<HTMLDivElement>(null)
@@ -654,6 +699,31 @@ export function ReadingMode({
                 )}
               </div>
 
+              {/* Performance-note cue — fixed-height row (always reserved) so the
+                  transition never shifts the chord display. Outgoing and incoming
+                  notes are stacked absolutely and animate at the same time. */}
+              <div className="relative h-5" aria-live="polite">
+                {leavingCue && (
+                  <span
+                    key={`out-${leavingCue.key}`}
+                    aria-hidden
+                    className="rm-note-rise-out absolute inset-0 flex items-center justify-center gap-1.5 min-w-0 text-[11px] font-mono text-lime pointer-events-none"
+                  >
+                    <span className="size-1.5 rounded-full bg-lime shrink-0" />
+                    <span className="truncate">{leavingCue.text}</span>
+                  </span>
+                )}
+                {noteCue && (
+                  <span
+                    key={`in-${noteCue.key}`}
+                    className="rm-note-rise-in absolute inset-0 flex items-center justify-center gap-1.5 min-w-0 text-[11px] font-mono text-lime"
+                  >
+                    <span className="size-1.5 rounded-full bg-lime shrink-0" aria-hidden />
+                    <span className="truncate">{noteCue.text}</span>
+                  </span>
+                )}
+              </div>
+
               {/* Always reserve this row's height so the layout doesn't jump when a section becomes current. */}
               <div>
                 <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1.5 tabular-nums whitespace-nowrap">
@@ -688,21 +758,28 @@ export function ReadingMode({
                     >
                       {sectionLabel(section)}
                     </span>
-                    <div className="flex-1 min-w-0 flex flex-wrap gap-1">
-                      {chords.length === 0 ? (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      ) : chords.map(c => (
-                        <span
-                          key={c.sectionChordIndex}
-                          className={`text-[10px] px-1.5 py-0.5 border ${
-                            c.globalIndex === displayChordIndex
-                              ? 'bg-lime text-primary-foreground border-lime'
-                              : 'border-border text-foreground'
-                          }`}
-                        >
-                          {c.name}
-                        </span>
-                      ))}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap gap-1">
+                        {chords.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : chords.map(c => (
+                          <span
+                            key={c.sectionChordIndex}
+                            className={`text-[10px] px-1.5 py-0.5 border ${
+                              c.globalIndex === displayChordIndex
+                                ? 'bg-lime text-primary-foreground border-lime'
+                                : 'border-border text-foreground'
+                            }`}
+                          >
+                            {c.name}
+                          </span>
+                        ))}
+                      </div>
+                      {section.note?.trim() && (
+                        <div className="text-[10px] text-muted-foreground mt-1.5">
+                          {section.note}
+                        </div>
+                      )}
                     </div>
                     <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 pt-0.5">
                       {sectionStartTime(section.start_bar)}

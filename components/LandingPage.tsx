@@ -789,6 +789,7 @@ function landingMockSection(
     start_bar,
     end_bar,
     chords,
+    note: null,
     color: "",
     position,
     created_at: "",

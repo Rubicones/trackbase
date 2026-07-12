@@ -15,7 +15,7 @@ export async function PUT(
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const body = await req.json()
-    const { type, custom_name, start_bar, end_bar, chords, color, position } = body
+    const { type, custom_name, start_bar, end_bar, chords, note, color, position } = body
 
     const updates: Record<string, unknown> = {}
     if (type !== undefined) updates.type = type
@@ -23,6 +23,11 @@ export async function PUT(
     if (start_bar !== undefined) updates.start_bar = start_bar
     if (end_bar !== undefined) updates.end_bar = end_bar
     if (chords !== undefined) updates.chords = chords
+    if (note !== undefined) {
+      updates.note = typeof note === 'string' && note.trim()
+        ? note.trim().slice(0, 40)
+        : null
+    }
     if (color !== undefined) updates.color = color
     if (position !== undefined) updates.position = position
 

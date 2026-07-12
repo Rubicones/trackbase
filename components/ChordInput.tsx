@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Copy, Trash2, X } from 'lucide-react'
 import { ChordDurationPicker } from '@/components/ChordDurationPicker'
 import {
   filterChordInputChar,
@@ -22,36 +23,92 @@ function isTouchInputDevice(): boolean {
   )
 }
 
+const LONG_PRESS_MS = 450
+
 function ChordChip({
   chord,
   onClick,
+  onContextMenu,
+  onLongPress,
+  selected,
   compact,
 }: {
   chord: ParsedChord
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
+  onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void
+  /** Touch devices — long-press toggles selection instead of opening the picker. */
+  onLongPress?: () => void
+  selected?: boolean
   compact?: boolean
 }) {
   const showDuration = Math.abs(chord.duration - 1) >= 0.001
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressFiredRef = useRef(false)
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
 
   const minSize = compact ? 'min-w-7 min-h-7' : 'min-w-8 min-h-8'
 
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={`inline-flex shrink-0 border border-border bg-surface flex-col items-center justify-center hover:border-foreground/40 transition px-1.5 ${minSize}`}
+      onClick={e => {
+        // Swallow the click synthesized after a long-press.
+        if (longPressFiredRef.current) {
+          longPressFiredRef.current = false
+          return
+        }
+        onClick(e)
+      }}
+      onContextMenu={onContextMenu}
+      onTouchStart={onLongPress ? () => {
+        longPressFiredRef.current = false
+        clearLongPress()
+        longPressTimerRef.current = setTimeout(() => {
+          longPressTimerRef.current = null
+          longPressFiredRef.current = true
+          navigator.vibrate?.(10)
+          onLongPress()
+        }, LONG_PRESS_MS)
+      } : undefined}
+      onTouchMove={onLongPress ? clearLongPress : undefined}
+      onTouchEnd={onLongPress ? clearLongPress : undefined}
+      onTouchCancel={onLongPress ? clearLongPress : undefined}
+      // Shift-click toggles selection — suppress native text-selection artifacts.
+      onMouseDown={e => { if (e.shiftKey) e.preventDefault() }}
+      className={`inline-flex shrink-0 border flex-col items-center justify-center transition px-1.5 ${minSize} ${
+        selected
+          ? 'border-lime bg-lime text-primary-foreground'
+          : 'border-border bg-surface hover:border-foreground/40'
+      }`}
       title={showDuration ? `${chord.name} · ${formatBarDuration(chord.duration)} bars` : chord.name}
     >
-      <span className={`font-bold leading-none whitespace-nowrap ${compact ? 'text-[10px]' : 'text-[11px]'} text-foreground/90`}>
+      <span className={`font-bold leading-none whitespace-nowrap ${compact ? 'text-[10px]' : 'text-[11px]'} ${selected ? '' : 'text-foreground/90'}`}>
         {chord.name}
       </span>
       {showDuration && (
-        <span className="text-[7px] font-mono text-muted-foreground leading-none mt-0.5">
+        <span className={`text-[7px] font-mono leading-none mt-0.5 ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
           {formatBarDuration(chord.duration)}
         </span>
       )}
     </button>
   )
+}
+
+/** Group sorted indices into contiguous runs, e.g. [2,4,5] → [[2],[4,5]]. */
+function contiguousRuns(indices: number[]): number[][] {
+  const runs: number[][] = []
+  for (const i of indices) {
+    const last = runs[runs.length - 1]
+    if (last && i === last[last.length - 1] + 1) last.push(i)
+    else runs.push([i])
+  }
+  return runs
 }
 
 function InactiveInsertSlot({
@@ -111,14 +168,23 @@ export function ChordInput({
   const [draft, setDraft] = useState('')
   const [cursorIndex, setCursorIndex] = useState(() => parseChordsString(value).length)
   const [durationPicker, setDurationPicker] = useState<{ index: number; rect: DOMRect } | null>(null)
+  // Desktop multi-select (shift+click) of chord chips.
+  const [selected, setSelected] = useState<Set<number>>(() => new Set())
+  const selectedRef = useRef(selected)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const lastEmittedRef = useRef(value)
 
   chordsRef.current = chords
   cursorIndexRef.current = cursorIndex
   draftRef.current = draft
+  selectedRef.current = selected
+
+  const [isTouch, setIsTouch] = useState(false)
 
   useEffect(() => {
-    touchInputRef.current = isTouchInputDevice()
+    const touch = isTouchInputDevice()
+    touchInputRef.current = touch
+    setIsTouch(touch)
   }, [])
 
   useEffect(() => {
@@ -128,6 +194,8 @@ export function ChordInput({
       setChords(parsed)
       setDraft('')
       setCursorIndex(parsed.length)
+      setSelected(new Set())
+      setContextMenu(null)
     }
   }, [value])
 
@@ -143,10 +211,94 @@ export function ChordInput({
     inputRef.current?.focus({ preventScroll: true })
   }, [])
 
+  const deleteSelected = useCallback(() => {
+    const sel = selectedRef.current
+    if (sel.size === 0) return
+    const next = chordsRef.current.filter((_, i) => !sel.has(i))
+    const removedBefore = [...sel].filter(i => i < cursorIndexRef.current).length
+    setSelected(new Set())
+    setContextMenu(null)
+    setCursorIndex(Math.max(0, cursorIndexRef.current - removedBefore))
+    emit(next)
+  }, [emit])
+
+  /**
+   * Duplicate each contiguous run of selected chords right after itself:
+   * c1 c2 [C3] c4 [C5 C6] c7 → c1 c2 C3(×2) c4 C5 C6 C5 C6 c7.
+   * A single-chord run just doubles its duration (equivalent, one chip).
+   */
+  const duplicateSelected = useCallback(() => {
+    const sel = selectedRef.current
+    if (sel.size === 0) return
+    const src = chordsRef.current
+    const runs = contiguousRuns([...sel].sort((a, b) => a - b))
+    const next: ParsedChord[] = []
+    const newSelected = new Set<number>()
+    let i = 0
+    let cursorShift = 0
+    for (const run of runs) {
+      while (i < run[0]) next.push(src[i++])
+      if (run.length === 1) {
+        const c = src[i++]
+        newSelected.add(next.length)
+        next.push({ ...c, duration: c.duration * 2 })
+      } else {
+        for (const idx of run) {
+          newSelected.add(next.length)
+          next.push(src[idx])
+        }
+        for (const idx of run) next.push({ ...src[idx] })
+        i = run[run.length - 1] + 1
+        if (run[run.length - 1] < cursorIndexRef.current) cursorShift += run.length
+      }
+    }
+    while (i < src.length) next.push(src[i++])
+    setSelected(newSelected)
+    setContextMenu(null)
+    setCursorIndex(cursorIndexRef.current + cursorShift)
+    emit(next)
+  }, [emit])
+
+  // Selection shortcuts: Backspace/Delete removes, Ctrl/Cmd+D duplicates, Escape deselects.
+  useEffect(() => {
+    if (selected.size === 0) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        // Typing a draft in the chord input — let Backspace edit the draft.
+        if (e.target === inputRef.current && draftRef.current !== '') return
+        e.preventDefault()
+        deleteSelected()
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        duplicateSelected()
+      } else if (e.key === 'Escape') {
+        // Deselect only — stop the popover's window-level Escape handler from closing it.
+        e.stopPropagation()
+        setSelected(new Set())
+        setContextMenu(null)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selected, deleteSelected, duplicateSelected])
+
+  // Close the context menu on any outside press.
+  useEffect(() => {
+    if (!contextMenu) return
+    function onDown(e: MouseEvent) {
+      const target = e.target
+      if (target instanceof Element && target.closest('[data-chord-context-menu]')) return
+      setContextMenu(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [contextMenu])
+
   function commitDraft(nameOverride?: string) {
     const name = (nameOverride ?? draftRef.current).trim()
     if (!name || !isValidChordName(name)) return
 
+    setSelected(new Set())
     const insertAt = cursorIndexRef.current
     const next = [
       ...chordsRef.current.slice(0, insertAt),
@@ -174,6 +326,7 @@ export function ChordInput({
 
   function pullChordAt(index: number) {
     if (index < 0 || index >= chordsRef.current.length) return
+    setSelected(new Set())
     const pulled = chordsRef.current[index]
     const next = chordsRef.current.filter((_, i) => i !== index)
 
@@ -209,6 +362,8 @@ export function ChordInput({
     }
 
     if (e.key === 'Backspace' && draftRef.current === '') {
+      // With an active selection the document-level handler deletes it instead.
+      if (selectedRef.current.size > 0) return
       e.preventDefault()
       if (cursorIndexRef.current > 0) pullChordAt(cursorIndexRef.current - 1)
       return
@@ -249,7 +404,38 @@ export function ChordInput({
   function handleChipClick(index: number, e: React.MouseEvent<HTMLButtonElement>) {
     if (disabled) return
     e.stopPropagation()
+    if (e.shiftKey) {
+      // Shift implies a keyboard — no touch-device gate (touch-capable laptops
+      // report maxTouchPoints > 0 and were wrongly excluded before).
+      toggleSelect(index)
+      return
+    }
+    if (selectedRef.current.size > 0) setSelected(new Set())
     setDurationPicker({ index, rect: e.currentTarget.getBoundingClientRect() })
+  }
+
+  function toggleSelect(index: number) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+    setContextMenu(null)
+  }
+
+  function handleChipContextMenu(index: number, e: React.MouseEvent<HTMLButtonElement>) {
+    if (disabled) return
+    if (touchInputRef.current) {
+      // Android long-press fires contextmenu — our long-press handler owns it.
+      e.preventDefault()
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+    // Right-click outside the selection re-targets it to that chip.
+    if (!selectedRef.current.has(index)) setSelected(new Set([index]))
+    setContextMenu({ x: e.clientX, y: e.clientY })
   }
 
   function handleDurationSelect(duration: number) {
@@ -307,7 +493,10 @@ export function ChordInput({
           <ChordChip
             chord={chords[slot]}
             compact={compact}
+            selected={selected.has(slot)}
             onClick={e => handleChipClick(slot, e)}
+            onContextMenu={e => handleChipContextMenu(slot, e)}
+            onLongPress={isTouch && !disabled ? () => toggleSelect(slot) : undefined}
           />
         </span>,
       )
@@ -316,16 +505,87 @@ export function ChordInput({
   slotNodes.push(inputEl)
 
   return (
-    <div
-      className={`flex flex-wrap items-center content-start border border-border bg-surface px-1.5 py-1 min-h-[34px] focus-within:border-foreground/40 transition ${
-        disabled ? 'opacity-50 pointer-events-none' : ''
-      }`}
-      onClick={e => {
-        if (disabled) return
-        if (e.target === e.currentTarget) focusCursor(chords.length)
-      }}
-    >
-      {slotNodes}
+    <>
+      <div
+        className={`flex flex-wrap items-center content-start border border-border bg-surface px-1.5 py-1 min-h-[34px] focus-within:border-foreground/40 transition ${
+          disabled ? 'opacity-50 pointer-events-none' : ''
+        }`}
+        onClick={e => {
+          if (disabled) return
+          if (e.target === e.currentTarget) focusCursor(chords.length)
+        }}
+      >
+        {slotNodes}
+      </div>
+
+      {/* Selection tip / actions */}
+      {!disabled && (
+        selected.size > 0 ? (
+          isTouch ? (
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="text-[9px] text-muted-foreground font-mono mr-auto">
+                {selected.size} selected
+              </span>
+              <button
+                type="button"
+                onClick={duplicateSelected}
+                aria-label="Duplicate selected chords"
+                className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[10px] uppercase tracking-widest hover:border-foreground/40"
+              >
+                <Copy className="size-3" /> Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={deleteSelected}
+                aria-label="Delete selected chords"
+                className="inline-flex items-center gap-1 border border-border px-2 py-1 text-[10px] uppercase tracking-widest text-destructive hover:border-destructive/60"
+              >
+                <Trash2 className="size-3" /> Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                aria-label="Clear selection"
+                className="inline-flex items-center border border-border p-1 hover:border-foreground/40"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="mt-1 text-[9px] text-muted-foreground font-mono">
+              {selected.size} selected · ⌘/Ctrl+D duplicate · ⌫ delete
+            </div>
+          )
+        ) : (
+          <div className="mt-1 text-[9px] text-muted-foreground font-mono">
+            {isTouch ? 'Long-press a chord to select' : 'Shift+click chords to select'}
+          </div>
+        )
+      )}
+
+      {contextMenu !== null && selected.size > 0 && (
+        <div
+          data-chord-context-menu
+          className="fixed z-[300] min-w-[140px] border border-border bg-popover shadow-2xl py-1"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={e => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={duplicateSelected}
+            className="block w-full text-left px-3 py-1.5 text-[11px] font-mono hover:bg-surface"
+          >
+            Duplicate <span className="text-muted-foreground text-[9px]">⌘D</span>
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelected}
+            className="block w-full text-left px-3 py-1.5 text-[11px] font-mono text-destructive hover:bg-surface"
+          >
+            Delete <span className="text-muted-foreground text-[9px]">⌫</span>
+          </button>
+        </div>
+      )}
 
       {durationPicker !== null && (
         <ChordDurationPicker
@@ -335,6 +595,6 @@ export function ChordInput({
           onClose={() => setDurationPicker(null)}
         />
       )}
-    </div>
+    </>
   )
 }

@@ -144,6 +144,8 @@ export interface Section {
   start_bar: number
   end_bar: number
   chords: string | null
+  /** Optional performance cue, e.g. "slower here" — max 40 chars. */
+  note: string | null
   color: string
   position: number
   created_at: string

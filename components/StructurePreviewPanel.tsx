@@ -625,9 +625,16 @@ export function StructurePreviewPanel({
                         <span className="tb-section-name text-lime tracking-widest uppercase shrink-0 pt-0.5">
                           {sectionLabel(section).toUpperCase()}
                         </span>
-                        <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed min-w-0">
-                          {formatChordsDisplay(section.chords)}
-                        </span>
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed block">
+                            {formatChordsDisplay(section.chords)}
+                          </span>
+                          {section.note?.trim() && (
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              {section.note}
+                            </div>
+                          )}
+                        </div>
                         <span className="text-muted-foreground tabular-nums font-mono whitespace-nowrap shrink-0 pt-0.5 text-right">
                           {startBar}–{endBar} · {startTime}
                         </span>

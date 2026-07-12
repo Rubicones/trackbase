@@ -1840,6 +1840,23 @@ html.dark[data-palette="green"] .theme-avatar {
   to   { background-position:  200% 0; }
 }
 
+/* ── Rehearsal performance-note cue ─────────────────────────── */
+/* New note rises in from ~12px below (opacity 0 → 1); the old one
+   drifts the same distance upward while fading out. On a section
+   switch both run simultaneously, reading like a wheel. */
+@keyframes rm-note-rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes rm-note-rise-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-12px); }
+}
+
+.rm-note-rise-in  { animation: rm-note-rise-in  0.35s ease-out both; }
+.rm-note-rise-out { animation: rm-note-rise-out 0.35s ease-in  both; }
+
 /* ── Skeleton shimmer ──────────────────────────────────────── */
 .skeleton-shimmer {
   background: linear-gradient(

@@ -6,6 +6,7 @@ export interface BarState {
   type: SectionType
   customName: string | null
   chords: string | null
+  note: string | null
   color: string
 }
 
@@ -39,6 +40,7 @@ export function buildBarMap(sections: Section[], totalBars: number): (BarState |
       type: s.type,
       customName: s.custom_name,
       chords: s.chords,
+      note: s.note ?? null,
       color: s.color,
     }
     for (let b = s.start_bar; b < s.end_bar && b < totalBars; b++) {
@@ -57,7 +59,7 @@ export function buildBarMap(sections: Section[], totalBars: number): (BarState |
 export function barStatesEqual(a: BarState | null, b: BarState | null): boolean {
   if (a === null && b === null) return true
   if (a === null || b === null) return false
-  return a.type === b.type && a.customName === b.customName && a.chords === b.chords
+  return a.type === b.type && a.customName === b.customName && a.chords === b.chords && a.note === b.note
 }
 
 // ─── groupConsecutiveBars ──────────────────────────────────────────────────────
@@ -164,6 +166,7 @@ export function barMapToSections(
       start_bar:   i,
       end_bar:     j,
       chords:      state.chords,
+      note:        state.note,
       color:       state.color,
       position:    position++,
     })

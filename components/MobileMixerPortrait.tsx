@@ -1221,6 +1221,7 @@ function MobileMixerPortraitInner({
           onChordsAutoSave={sectionActions.handleChordsAutoSave}
           onDetectChords={ids => sectionActions.handleDetectChords(editingSection.id, ids)}
           onBarRangeChange={sectionActions.handleBarRangeChange}
+          onNoteChange={sectionActions.handleNoteChange}
           onDelete={id => { sectionActions.handleDelete(id); setEditingSectionId(null) }}
           onClose={() => setEditingSectionId(null)}
         />

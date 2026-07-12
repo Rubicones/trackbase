@@ -33,6 +33,31 @@ const SECTION_TYPE_LABELS: Record<SectionType, string> = {
 
 const BARS_PER_TACT = 4
 
+/** Debounce for chord auto-save — keeps resetting while the user is still typing. */
+const CHORD_SAVE_DEBOUNCE_MS = 2000
+
+/** Max length of a section's performance note. */
+const NOTE_MAX_LEN = 40
+
+// Serialize chord PUTs per section so overlapping requests can't race:
+// each save waits for the previous one to settle before hitting the server.
+const chordSaveChains = new Map<string, Promise<void>>()
+
+function queueChordSave(id: string, chords: string): Promise<void> {
+  const prev = chordSaveChains.get(id) ?? Promise.resolve()
+  const run = prev.then(async () => {
+    const res = await fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chords }),
+    })
+    if (!res.ok) throw new Error('Failed to save chords')
+  })
+  // Store a non-rejecting link so one failure doesn't poison the chain.
+  chordSaveChains.set(id, run.catch(() => {}))
+  return run
+}
+
 function sectionDisplayRange(s: Section): string {
   return `${s.start_bar + 1}–${s.end_bar}`
 }
@@ -306,7 +331,7 @@ function clampSectionEditPopoverPosition(
 
 export function SectionEditPopover({
   section, cellPos, detectingChords, audioTracks, totalBars,
-  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onDelete, onClose,
+  onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onNoteChange, onDelete, onClose,
   layout = 'popover',
 }: {
   section: Section
@@ -319,6 +344,7 @@ export function SectionEditPopover({
   onChordsAutoSave: (id: string, chords: string) => Promise<void>
   onDetectChords: (trackIds: string[]) => void
   onBarRangeChange: (id: string, startBar: number, endBar: number) => void
+  onNoteChange: (id: string, note: string | null) => void
   onDelete: (id: string) => void
   onClose: () => void
   layout?: 'popover' | 'sheet'
@@ -333,6 +359,13 @@ export function SectionEditPopover({
   const [customMode, setCustomMode] = useState(false)
   const [customName, setCustomName] = useState(section.custom_name ?? '')
   const [chords, setChords] = useState(section.chords ?? '')
+  const [note, setNote] = useState(section.note ?? '')
+  const [noteFocused, setNoteFocused] = useState(false)
+  const noteRef = useRef(note)
+  noteRef.current = note
+  const sectionNoteRef = useRef<string | null>(section.note ?? null)
+  const onNoteChangeRef = useRef(onNoteChange)
+  onNoteChangeRef.current = onNoteChange
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [isDirty, setIsDirty] = useState(false)
   const wasDetectingRef = useRef(detectingChords)
@@ -347,8 +380,25 @@ export function SectionEditPopover({
   useEffect(() => {
     setIsDirty(false)
     setChords(section.chords ?? '')
+    setNote(section.note ?? '')
+    sectionNoteRef.current = section.note ?? null
     setSaveStatus('idle')
   }, [section.id])
+
+  const flushNote = useCallback((id: string) => {
+    const trimmed = noteRef.current.trim().slice(0, NOTE_MAX_LEN)
+    const next = trimmed || null
+    if (sectionNoteRef.current === next) return
+    sectionNoteRef.current = next
+    onNoteChangeRef.current(id, next)
+  }, [])
+
+  // Flush an unsaved note when the popover closes any way (Done, Escape, outside
+  // click, unmount) or switches to another section — id is captured per section.
+  useEffect(() => {
+    const id = section.id
+    return () => flushNote(id)
+  }, [section.id, flushNote])
 
   // Sync from parent only when not editing.
   useEffect(() => {
@@ -404,7 +454,7 @@ export function SectionEditPopover({
         pendingRef.current = { id: section.id, chords: val }
         setIsDirty(true)
       }
-    }, 800)
+    }, CHORD_SAVE_DEBOUNCE_MS)
   }
 
   useEffect(() => { if (customMode) customInputRef.current?.focus() }, [customMode])
@@ -664,6 +714,24 @@ export function SectionEditPopover({
             )}
           </div>
 
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Performance note</div>
+              {noteFocused && (
+                <span className="text-[9px] font-mono tabular-nums text-muted-foreground">{note.length}/{NOTE_MAX_LEN}</span>
+              )}
+            </div>
+            <input
+              value={note}
+              maxLength={NOTE_MAX_LEN}
+              onChange={e => setNote(e.target.value)}
+              onFocus={() => setNoteFocused(true)}
+              onBlur={() => { setNoteFocused(false); flushNote(section.id) }}
+              placeholder="e.g. slower, more expression, pause at end"
+              className="w-full bg-surface border border-border px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-foreground/40 placeholder:text-muted-foreground/60"
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <RangeStepper label="Start bar" value={section.start_bar + 1} min={1} max={section.end_bar}
               onChange={v => onBarRangeChange(section.id, v - 1, section.end_bar)} />
@@ -742,15 +810,19 @@ export function useSectionEditActions({
   async function handleChordsAutoSave(id: string, chords: string): Promise<void> {
     const gen = (chordSaveGenRef.current.get(id) ?? 0) + 1
     chordSaveGenRef.current.set(id, gen)
-    const res = await fetch(`/api/sections/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chords }),
-    })
-    if (!res.ok) throw new Error('Failed to save chords')
+    await queueChordSave(id, chords)
     if (chordSaveGenRef.current.get(id) !== gen) return
     onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, chords } : s)))
     pendingChordSavesRef.current.delete(id)
+  }
+
+  function handleNoteChange(id: string, note: string | null) {
+    onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, note } : s)))
+    fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    }).catch(console.error)
   }
 
   async function runChordDetection(section: Section, selectedTrackIds: string[]) {
@@ -830,6 +902,7 @@ export function useSectionEditActions({
     handleTypeChange,
     handleChordsLocalChange,
     handleChordsAutoSave,
+    handleNoteChange,
     handleDetectChords,
     handleBarRangeChange,
     handleDelete,
@@ -1319,12 +1392,7 @@ export default function StructureOverlay({
   async function handleChordsAutoSave(id: string, chords: string): Promise<void> {
     const gen = (chordSaveGenRef.current.get(id) ?? 0) + 1
     chordSaveGenRef.current.set(id, gen)
-    const res = await fetch(`/api/sections/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chords }),
-    })
-    if (!res.ok) throw new Error('Failed to save chords')
+    await queueChordSave(id, chords)
     if (chordSaveGenRef.current.get(id) !== gen) return
     onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, chords } : s)))
     pendingChordSavesRef.current.delete(id)
@@ -1335,16 +1403,21 @@ export default function StructureOverlay({
     })
   }
 
+  function handleNoteChange(id: string, note: string | null) {
+    onSectionsChange(prev => prev.map(s => (s.id === id ? { ...s, note } : s)))
+    fetch(`/api/sections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    }).catch(console.error)
+  }
+
   async function handleDone() {
     const pending = Array.from(pendingChordSavesRef.current.entries())
     if (pending.length > 0) {
       await Promise.allSettled(
         pending.map(([id, chords]) =>
-          fetch(`/api/sections/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chords }),
-          })
+          queueChordSave(id, chords)
           .then(() => {
             pendingChordSavesRef.current.delete(id)
             setPendingChordIds(prev => {
@@ -1587,9 +1660,16 @@ export default function StructureOverlay({
                       background: `color-mix(in oklab, ${accent} 12%, transparent)`,
                     }}
                   >
-                    <span className={`tb-section-name uppercase tracking-widest text-lime truncate leading-tight pointer-events-none w-full ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
-                      {sectionLabel(s)}
-                    </span>
+                    <div className="flex flex-col justify-center min-w-0 w-full pointer-events-none overflow-hidden">
+                      <span className={`tb-section-name uppercase tracking-widest text-lime truncate leading-tight ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
+                        {sectionLabel(s)}
+                      </span>
+                      {!compact && s.note?.trim() && (
+                        <span className="text-[8px] italic font-light text-muted-foreground truncate leading-tight whitespace-nowrap">
+                          {s.note}
+                        </span>
+                      )}
+                    </div>
                     {editMode && !compact && (
                       <>
                         <div
@@ -1679,6 +1759,7 @@ export default function StructureOverlay({
           onChordsAutoSave={handleChordsAutoSave}
           onDetectChords={ids => handleDetectChords(activeSection.id, ids)}
           onBarRangeChange={handleBarRangeChange}
+          onNoteChange={handleNoteChange}
           onDelete={handleDelete}
           onClose={closeActiveEdit}
         />
