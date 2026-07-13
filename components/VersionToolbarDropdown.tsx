@@ -21,14 +21,22 @@ export function versionTabButtonClass(
   }`
 }
 
-function VersionTabLabel({ v }: { v: Version }) {
+function VersionTabLabel({ v, variant = 'trigger' }: { v: Version; variant?: 'trigger' | 'menu' }) {
+  const prefix =
+    v.type === 'main' ? '● ' : v.merged_at ? '✓ ' : v.type === 'branch' ? '⌥ ' : ''
+  if (variant === 'menu') {
+    return (
+      <span className="line-clamp-2 w-[25ch] whitespace-normal wrap-break-word text-left">
+        {prefix}
+        <VersionListName version={v} />
+      </span>
+    )
+  }
   return (
-    <>
-      {v.type === 'main' && '● '}
-      {v.merged_at && '✓ '}
-      {v.type === 'branch' && !v.merged_at && '⌥ '}
+    <span className="min-w-0 truncate">
+      {prefix}
       <VersionListName version={v} />
-    </>
+    </span>
   )
 }
 
@@ -91,7 +99,7 @@ export function VersionToolbarDropdown({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(o => !o)}
-        className={`${versionTabButtonClass(active, true, false)} inline-flex items-center gap-1.5`}
+        className={`${versionTabButtonClass(active, true, false)} inline-flex max-w-[180px] items-center gap-1.5`}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
@@ -133,9 +141,9 @@ export function VersionToolbarDropdown({
                   onSelect(v.id)
                   setOpen(false)
                 }}
-                className={versionTabButtonClass(v, isActive, switchBlocked)}
+                className={`${versionTabButtonClass(v, isActive, switchBlocked)} flex items-center`}
               >
-                <VersionTabLabel v={v} />
+                <VersionTabLabel v={v} variant="menu" />
               </button>
             )
           })}

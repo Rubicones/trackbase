@@ -104,6 +104,18 @@ function MergeTitle({ branchName, targetName }: { branchName: string; targetName
   )
 }
 
+/** Guardrail chip — the target's copy of this content is newer than the version's. */
+function TargetNewerChip() {
+  return (
+    <span
+      className="shrink-0 text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 border border-destructive/40 text-destructive bg-destructive/10"
+      title="The target changed this after the version being applied — applying overwrites newer work"
+    >
+      Target newer
+    </span>
+  )
+}
+
 function AutoCheckIcon() {
   return (
     <svg className="shrink-0 mt-0.5 text-lime" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden>
@@ -149,7 +161,7 @@ function MergeBtn({
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void
   className?: string
 }) {
-  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center gap-1.5 px-3 py-1.5'
+  const base = 'text-[10px] uppercase tracking-widest transition disabled:opacity-50 disabled:pointer-events-none inline-flex items-center justify-center gap-1.5 px-3 py-1.5 whitespace-nowrap'
   const styles = {
     ghost: 'border border-border text-muted-foreground hover:border-lime hover:text-lime',
     primary: 'bg-lime text-primary-foreground border border-lime font-display font-bold',
@@ -692,7 +704,13 @@ export function MergeModal({
     sectionAutoItems.length > 0 ||
     sectionConflicts.length > 0 ||
     (preview.commentChanges?.added.length ?? 0) > 0 ||
-    (preview.commentChanges?.deleted.length ?? 0) > 0
+    (preview.commentChanges?.deleted.length ?? 0) > 0 ||
+    (preview.targetOnlyTracks?.length ?? 0) > 0
+
+  // Guardrail: any change where the target's copy is newer than the version's
+  const hasTargetNewer =
+    preview.autoMerge.some(i => i.targetNewer) ||
+    sectionAutoItems.some(r => r.targetNewer)
 
   const diffButton = onOpenDiff && (
     <CherryPickDiffButton
@@ -705,15 +723,28 @@ export function MergeModal({
   if (!hasConflicts) {
     return (
       <MergeShell>
-        <div className="p-6 overflow-y-auto">
+        {/* Header — target branch pinned at the top */}
+        <div className="px-6 pt-6 pb-4 shrink-0 border-b border-border">
           <MergeTitle branchName={preview.branchName} targetName={preview.targetVersionName} />
           {targetSelectorRow()}
+          {!previewLoading && (
+            <p className="text-xs text-muted-foreground mt-1 m-0">
+              Differences below replace the target&rsquo;s content — ready to apply
+            </p>
+          )}
+          {!previewLoading && hasTargetNewer && (
+            <p className="text-[11px] text-destructive mt-1 m-0">
+              Some content in {preview.targetVersionName} is newer than this version — marked below.
+            </p>
+          )}
+        </div>
+
+        {/* Scrollable diff contents */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
           {previewLoading ? (
             <MergePreviewLoading label="Updating comparison…" />
           ) : (
           <>
-          <p className="text-xs text-muted-foreground mt-1 mb-5 m-0">No overlapping changes — ready to apply</p>
-
           {preview.autoMerge.length > 0 && (
             <>
               <div className="mb-2"><SectionLabel>Tracks</SectionLabel></div>
@@ -721,15 +752,24 @@ export function MergeModal({
                 {preview.autoMerge.map((item, i) => (
                   <MergeListRow key={i} last={i === preview.autoMerge.length - 1}>
                     <AutoCheckIcon />
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <span className="text-xs font-medium text-foreground">{trackTitle(item.track)}</span>
                       <span className="text-[11px] ml-2 text-muted-foreground">{autoMergeDescription(item)}</span>
                     </div>
+                    {item.targetNewer && <TargetNewerChip />}
                   </MergeListRow>
                 ))}
               </MergeListBox>
               <div className="mb-4" />
             </>
+          )}
+
+          {(preview.targetOnlyTracks?.length ?? 0) > 0 && (
+            <p className="text-[11px] text-muted-foreground -mt-2 mb-4">
+              Kept in {preview.targetVersionName} (not in this version):{' '}
+              {preview.targetOnlyTracks!.map(trackTitle).join(', ')}. Remove them via
+              &ldquo;Show &amp; cherry-pick differences&rdquo; if needed.
+            </p>
           )}
 
           {sectionAutoItems.length > 0 && (
@@ -744,6 +784,7 @@ export function MergeModal({
                     </span>
                     <span className="text-[11px] text-muted-foreground">→</span>
                     <SectionTag state={item.branchState} />
+                    {item.targetNewer && <span className="ml-auto"><TargetNewerChip /></span>}
                   </MergeListRow>
                 ))}
               </MergeListBox>
@@ -774,17 +815,16 @@ export function MergeModal({
 
           </>
           )}
+        </div>
 
-          {mergeErr && <p className="text-xs text-destructive mb-3 m-0">{mergeErr}</p>}
-
-          <div className="flex items-center gap-2 pt-2 border-t border-border">
-            {diffButton}
-            <div className="flex gap-2 ml-auto">
-              <MergeBtn onClick={onClose}>Cancel</MergeBtn>
-              <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
-                {merging ? 'Applying…' : 'Apply →'}
-              </MergeBtn>
-            </div>
+        {/* Footer — action buttons always at the bottom */}
+        <div className="px-6 py-4 shrink-0 flex items-center gap-2 border-t border-border">
+          {mergeErr ? <p className="text-xs text-destructive m-0">{mergeErr}</p> : diffButton}
+          <div className="flex gap-2 ml-auto">
+            <MergeBtn onClick={onClose}>Cancel</MergeBtn>
+            <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
+              {merging ? 'Applying…' : 'Apply →'}
+            </MergeBtn>
           </div>
         </div>
       </MergeShell>
@@ -806,7 +846,7 @@ export function MergeModal({
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-4">
         {previewLoading ? (
           <MergePreviewLoading label="Updating comparison…" />
         ) : (

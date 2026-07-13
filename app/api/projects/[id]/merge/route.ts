@@ -5,46 +5,49 @@ import { logActivity } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import {
   buildBarMap,
-  groupConsecutiveBars,
+  diffBarMaps,
   barMapToSections,
   calculateTotalBars,
   BarState,
 } from '@/lib/sectionMerge'
 import { trackStartBar } from '@/lib/trackMerge'
-import { buildVersionParentMap, findMergeBaseVersionId } from '@/lib/mergeBase'
 
 // POST /api/projects/[id]/merge
+//
+// TWO-WAY apply: the version (branch) is diffed directly against the target —
+// no ancestors, no merge base. The rules are:
+//
+//   Tracks (matched by name):
+//     · in both, identical            → target row kept untouched
+//     · in both, differing            → version's state applied (file, name,
+//                                       start bar) unless the name is listed
+//                                       in skippedTracks (then target wins)
+//     · only in version               → added, unless in skippedTracks
+//     · only in target                → KEPT (target wins for absences),
+//                                       unless explicitly in removedTracks
+//
+//   Structure (per bar):
+//     · bars where the version differs from the target take the version's
+//       state, except bars covered by skippedSections (bar-coverage: a stale
+//       range from an outdated preview still protects exactly those bars)
+//
+//   Comments: content-fingerprint diff (same as preview), with per-comment
+//   cherry-picks and an optional bulk deletion choice.
+//
+// The same diff primitives (diffBarMaps, name matching, fingerprints) drive
+// both this route and the preview route, so what the user reviewed is what
+// gets applied.
+//
 // Body: {
 //   branchVersionId: string,
-//   target_version_id?: string,         // defaults to main version if omitted
-//   resolutions: Array<{
-//     trackName: string,
-//     fileChoice?: 'main' | 'branch',   // required when fileConflict
-//     nameChoice?: 'main' | 'branch',   // required when renameConflict
-//     offsetChoice?: 'main' | 'branch', // required when offsetConflict
-//   }>,
-//   sectionResolutions: Array<{
-//     startBar: number,
-//     endBar: number,
-//     choice: 'main' | 'branch',
-//   }>,
-//   // ── Cherry-pick (all optional; omitting = apply everything) ──
-//   skippedTracks?: string[],                       // branch track names to leave out entirely
-//   skippedSections?: Array<{ startBar: number, endBar: number }>, // auto section ranges to skip
-//   skippedAddedCommentIds?: string[],              // branch comment ids NOT to copy over
-//   appliedDeletedCommentIds?: string[],            // target comment ids whose deletion is applied
-//   commentDeletionChoice?: 'keep' | 'apply',       // bulk: apply all deletions detected in branch
+//   target_version_id?: string,                       // defaults to main
+//   skippedTracks?: string[],                         // version changes to leave out
+//   removedTracks?: string[],                         // target-only tracks to delete (opt-in)
+//   skippedSections?: Array<{ startBar, endBar }>,    // bars that keep the target's structure
+//   skippedAddedCommentIds?: string[],
+//   appliedDeletedCommentIds?: string[],
+//   commentDeletionChoice?: 'keep' | 'apply',
 // }
-//
-// Algorithm:
-//   1. Load base/branch/target track sets
-//   2. Re-run conflict detection to determine fileConflict, renameConflict,
-//      fileChangedInBranch, renamedInBranch flags per track
-//   3. Determine final file source and display_name for each track
-//   4. Wipe target tracks and insert the merged set
-//   5. Build section finalMap from bar-by-bar merge + resolutions
-//   6. Replace target sections with finalMap output
-//   7. Mark branch as merged (merged_at + merged_into_id)
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -55,37 +58,45 @@ export async function POST(
     const access = await requireBandMember(req, projectId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project: _project } = access
-    const {
-      branchVersionId,
-      target_version_id,
-      resolutions = [],
-      sectionResolutions = [],
-      skippedTracks = [],
-      skippedSections = [],
-      skippedAddedCommentIds = [],
-      appliedDeletedCommentIds = [],
-      commentDeletionChoice = 'keep',
-    } = await req.json() as {
-      branchVersionId: string
-      target_version_id?: string
-      resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch'; offsetChoice?: 'main' | 'branch' }>
-      sectionResolutions: Array<{ startBar: number; endBar: number; choice: 'main' | 'branch' }>
-      skippedTracks?: string[]
-      skippedSections?: Array<{ startBar: number; endBar: number }>
-      skippedAddedCommentIds?: string[]
-      appliedDeletedCommentIds?: string[]
-      commentDeletionChoice?: 'keep' | 'apply'
+
+    const body = await req.json() as {
+      branchVersionId?: unknown
+      target_version_id?: unknown
+      skippedTracks?: unknown
+      removedTracks?: unknown
+      skippedSections?: unknown
+      skippedAddedCommentIds?: unknown
+      appliedDeletedCommentIds?: unknown
+      commentDeletionChoice?: unknown
     }
 
-    const skippedTrackSet = new Set(skippedTracks)
-    const skippedAddedCommentSet = new Set(skippedAddedCommentIds)
-    const appliedDeletedCommentSet = new Set(appliedDeletedCommentIds)
+    // ── Input sanitisation — reject nothing silently mutable, coerce hard ────
+    const branchVersionId = typeof body.branchVersionId === 'string' ? body.branchVersionId : ''
+    const target_version_id = typeof body.target_version_id === 'string' ? body.target_version_id : undefined
+
+    const strArray = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+
+    const skippedTrackSet         = new Set(strArray(body.skippedTracks))
+    const removedTrackSet         = new Set(strArray(body.removedTracks))
+    const skippedAddedCommentSet  = new Set(strArray(body.skippedAddedCommentIds))
+    const appliedDeletedCommentSet = new Set(strArray(body.appliedDeletedCommentIds))
+    const commentDeletionChoice   = body.commentDeletionChoice === 'apply' ? 'apply' : 'keep'
+
+    const skippedSections: Array<{ startBar: number; endBar: number }> =
+      (Array.isArray(body.skippedSections) ? body.skippedSections : [])
+        .filter((s): s is { startBar: number; endBar: number } =>
+          !!s && typeof s === 'object'
+          && Number.isFinite((s as { startBar?: unknown }).startBar)
+          && Number.isFinite((s as { endBar?: unknown }).endBar))
+        .map(s => ({ startBar: Math.floor(s.startBar), endBar: Math.floor(s.endBar) }))
+        .filter(s => s.endBar > s.startBar && s.startBar >= 0)
 
     if (!branchVersionId) {
       return NextResponse.json({ error: 'branchVersionId is required' }, { status: 400 })
     }
 
-    // Fetch branch
+    // ── Fetch branch (the version being applied) ──────────────────────────────
     const { data: branch, error: branchErr } = await supabase
       .from('versions')
       .select('*')
@@ -99,7 +110,7 @@ export async function POST(
       return NextResponse.json({ error: 'branch already merged' }, { status: 400 })
     }
 
-    // Fetch target version (explicit or default to main)
+    // ── Fetch target version (explicit or default to main) ────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let main: any
     if (target_version_id) {
@@ -130,129 +141,76 @@ export async function POST(
       main = mainVersion
     }
 
-    const { data: projectVersions, error: versionsErr } = await supabase
-      .from('versions')
-      .select('id, parent_id')
-      .eq('project_id', projectId)
-    if (versionsErr) throw versionsErr
-
-    const baseVersionId = findMergeBaseVersionId(
-      branch,
-      main.id,
-      buildVersionParentMap(projectVersions ?? []),
-    )
-    if (!baseVersionId) {
-      return NextResponse.json(
-        { error: 'branch and merge target share no common ancestor' },
-        { status: 400 },
-      )
-    }
-
-    // Fetch all relevant track sets (base = LCA of branch and target, not parent_id)
+    // ── Fetch both track sets ─────────────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [baseTrk, branchTrk, mainTrk]: [any[], any[], any[]] = await Promise.all([
-      baseVersionId
-        ? supabase.from('tracks').select('*').eq('version_id', baseVersionId).then(r => r.data ?? [])
-        : Promise.resolve([]),
+    const [branchTrk, mainTrk]: [any[], any[]] = await Promise.all([
       supabase.from('tracks').select('*').eq('version_id', branchVersionId).order('position', { ascending: true }).then(r => r.data ?? []),
       supabase.from('tracks').select('*').eq('version_id', main.id).order('position', { ascending: true }).then(r => r.data ?? []),
     ])
 
-    // Start with all main tracks (tracks not touched by branch remain as-is)
+    const branchNames = new Set(branchTrk.map((t: { name: string }) => t.name))
+
+    // ── Track merge (two-way) ─────────────────────────────────────────────────
+    // Start from the target's tracks; target-only tracks are kept unless the
+    // user explicitly opted into removing them (and removal only ever applies
+    // to tracks the version does NOT contain — a version-side track can't be
+    // "removed", only skipped).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mergedMap = new Map<string, any>()
-    for (const t of mainTrk) mergedMap.set(t.name, t)
+    for (const t of mainTrk) {
+      if (!branchNames.has(t.name) && removedTrackSet.has(t.name)) continue
+      mergedMap.set(t.name, t)
+    }
 
-    const resolutionMap = new Map(resolutions.map(r => [r.trackName, r]))
-
-    // Process each branch track
     for (const bt of branchTrk) {
-      // Cherry-pick: change skipped by the user — target keeps its own state
+      // Cherry-pick: user chose to keep the target's state for this track
       if (skippedTrackSet.has(bt.name)) continue
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const baseTrack: any  = baseTrk.find((t: { name: string }) => t.name === bt.name) ?? null
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mainTrack: any  = mainTrk.find((t: { name: string }) => t.name === bt.name) ?? null
+      const mt: any | undefined = mainTrk.find((t: { name: string }) => t.name === bt.name)
 
-      // ── File conflict detection ────────────────────────────────────────────
-      const fileChangedInBranch = !baseTrack || baseTrack.file_hash !== bt.file_hash
-      const fileChangedInMain   = baseTrack
-        ? baseTrack.file_hash !== (mainTrack?.file_hash ?? baseTrack.file_hash)
-        : false
-      const fileConflict = fileChangedInBranch && fileChangedInMain && !!mainTrack
-
-      // ── Rename detection ───────────────────────────────────────────────────
-      const baseDisplay   = baseTrack  ? (baseTrack.display_name  ?? baseTrack.name)  : null
-      const branchDisplay = bt.display_name ?? bt.name
-      const mainDisplay   = mainTrack  ? (mainTrack.display_name  ?? mainTrack.name)  : null
-
-      const renamedInBranch = baseTrack ? branchDisplay !== baseDisplay : false
-      const renamedInMain   = baseTrack && mainTrack ? mainDisplay !== baseDisplay : false
-      const renameConflict  = renamedInBranch && renamedInMain && branchDisplay !== mainDisplay
-      const autoRename      = renamedInBranch && !renameConflict
-
-      const resolution = resolutionMap.get(bt.name)
-
-      // ── Step 1: Choose file source ─────────────────────────────────────────
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let fileSource: any
-      if (fileConflict) {
-        fileSource = resolution?.fileChoice === 'branch' ? bt : (mainTrack ?? bt)
-      } else if (fileChangedInBranch) {
-        fileSource = bt
-      } else {
-        fileSource = mainTrack ?? bt
+      if (!mt) {
+        // Only in the version → plain addition
+        mergedMap.set(bt.name, bt)
+        continue
       }
 
-      // ── Step 2: Determine final display_name ──────────────────────────────
-      let finalDisplayName: string | null
-      if (renameConflict) {
-        finalDisplayName = resolution?.nameChoice === 'branch'
-          ? (bt.display_name ?? null)
-          : (mainTrack?.display_name ?? null)
-      } else if (autoRename) {
-        finalDisplayName = bt.display_name ?? null
-      } else {
-        finalDisplayName = mainTrack?.display_name ?? null
-      }
+      const fileDiffers   = mt.file_hash !== bt.file_hash
+      const nameDiffers   = (mt.display_name ?? mt.name) !== (bt.display_name ?? bt.name)
+      const offsetDiffers = trackStartBar(mt) !== trackStartBar(bt)
 
-      const baseStartBar = trackStartBar(baseTrack)
-      const branchStartBar = trackStartBar(bt)
-      const mainStartBar = mainTrack ? trackStartBar(mainTrack) : baseStartBar
-      const offsetChangedInBranch = !baseTrack || branchStartBar !== baseStartBar
-      const offsetChangedInMain = baseTrack && mainTrack ? mainStartBar !== baseStartBar : false
-      const offsetConflict = offsetChangedInBranch && offsetChangedInMain && branchStartBar !== mainStartBar
+      if (!fileDiffers && !nameDiffers && !offsetDiffers) continue // identical — keep target row
 
-      let finalStartBar: number
-      if (offsetConflict) {
-        finalStartBar = resolution?.offsetChoice === 'branch' ? branchStartBar : mainStartBar
-      } else if (offsetChangedInBranch) {
-        finalStartBar = branchStartBar
-      } else {
-        finalStartBar = mainStartBar
-      }
+      const fileSource    = fileDiffers ? bt : mt
+      const finalName     = nameDiffers ? (bt.display_name ?? null) : (mt.display_name ?? null)
+      const finalStartBar = offsetDiffers ? trackStartBar(bt) : trackStartBar(mt)
 
       mergedMap.set(bt.name, {
         ...fileSource,
-        display_name: finalDisplayName,
+        display_name: finalName,
         start_bar: finalStartBar,
         midi_start_bar: finalStartBar,
       })
     }
 
-    // Build final ordered track list
+    // Build final ordered track list: tracks the target already had keep the
+    // TARGET's mixer order (matched by name — a track whose audio was taken
+    // from the version carries a branch row id, so id-based matching would
+    // wrongly push it to the bottom); version-only tracks follow in the
+    // version's order.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const finalTracks: any[] = Array.from(mergedMap.values())
+    const mainPosByName = new Map(mainTrk.map((t: { name: string; position: number }) => [t.name, t.position]))
     finalTracks.sort((a, b) => {
-      const aIsFromMain = mainTrk.some((t: { id: string }) => t.id === a.id)
-      const bIsFromMain = mainTrk.some((t: { id: string }) => t.id === b.id)
-      if (aIsFromMain && bIsFromMain) return a.position - b.position
-      if (aIsFromMain) return -1
-      if (bIsFromMain) return 1
+      const aMainPos = mainPosByName.get(a.name)
+      const bMainPos = mainPosByName.get(b.name)
+      if (aMainPos !== undefined && bMainPos !== undefined) return aMainPos - bMainPos
+      if (aMainPos !== undefined) return -1
+      if (bMainPos !== undefined) return 1
       return a.position - b.position
     })
 
-    // Wipe main tracks and insert merged set
+    // Wipe target tracks and insert merged set
     const { error: delErr } = await supabase.from('tracks').delete().eq('version_id', main.id)
     if (delErr) throw delErr
 
@@ -268,46 +226,33 @@ export async function POST(
       if (insertErr) throw insertErr
     }
 
-    // ── Section bar merge ─────────────────────────────────────────────────────
-    const [baseSections, branchSections, mainSections] = await Promise.all([
-      baseVersionId
-        ? supabase.from('sections').select('*').eq('version_id', baseVersionId).then(r => r.data ?? [])
-        : Promise.resolve([]),
+    // ── Section merge (two-way, per bar) ──────────────────────────────────────
+    const [branchSections, mainSections] = await Promise.all([
       supabase.from('sections').select('*').eq('version_id', branchVersionId).then(r => r.data ?? []),
       supabase.from('sections').select('*').eq('version_id', main.id).then(r => r.data ?? []),
     ])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const totalBars = calculateTotalBars(baseSections as any[], branchSections as any[], mainSections as any[])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const baseMap   = buildBarMap(baseSections   as any[], totalBars)
+    const totalBars = calculateTotalBars(branchSections as any[], mainSections as any[])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const branchMap = buildBarMap(branchSections as any[], totalBars)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mainMap   = buildBarMap(mainSections   as any[], totalBars)
 
-    const { conflicts: sectionConflicts, autoFromBranch } =
-      groupConsecutiveBars(baseMap, branchMap, mainMap, totalBars)
-
-    // Build final bar map: start from main, apply auto-from-branch, then resolutions
-    const finalMap: (BarState | null)[] = [...mainMap]
-
-    for (const range of autoFromBranch) {
-      // Cherry-pick: skipped structure ranges keep the target's arrangement
-      if (skippedSections.some(s => s.startBar === range.startBar && s.endBar === range.endBar)) continue
-      for (let b = range.startBar; b < range.endBar; b++) {
-        finalMap[b] = branchMap[b]
-      }
+    // Bar-coverage skips: any bar inside a skipped range keeps the target's
+    // state, even if the diff ranges drifted since the preview was computed.
+    const skippedBars = new Set<number>()
+    for (const s of skippedSections) {
+      const from = Math.max(0, s.startBar)
+      const to   = Math.min(totalBars, s.endBar)
+      for (let b = from; b < to; b++) skippedBars.add(b)
     }
 
-    for (const res of sectionResolutions) {
-      const conflict = sectionConflicts.find(
-        c => c.startBar === res.startBar && c.endBar === res.endBar
-      )
-      if (!conflict) continue
-      const chosenState = res.choice === 'branch' ? conflict.branchState : conflict.mainState
-      for (let b = res.startBar; b < res.endBar; b++) {
-        finalMap[b] = chosenState
+    const finalMap: (BarState | null)[] = [...mainMap]
+    for (const range of diffBarMaps(branchMap, mainMap, totalBars)) {
+      for (let b = range.startBar; b < range.endBar; b++) {
+        if (skippedBars.has(b)) continue
+        finalMap[b] = branchMap[b]
       }
     }
 
@@ -324,14 +269,14 @@ export async function POST(
       if (insSecErr) throw insSecErr
     }
 
-    // Mark branch as merged
+    // ── Mark branch as merged ─────────────────────────────────────────────────
     const { error: mergeErr } = await supabase
       .from('versions')
       .update({ merged_at: new Date().toISOString(), merged_into_id: main.id })
       .eq('id', branchVersionId)
     if (mergeErr) throw mergeErr
 
-    // ── Copy comments to new main snapshot ────────────────────────────────────
+    // ── Copy comments to the new target snapshot ──────────────────────────────
     const { data: newMainTracks } = await supabase
       .from('tracks')
       .select('id, name')
@@ -354,33 +299,27 @@ export async function POST(
     const oldToNewCommentId = new Map<string, string>()
     const allCommentsToCopy: Array<{ oldId: string; trackName: string; comment: Record<string, unknown> }> = []
 
-    // Content fingerprint — same logic as the merge preview. Comments are copied
-    // with new UUIDs when a branch is created, so deletions are detected by
-    // fingerprint (a target comment whose fingerprint no longer exists in branch).
+    // Content fingerprint — identical to the preview's detection, so what the
+    // user reviewed as added/deleted is exactly what happens here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const commentKey = (c: any): string =>
       `${c.created_by}|${c.timecode_start_ms}|${c.timecode_end_ms}|${c.content}`
     const branchCommentKeys = new Set(branchComments.map(commentKey))
+    const mainCommentKeys   = new Set(mainComments.map(commentKey))
 
     for (const c of mainComments) {
       const track = mainTrk.find((t: { id: string }) => t.id === c.track_id)
       if (!track) continue
-      // Cherry-pick: this comment's deletion (made in the branch) is applied
+      // Cherry-pick: this comment's deletion (made in the version) is applied
       if (appliedDeletedCommentSet.has(c.id)) continue
-      // Bulk choice: apply every deletion detected in the branch
+      // Bulk choice: apply every deletion detected in the version
       if (commentDeletionChoice === 'apply' && !branchCommentKeys.has(commentKey(c))) continue
       allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
     }
 
-    // Only include branch comments that were added AFTER the branch was created.
-    // Comments copied from the parent at branch-creation time have a created_at
-    // that is ≤ branch.created_at — skip those to avoid duplicating main's
-    // existing comments in the merged result.
-    const branchCreatedAt = new Date(branch.created_at).getTime()
-    const mainCommentIds  = new Set(mainComments.map((c: { id: string }) => c.id))
+    // Version comments the target doesn't have (fingerprint mismatch) = added.
     for (const c of branchComments) {
-      if (mainCommentIds.has(c.id)) continue
-      if (new Date(c.created_at as string).getTime() <= branchCreatedAt) continue
+      if (mainCommentKeys.has(commentKey(c))) continue   // unchanged — already carried over above
       // Cherry-pick: user chose not to bring this comment over
       if (skippedAddedCommentSet.has(c.id)) continue
       const track = branchTrk.find((t: { id: string }) => t.id === c.track_id)
@@ -391,21 +330,23 @@ export async function POST(
     }
 
     if (allCommentsToCopy.length > 0) {
-      const newCommentRows = allCommentsToCopy.map(({ comment, trackName }) => {
+      // Filter BEFORE insert while keeping (oldId ↔ row) pairs together, so the
+      // inserted-id ↔ old-id mapping used for replies can never misalign.
+      const rowsToInsert = allCommentsToCopy.flatMap(({ oldId, comment, trackName }) => {
         const newTrackId = newTrackByName.get(trackName)
-        if (!newTrackId) return null
+        if (!newTrackId) return []
         const { id: _id, track_id: _ti, version_id: _vi, ...rest } = comment as { id: string; track_id: string; version_id: string; [k: string]: unknown }
-        return { ...rest, track_id: newTrackId, version_id: main.id }
-      }).filter((r): r is NonNullable<typeof r> => r !== null)
+        return [{ oldId, row: { ...rest, track_id: newTrackId, version_id: main.id } }]
+      })
 
-      if (newCommentRows.length > 0) {
+      if (rowsToInsert.length > 0) {
         const { data: insertedComments } = await supabase
           .from('track_comments')
-          .insert(newCommentRows)
+          .insert(rowsToInsert.map(r => r.row))
           .select('id')
 
         if (insertedComments) {
-          allCommentsToCopy.forEach(({ oldId }, i) => {
+          rowsToInsert.forEach(({ oldId }, i) => {
             if (insertedComments[i]) oldToNewCommentId.set(oldId, insertedComments[i].id)
           })
         }

@@ -10,6 +10,10 @@ export interface TrackSnapshot {
   start_bar: number
 }
 
+/**
+ * @deprecated Two-way compare — conflicts no longer exist. `conflicts` is
+ * always `[]`; kept so existing consumers type-check.
+ */
 export interface ConflictTrack {
   trackName: string
   fileConflict: boolean
@@ -27,6 +31,8 @@ export interface AutoMergeItem {
   newDisplayName?: string
   newStartBar?: number
   previousStartBar?: number
+  /** Guardrail: the target's copy of this track is newer than the version's. */
+  targetNewer?: boolean
 }
 
 export interface CommentPreview {
@@ -54,9 +60,16 @@ export interface MergePreview {
   targetVersionId: string
   targetVersionName: string
   branchCommentCount: number
+  /** Always `[]` — two-way compare has no conflicts. Kept for compatibility. */
   sectionBarConflicts: ConflictRange[]
   sectionAutoFromBranch: AutoBarRange[]
   commentChanges?: CommentChanges
+  /**
+   * Tracks that exist in the target but not in the version being applied.
+   * Target wins by default (they are kept untouched); the diff screen offers
+   * an opt-in per-track removal.
+   */
+  targetOnlyTracks?: TrackSnapshot[]
 }
 
 export type MergeResolution = {

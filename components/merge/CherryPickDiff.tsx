@@ -30,11 +30,12 @@ const LABEL_W = 200
 const MONO_CLIP_COLOR = 'rgba(128,128,128,0.55)'
 
 // Change-id namespace:
-//   track:<name>            auto track change (cherry-pickable)
-//   sec:<start>-<end>       auto structure range (cherry-pickable)
+//   track:<name>            track change from the version (cherry-pickable)
+//   trackdel:<name>         OPT-IN removal of a target-only track — never part
+//                           of select-all / group toggles, off by default
+//   sec:<start>-<end>       structure range (cherry-pickable)
 //   com:add:<id>            comment added in version (cherry-pickable)
 //   com:del:<id>            comment deleted in version (cherry-pickable)
-// Conflicts are never "off" — they carry a main/branch choice instead.
 type ChangeId = string
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -74,6 +75,8 @@ interface TrackChangeInfo {
   newStartBar?: number
   previousStartBar?: number
   conflict?: ConflictTrack
+  /** Guardrail: the target's copy of this track is newer than the version's. */
+  targetNewer?: boolean
   notes: string[]
 }
 
@@ -86,6 +89,7 @@ function buildTrackChanges(preview: MergePreview): Map<string, TrackChangeInfo> 
       info = { trackName: item.trackName, auto: true, isNew: false, fileFromBranch: false, notes: [] }
       map.set(item.trackName, info)
     }
+    if (item.targetNewer) info.targetNewer = true
     if (item.action === 'add_new') {
       info.isNew = true
       info.fileFromBranch = true
@@ -256,8 +260,20 @@ function ChangeGroup({
   )
 }
 
+/** Guardrail chip — the target's content is more recent than the version's. */
+function TargetNewerChip() {
+  return (
+    <span
+      className="shrink-0 text-[7px] font-bold uppercase tracking-widest px-1 py-px border border-destructive/40 text-destructive bg-destructive/10"
+      title="The target changed this after the version being applied — applying overwrites newer work"
+    >
+      Target newer
+    </span>
+  )
+}
+
 function PickRow({
-  on, onToggle, sign, title, detail, removed, children,
+  on, onToggle, sign, title, detail, removed, warn, children,
 }: {
   on: boolean
   onToggle: () => void
@@ -265,6 +281,8 @@ function PickRow({
   title: ReactNode
   detail?: string
   removed?: boolean
+  /** Guardrail: the target's side of this change is newer than the version's. */
+  warn?: boolean
   children?: ReactNode
 }) {
   const accent = removed ? 'var(--destructive)' : 'var(--lime)'
@@ -282,8 +300,11 @@ function PickRow({
       <span className="mt-0.5"><PickCheckbox on={on} onClick={onToggle} removed={removed} /></span>
       <span className="font-mono text-[10px] w-2.5 text-center shrink-0 mt-px" style={{ color: accent }}>{sign}</span>
       <div className="min-w-0 flex-1">
-        <div className={`text-[10px] font-bold uppercase tracking-tight truncate ${removed && on ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-          {title}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`text-[10px] font-bold uppercase tracking-tight truncate ${removed && on ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+            {title}
+          </span>
+          {warn && <span className="ml-auto"><TargetNewerChip /></span>}
         </div>
         {detail && <div className="text-[9px] text-muted-foreground mt-0.5 leading-tight break-words">{detail}</div>}
         {children}
@@ -522,7 +543,8 @@ function DiffClip({
       ? Math.min((clampedContent / totalMs) * 100, 100 - leftPct)
       : 100
 
-  const vertical = half === 'full' ? 'top-[12%] h-[76%]' : half === 'top' ? 'top-[6%] h-[40%]' : 'bottom-[6%] h-[40%]'
+  // Clips fill the row — full uses the whole height, split clips take exact halves
+  const vertical = half === 'full' ? 'top-0 h-full' : half === 'top' ? 'top-0 h-1/2' : 'bottom-0 h-1/2'
 
   // barsVersion is a re-render trigger — bars appear once decoding seeds the cache
   void barsVersion
@@ -586,6 +608,8 @@ interface LaneSectionBox {
   startBar: number
   endBar: number
   label: string
+  /** Extra left padding (px) so the label clears an overlay checkbox. */
+  labelPadLeft?: number
 }
 
 function sectionsToBoxes(sections: Array<Pick<Section, 'start_bar' | 'end_bar' | 'type' | 'custom_name'>>): LaneSectionBox[] {
@@ -616,17 +640,22 @@ function StructureLane({
       >
         {label}
       </span>
+      {/* border-y only — a left/right border would shift the bar→% mapping off the waveform grid */}
       <div
-        className={`relative overflow-hidden border ${tone === 'result' ? 'border-lime/40' : 'border-border'}`}
+        className={`relative overflow-hidden border-y ${tone === 'result' ? 'border-lime/40' : 'border-border'}`}
         style={{ height: 26, background: tone === 'accent' ? 'color-mix(in oklab, var(--lime) 4%, transparent)' : 'var(--bg-surface, transparent)' }}
       >
         {boxes.map(b => (
           <div
             key={b.key}
-            className="absolute inset-y-0.5 flex items-center px-1.5 overflow-hidden"
+            className="absolute inset-y-0 flex items-center overflow-hidden"
             style={{
               left: `${pct(b.startBar)}%`,
-              width: `calc(${Math.max(0, pct(b.endBar) - pct(b.startBar))}% - 1px)`,
+              width: `${Math.max(0, pct(b.endBar) - pct(b.startBar))}%`,
+              paddingLeft: 6 + (b.labelPadLeft ?? 0),
+              paddingRight: 6,
+              // Full-bleed fill; adjacent sections divided by a between-border
+              borderLeft: b.startBar > 0 ? '1px solid var(--border)' : undefined,
               background: tone === 'muted'
                 ? 'color-mix(in oklab, var(--foreground) 5%, transparent)'
                 : 'var(--lime-soft)',
@@ -790,6 +819,8 @@ export function CherryPickDiff({
   const trackChanges = useMemo(() => preview ? buildTrackChanges(preview) : new Map<string, TrackChangeInfo>(), [preview])
   const autoTrackChanges = useMemo(() => [...trackChanges.values()].filter(c => c.auto), [trackChanges])
   const conflictTrackChanges = useMemo(() => [...trackChanges.values()].filter(c => c.conflict), [trackChanges])
+  /** Tracks only in the target — kept by default, removable per-track (opt-in). */
+  const targetOnlyTracks = useMemo(() => preview?.targetOnlyTracks ?? [], [preview])
 
   const sectionAuto: AutoBarRange[] = useMemo(() => preview?.sectionAutoFromBranch ?? [], [preview])
   const sectionConflicts: ConflictRange[] = useMemo(() => preview?.sectionBarConflicts ?? [], [preview])
@@ -805,6 +836,8 @@ export function CherryPickDiff({
     ...addedComments.map(c => `com:add:${c.id}`),
     ...deletedComments.map(c => `com:del:${c.id}`),
   ], [addedComments, deletedComments])
+  // NOTE: trackdel:<name> removal ids are deliberately NOT part of this list —
+  // "Select all" and group toggles must never turn destructive removals on.
   const allPickableIds = useMemo(
     () => [...trackChangeIds, ...sectionChangeIds, ...commentChangeIds],
     [trackChangeIds, sectionChangeIds, commentChangeIds],
@@ -859,6 +892,8 @@ export function CherryPickDiff({
     for (const mt of targetTracks) {
       const bt = branchByName.get(mt.name)
       const change = trackChanges.get(mt.name)
+      // Target-only track with removal opted in — excluded from the result
+      if (!bt && isPicked(`trackdel:${mt.name}`)) continue
       if (!bt || !change) { out.push(mt); continue }
 
       if (change.conflict) {
@@ -988,7 +1023,8 @@ export function CherryPickDiff({
   const pickedCount = allPickableIds.filter(id => picked.has(id)).length
   const totalCount = allPickableIds.length
   const conflictCount = conflictTrackChanges.length + sectionConflicts.length
-  const nothingToApply = pickedCount === 0 && conflictCount === 0
+  const removedCount = targetOnlyTracks.filter(t => picked.has(`trackdel:${t.name}`)).length
+  const nothingToApply = pickedCount === 0 && conflictCount === 0 && removedCount === 0
 
   async function handleApply() {
     if (!preview || applying || nothingToApply) return
@@ -996,6 +1032,7 @@ export function CherryPickDiff({
     setApplyErr('')
     try {
       const skippedTracks = autoTrackChanges.filter(c => !picked.has(`track:${c.trackName}`)).map(c => c.trackName)
+      const removedTracks = targetOnlyTracks.filter(t => picked.has(`trackdel:${t.name}`)).map(t => t.name)
       const skippedSections = sectionAuto
         .filter(r => !picked.has(rangeId(r)))
         .map(r => ({ startBar: r.startBar, endBar: r.endBar }))
@@ -1008,13 +1045,8 @@ export function CherryPickDiff({
         body: JSON.stringify({
           branchVersionId: preview.branchVersionId,
           target_version_id: preview.targetVersionId,
-          resolutions: Object.entries(trackChoices).map(([trackName, r]) => ({ trackName, ...r })),
-          sectionResolutions: sectionConflicts.map(c => ({
-            startBar: c.startBar,
-            endBar: c.endBar,
-            choice: sectionChoices[rangeKey(c)] ?? 'main',
-          })),
           skippedTracks,
+          removedTracks,
           skippedSections,
           skippedAddedCommentIds,
           appliedDeletedCommentIds,
@@ -1156,10 +1188,30 @@ export function CherryPickDiff({
                       sign={c.isNew ? '+' : '~'}
                       title={branchTrack ? trackTitle(branchTrack) : c.trackName}
                       detail={c.notes.join(' · ')}
+                      warn={c.targetNewer}
                     />
                   )
                 })}
-                {autoTrackChanges.length + conflictTrackChanges.length === 0 && (
+                {/* Target-only tracks — kept by default; removal is a per-track opt-in
+                    and is never included in select-all */}
+                {targetOnlyTracks.map(t => {
+                  const id = `trackdel:${t.name}`
+                  const on = picked.has(id)
+                  return (
+                    <PickRow
+                      key={id}
+                      on={on}
+                      onToggle={() => togglePick(id)}
+                      sign="−"
+                      removed
+                      title={trackTitle(t)}
+                      detail={on
+                        ? 'will be REMOVED from the target'
+                        : `not in this version — kept in ${targetName}`}
+                    />
+                  )
+                })}
+                {autoTrackChanges.length + conflictTrackChanges.length + targetOnlyTracks.length === 0 && (
                   <p className="px-3 py-1 text-[9px] text-muted-foreground m-0">No track changes</p>
                 )}
               </ChangeGroup>
@@ -1196,6 +1248,7 @@ export function CherryPickDiff({
                       removed={kind === 'removed'}
                       title={`Bars ${r.startBar + 1}–${r.endBar}`}
                       detail={r.branchState ? `→ ${barStateLabel(r.branchState)}` : 'cleared'}
+                      warn={r.targetNewer}
                     />
                   )
                 })}
@@ -1249,7 +1302,7 @@ export function CherryPickDiff({
             <button
               type="button"
               onClick={onExit}
-              className="py-2 border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:border-foreground/40 transition"
+              className="py-2 inline-flex items-center justify-center whitespace-nowrap border border-border text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground hover:border-foreground/40 transition"
             >
               Cancel
             </button>
@@ -1257,9 +1310,9 @@ export function CherryPickDiff({
               type="button"
               disabled={applying || previewLoading || !preview || nothingToApply}
               onClick={handleApply}
-              className="py-2 text-[10px] uppercase tracking-widest font-bold bg-lime text-primary-foreground border border-lime transition hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none"
+              className="py-2 inline-flex items-center justify-center gap-1 whitespace-nowrap text-[10px] uppercase tracking-widest font-bold bg-lime text-primary-foreground border border-lime transition hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none"
             >
-              {applying ? 'Applying…' : `Apply ${pickedCount + conflictCount} →`}
+              {applying ? 'Applying…' : <>Apply {pickedCount + conflictCount + removedCount} <span aria-hidden>→</span></>}
             </button>
           </div>
         </div>
@@ -1308,8 +1361,8 @@ export function CherryPickDiff({
         {/* Scrollable diff body */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none">
 
-          {/* Bar ruler */}
-          <div className="flex border-b border-border" style={{ height: 24 }}>
+          {/* Bar ruler — 2px transparent borderLeft mirrors the track rows' status border so all rows share one grid */}
+          <div className="flex border-b border-border" style={{ height: 24, borderLeft: '2px solid transparent' }}>
             <div className="shrink-0 border-r border-border bg-surface/40 flex items-center px-3" style={{ width: LABEL_W }}>
               <span className="text-[9px] uppercase tracking-widest font-bold text-muted-foreground">
                 Bars · {timeSig}
@@ -1326,15 +1379,16 @@ export function CherryPickDiff({
             </div>
           </div>
 
-          {/* Structure: Target / Incoming / Result lanes */}
-          <div className="flex border-b border-border">
+          {/* Structure: Target / Incoming / Result lanes — same 2px inset as track rows */}
+          <div className="flex border-b border-border" style={{ borderLeft: '2px solid transparent' }}>
             <div className="shrink-0 border-r border-border px-3 py-3 flex flex-col gap-1.5 bg-lime-soft/40" style={{ width: LABEL_W }}>
               <span className="text-[9px] uppercase tracking-widest font-bold text-lime">Structure</span>
               <span className="text-[8px] uppercase tracking-widest text-muted-foreground leading-relaxed">
                 Both arrangements overlapped — result updates live
               </span>
             </div>
-            <div className="flex-1 min-w-0 px-2 pt-3 pb-2 flex flex-col gap-3">
+            {/* No horizontal padding — lanes share the exact coordinate system of the waveform rows */}
+            <div className="flex-1 min-w-0 pt-3 pb-2 flex flex-col gap-3">
               <StructureLane
                 label="Target"
                 tone="muted"
@@ -1381,7 +1435,11 @@ export function CherryPickDiff({
               <StructureLane
                 label="Result"
                 tone="result"
-                boxes={sectionsToBoxes(resultSections)}
+                boxes={sectionsToBoxes(resultSections).map(b =>
+                  // Overlay checkboxes sit at the start of each pickable range —
+                  // shift the label right so it isn't covered.
+                  sectionAuto.some(r => r.startBar === b.startBar) ? { ...b, labelPadLeft: 18 } : b,
+                )}
                 barDurationMs={barDurationMs}
                 totalMs={totalMs}
                 overlays={
@@ -1444,6 +1502,10 @@ export function CherryPickDiff({
             const on = conflict ? true : isAuto ? picked.has(id) : true
             const isSame = !change
             const isNew = !!change?.isNew
+            // Target-only track: kept by default, removable via opt-in checkbox
+            const isTargetOnly = !!row.target && !row.branch && !change
+            const removalId = `trackdel:${row.name}`
+            const removalOn = isTargetOnly && picked.has(removalId)
             const displayTrack = row.branch ?? row.target!
             const accent = trackAccentColor(displayTrack.icon_color ?? null, i)
 
@@ -1490,18 +1552,20 @@ export function CherryPickDiff({
             return (
               <div
                 key={row.name}
-                className={`flex border-b border-border relative ${isSame ? 'opacity-60' : ''} ${on && isNew ? 'bg-lime-soft/20' : ''}`}
-                style={{ borderLeft: `2px solid ${!isSame && on ? (conflict ? 'var(--destructive)' : isNew ? 'var(--lime)' : 'color-mix(in oklab, var(--foreground) 35%, transparent)') : 'transparent'}` }}
+                className={`flex border-b border-border relative ${isSame && !removalOn ? 'opacity-60' : ''} ${on && isNew ? 'bg-lime-soft/20' : ''}`}
+                style={{ borderLeft: `2px solid ${removalOn ? 'var(--destructive)' : !isSame && on ? (conflict ? 'var(--destructive)' : isNew ? 'var(--lime)' : 'color-mix(in oklab, var(--foreground) 35%, transparent)') : 'transparent'}` }}
               >
                 {/* Label column */}
                 <div className="shrink-0 border-r border-border px-3 py-2.5 flex flex-col gap-1.5 bg-surface/40" style={{ width: LABEL_W }}>
                   <div className="flex items-center gap-2 min-w-0">
                     {isAuto && <PickCheckbox on={on} onClick={() => togglePick(id)} />}
+                    {isTargetOnly && <PickCheckbox on={removalOn} removed onClick={() => togglePick(removalId)} />}
+                    {/* Track badge — first letter, mixer-identical */}
                     <div
-                      className="size-5 grid place-items-center text-[10px] font-display font-bold shrink-0"
-                      style={{ background: accent, color: 'var(--primary-foreground, #000)' }}
+                      className="size-5 grid place-items-center text-[10px] font-bold text-white uppercase shrink-0"
+                      style={{ background: accent }}
                     >
-                      {displayTrack.icon_emoji ?? trackTitle(displayTrack).charAt(0).toUpperCase()}
+                      {(trackTitle(displayTrack).trim()[0] ?? '?').toUpperCase()}
                     </div>
                     <span className="text-[11px] font-bold uppercase tracking-tight truncate text-foreground" title={trackTitle(displayTrack)}>
                       {trackTitle(displayTrack)}
@@ -1523,16 +1587,22 @@ export function CherryPickDiff({
                       {change.notes.join(' · ')}
                     </span>
                   )}
+                  {change?.targetNewer && on && <span className="w-fit"><TargetNewerChip /></span>}
                   {conflict && (
                     <span className="text-[8px] uppercase tracking-widest leading-tight text-muted-foreground">
                       {change!.notes[0]} — using {fileChoiceBranch ? 'version' : 'target'}
                     </span>
                   )}
-                  {isSame && <span className="text-[8px] uppercase tracking-widest text-muted-foreground">unchanged</span>}
+                  {isTargetOnly && (
+                    <span className={`text-[8px] uppercase tracking-widest leading-tight ${removalOn ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {removalOn ? 'will be removed from target' : 'not in version — kept'}
+                    </span>
+                  )}
+                  {isSame && !isTargetOnly && <span className="text-[8px] uppercase tracking-widest text-muted-foreground">unchanged</span>}
                 </div>
 
                 {/* Timeline canvas */}
-                <div className="relative flex-1 min-w-0" style={{ height: 88 }}>
+                <div className="relative flex-1 min-w-0" style={{ height: 70 }}>
                   {showTarget && row.target && (
                     <DiffClip
                       track={row.target}
@@ -1602,6 +1672,13 @@ export function CherryPickDiff({
                     <div
                       className="absolute inset-0 pointer-events-none"
                       style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 6px, color-mix(in oklab, var(--foreground) 3%, transparent) 6px, color-mix(in oklab, var(--foreground) 3%, transparent) 12px)' }}
+                    />
+                  )}
+                  {/* Removal wash — target-only track opted into deletion */}
+                  {removalOn && (
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 6px, color-mix(in oklab, var(--destructive) 14%, transparent) 6px, color-mix(in oklab, var(--destructive) 14%, transparent) 12px)' }}
                     />
                   )}
                 </div>

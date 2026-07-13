@@ -12,7 +12,11 @@ export interface BarState {
 
 // ─── Range types ───────────────────────────────────────────────────────────────
 
-/** A group of consecutive bars where branch and main diverge (both changed from base). */
+/**
+ * @deprecated The system is a two-way compare — conflicts no longer exist.
+ * Kept only so older clients reading `sectionBarConflicts` (always `[]`) still
+ * type-check. Do not produce values of this type.
+ */
 export interface ConflictRange {
   startBar: number
   endBar: number           // exclusive
@@ -20,11 +24,15 @@ export interface ConflictRange {
   branchState: BarState | null
 }
 
-/** A group of consecutive bars changed only in branch — auto-applies to main. */
+/** A group of consecutive bars where the incoming version differs from the target. */
 export interface AutoBarRange {
   startBar: number
   endBar: number           // exclusive
   branchState: BarState | null  // null means the bars will become empty (no section)
+  /** Target's current state on these bars (what applying would replace). */
+  targetState?: BarState | null
+  /** Guardrail: the target's content here is newer than the version's. */
+  targetNewer?: boolean
 }
 
 // ─── buildBarMap ───────────────────────────────────────────────────────────────
@@ -62,78 +70,50 @@ export function barStatesEqual(a: BarState | null, b: BarState | null): boolean 
   return a.type === b.type && a.customName === b.customName && a.chords === b.chords && a.note === b.note
 }
 
-// ─── groupConsecutiveBars ──────────────────────────────────────────────────────
+// ─── diffBarMaps ───────────────────────────────────────────────────────────────
 
 /**
- * Three-way bar comparison producing two outputs:
+ * Two-way bar comparison: the ONLY structure-diff primitive in the system.
  *
- *  conflicts      — bars changed in BOTH branch and main, with different end-states.
- *                   Consecutive bars with the same (branchState, mainState) pair are
- *                   grouped into one ConflictRange.
+ * A bar is a change when the incoming version's state differs from the target's.
+ * Consecutive changed bars sharing the same (branchState, targetState) pair are
+ * grouped into one range, so each range is homogeneous: applying it sets every
+ * bar to `branchState`, skipping it keeps every bar at `targetState`.
  *
- *  autoFromBranch — bars changed only in branch (not a conflict).
- *                   Consecutive bars with the same branchState are grouped.
+ * Deterministic: same two section sets always produce the same ranges (bar maps
+ * are pure functions of the section rows, and grouping is a single linear scan).
+ * Both the preview and the apply route call this with the same inputs, so what
+ * the user reviews is exactly what gets applied.
  */
-export function groupConsecutiveBars(
-  baseMap:   (BarState | null)[],
+export function diffBarMaps(
   branchMap: (BarState | null)[],
-  mainMap:   (BarState | null)[],
+  targetMap: (BarState | null)[],
   totalBars: number,
-): { conflicts: ConflictRange[]; autoFromBranch: AutoBarRange[] } {
-  const conflicts:      ConflictRange[]  = []
-  const autoFromBranch: AutoBarRange[]   = []
+): AutoBarRange[] {
+  const ranges: AutoBarRange[] = []
 
   let i = 0
   while (i < totalBars) {
-    const base   = baseMap[i]   ?? null
     const branch = branchMap[i] ?? null
-    const main   = mainMap[i]   ?? null
+    const target = targetMap[i] ?? null
 
-    const changedInBranch = !barStatesEqual(base, branch)
-    const changedInMain   = !barStatesEqual(base, main)
-    const isConflict      = changedInBranch && changedInMain && !barStatesEqual(branch, main)
-    const isAuto          = changedInBranch && !isConflict
+    if (barStatesEqual(branch, target)) { i++; continue }
 
-    if (isConflict) {
-      const startBar = i
-      let   endBar   = i + 1
-      while (endBar < totalBars) {
-        const b2  = baseMap[endBar]   ?? null
-        const br2 = branchMap[endBar] ?? null
-        const m2  = mainMap[endBar]   ?? null
-        const cb2 = !barStatesEqual(b2, br2)
-        const cm2 = !barStatesEqual(b2, m2)
-        const ic2 = cb2 && cm2 && !barStatesEqual(br2, m2)
-        // Must still be a conflict AND share the same (branch, main) state pair
-        if (!ic2) break
-        if (!barStatesEqual(br2, branch) || !barStatesEqual(m2, main)) break
-        endBar++
-      }
-      conflicts.push({ startBar, endBar, mainState: main, branchState: branch })
-      i = endBar
-    } else if (isAuto) {
-      const startBar = i
-      let   endBar   = i + 1
-      while (endBar < totalBars) {
-        const b2  = baseMap[endBar]   ?? null
-        const br2 = branchMap[endBar] ?? null
-        const m2  = mainMap[endBar]   ?? null
-        const cb2 = !barStatesEqual(b2, br2)
-        const cm2 = !barStatesEqual(b2, m2)
-        const ic2 = cb2 && cm2 && !barStatesEqual(br2, m2)
-        // Must still be auto (changed in branch, not a conflict) AND same branch state
-        if (!cb2 || ic2) break
-        if (!barStatesEqual(br2, branch)) break
-        endBar++
-      }
-      autoFromBranch.push({ startBar, endBar, branchState: branch })
-      i = endBar
-    } else {
-      i++
+    const startBar = i
+    let   endBar   = i + 1
+    while (endBar < totalBars) {
+      const br2 = branchMap[endBar] ?? null
+      const tg2 = targetMap[endBar] ?? null
+      // Still a difference AND the same homogeneous (branch, target) pair
+      if (barStatesEqual(br2, tg2)) break
+      if (!barStatesEqual(br2, branch) || !barStatesEqual(tg2, target)) break
+      endBar++
     }
+    ranges.push({ startBar, endBar, branchState: branch, targetState: target })
+    i = endBar
   }
 
-  return { conflicts, autoFromBranch }
+  return ranges
 }
 
 // ─── barMapToSections ──────────────────────────────────────────────────────────

@@ -3,80 +3,41 @@ import { supabase } from '@/lib/supabase'
 import { requireBandMember } from '@/lib/supabase/server'
 import {
   buildBarMap,
-  groupConsecutiveBars,
+  diffBarMaps,
   calculateTotalBars,
-  ConflictRange,
   AutoBarRange,
 } from '@/lib/sectionMerge'
 import { trackStartBar } from '@/lib/trackMerge'
-import { buildVersionParentMap, findMergeBaseVersionId } from '@/lib/mergeBase'
+import type {
+  TrackSnapshot,
+  AutoMergeItem,
+  CommentPreview,
+  MergePreview,
+} from '@/lib/mergePreview'
 
-// ─── Shared types (re-exported so MergeModal can import them) ─────────────────
-
-interface TrackSnapshot {
-  id: string
-  name: string
-  display_name: string | null
-  original_filename: string | null
-  file_size_bytes: number | null
-  created_at: string
-  start_bar: number
-}
-
-export interface ConflictTrack {
-  trackName: string
-  fileConflict: boolean
-  renameConflict: boolean
-  offsetConflict: boolean
-  mainTrack: TrackSnapshot
-  branchTrack: TrackSnapshot
-  baseTrack: TrackSnapshot | null
-}
-
-export interface AutoMergeItem {
-  action: 'take_from_branch' | 'add_new' | 'apply_rename' | 'apply_offset'
-  trackName: string
-  track: { id: string; name: string; display_name: string | null; original_filename: string | null; start_bar?: number }
-  newDisplayName?: string
-  newStartBar?: number
-  previousStartBar?: number
-}
-
-export interface CommentPreview {
-  id: string
-  author_username: string | null
-  timecode_start_ms: number
-  timecode_end_ms: number
-  content: string
-  track_name: string
-  reply_count: number
-}
-
-export interface CommentChanges {
-  added: CommentPreview[]
-  deleted: CommentPreview[]
-}
-
-export interface MergePreview {
-  conflicts: ConflictTrack[]
-  autoMerge: AutoMergeItem[]
-  branchName: string
-  mainName: string
-  branchVersionId: string
-  mainVersionId: string
-  branchCommentCount: number
-  targetVersionId: string
-  targetVersionName: string
-  // ── Section bar merge ──────────────────────────────────────────────────────
-  sectionBarConflicts:   ConflictRange[]
-  sectionAutoFromBranch: AutoBarRange[]
-  // ── Comment diff ──────────────────────────────────────────────────────────
-  commentChanges: CommentChanges
-}
+// Re-exported so client code that historically imported types from this route
+// keeps compiling.
+export type {
+  TrackSnapshot,
+  ConflictTrack,
+  AutoMergeItem,
+  CommentPreview,
+  CommentChanges,
+  MergePreview,
+} from '@/lib/mergePreview'
 
 // POST /api/projects/[id]/merge/preview
 // Body: { branch_id: string, target_version_id?: string }
-// Returns conflict detection results without applying any changes.
+//
+// TWO-WAY compare: the version being applied (branch) is diffed directly
+// against the target. No ancestors, no merge base — what you see is exactly
+// the difference between the two versions you picked. Every difference is a
+// cherry-pickable change; there are no conflicts (`conflicts` and
+// `sectionBarConflicts` are always empty and kept only for compatibility).
+//
+// Guardrail: each change carries `targetNewer` — true when the target's copy
+// of that content is more recent than the version's, i.e. applying would
+// overwrite newer work with older material.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -93,7 +54,7 @@ export async function POST(
       return NextResponse.json({ error: 'branch_id is required' }, { status: 400 })
     }
 
-    // Fetch branch
+    // Fetch branch (the version being applied)
     const { data: branch, error: branchErr } = await supabase
       .from('versions')
       .select('*')
@@ -138,30 +99,7 @@ export async function POST(
       main = mainVersion
     }
 
-    const { data: projectVersions, error: versionsErr } = await supabase
-      .from('versions')
-      .select('id, parent_id')
-      .eq('project_id', projectId)
-    if (versionsErr) throw versionsErr
-
-    const baseVersionId = findMergeBaseVersionId(
-      branch,
-      main.id,
-      buildVersionParentMap(projectVersions ?? []),
-    )
-    if (!baseVersionId) {
-      return NextResponse.json(
-        { error: 'branch and merge target share no common ancestor' },
-        { status: 400 },
-      )
-    }
-
-    // Fetch all three track sets (base = LCA of branch and target, not parent_id)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const baseTracks: any[] = baseVersionId
-      ? (await supabase.from('tracks').select('*').eq('version_id', baseVersionId)).data ?? []
-      : []
-
+    // ── Fetch both track sets ─────────────────────────────────────────────────
     const branchTracksRes = await supabase.from('tracks').select('*').eq('version_id', branch_id)
     const mainTracksRes   = await supabase.from('tracks').select('*').eq('version_id', main.id)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -169,114 +107,122 @@ export async function POST(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mainTracks: any[]   = mainTracksRes.data ?? []
 
-    const conflicts: ConflictTrack[] = []
-    const autoMerge: AutoMergeItem[] = []
-
-    // Walk each track in branch
-    for (const bt of branchTracks) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const baseTrack: any | undefined = baseTracks.find((t: { name: string }) => t.name === bt.name)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mainTrack: any | undefined = mainTracks.find((t: { name: string }) => t.name === bt.name)
-
-      // ── File change detection ──────────────────────────────────────────────
-      const fileChangedInBranch = !baseTrack || baseTrack.file_hash !== bt.file_hash
-      const fileChangedInMain   = baseTrack
-        ? baseTrack.file_hash !== (mainTrack?.file_hash ?? baseTrack.file_hash)
-        : false
-      const fileConflict = fileChangedInBranch && fileChangedInMain && !!mainTrack
-
-      // ── Rename detection ───────────────────────────────────────────────────
-      const baseDisplay   = baseTrack   ? (baseTrack.display_name   ?? baseTrack.name)   : null
-      const branchDisplay = bt.display_name ?? bt.name
-      const mainDisplay   = mainTrack   ? (mainTrack.display_name   ?? mainTrack.name)   : null
-
-      const renamedInBranch = baseTrack ? branchDisplay !== baseDisplay : false
-      const renamedInMain   = baseTrack && mainTrack ? mainDisplay !== baseDisplay : false
-      const renameConflict  = renamedInBranch && renamedInMain && branchDisplay !== mainDisplay
-
-      // ── Start bar (track offset) detection ─────────────────────────────────
-      const baseStartBar = trackStartBar(baseTrack)
-      const branchStartBar = trackStartBar(bt)
-      const mainStartBar = mainTrack ? trackStartBar(mainTrack) : baseStartBar
-      const offsetChangedInBranch = !baseTrack || branchStartBar !== baseStartBar
-      const offsetChangedInMain = baseTrack && mainTrack ? mainStartBar !== baseStartBar : false
-      const offsetConflict = offsetChangedInBranch && offsetChangedInMain && branchStartBar !== mainStartBar
-
-      function toSnapshot(t: typeof bt): TrackSnapshot {
-        return {
-          id: t.id,
-          name: t.name,
-          display_name: t.display_name ?? null,
-          original_filename: t.original_filename ?? null,
-          file_size_bytes: t.file_size_bytes ?? null,
-          created_at: t.created_at,
-          start_bar: trackStartBar(t),
-        }
-      }
-
-      // ── Categorise ────────────────────────────────────────────────────────
-      if (fileConflict || renameConflict || offsetConflict) {
-        conflicts.push({
-          trackName:    bt.name,
-          fileConflict,
-          renameConflict,
-          offsetConflict,
-          mainTrack:   toSnapshot(mainTrack ?? bt),
-          branchTrack: toSnapshot(bt),
-          baseTrack:   baseTrack ? toSnapshot(baseTrack) : null,
-        })
-      } else {
-        if (fileChangedInBranch) {
-          const action = !baseTrack && !mainTrack ? 'add_new' : 'take_from_branch'
-          autoMerge.push({ action, trackName: bt.name, track: bt })
-        }
-        // Auto-rename: branch renamed, main didn't (or no base)
-        if (renamedInBranch && !renameConflict) {
-          autoMerge.push({
-            action: 'apply_rename',
-            trackName: bt.name,
-            track: bt,
-            newDisplayName: branchDisplay,
-          })
-        }
-        // Auto-offset: branch moved track, main didn't
-        if (offsetChangedInBranch && !offsetConflict) {
-          autoMerge.push({
-            action: 'apply_offset',
-            trackName: bt.name,
-            track: bt,
-            newStartBar: branchStartBar,
-            previousStartBar: baseStartBar,
-          })
-        }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function toSnapshot(t: any): TrackSnapshot {
+      return {
+        id: t.id,
+        name: t.name,
+        display_name: t.display_name ?? null,
+        original_filename: t.original_filename ?? null,
+        file_size_bytes: t.file_size_bytes ?? null,
+        created_at: t.created_at,
+        start_bar: trackStartBar(t),
       }
     }
 
-    // ── Section bar conflict detection ────────────────────────────────────────
-    const [baseSections, branchSections, mainSections] = await Promise.all([
-      baseVersionId
-        ? supabase.from('sections').select('*').eq('version_id', baseVersionId).then(r => r.data ?? [])
-        : Promise.resolve([]),
+    // Guardrail (best effort): is the target's copy of this content more
+    // recent than the version's? Row created_at is bumped by every
+    // row-recreating operation — upload, replace, branch copy, merge — but
+    // NOT by in-place PATCHes (rename, offset drag), so this can under-warn.
+    // It never blocks anything; it only marks changes for extra attention.
+    // TODO: add an updated_at column (+ trigger) to tracks/sections to make
+    // this exact.
+    function isTargetNewer(targetCreatedAt: string | null, branchCreatedAt: string | null): boolean {
+      if (!targetCreatedAt || !branchCreatedAt) return false
+      return new Date(targetCreatedAt).getTime() > new Date(branchCreatedAt).getTime()
+    }
+
+    // ── Track diff (two-way, by track name) ───────────────────────────────────
+    const autoMerge: AutoMergeItem[] = []
+
+    for (const bt of branchTracks) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mt: any | undefined = mainTracks.find((t: { name: string }) => t.name === bt.name)
+
+      if (!mt) {
+        // Only in the version → plain addition
+        autoMerge.push({ action: 'add_new', trackName: bt.name, track: bt })
+        continue
+      }
+
+      const targetNewer = isTargetNewer(mt.created_at, bt.created_at)
+
+      const fileDiffers   = mt.file_hash !== bt.file_hash
+      const nameDiffers   = (mt.display_name ?? mt.name) !== (bt.display_name ?? bt.name)
+      const offsetDiffers = trackStartBar(mt) !== trackStartBar(bt)
+
+      if (fileDiffers) {
+        autoMerge.push({
+          action: 'take_from_branch',
+          trackName: bt.name,
+          track: bt,
+          ...(targetNewer && { targetNewer }),
+        })
+      }
+      if (nameDiffers) {
+        autoMerge.push({
+          action: 'apply_rename',
+          trackName: bt.name,
+          track: bt,
+          newDisplayName: bt.display_name ?? bt.name,
+          ...(targetNewer && { targetNewer }),
+        })
+      }
+      if (offsetDiffers) {
+        autoMerge.push({
+          action: 'apply_offset',
+          trackName: bt.name,
+          track: bt,
+          newStartBar: trackStartBar(bt),
+          previousStartBar: trackStartBar(mt),
+          ...(targetNewer && { targetNewer }),
+        })
+      }
+    }
+
+    // Only in the target → target wins by default; removal is a per-track opt-in
+    const branchNames = new Set(branchTracks.map((t: { name: string }) => t.name))
+    const targetOnlyTracks: TrackSnapshot[] = mainTracks
+      .filter((t: { name: string }) => !branchNames.has(t.name))
+      .map(toSnapshot)
+
+    // ── Section diff (two-way, per bar) ───────────────────────────────────────
+    const [branchSections, mainSections] = await Promise.all([
       supabase.from('sections').select('*').eq('version_id', branch_id).then(r => r.data ?? []),
       supabase.from('sections').select('*').eq('version_id', main.id).then(r => r.data ?? []),
     ])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const totalBars = calculateTotalBars(baseSections as any[], branchSections as any[], mainSections as any[])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const baseMap   = buildBarMap(baseSections   as any[], totalBars)
+    const totalBars = calculateTotalBars(branchSections as any[], mainSections as any[])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const branchMap = buildBarMap(branchSections as any[], totalBars)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mainMap   = buildBarMap(mainSections   as any[], totalBars)
 
-    const { conflicts: sectionBarConflicts, autoFromBranch: sectionAutoFromBranch } =
-      groupConsecutiveBars(baseMap, branchMap, mainMap, totalBars)
+    const sectionAutoFromBranch: AutoBarRange[] = diffBarMaps(branchMap, mainMap, totalBars)
 
-    // ── Comment diff (added in branch / deleted in branch vs main) ───────────
-    // We compare main's comments vs branch's comments so that a comment deleted
-    // in the branch (but still present on main) correctly surfaces as "deleted".
+    // Guardrail per range: compare the most recent section row touching the
+    // range on each side. A side with no rows there contributes its version's
+    // created_at (rows are copied at version creation).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function newestRowMs(sections: any[], range: { startBar: number; endBar: number }, fallbackIso: string | null): number {
+      let max = fallbackIso ? new Date(fallbackIso).getTime() : 0
+      for (const s of sections) {
+        if (s.start_bar < range.endBar && s.end_bar > range.startBar && s.created_at) {
+          max = Math.max(max, new Date(s.created_at).getTime())
+        }
+      }
+      return max
+    }
+    for (const r of sectionAutoFromBranch) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const targetMs = newestRowMs(mainSections as any[], r, null)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const branchMs = newestRowMs(branchSections as any[], r, branch.created_at)
+      if (targetMs > 0 && targetMs > branchMs) r.targetNewer = true
+    }
+
+    // ── Comment diff (already two-way: content fingerprint) ───────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const branchTrackMap = new Map(branchTracks.map((t: any) => [t.id, t.display_name ?? t.name]))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -284,8 +230,6 @@ export async function POST(
     const branchCommentTrackIds = branchTracks.map((t: { id: string }) => t.id)
     const mainCommentTrackIds   = mainTracks.map((t: { id: string }) => t.id)
 
-    // Note: track_comments stores the author as `created_by` (user UUID),
-    // not `author_username`. We fetch created_by and resolve usernames below.
     const [rawBranchComments, rawMainComments] = await Promise.all([
       branchCommentTrackIds.length
         ? supabase.from('track_comments')
@@ -364,7 +308,7 @@ export async function POST(
       .map((mc: any) => toCommentPreview(mc, mainTrackMap))
 
     const result: MergePreview = {
-      conflicts,
+      conflicts: [],               // two-way compare — no conflicts, ever
       autoMerge,
       branchName: branch.name,
       mainName: main.name,
@@ -373,9 +317,10 @@ export async function POST(
       targetVersionId: main.id,
       targetVersionName: main.name,
       branchCommentCount: addedInBranch.length,
-      sectionBarConflicts,
+      sectionBarConflicts: [],     // two-way compare — no conflicts, ever
       sectionAutoFromBranch,
       commentChanges: { added: addedInBranch, deleted: deletedInBranch },
+      targetOnlyTracks,
     }
 
     return NextResponse.json(result)
