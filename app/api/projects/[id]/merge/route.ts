@@ -27,7 +27,13 @@ import { buildVersionParentMap, findMergeBaseVersionId } from '@/lib/mergeBase'
 //     startBar: number,
 //     endBar: number,
 //     choice: 'main' | 'branch',
-//   }>
+//   }>,
+//   // ── Cherry-pick (all optional; omitting = apply everything) ──
+//   skippedTracks?: string[],                       // branch track names to leave out entirely
+//   skippedSections?: Array<{ startBar: number, endBar: number }>, // auto section ranges to skip
+//   skippedAddedCommentIds?: string[],              // branch comment ids NOT to copy over
+//   appliedDeletedCommentIds?: string[],            // target comment ids whose deletion is applied
+//   commentDeletionChoice?: 'keep' | 'apply',       // bulk: apply all deletions detected in branch
 // }
 //
 // Algorithm:
@@ -49,12 +55,31 @@ export async function POST(
     const access = await requireBandMember(req, projectId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project: _project } = access
-    const { branchVersionId, target_version_id, resolutions = [], sectionResolutions = [] } = await req.json() as {
+    const {
+      branchVersionId,
+      target_version_id,
+      resolutions = [],
+      sectionResolutions = [],
+      skippedTracks = [],
+      skippedSections = [],
+      skippedAddedCommentIds = [],
+      appliedDeletedCommentIds = [],
+      commentDeletionChoice = 'keep',
+    } = await req.json() as {
       branchVersionId: string
       target_version_id?: string
       resolutions: Array<{ trackName: string; fileChoice?: 'main' | 'branch'; nameChoice?: 'main' | 'branch'; offsetChoice?: 'main' | 'branch' }>
       sectionResolutions: Array<{ startBar: number; endBar: number; choice: 'main' | 'branch' }>
+      skippedTracks?: string[]
+      skippedSections?: Array<{ startBar: number; endBar: number }>
+      skippedAddedCommentIds?: string[]
+      appliedDeletedCommentIds?: string[]
+      commentDeletionChoice?: 'keep' | 'apply'
     }
+
+    const skippedTrackSet = new Set(skippedTracks)
+    const skippedAddedCommentSet = new Set(skippedAddedCommentIds)
+    const appliedDeletedCommentSet = new Set(appliedDeletedCommentIds)
 
     if (!branchVersionId) {
       return NextResponse.json({ error: 'branchVersionId is required' }, { status: 400 })
@@ -142,6 +167,8 @@ export async function POST(
 
     // Process each branch track
     for (const bt of branchTrk) {
+      // Cherry-pick: change skipped by the user — target keeps its own state
+      if (skippedTrackSet.has(bt.name)) continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const baseTrack: any  = baseTrk.find((t: { name: string }) => t.name === bt.name) ?? null
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -266,6 +293,8 @@ export async function POST(
     const finalMap: (BarState | null)[] = [...mainMap]
 
     for (const range of autoFromBranch) {
+      // Cherry-pick: skipped structure ranges keep the target's arrangement
+      if (skippedSections.some(s => s.startBar === range.startBar && s.endBar === range.endBar)) continue
       for (let b = range.startBar; b < range.endBar; b++) {
         finalMap[b] = branchMap[b]
       }
@@ -325,9 +354,21 @@ export async function POST(
     const oldToNewCommentId = new Map<string, string>()
     const allCommentsToCopy: Array<{ oldId: string; trackName: string; comment: Record<string, unknown> }> = []
 
+    // Content fingerprint — same logic as the merge preview. Comments are copied
+    // with new UUIDs when a branch is created, so deletions are detected by
+    // fingerprint (a target comment whose fingerprint no longer exists in branch).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const commentKey = (c: any): string =>
+      `${c.created_by}|${c.timecode_start_ms}|${c.timecode_end_ms}|${c.content}`
+    const branchCommentKeys = new Set(branchComments.map(commentKey))
+
     for (const c of mainComments) {
       const track = mainTrk.find((t: { id: string }) => t.id === c.track_id)
       if (!track) continue
+      // Cherry-pick: this comment's deletion (made in the branch) is applied
+      if (appliedDeletedCommentSet.has(c.id)) continue
+      // Bulk choice: apply every deletion detected in the branch
+      if (commentDeletionChoice === 'apply' && !branchCommentKeys.has(commentKey(c))) continue
       allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
     }
 
@@ -340,8 +381,12 @@ export async function POST(
     for (const c of branchComments) {
       if (mainCommentIds.has(c.id)) continue
       if (new Date(c.created_at as string).getTime() <= branchCreatedAt) continue
+      // Cherry-pick: user chose not to bring this comment over
+      if (skippedAddedCommentSet.has(c.id)) continue
       const track = branchTrk.find((t: { id: string }) => t.id === c.track_id)
       if (!track) continue
+      // Note: comments on skipped *new* tracks are dropped naturally below —
+      // the track name won't exist in the merged target.
       allCommentsToCopy.push({ oldId: c.id, trackName: track.name, comment: c })
     }
 

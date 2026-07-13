@@ -502,6 +502,25 @@ function CommentChangesSection({
   )
 }
 
+// ─── Cherry-pick entry button ─────────────────────────────────────────────────
+
+function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-lime hover:text-lime transition disabled:opacity-50 disabled:pointer-events-none"
+    >
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+        <path d="M1.5 3h6M1.5 6h9M1.5 9h4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <path d="M9 2l1.5 1L9 4M11.5 8.25l-1.75 1.75-1-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      Show &amp; cherry-pick differences
+    </button>
+  )
+}
+
 // ─── MergeModal ───────────────────────────────────────────────────────────────
 
 export function MergeModal({
@@ -510,12 +529,15 @@ export function MergeModal({
   versions,
   onClose,
   onMerged,
+  onOpenDiff,
 }: {
   projectId: string
   branchId: string
   versions: Version[]
   onClose: () => void
   onMerged: (result: { tracksUpdated: number; branchName: string; targetName: string }) => void
+  /** Opens the full cherry-pick diff view for the current branch → target pair. */
+  onOpenDiff?: (targetVersionId: string) => void
 }) {
   const defaultTargetId = useMemo(
     () => versions.find(v => v.type === 'main')?.id ?? mergeTargetVersions(versions, branchId)[0]?.id ?? '',
@@ -664,6 +686,21 @@ export function MergeModal({
 
   const hasConflicts = preview.conflicts.length > 0 || sectionConflicts.length > 0
 
+  const hasAnyChanges =
+    preview.autoMerge.length > 0 ||
+    preview.conflicts.length > 0 ||
+    sectionAutoItems.length > 0 ||
+    sectionConflicts.length > 0 ||
+    (preview.commentChanges?.added.length ?? 0) > 0 ||
+    (preview.commentChanges?.deleted.length ?? 0) > 0
+
+  const diffButton = onOpenDiff && (
+    <CherryPickDiffButton
+      disabled={previewLoading || merging || !hasAnyChanges}
+      onClick={() => onOpenDiff(targetVersionId)}
+    />
+  )
+
   // ── Clean merge confirm ────────────────────────────────────────────────────
   if (!hasConflicts) {
     return (
@@ -740,11 +777,14 @@ export function MergeModal({
 
           {mergeErr && <p className="text-xs text-destructive mb-3 m-0">{mergeErr}</p>}
 
-          <div className="flex gap-2 justify-end pt-2 border-t border-border">
-            <MergeBtn onClick={onClose}>Cancel</MergeBtn>
-            <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
-              {merging ? 'Applying…' : 'Apply →'}
-            </MergeBtn>
+          <div className="flex items-center gap-2 pt-2 border-t border-border">
+            {diffButton}
+            <div className="flex gap-2 ml-auto">
+              <MergeBtn onClick={onClose}>Cancel</MergeBtn>
+              <MergeBtn variant="primary" disabled={!canMerge} onClick={handleMerge}>
+                {merging ? 'Applying…' : 'Apply →'}
+              </MergeBtn>
+            </div>
           </div>
         </div>
       </MergeShell>
@@ -945,7 +985,7 @@ export function MergeModal({
       </div>
 
       <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3 border-t border-border">
-        {mergeErr ? <p className="text-xs text-destructive m-0">{mergeErr}</p> : <div />}
+        {mergeErr ? <p className="text-xs text-destructive m-0">{mergeErr}</p> : (diffButton ?? <div />)}
         <div className="flex gap-2">
           <MergeBtn onClick={onClose}>Cancel</MergeBtn>
           <MergeBtn variant="primary" disabled={!canMerge || merging} onClick={handleMerge}>

@@ -174,15 +174,16 @@ async function loadSharedMidiBuffer(
 }
 
 // ─── useCompareAudio ─────────────────────────────────────────────────────────
+// Exported: also powers the cherry-pick diff view (target vs. result preview).
 
-type ABMode = 'a' | 'b' | 'both'
+export type ABMode = 'a' | 'b' | 'both'
 
 interface LoopRange {
   startMs: number
   endMs: number
 }
 
-function useCompareAudio(
+export function useCompareAudio(
   tracksA: Track[],
   tracksB: Track[],
   project: Project | null,
@@ -594,8 +595,9 @@ function useCompareAudio(
 }
 
 // ─── BarRuler ─────────────────────────────────────────────────────────────────
+// Exported: reused by the cherry-pick diff view.
 
-function BarRuler({
+export function BarRuler({
   totalDurationMs, barDurationMs,
   currentTimeMsRef, playing, onSeek,
 }: {

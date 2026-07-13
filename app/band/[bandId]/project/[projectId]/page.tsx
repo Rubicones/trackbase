@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import type { TrackComment, CommentReply, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
+import type { TrackComment, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
@@ -20,6 +20,8 @@ import { allTracksLoaded } from '@/lib/transportStatus'
 import { barOffsetToMs } from '@/lib/commentTimecodes'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
 import CompareMode from '@/components/CompareMode'
+import { CommentTooltip } from '@/components/CommentTooltip'
+import { CherryPickDiff } from '@/components/merge/CherryPickDiff'
 import { MergeModal } from './MergeModal'
 import StructureOverlay, { getBarMath } from '@/components/StructureEditor'
 import { ProjectMetaFields } from '@/components/ProjectMetaFields'
@@ -206,15 +208,6 @@ function fmtTime(s: number) {
 const fmtMs = (ms: number) => fmtTime(ms / 1000)
 
 function fmtDate(iso: string) {
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 172800) return 'yesterday'
-  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
-}
-
-function relativeTime(iso: string): string {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000
   if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
@@ -448,119 +441,10 @@ function ThemeToggle() {
   )
 }
 
-// ─── Comment tooltip (portal) ─────────────────────────────────────────────────
+// ─── Comment tooltip (extracted to components/CommentTooltip.tsx) ────────────
 
 function isCommentUiTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('[data-comment-ui]') !== null
-}
-
-function CommentTooltip({
-  comment, anchorLeft, anchorTop, onDelete, onHide, onShow, currentUserId, isOwner, onReplySubmit, onReplyFocusChange,
-  projectOffsetMs = 0,
-}: {
-  comment: TrackComment
-  anchorLeft: number
-  anchorTop: number
-  onDelete: (id: string) => void
-  onHide: () => void
-  onShow?: () => void
-  currentUserId: string | undefined
-  isOwner: boolean
-  onReplySubmit: (commentId: string, content: string) => Promise<void>
-  onReplyFocusChange?: (focused: boolean) => void
-  /** Added to track-relative timecodes for project-timeline display. */
-  projectOffsetMs?: number
-}) {
-  const W = 260
-  let left = anchorLeft - W / 2
-  if (left < 8) left = 8
-  if (left + W > window.innerWidth - 8) left = window.innerWidth - W - 8
-
-  const [showAllReplies, setShowAllReplies] = useState(false)
-  const [replyText, setReplyText] = useState('')
-  const [submittingReply, setSubmittingReply] = useState(false)
-  const replies: CommentReply[] = (comment.replies ?? []) as CommentReply[]
-  const visibleReplies = showAllReplies ? replies : replies.slice(0, 2)
-  const hiddenCount = replies.length - 2
-
-  const canDelete = comment.created_by === currentUserId || isOwner
-  const author = comment.author_username ?? 'unknown'
-
-  return (
-    <FloatingPopover left={left} top={anchorTop} width={W} transform="translateY(4px)" onMouseLeave={onHide} onMouseEnter={onShow}>
-      <div className="px-3 py-2.5">
-        <div className="flex items-center gap-2 mb-1">
-          <UserAvatar seed={author} size={18} kind="user" />
-          <span className="text-[11px] text-foreground truncate">{author}</span>
-          <span className="text-[10px] tabular-nums text-lime shrink-0">
-            {fmtMs(comment.timecode_start_ms + projectOffsetMs)} → {fmtMs(comment.timecode_end_ms + projectOffsetMs)}
-          </span>
-          {canDelete && (
-            <button
-              type="button"
-              onClick={e => { e.stopPropagation(); onDelete(comment.id) }}
-              className="ml-auto text-muted-foreground hover:text-destructive transition-colors grid place-items-center size-6 shrink-0"
-              aria-label="Delete comment"
-            >
-              <TrashIcon />
-            </button>
-          )}
-        </div>
-        <p className="text-[9px] text-muted-foreground m-0 mb-2">{relativeTime(comment.created_at)}</p>
-        <p className="text-[13px] text-foreground leading-snug break-words m-0">{comment.content}</p>
-
-        {replies.length > 0 && (
-          <div className="border-t border-border mt-2 pt-2 space-y-2">
-            {visibleReplies.map(r => (
-              <div key={r.id}>
-                <div className="flex items-center gap-2 mb-0.5">
-                  <UserAvatar seed={r.author_username} size={16} kind="user" />
-                  <span className="text-[11px] text-foreground">{r.author_username}</span>
-                </div>
-                <p className="text-[12px] text-foreground/85 leading-snug m-0">{r.content}</p>
-                <p className="text-[9px] text-muted-foreground m-0 mt-0.5">{relativeTime(r.created_at)}</p>
-              </div>
-            ))}
-            {!showAllReplies && hiddenCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowAllReplies(true)}
-                className="text-[10px] uppercase tracking-widest text-lime hover:underline"
-              >
-                Show {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className={`border-t border-border pt-2 ${replies.length > 0 ? 'mt-2' : 'mt-3'}`}>
-          <input
-            placeholder="Reply..."
-            value={replyText}
-            onChange={e => setReplyText(e.target.value)}
-            onPointerDown={e => {
-              e.stopPropagation()
-              onReplyFocusChange?.(true)
-            }}
-            onFocus={() => onReplyFocusChange?.(true)}
-            onBlur={() => { setTimeout(() => onReplyFocusChange?.(false), 150) }}
-            onMouseDown={e => e.stopPropagation()}
-            onClick={e => e.stopPropagation()}
-            onKeyDown={async e => {
-              if (e.key === 'Enter' && !e.shiftKey && replyText.trim() && !submittingReply) {
-                e.preventDefault()
-                setSubmittingReply(true)
-                try { await onReplySubmit(comment.id, replyText.trim()); setReplyText('') }
-                catch { /* ignore */ }
-                finally { setSubmittingReply(false) }
-              }
-            }}
-            className="flex h-8 w-full font-display border border-border bg-transparent px-3 py-1 text-xs text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        </div>
-      </div>
-    </FloatingPopover>
-  )
 }
 
 // ─── Comment toggle (icon button for mobile top bar) ─────────────────────────
@@ -4743,6 +4627,10 @@ export default function ProjectPage() {
   }, [])
 
   const [mergeModal, setMergeModal] = useState<{ branchId: string } | null>(null)
+  // Cherry-pick diff view — full-screen mode entered from the apply modal
+  const [cherryPickDiff, setCherryPickDiff] = useState<{ branchId: string; targetVersionId: string } | null>(null)
+  const cherryPickDiffRef = useRef(false)
+  cherryPickDiffRef.current = cherryPickDiff !== null
   const [deleteVersionModal, setDeleteVersionModal] = useState<{ id: string; name: string } | null>(null)
   const [deletingVersion, setDeletingVersion] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -5848,6 +5736,7 @@ export default function ProjectPage() {
       if (e.code !== 'Space') return
       // Compare mode registers its own spacebar handler; let it handle when active
       if (compareActiveRef.current) return
+      if (cherryPickDiffRef.current) return
       const el = e.target as HTMLElement
       if (el.closest('input, textarea, select, [contenteditable="true"]')) return
 
@@ -6542,10 +6431,18 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     setMergeModal({ branchId })
   }
 
-  async function handleMergeComplete({ tracksUpdated, branchName, targetName }: { tracksUpdated: number; branchName: string; targetName?: string }) {
-    trackEvent('version_saved')
-    const branchId = mergeModal?.branchId
+  function handleOpenCherryPickDiff(branchId: string, targetVersionId: string) {
+    trackEvent('cherry_pick_diff_opened')
     setMergeModal(null)
+    if (playerRef.current.playing) playerRef.current.pause()
+    setCherryPickDiff({ branchId, targetVersionId })
+  }
+
+  async function finishMergeApply(
+    branchId: string | undefined,
+    { tracksUpdated, branchName, targetName }: { tracksUpdated: number; branchName: string; targetName?: string },
+  ) {
+    trackEvent('version_saved')
     if (branchId) cache.invalidate(branchId)
     const target = versions.find(v => v.name === targetName) ?? versions.find(v => v.type === 'main')
     if (target) cache.invalidate(target.id)
@@ -6556,6 +6453,18 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     const msg = `✓ "${branchName}" applied to ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
+  }
+
+  async function handleMergeComplete(result: { tracksUpdated: number; branchName: string; targetName?: string }) {
+    const branchId = mergeModal?.branchId
+    setMergeModal(null)
+    await finishMergeApply(branchId, result)
+  }
+
+  async function handleCherryPickApplied(result: { tracksUpdated: number; branchName: string; targetName?: string }) {
+    const branchId = cherryPickDiff?.branchId
+    setCherryPickDiff(null)
+    await finishMergeApply(branchId, result)
   }
 
   async function handleRenameVersion(id: string, name: string) {
@@ -7051,7 +6960,19 @@ function uploadFileType(file: File): 'audio' | 'midi' {
 
       {/* Body — only when project is loaded; header above always renders */}
       {project ? (<>
-      <div className="flex flex-1 overflow-hidden">
+      {/* Cherry-pick diff view — replaces sidebar + mixer while active.
+          The mixer below stays mounted (hidden) so its state survives the round-trip. */}
+      {cherryPickDiff && (
+        <CherryPickDiff
+          project={project}
+          versions={versions}
+          branchId={cherryPickDiff.branchId}
+          targetVersionId={cherryPickDiff.targetVersionId}
+          onExit={() => setCherryPickDiff(null)}
+          onApplied={handleCherryPickApplied}
+        />
+      )}
+      <div className={`flex-1 overflow-hidden ${cherryPickDiff ? 'hidden' : 'flex'}`}>
         {/* Backdrop — only visible on tablet/mobile when sidebar is open */}
         <div
           className={`sidebar-backdrop${sidebarOpen ? ' sidebar-open' : ''}`}
@@ -7643,7 +7564,9 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         </main>
       </div>
 
-      {compareActive
+      {cherryPickDiff
+        ? null /* diff view renders its own transport */
+        : compareActive
         ? <div ref={setCompareTransportSlot} className="shrink-0" />
         : <MasterPlayerBar
             playing={player.playing}
@@ -7669,7 +7592,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           />
       }
 
-      {!compareActive && !isMobileLandscape && (
+      {!compareActive && !cherryPickDiff && !isMobileLandscape && (
       <StatusFooter
         left={
           <span className="uppercase tracking-widest truncate hidden sm:inline">
@@ -7862,6 +7785,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           versions={versions}
           onClose={() => setMergeModal(null)}
           onMerged={handleMergeComplete}
+          onOpenDiff={targetVersionId => handleOpenCherryPickDiff(mergeModal.branchId, targetVersionId)}
         />
       )}
 
