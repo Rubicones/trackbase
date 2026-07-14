@@ -21,8 +21,10 @@ const METER_RENDER_MS = 70
 // (and the rendered DOM) without bound. ~1200 samples ≈ 84s at full resolution;
 // beyond that we halve resolution in place, keeping the full span.
 const MAX_LIVE_RECORDING_BARS = 1200
-/** Default take volume — demo mics run quiet; bake 3× so takes sit in the mix. */
-const DEFAULT_TAKE_GAIN = 3
+/** Vol slider default after peak-normalization (1 = full-scale take). */
+const DEFAULT_TAKE_GAIN = 1
+/** Target peak after normalizing browser mic captures (~half of full-scale). */
+const RECORDING_PEAK_TARGET = 0.475
 
 const BUILTIN_MIC_KEYWORDS = ['built-in', 'default', 'internal', 'macbook', 'facetime']
 
@@ -98,9 +100,29 @@ function applyGainToBuffer(buffer: AudioBuffer, gain: number): AudioBuffer {
   return out
 }
 
-/** Same transform used for take preview playback and for the uploaded WAV. */
+function bufferPeak(buffer: AudioBuffer): number {
+  let peak = 0
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const data = buffer.getChannelData(c)
+    for (let i = 0; i < data.length; i++) {
+      const a = Math.abs(data[i])
+      if (a > peak) peak = a
+    }
+  }
+  return peak
+}
+
+/**
+ * Same transform for take preview and the uploaded WAV.
+ * Browser mic / MediaRecorder levels are typically far below uploaded studio
+ * tracks — peak-normalize first, then apply the Vol slider so "100%" is a
+ * full-scale take and higher values push hotter.
+ */
 function bakeTakeAudio(decoded: AudioBuffer, nudgeMs: number, gain: number): AudioBuffer {
-  return applyGainToBuffer(applyNudgeToBuffer(decoded, nudgeMs), gain)
+  const shifted = applyNudgeToBuffer(decoded, nudgeMs)
+  const peak = bufferPeak(shifted)
+  const normalize = peak > 1e-6 ? RECORDING_PEAK_TARGET / peak : 1
+  return applyGainToBuffer(shifted, normalize * gain)
 }
 
 /** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
@@ -316,9 +338,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
   const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
-  // Take volume (0–3, default DEFAULT_TAKE_GAIN). Applied live to the preview
-  // playback and baked into the WAV samples on save, so the saved track sits
-  // in the mix exactly as previewed.
+  // Take volume (0–3). Applied after peak-normalization so 100% ≈ full-scale.
+  // Baked into the WAV so preview and the saved track match.
   const [takeGain, setTakeGain] = useState(DEFAULT_TAKE_GAIN)
   // Timeline width snapshot taken when a take starts, so the live waveform keeps a
   // constant bar width and stays anchored instead of reflowing as the take/playhead
@@ -1459,7 +1480,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               value={takeGain}
               onChange={e => setTakeGain(parseFloat(e.target.value))}
               className="flex-1 min-w-0 accent-lime"
-              aria-label="Take volume (applied on save)"
+              aria-label="Take volume (peak-normalized, applied on save)"
             />
             <span className="text-[9px] tabular-nums text-muted-foreground shrink-0 w-9 text-right">
               {Math.round(takeGain * 100)}%
