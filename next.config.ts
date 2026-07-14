@@ -5,7 +5,9 @@ import { securityHeaders } from './lib/securityHeaders'
 const ffmpegTracing = [
   './node_modules/ffmpeg-static/ffmpeg',
   './node_modules/ffmpeg-static/package.json',
-  './node_modules/ffprobe-static/bin/**',
+  // Only the binary Vercel actually runs — tracing bin/** pulls in every
+  // platform (~337MB) and blows past the function size limit.
+  './node_modules/ffprobe-static/bin/linux/x64/ffprobe',
   './node_modules/ffprobe-static/package.json',
 ]
 
