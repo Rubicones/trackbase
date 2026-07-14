@@ -15,8 +15,18 @@ const TRACK_LABEL_W = 192
 const TRACK_ROW_H = 96
 const WAVEFORM_COLOR = 'var(--lime, #e07a5f)'
 const BAR_COUNT = 96
-const LIVE_MONITOR_BARS = 28
 const METER_RENDER_MS = 70
+// Cap the live-waveform sample buffer so multi-minute takes don't grow the array
+// (and the rendered DOM) without bound. ~1200 samples ≈ 84s at full resolution;
+// beyond that we halve resolution in place, keeping the full span.
+const MAX_LIVE_RECORDING_BARS = 1200
+
+const BUILTIN_MIC_KEYWORDS = ['built-in', 'default', 'internal', 'macbook', 'facetime']
+
+function isBuiltinMic(label: string): boolean {
+  const l = label.toLowerCase()
+  return BUILTIN_MIC_KEYWORDS.some(k => l.includes(k))
+}
 
 function encodeWAV(buffer: AudioBuffer, skipSamples = 0): Blob {
   const numCh  = buffer.numberOfChannels
@@ -258,15 +268,22 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [recordedDurationSec, setRecordedDurationSec] = useState(0)
   const [recordingSec, setRecordingSec] = useState(0)
   const [staticBars, setStaticBars] = useState<number[]>([])
-  const [liveBars, setLiveBars] = useState<number[]>(() => Array(LIVE_MONITOR_BARS).fill(0))
   const [recordingBars, setRecordingBars] = useState<number[]>([])
   const [inputLevel, setInputLevel] = useState(0)
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
   const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
+  // Timeline width snapshot taken when a take starts, so the live waveform keeps a
+  // constant bar width and stays anchored instead of reflowing as the take/playhead
+  // grow. Null except while recording.
+  const [frozenTimelineBars, setFrozenTimelineBars] = useState<number | null>(null)
 
   const streamRef       = useRef<MediaStream | null>(null)
   const recorderRef     = useRef<MediaRecorder | null>(null)
+  // Dedicated clone of the mic track used only by the MediaRecorder — see handleStartRecord.
+  const recordTrackRef  = useRef<MediaStreamTrack | null>(null)
+  // Once the user drags the Monitor slider, stop auto-setting a default level.
+  const monitorTouchedRef = useRef(false)
   const chunksRef       = useRef<Blob[]>([])
   const audioBufferRef  = useRef<AudioBuffer | null>(null)
   const startBarRef     = useRef(0)
@@ -330,6 +347,13 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       const buf = meterDataRef.current
       if (!an || !buf) return
 
+      // Only touch React state at the meter cadence (~METER_RENDER_MS), never on
+      // every animation frame. Setting state 60×/s while recording a long take
+      // floods React with re-renders and GC churn, which can starve the audio
+      // pipeline and make the MediaRecorder stall on long recordings.
+      if (now - lastMeterRenderRef.current < METER_RENDER_MS) return
+      lastMeterRenderRef.current = now
+
       an.getFloatTimeDomainData(buf)
       let peak = 0
       for (let i = 0; i < buf.length; i++) {
@@ -337,19 +361,24 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         if (abs > peak) peak = abs
       }
       const level = Math.min(1, peak * 1.8)
-      setInputLevel(level)
-
-      if (now - lastMeterRenderRef.current < METER_RENDER_MS) return
-      lastMeterRenderRef.current = now
 
       if (stateRef.current === 'recording') {
-        setRecordingBars(prev => [...prev, level])
-      } else {
-        setLiveBars(prev => {
-          const next = prev.length >= LIVE_MONITOR_BARS ? prev.slice(1) : [...prev]
-          next.push(level)
-          return next
+        setRecordingBars(prev => {
+          // Bound memory/DOM on very long takes: once we exceed the cap, halve
+          // resolution in place (keep the louder of each pair) so the waveform
+          // still spans the whole recording without growing without limit.
+          if (prev.length >= MAX_LIVE_RECORDING_BARS) {
+            const compacted: number[] = []
+            for (let i = 0; i < prev.length; i += 2) {
+              compacted.push(Math.max(prev[i], prev[i + 1] ?? prev[i]))
+            }
+            compacted.push(level)
+            return compacted
+          }
+          return [...prev, level]
         })
+      } else {
+        setInputLevel(level)
       }
     }
     meterRafRef.current = requestAnimationFrame(tick)
@@ -430,8 +459,18 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
             if (gen !== armGenRef.current) return
             const audioIns = all.filter(d => d.kind === 'audioinput')
             setDevices(audioIns)
-            const activeId = streamRef.current?.getAudioTracks()[0]?.getSettings().deviceId ?? ''
+            const activeTrack = streamRef.current?.getAudioTracks()[0]
+            const activeId = activeTrack?.getSettings().deviceId ?? ''
             if (activeId) setSelectedDevice(activeId)
+            // Give a sensible default monitor level so the user actually hears
+            // themselves: muted for built-in mics (prevents speaker feedback),
+            // audible for external interfaces/headsets. Never override a level
+            // the user has already set with the slider.
+            if (!monitorTouchedRef.current) {
+              const vol = isBuiltinMic(activeTrack?.label ?? '') ? 0 : 0.7
+              setMonitorVol(vol)
+              if (meterMonitorRef.current) meterMonitorRef.current.gain.value = vol
+            }
           })
           .catch(() => {})
       }, 400)
@@ -450,6 +489,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       armGenRef.current++
       previewSrcRef.current?.stop()
       recorderRef.current?.stop()
+      recordTrackRef.current?.stop()
+      recordTrackRef.current = null
       stopStream()
     }
   }, [stopStream])
@@ -498,6 +539,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   }
 
   function handleMonitorChange(vol: number) {
+    monitorTouchedRef.current = true
     setMonitorVol(vol)
     // Update the Web Audio monitor gain in real-time — no restart needed.
     if (meterMonitorRef.current) meterMonitorRef.current.gain.value = vol
@@ -550,13 +592,32 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       ? 'audio/webm;codecs=opus'
       : 'audio/mp4'
 
+    // Record from a dedicated CLONE of the mic track. The original track is held
+    // by the Web Audio monitor graph (createMediaStreamSource in startMeter);
+    // handing that same track to MediaRecorder makes Chrome capture silence —
+    // one MediaStreamTrack can't reliably feed both Web Audio and a recorder.
+    // A cloned track is an independent sink, so the monitor and the recorder
+    // each get live audio.
+    const micTrack = stream.getAudioTracks()[0]
+    if (!micTrack) {
+      setError('Microphone not available')
+      setState('armed')
+      return
+    }
+    recordTrackRef.current?.stop()
+    const recordTrack = micTrack.clone()
+    recordTrackRef.current = recordTrack
+    const recordStream = new MediaStream([recordTrack])
+
     let recorder: MediaRecorder
     try {
-      recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64000 })
+      recorder = new MediaRecorder(recordStream, { mimeType, audioBitsPerSecond: 64000 })
     } catch {
       try {
-        recorder = new MediaRecorder(stream, { mimeType })
+        recorder = new MediaRecorder(recordStream, { mimeType })
       } catch {
+        recordTrack.stop()
+        recordTrackRef.current = null
         setError('Recording not supported in this browser')
         setState('armed')
         return
@@ -566,12 +627,45 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     chunksRef.current = []
     setRecordingSec(0)
     setRecordingBars([])
-    setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
     setNudgeOffsetMs(0)
 
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-    recorder.onstop = () => { void processBlob(mimeType) }
+    recorder.onstop = () => {
+      // The recorder can stop on its own — a USB/Bluetooth mic dropping out, the
+      // OS switching the default device, or a browser resource limit on a long
+      // take. In that case we're still in 'recording' state, so run the same
+      // teardown the Stop button does; otherwise the captured take is stranded
+      // (playback left running, state stuck on 'recording', no way to Save it).
+      if (stateRef.current === 'recording') {
+        if (recordTimerRef.current) {
+          clearInterval(recordTimerRef.current)
+          recordTimerRef.current = null
+        }
+        recordTrackRef.current?.stop()
+        recordTrackRef.current = null
+        onPlaybackStop()
+        stopStream()
+        setFrozenTimelineBars(null)
+        setState('preview')
+      }
+      void processBlob(mimeType)
+    }
+    recorder.onerror = () => {
+      // Salvage whatever was captured before the error instead of losing the take.
+      try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+    }
+    // If the recorded mic track ends mid-take (device unplugged / lost — common
+    // with USB interfaces), stop cleanly so onstop fires and the partial take is
+    // preserved in preview rather than silently vanishing.
+    recordTrack.onended = () => {
+      try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+    }
     recorderRef.current = recorder
+
+    // Snapshot the timeline width now so the live waveform keeps a constant bar
+    // width and fixed anchor as the take and playhead advance (see timelineBars).
+    const startPlayheadBar = barDurSec > 0 ? Math.ceil(getPlaybackMs() / 1000 / barDurSec) : 0
+    setFrozenTimelineBars(Math.max(totalBars, snapBar + 4, startPlayheadBar + 4))
 
     await promise
 
@@ -590,8 +684,11 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     }
     recorderRef.current?.stop()
     recorderRef.current = null
+    recordTrackRef.current?.stop()
+    recordTrackRef.current = null
     onPlaybackStop()
     stopStream()
+    setFrozenTimelineBars(null)
     setState('preview')
   }
 
@@ -726,8 +823,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordedDurationSec(0)
     setRecordingSec(0)
     setRecordingBars([])
-    setLiveBars(Array(LIVE_MONITOR_BARS).fill(0))
     setNudgeOffsetMs(0)
+    setFrozenTimelineBars(null)
     setState('armed')
     const gen = armGenRef.current
     try {
@@ -810,6 +907,8 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   function handleDelete() {
     previewSrcRef.current?.stop()
     recorderRef.current?.stop()
+    recordTrackRef.current?.stop()
+    recordTrackRef.current = null
     stopStream()
     notifyPreviewTimeline(null)
     onRelease(id)
@@ -835,7 +934,15 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const visualStartBar = timelineStartBar + nudgeBarOffset
   const playheadBar = barDurSec > 0 ? Math.ceil(getPlaybackMs() / 1000 / barDurSec) : 0
   const contentEndBar = visualStartBar + (isRecording ? liveRecordedBars : recordedBars) + 4
-  const timelineBars = Math.max(totalBars, playheadBar + 4, Math.ceil(contentEndBar))
+  const naturalTimelineBars = Math.max(totalBars, playheadBar + 4, Math.ceil(contentEndBar))
+  // While recording, use the width snapshot taken at take start (see handleStartRecord).
+  // Otherwise the growing take and advancing playhead keep expanding the timeline,
+  // rescaling the whole waveform and shifting its anchor mid-take. The frozen width
+  // keeps bars a constant size, pinned to where they're recorded, with the right edge
+  // tracking the playhead.
+  const timelineBars = isRecording && frozenTimelineBars != null
+    ? frozenTimelineBars
+    : naturalTimelineBars
   const waveformLeft = timelineBars > 0
     ? `${(visualStartBar / timelineBars) * 100}%`
     : '0'
@@ -844,15 +951,15 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     : '100%'
   const oneBarWidthPct = timelineBars > 0 ? `${Math.max((1 / timelineBars) * 100, 1.5)}%` : '4%'
   const liveMeterWidth = isRecording ? waveformWidth : oneBarWidthPct
-  const liveSpectrumBars = isRecording
-    ? recordingBars
-    : (liveBars.some(v => v > 0.02) ? liveBars : [inputLevel])
   const showRecordedWaveform = (isPreview || isSaving) && staticBars.length > 0
   const showLiveSpectrum = showLiveMeter && isRecording && recordingBars.length > 0
   const showLiveVolumeBar = showLiveMeter && !showLiveSpectrum
   // Match the visual bar density of other tracks (96 bars across the full row).
   // Recording spans recordedBars/totalBars of the row → scale proportionally.
   const previewBarCount = Math.max(4, Math.round(BAR_COUNT * (recordedBars / Math.max(1, timelineBars))))
+  // Same density formula for the live take. Because the bar count and the
+  // waveform width both scale with elapsed recording time, each bar keeps a
+  // constant width and the right edge stays glued to the moving playhead.
   const liveBarCount = Math.max(4, Math.round(BAR_COUNT * (liveRecordedBars / Math.max(1, timelineBars))))
 
   const showDeviceSelect = devices.length > 0 && (isArmed || isCounting || isRecording)
@@ -926,11 +1033,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       {showLiveSpectrum && (
         <BarWaveform
-          bars={liveSpectrumBars}
+          bars={recordingBars}
           leftPct={waveformLeft}
-          widthPct={liveMeterWidth}
-          opacity={0.9}
-          minBarPct={8}
+          widthPct={waveformWidth}
+          opacity={0.95}
           barCount={liveBarCount}
         />
       )}
