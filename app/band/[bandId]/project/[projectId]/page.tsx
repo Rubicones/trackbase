@@ -5600,6 +5600,14 @@ export default function ProjectPage() {
     [],
   )
 
+  // Take preview must hit the transport master gain — same bus as saved tracks.
+  // Wiring through getMasterOutput() skips the volume fader and makes the
+  // preview louder than the track after Save.
+  const getRecordingPreviewOutput = useCallback(
+    () => masterGainRef.current ?? getMasterOutput(),
+    [],
+  )
+
   useEffect(() => {
     for (const stream of pendingMicStreamsRef.current.values()) {
       stream.getTracks().forEach(t => t.stop())
@@ -6826,6 +6834,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                 playCountdown={beginRecordingCountdown}
                 registerControl={registerRecordingControl}
                 onStateChange={handleRecordingStateChange}
+                getPreviewOutput={getRecordingPreviewOutput}
                 mobileScrollableTimeline
               />
             )),
@@ -7511,6 +7520,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   playCountdown={beginRecordingCountdown}
                   registerControl={registerRecordingControl}
                   onStateChange={handleRecordingStateChange}
+                  getPreviewOutput={getRecordingPreviewOutput}
                 />
               ))}
 

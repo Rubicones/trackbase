@@ -72,7 +72,12 @@ function barsFromBuffer(buffer: AudioBuffer, n = BAR_COUNT): number[] {
 }
 
 
-/** Scale every sample by `gain` (encodeWAV clamps to [-1, 1], so clipping is bounded). */
+/**
+ * Scale samples by `gain` and hard-clip to [-1, 1] — identical to what
+ * encodeWAV will store. Preview must play this exact buffer (unity gain) so
+ * the ear matches the saved file; a raw GainNode can exceed ±1 and sound
+ * louder than the clipped WAV.
+ */
 function applyGainToBuffer(buffer: AudioBuffer, gain: number): AudioBuffer {
   if (gain === 1) return buffer
   const out = new AudioBuffer({
@@ -83,9 +88,17 @@ function applyGainToBuffer(buffer: AudioBuffer, gain: number): AudioBuffer {
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const src = buffer.getChannelData(c)
     const dst = out.getChannelData(c)
-    for (let i = 0; i < src.length; i++) dst[i] = src[i] * gain
+    for (let i = 0; i < src.length; i++) {
+      const s = src[i] * gain
+      dst[i] = s < -1 ? -1 : s > 1 ? 1 : s
+    }
   }
   return out
+}
+
+/** Same transform used for take preview playback and for the uploaded WAV. */
+function bakeTakeAudio(decoded: AudioBuffer, nudgeMs: number, gain: number): AudioBuffer {
+  return applyGainToBuffer(applyNudgeToBuffer(decoded, nudgeMs), gain)
 }
 
 /** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
@@ -259,6 +272,12 @@ export interface RecordingTrackRowProps {
   onStateChange?: (id: string, state: RecordState) => void
   /** Mobile mixer: wide scrollable timeline so mid-song record points are reachable. */
   mobileScrollableTimeline?: boolean
+  /**
+   * Output bus for take preview — MUST be the same node project tracks use
+   * (transport master gain). Connecting to getMasterOutput() directly bypasses
+   * the volume fader and makes preview louder than the saved track.
+   */
+  getPreviewOutput?: () => AudioNode
 }
 
 export const RecordingTrackRow = memo(function RecordingTrackRow({
@@ -275,6 +294,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   registerControl,
   onStateChange,
   mobileScrollableTimeline = false,
+  getPreviewOutput,
 }: RecordingTrackRowProps) {
   const [state, setState]           = useState<RecordState>('idle')
   const [devices, setDevices]       = useState<MediaDeviceInfo[]>([])
@@ -326,7 +346,6 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   takeGainRef.current = takeGain
   const errorRef        = useRef('')
   errorRef.current = error
-  const previewGainRef  = useRef<GainNode | null>(null)
   const stateRef        = useRef<RecordState>('idle')
   stateRef.current = state
   // setState + synchronous stateRef update. Several flows (mobile prefetched-
@@ -346,6 +365,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const meterDataRef    = useRef<Float32Array<ArrayBuffer> | null>(null)
   const lastMeterRenderRef = useRef(0)
   const waveformScrollRef = useRef<HTMLDivElement>(null)
+  const bakedPreviewRef = useRef<AudioBuffer | null>(null)
+  const getPreviewOutputRef = useRef(getPreviewOutput)
+  getPreviewOutputRef.current = getPreviewOutput
   const scrollSync = useMobileTimelineScroll()
   useRegisterTimelineScroll(waveformScrollRef)
 
@@ -939,6 +961,16 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     }
   }
 
+  // Keep a baked buffer (nudge + vol + clip) in sync with the sliders so
+  // preview playback and Save upload the exact same audio.
+  useEffect(() => {
+    if (state !== 'preview' || !audioBufferRef.current) {
+      bakedPreviewRef.current = null
+      return
+    }
+    bakedPreviewRef.current = bakeTakeAudio(audioBufferRef.current, nudgeOffsetMs, takeGain)
+  }, [state, nudgeOffsetMs, takeGain, recordedDurationSec])
+
   useEffect(() => {
     if (state !== 'preview' || !audioBufferRef.current || recordedDurationSec <= 0) return
 
@@ -946,7 +978,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
     const run = async () => {
       if (!isPlaying || previewMutedRef.current) {
-        previewSrcRef.current?.stop()
+        try { previewSrcRef.current?.stop() } catch { /* ok */ }
         previewSrcRef.current = null
         return
       }
@@ -957,27 +989,24 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
       const beatsPerBar       = parseInt(timeSig.split('/')[0]) || 4
       const barDurSec         = (60 / bpm) * beatsPerBar
-      const nudgeSec          = nudgeOffsetMs / 1000
-      const recordingStartSec = startBarRef.current * barDurSec + nudgeSec
-      const buf               = audioBufferRef.current
-      if (!buf) return
+      // Nudge is baked into the buffer — timeline start is the record bar only.
+      const recordingStartSec = startBarRef.current * barDurSec
+      const buf = bakedPreviewRef.current
+        ?? bakeTakeAudio(audioBufferRef.current!, nudgeOffsetMs, takeGainRef.current)
+      bakedPreviewRef.current = buf
       const recordingEndSec   = recordingStartSec + buf.duration
       const playNowSec        = getPlaybackMs() / 1000
 
-      previewSrcRef.current?.stop()
+      try { previewSrcRef.current?.stop() } catch { /* ok */ }
       previewSrcRef.current = null
 
       if (playNowSec < recordingEndSec) {
         const src = audioCtx.createBufferSource()
         src.buffer = buf
-        // Route through the take-gain node so the Vol slider shapes the preview
-        // exactly like the saved WAV. Slider changes update the node directly
-        // (no source restart needed).
-        const gainNode = audioCtx.createGain()
-        gainNode.gain.value = takeGainRef.current
-        src.connect(gainNode)
-        gainNode.connect(getMasterOutput())
-        previewGainRef.current = gainNode
+        // Unity gain through the SAME bus as project tracks (transport master).
+        // Vol is already baked into `buf` — do not apply takeGain again here.
+        const out = getPreviewOutputRef.current?.() ?? getMasterOutput()
+        src.connect(out)
 
         const acxNow  = audioCtx.currentTime
         const acxZero = acxNow - playNowSec
@@ -997,18 +1026,19 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       cancelled = true
       try { previewSrcRef.current?.stop() } catch { /* ok */ }
       previewSrcRef.current = null
-      try { previewGainRef.current?.disconnect() } catch { /* ok */ }
-      previewGainRef.current = null
     }
-  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, nudgeOffsetMs, bpm, timeSig, getPlaybackMs])
+  }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, nudgeOffsetMs, takeGain, bpm, timeSig, getPlaybackMs])
 
   useEffect(() => {
     if (state !== 'preview' || !audioBufferRef.current || recordedDurationSec <= 0) return
     const beatsPerBar = parseInt(timeSig.split('/')[0]) || 4
     const barDurSec = (60 / bpm) * beatsPerBar
-    const effectiveStartSec = startBarRef.current * barDurSec + nudgeOffsetMs / 1000
-    onPreviewTimelineChangeRef.current?.(id, effectiveStartSec + audioBufferRef.current.duration)
-  }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, id])
+    // Nudge is baked into samples on save — timeline extent uses raw duration
+    // at the record start bar (same as playback after save).
+    const baked = bakedPreviewRef.current
+      ?? bakeTakeAudio(audioBufferRef.current, nudgeOffsetMs, takeGain)
+    onPreviewTimelineChangeRef.current?.(id, startBarRef.current * barDurSec + baked.duration)
+  }, [state, nudgeOffsetMs, takeGain, recordedDurationSec, bpm, timeSig, id])
 
   async function handleReRecord() {
     try { previewSrcRef.current?.stop() } catch { /* ok */ }
@@ -1043,9 +1073,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     previewSrcRef.current = null
     notifyPreviewTimeline(null)
     try {
-      // Bake nudge + take volume into the file so the saved track plays back
-      // exactly as previewed.
-      const adjusted = applyGainToBuffer(applyNudgeToBuffer(decoded, nudgeOffsetMs), takeGain)
+      // Exact same bake as the preview player (nudge + vol + clip).
+      const gain = takeGainRef.current
+      const adjusted = bakedPreviewRef.current
+        ?? bakeTakeAudio(decoded, nudgeOffsetMs, gain)
       const wavBlob  = encodeWAV(adjusted, 0)
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
       const filename = `${safeName.replace(/\s+/g, '_')}_${Date.now()}.wav`
@@ -1424,12 +1455,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               max={3}
               step={0.01}
               value={takeGain}
-              onChange={e => {
-                const v = parseFloat(e.target.value)
-                setTakeGain(v)
-                // Live-update the preview without restarting the source.
-                if (previewGainRef.current) previewGainRef.current.gain.value = v
-              }}
+              onChange={e => setTakeGain(parseFloat(e.target.value))}
               className="flex-1 min-w-0 accent-lime"
               aria-label="Take volume (applied on save)"
             />
