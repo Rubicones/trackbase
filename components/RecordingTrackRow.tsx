@@ -21,6 +21,8 @@ const METER_RENDER_MS = 70
 // (and the rendered DOM) without bound. ~1200 samples ≈ 84s at full resolution;
 // beyond that we halve resolution in place, keeping the full span.
 const MAX_LIVE_RECORDING_BARS = 1200
+/** Default take volume — demo mics run quiet; bake 3× so takes sit in the mix. */
+const DEFAULT_TAKE_GAIN = 3
 
 const BUILTIN_MIC_KEYWORDS = ['built-in', 'default', 'internal', 'macbook', 'facetime']
 
@@ -314,10 +316,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
   const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
-  // Take volume (0–3, default 1). Applied live to the preview playback and
-  // baked into the WAV samples on save, so the saved track sits in the mix
-  // exactly as previewed.
-  const [takeGain, setTakeGain] = useState(1)
+  // Take volume (0–3, default DEFAULT_TAKE_GAIN). Applied live to the preview
+  // playback and baked into the WAV samples on save, so the saved track sits
+  // in the mix exactly as previewed.
+  const [takeGain, setTakeGain] = useState(DEFAULT_TAKE_GAIN)
   // Timeline width snapshot taken when a take starts, so the live waveform keeps a
   // constant bar width and stays anchored instead of reflowing as the take/playhead
   // grow. Null except while recording.
@@ -710,7 +712,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       setRecordingSec(0)
       setRecordingBars([])
       setNudgeOffsetMs(0)
-      setTakeGain(1)
+      setTakeGain(DEFAULT_TAKE_GAIN)
 
       // Snapshot the timeline width now so the live waveform keeps a constant bar
       // width and fixed anchor as the take and playhead advance (see timelineBars).
@@ -1051,7 +1053,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setNudgeOffsetMs(0)
-    setTakeGain(1)
+    setTakeGain(DEFAULT_TAKE_GAIN)
     setFrozenTimelineBars(null)
     setRecState('armed')
     const gen = armGenRef.current
