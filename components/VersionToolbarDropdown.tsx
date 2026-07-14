@@ -21,21 +21,37 @@ export function versionTabButtonClass(
   }`
 }
 
+function VersionTypeIcon({ v }: { v: Version }) {
+  if (v.type === 'main') {
+    return <span className="size-[5px] shrink-0 rounded-full bg-current" aria-hidden />
+  }
+  if (v.merged_at) {
+    return <span className="shrink-0 text-[10px] leading-none" aria-hidden>✓</span>
+  }
+  if (v.type === 'branch') {
+    return <span className="shrink-0 text-[10px] leading-none" aria-hidden>⌥</span>
+  }
+  return null
+}
+
 function VersionTabLabel({ v, variant = 'trigger' }: { v: Version; variant?: 'trigger' | 'menu' }) {
-  const prefix =
-    v.type === 'main' ? '● ' : v.merged_at ? '✓ ' : v.type === 'branch' ? '⌥ ' : ''
   if (variant === 'menu') {
     return (
-      <span className="line-clamp-2 w-[25ch] whitespace-normal wrap-break-word text-left">
-        {prefix}
-        <VersionListName version={v} />
+      <span className="inline-flex w-[25ch] items-start gap-1.5 text-left">
+        <span className="flex h-[1lh] shrink-0 items-center">
+          <VersionTypeIcon v={v} />
+        </span>
+        <VersionListName
+          version={v}
+          className="line-clamp-2 min-w-0 whitespace-normal wrap-break-word"
+        />
       </span>
     )
   }
   return (
-    <span className="min-w-0 truncate">
-      {prefix}
-      <VersionListName version={v} />
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <VersionTypeIcon v={v} />
+      <VersionListName version={v} className="min-w-0 truncate" />
     </span>
   )
 }

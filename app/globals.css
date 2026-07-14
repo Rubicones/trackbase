@@ -1845,13 +1845,13 @@ html.dark[data-palette="green"] .theme-avatar {
    drifts the same distance upward while fading out. On a section
    switch both run simultaneously, reading like a wheel. */
 @keyframes rm-note-rise-in {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes rm-note-rise-out {
   from { opacity: 1; transform: translateY(0); }
-  to   { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 0; transform: translateY(-18px); }
 }
 
 .rm-note-rise-in  { animation: rm-note-rise-in  0.35s ease-out both; }

@@ -702,23 +702,23 @@ export function ReadingMode({
               {/* Performance-note cue — fixed-height row (always reserved) so the
                   transition never shifts the chord display. Outgoing and incoming
                   notes are stacked absolutely and animate at the same time. */}
-              <div className="relative h-5" aria-live="polite">
+              <div className="relative h-[30px]" aria-live="polite">
                 {leavingCue && (
                   <span
                     key={`out-${leavingCue.key}`}
                     aria-hidden
-                    className="rm-note-rise-out absolute inset-0 flex items-center justify-center gap-1.5 min-w-0 text-[11px] font-mono text-lime pointer-events-none"
+                    className="rm-note-rise-out absolute inset-0 flex items-center justify-center gap-[9px] min-w-0 text-[16.5px] font-mono text-lime pointer-events-none"
                   >
-                    <span className="size-1.5 rounded-full bg-lime shrink-0" />
+                    <span className="size-[9px] rounded-full bg-lime shrink-0" />
                     <span className="truncate">{leavingCue.text}</span>
                   </span>
                 )}
                 {noteCue && (
                   <span
                     key={`in-${noteCue.key}`}
-                    className="rm-note-rise-in absolute inset-0 flex items-center justify-center gap-1.5 min-w-0 text-[11px] font-mono text-lime"
+                    className="rm-note-rise-in absolute inset-0 flex items-center justify-center gap-[9px] min-w-0 text-[16.5px] font-mono text-lime"
                   >
-                    <span className="size-1.5 rounded-full bg-lime shrink-0" aria-hidden />
+                    <span className="size-[9px] rounded-full bg-lime shrink-0" aria-hidden />
                     <span className="truncate">{noteCue.text}</span>
                   </span>
                 )}
