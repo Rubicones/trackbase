@@ -65,6 +65,7 @@ import {
 } from '@/lib/metronomeAudio'
 import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
+import { acquireMicStream } from '@/lib/micCapture'
 import { registerPlaybackStop } from '@/lib/playbackSession'
 import {
   fetchPreviewMixBuffer,
@@ -5600,20 +5601,45 @@ export default function ProjectPage() {
   )
 
   useEffect(() => {
+    for (const stream of pendingMicStreamsRef.current.values()) {
+      stream.getTracks().forEach(t => t.stop())
+    }
+    pendingMicStreamsRef.current.clear()
+    pendingMobileArmRef.current = null
     setRecordingSessions([])
     setActiveRecordingId(null)
     setRecordingPreviewEnds({})
   }, [activeVersionId])
 
-  function handleAddRecordingTrack() {
+  const addRecordingInFlightRef = useRef(false)
+
+  // Mic must be requested in this click (user activation). Auto-arming from a
+  // child useEffect loses the gesture and browsers often never show a prompt —
+  // the row sticks on "Requesting mic…". Same pattern as the mobile Rec button.
+  async function handleAddRecordingTrack() {
     if (storageFull) {
       setToast(storageQuotaError(storageUsed, storageLimit))
       setTimeout(() => setToast(null), 4000)
       return
     }
-    if (!activeVersionId) return
+    if (!activeVersionId || addRecordingInFlightRef.current) return
     trackEvent('record_track_clicked')
-    setRecordingSessions(prev => [...prev, { id: crypto.randomUUID(), name: 'New recording' }])
+    addRecordingInFlightRef.current = true
+    const id = crypto.randomUUID()
+    try {
+      const stream = await acquireMicStream()
+      pendingMicStreamsRef.current.set(id, stream)
+      pendingMobileArmRef.current = id
+      setScrollToRecordingId(id)
+      setRecordingSessions(prev => [...prev, { id, name: 'New recording' }])
+    } catch {
+      pendingMicStreamsRef.current.delete(id)
+      if (pendingMobileArmRef.current === id) pendingMobileArmRef.current = null
+      setToast('Microphone access denied')
+      setTimeout(() => setToast(null), 4000)
+    } finally {
+      addRecordingInFlightRef.current = false
+    }
   }
 
   const registerRecordingControl = useCallback((id: string, control: RecordingTrackControl | null) => {
@@ -5651,7 +5677,7 @@ export default function ProjectPage() {
     if (!targetId) {
       const id = crypto.randomUUID()
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        const stream = await acquireMicStream()
         pendingMicStreamsRef.current.set(id, stream)
         pendingMobileArmRef.current = id
         setScrollToRecordingId(id)
@@ -5673,7 +5699,7 @@ export default function ProjectPage() {
     const state = control.getState()
     if (state === 'idle') {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        const stream = await acquireMicStream()
         await control.arm(stream)
       } catch {
         // Mic denied
@@ -5704,6 +5730,12 @@ export default function ProjectPage() {
 
   function handleRecordingDelete(id: string) {
     trackEvent('recording_discarded')
+    const orphan = pendingMicStreamsRef.current.get(id)
+    if (orphan) {
+      orphan.getTracks().forEach(t => t.stop())
+      pendingMicStreamsRef.current.delete(id)
+    }
+    if (pendingMobileArmRef.current === id) pendingMobileArmRef.current = null
     setRecordingSessions(prev => prev.filter(s => s.id !== id))
     setActiveRecordingId(prev => (prev === id ? null : prev))
     setRecordingPreviewEnds(prev => {
@@ -7477,6 +7509,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   onPreviewTimelineChange={handleRecordingPreviewTimeline}
                   recordingStopRef={recordingStopRef}
                   playCountdown={beginRecordingCountdown}
+                  registerControl={registerRecordingControl}
+                  onStateChange={handleRecordingStateChange}
                 />
               ))}
 

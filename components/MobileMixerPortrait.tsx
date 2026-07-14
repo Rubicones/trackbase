@@ -1192,7 +1192,7 @@ function MobileMixerPortraitInner({
                   ? 'bg-background border-destructive text-destructive hover:bg-destructive hover:text-white'
                   : 'bg-background border-destructive/70 text-destructive hover:bg-destructive hover:text-white hover:border-destructive'
             }`}
-            aria-label={isRecording ? 'Stop recording' : isArmed ? 'Start recording' : 'Arm and record'}
+            aria-label={isRecording ? 'Stop recording' : isArmed ? 'Start recording' : 'Record'}
           >
             <RecordDotIcon />
           </button>

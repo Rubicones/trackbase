@@ -61,7 +61,7 @@ export function resolveTransportStatus(input: TransportStatusInput): TransportSt
   }
 
   if (input.hasRecordingTrack && input.recordingState === 'armed') {
-    status = { label: 'armed', tone: 'destructive' }
+    status = { label: 'mic ready', tone: 'destructive' }
   }
 
   if (input.recordingState === 'recording' || input.recordingState === 'countdown') {

@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback, memo, type MutableRefObject }
 import type { Track } from '@/lib/types'
 import { getSharedAudioContext, getMasterOutput } from '@/lib/audioContext'
 import { getRecordingAudioContext, resumeRecordingAudioContext } from '@/lib/recordingAudioContext'
+import { isMicStreamLive, acquireMicStream } from '@/lib/micCapture'
 import { trackEvent } from '@/lib/analytics'
 import { TactGrid } from '@/components/design/TactGrid'
 import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components/MobileTimelineScrollSync'
@@ -70,6 +71,22 @@ function barsFromBuffer(buffer: AudioBuffer, n = BAR_COUNT): number[] {
   return amps.map(a => a / max)
 }
 
+
+/** Scale every sample by `gain` (encodeWAV clamps to [-1, 1], so clipping is bounded). */
+function applyGainToBuffer(buffer: AudioBuffer, gain: number): AudioBuffer {
+  if (gain === 1) return buffer
+  const out = new AudioBuffer({
+    length: buffer.length,
+    numberOfChannels: buffer.numberOfChannels,
+    sampleRate: buffer.sampleRate,
+  })
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const src = buffer.getChannelData(c)
+    const dst = out.getChannelData(c)
+    for (let i = 0; i < src.length; i++) dst[i] = src[i] * gain
+  }
+  return out
+}
 
 /** Shift recorded audio earlier (negative ms) or later (positive ms) at sample precision. */
 function applyNudgeToBuffer(buffer: AudioBuffer, nudgeMs: number): AudioBuffer {
@@ -235,6 +252,8 @@ export interface RecordingTrackRowProps {
   playCountdown: (bpm: number, timeSig: string) => Promise<{
     promise: Promise<void>
     takeStartTime: number
+    /** Stops the scheduled count-in clicks and resolves `promise` immediately. */
+    cancel?: () => void
   }>
   registerControl?: (id: string, control: RecordingTrackControl | null) => void
   onStateChange?: (id: string, state: RecordState) => void
@@ -260,7 +279,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [state, setState]           = useState<RecordState>('idle')
   const [devices, setDevices]       = useState<MediaDeviceInfo[]>([])
   const [selectedDevice, setSelectedDevice] = useState('')
-  const [monitorVol, setMonitorVol] = useState(0)
+  // Non-zero default so monitoring is audible as soon as the row arms, before
+  // device enumeration refines built-in vs external levels.
+  const [monitorVol, setMonitorVol] = useState(0.5)
   const [previewMuted, setPreviewMuted] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError]           = useState('')
@@ -273,6 +294,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const [recordStartBar, setRecordStartBar] = useState(0)
   const [armedAtBar, setArmedAtBar] = useState(0)
   const [nudgeOffsetMs, setNudgeOffsetMs] = useState(0)
+  // Take volume (0–3, default 1). Applied live to the preview playback and
+  // baked into the WAV samples on save, so the saved track sits in the mix
+  // exactly as previewed.
+  const [takeGain, setTakeGain] = useState(1)
   // Timeline width snapshot taken when a take starts, so the live waveform keeps a
   // constant bar width and stays anchored instead of reflowing as the take/playhead
   // grow. Null except while recording.
@@ -291,8 +316,26 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   const recordTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const armGenRef       = useRef(0)
   const armInFlightRef  = useRef(false)
+  // Bumped whenever the current take is stopped/cancelled/discarded so async
+  // continuations (post-countdown) can detect they were superseded.
+  const takeGenRef      = useRef(0)
+  const countdownCancelRef = useRef<(() => void) | null>(null)
+  const seekEpochBaselineRef = useRef(0)
+  const seenPlayingRef  = useRef(false)
+  const takeGainRef     = useRef(takeGain)
+  takeGainRef.current = takeGain
+  const errorRef        = useRef('')
+  errorRef.current = error
+  const previewGainRef  = useRef<GainNode | null>(null)
   const stateRef        = useRef<RecordState>('idle')
   stateRef.current = state
+  // setState + synchronous stateRef update. Several flows (mobile prefetched-
+  // stream arm, auto-arm effect) read stateRef in the same tick the state
+  // changes, before React re-renders — the render-time mirror alone is stale.
+  const setRecState = useCallback((s: RecordState) => {
+    stateRef.current = s
+    setState(s)
+  }, [])
   const monitorVolRef   = useRef(monitorVol)
   monitorVolRef.current = monitorVol
   const meterSourceRef  = useRef<MediaStreamAudioSourceNode | null>(null)
@@ -319,9 +362,16 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setInputLevel(0)
   }, [])
 
+  const applyMonitorGain = useCallback((g: GainNode | null = meterMonitorRef.current) => {
+    if (!g) return
+    // Hear input while armed / count-in; mute only once the take is rolling.
+    g.gain.value = stateRef.current === 'recording' ? 0 : monitorVolRef.current
+  }, [])
+
   const startMeter = useCallback(async (stream: MediaStream) => {
     stopMeter()
     const ctx = await resumeRecordingAudioContext()
+    if (streamRef.current !== stream) return
     const source = ctx.createMediaStreamSource(stream)
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 512
@@ -330,7 +380,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     // This keeps the graph pulled (so the analyser gets data) and provides
     // low-latency Web Audio monitoring — no <audio> element buffering involved.
     const monGain = ctx.createGain()
-    monGain.gain.value = monitorVolRef.current
+    applyMonitorGain(monGain)
     source.connect(analyser)
     analyser.connect(monGain)
     monGain.connect(ctx.destination)
@@ -343,6 +393,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
     const tick = (now: number) => {
       meterRafRef.current = requestAnimationFrame(tick)
+      // Keep the monitoring context alive — browsers often re-suspend after the
+      // Record-track click before Rec is pressed, which silences armed monitoring.
+      if (ctx.state === 'suspended') void ctx.resume()
       const an = meterAnalyserRef.current
       const buf = meterDataRef.current
       if (!an || !buf) return
@@ -382,7 +435,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       }
     }
     meterRafRef.current = requestAnimationFrame(tick)
-  }, [stopMeter])
+  }, [applyMonitorGain, stopMeter])
 
   const stopStream = useCallback(() => {
     stopMeter()
@@ -396,15 +449,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
   const acquireMic = useCallback(async (deviceId: string, gen: number) => {
     if (streamRef.current) stopStream()
-    const audio: MediaTrackConstraints = {
-      deviceId: deviceId ? { ideal: deviceId } : undefined,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      sampleRate: { ideal: 22050 },
-      channelCount: { ideal: 1 },
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+    const stream = await acquireMicStream(deviceId || undefined)
     if (gen !== armGenRef.current) {
       stream.getTracks().forEach(t => t.stop())
       return null
@@ -414,20 +459,28 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   }, [stopStream])
 
   async function handleArm(prefetchedStream?: MediaStream) {
-    if (armInFlightRef.current) return
-    if (stateRef.current !== 'idle') return
-    if (isActiveRecording) return
+    if (armInFlightRef.current || stateRef.current !== 'idle' || isActiveRecording) {
+      // A superseded prefetched stream would otherwise leak (mic stays open).
+      prefetchedStream?.getTracks().forEach(t => t.stop())
+      return
+    }
 
     armInFlightRef.current = true
     const gen = ++armGenRef.current
-    if (!prefetchedStream) setState('permitting')
+    if (!prefetchedStream) setRecState('permitting')
     setError('')
+
+    const abandon = (stream: MediaStream) => {
+      stream.getTracks().forEach(t => t.stop())
+      // Don't leave the row stuck on "Requesting mic…" after a superseded arm.
+      if (stateRef.current === 'permitting') setRecState('idle')
+    }
 
     try {
       const stream = prefetchedStream
-        ?? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        ?? await acquireMicStream(selectedDevice || undefined)
       if (gen !== armGenRef.current) {
-        stream.getTracks().forEach(t => t.stop())
+        abandon(stream)
         return
       }
 
@@ -437,20 +490,30 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
         })
         if (gen !== armGenRef.current) {
-          stream.getTracks().forEach(t => t.stop())
+          abandon(stream)
           return
         }
       }
 
       streamRef.current = stream
-      setState('armed')
+      // Set monitor level + start the graph before paint so armed monitoring is
+      // live immediately (waiting on enumerateDevices left gain at silence).
+      if (!monitorTouchedRef.current) {
+        const label = stream.getAudioTracks()[0]?.label ?? ''
+        const vol = isBuiltinMic(label) ? 0.35 : 0.7
+        monitorVolRef.current = vol
+        setMonitorVol(vol)
+      }
+      await resumeRecordingAudioContext()
+      if (gen !== armGenRef.current) {
+        abandon(stream)
+        return
+      }
+      setRecState('armed')
       onArm(id)
-
-      window.setTimeout(() => {
-        if (gen === armGenRef.current && streamRef.current === stream) {
-          void startMeter(stream)
-        }
-      }, 200)
+      await startMeter(stream)
+      if (gen !== armGenRef.current) return
+      applyMonitorGain()
 
       window.setTimeout(() => {
         if (gen !== armGenRef.current || !streamRef.current) return
@@ -462,14 +525,11 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
             const activeTrack = streamRef.current?.getAudioTracks()[0]
             const activeId = activeTrack?.getSettings().deviceId ?? ''
             if (activeId) setSelectedDevice(activeId)
-            // Give a sensible default monitor level so the user actually hears
-            // themselves: muted for built-in mics (prevents speaker feedback),
-            // audible for external interfaces/headsets. Never override a level
-            // the user has already set with the slider.
             if (!monitorTouchedRef.current) {
-              const vol = isBuiltinMic(activeTrack?.label ?? '') ? 0 : 0.7
+              const vol = isBuiltinMic(activeTrack?.label ?? '') ? 0.35 : 0.7
+              monitorVolRef.current = vol
               setMonitorVol(vol)
-              if (meterMonitorRef.current) meterMonitorRef.current.gain.value = vol
+              applyMonitorGain()
             }
           })
           .catch(() => {})
@@ -477,7 +537,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     } catch {
       if (gen === armGenRef.current) {
         setError('Mic access denied')
-        setState('idle')
+        setRecState('idle')
       }
     } finally {
       armInFlightRef.current = false
@@ -487,30 +547,67 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   useEffect(() => {
     return () => {
       armGenRef.current++
-      previewSrcRef.current?.stop()
-      recorderRef.current?.stop()
-      recordTrackRef.current?.stop()
+      takeGenRef.current++
+      countdownCancelRef.current?.()
+      countdownCancelRef.current = null
+      try { previewSrcRef.current?.stop() } catch { /* already stopped */ }
+      // MediaRecorder.stop() throws InvalidStateError when already inactive —
+      // an uncaught throw here propagates into React's commit phase and can
+      // take the whole route down. Never assume recorder state on unmount.
+      const recorder = recorderRef.current
+      if (recorder) {
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        recorder.onerror = null
+        try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+        recorderRef.current = null
+      }
+      try { recordTrackRef.current?.stop() } catch { /* ok */ }
       recordTrackRef.current = null
       stopStream()
     }
   }, [stopStream])
 
-  // Live input meter — isolated context, deferred after mic is stable.
+  // Live input meter — isolated context. Depends on a boolean, not `state`, so
+  // the monitor/analyser graph survives armed → countdown → recording instead
+  // of being torn down mid-take. handleArm also starts the graph immediately;
+  // this effect covers remounts when already armed.
+  const meterActive = state === 'armed' || state === 'countdown' || state === 'recording'
   useEffect(() => {
-    const active = state === 'armed' || state === 'countdown' || state === 'recording'
-    if (!active || !streamRef.current) {
+    if (!meterActive) {
       stopMeter()
       return
     }
     const stream = streamRef.current
-    const t = window.setTimeout(() => {
-      if (streamRef.current === stream) void startMeter(stream)
-    }, 150)
-    return () => {
-      clearTimeout(t)
-      stopMeter()
+    if (!stream) return
+    // Already wired (e.g. handleArm) — keep it; only ensure context + gain.
+    if (!meterMonitorRef.current) void startMeter(stream)
+    else {
+      void resumeRecordingAudioContext()
+      applyMonitorGain()
     }
-  }, [state, startMeter, stopMeter])
+    // No cleanup here: tearing down on dep identity changes would kill armed
+    // monitoring. Unmount / meterActive→false / stopStream handle teardown.
+  }, [meterActive, startMeter, stopMeter, applyMonitorGain])
+
+  // Monitor level: live while armed/count-in; hard-mute once recording.
+  useEffect(() => {
+    applyMonitorGain()
+  }, [state, monitorVol, applyMonitorGain])
+
+  // Re-resume monitoring context if the browser suspends it while we expect output.
+  useEffect(() => {
+    if (!meterActive) return
+    const ctx = getRecordingAudioContext()
+    const onState = () => {
+      if (ctx.state === 'suspended' && stateRef.current !== 'idle') {
+        void ctx.resume()
+      }
+    }
+    ctx.addEventListener('statechange', onState)
+    if (ctx.state === 'suspended') void ctx.resume()
+    return () => ctx.removeEventListener('statechange', onState)
+  }, [meterActive])
 
   // Track playhead while armed so the live meter sits at the upcoming record point.
   useEffect(() => {
@@ -540,160 +637,202 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
   function handleMonitorChange(vol: number) {
     monitorTouchedRef.current = true
+    monitorVolRef.current = vol
     setMonitorVol(vol)
-    // Update the Web Audio monitor gain in real-time — no restart needed.
-    if (meterMonitorRef.current) meterMonitorRef.current.gain.value = vol
+    applyMonitorGain()
   }
 
   async function handleStartRecord() {
-    if (stateRef.current !== 'armed' && stateRef.current !== 'countdown') return
+    if (stateRef.current !== 'armed') return
     setError('')
+    const takeGen = ++takeGenRef.current
+    let playbackStarted = false
 
-    if (!streamRef.current) {
-      const gen = armGenRef.current
-      try {
-        const stream = await acquireMic(selectedDevice, gen)
+    try {
+      // Ensure a LIVE mic stream before committing to the take. A stream can
+      // exist but be dead (device unplugged, OS revoked, Bluetooth dropout) —
+      // handing a dead track to MediaRecorder throws "MediaStream is inactive".
+      if (!isMicStreamLive(streamRef.current)) {
+        const stream = await acquireMic(selectedDevice, armGenRef.current)
         if (!stream) {
           setError('Microphone not available')
           return
         }
-      } catch {
-        setError('Microphone not available')
-        return
+        if (takeGen !== takeGenRef.current) return
+        // Rebind the meter/monitor graph to the fresh stream — the meter
+        // effect only reacts to state changes, not stream swaps.
+        void startMeter(stream)
       }
-    }
 
-    const barDurSec = barDurationSec(bpm, timeSig)
+      const barDurSec = barDurationSec(bpm, timeSig)
 
-    // Snap to the previous bar boundary and always play count-in.
-    // Seek the player NOW so offsetRef is locked to the bar start — when
-    // onPlaybackStart fires after the countdown, playback resumes from exactly
-    // that bar, not from wherever the user originally paused.
-    const snapPosSec = snapToPreviousBarSec(getPlaybackMs() / 1000, bpm, timeSig)
-    const snapBar    = Math.round(snapPosSec / barDurSec)
-    onSeekTo(snapPosSec)
-    onPreparePlayback?.()
+      // Snap to the previous bar boundary and always play count-in.
+      // Seek the player NOW so offsetRef is locked to the bar start — when
+      // onPlaybackStart fires after the countdown, playback resumes from exactly
+      // that bar, not from wherever the user originally paused.
+      const snapPosSec = snapToPreviousBarSec(getPlaybackMs() / 1000, bpm, timeSig)
+      const snapBar    = Math.round(snapPosSec / barDurSec)
+      onSeekTo(snapPosSec)
+      onPreparePlayback?.()
 
-    setState('countdown')
-    const { promise, takeStartTime } = await playCountdown(bpm, timeSig)
-    onPlaybackStart(takeStartTime)
+      setRecState('countdown')
+      const { promise, takeStartTime, cancel } = await playCountdown(bpm, timeSig)
+      countdownCancelRef.current = cancel ?? null
+      onPlaybackStart(takeStartTime)
+      playbackStarted = true
 
-    startBarRef.current = snapBar
-    setRecordStartBar(snapBar)
+      startBarRef.current = snapBar
+      setRecordStartBar(snapBar)
 
-    const stream = streamRef.current
-    if (!stream) {
-      setError('Microphone not available')
-      setState('armed')
-      return
-    }
+      chunksRef.current = []
+      setRecordingSec(0)
+      setRecordingBars([])
+      setNudgeOffsetMs(0)
+      setTakeGain(1)
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/mp4'
+      // Snapshot the timeline width now so the live waveform keeps a constant bar
+      // width and fixed anchor as the take and playhead advance (see timelineBars).
+      const startPlayheadBar = barDurSec > 0 ? Math.ceil(getPlaybackMs() / 1000 / barDurSec) : 0
+      setFrozenTimelineBars(Math.max(totalBars, snapBar + 4, startPlayheadBar + 4))
 
-    // Record from a dedicated CLONE of the mic track. The original track is held
-    // by the Web Audio monitor graph (createMediaStreamSource in startMeter);
-    // handing that same track to MediaRecorder makes Chrome capture silence —
-    // one MediaStreamTrack can't reliably feed both Web Audio and a recorder.
-    // A cloned track is an independent sink, so the monitor and the recorder
-    // each get live audio.
-    const micTrack = stream.getAudioTracks()[0]
-    if (!micTrack) {
-      setError('Microphone not available')
-      setState('armed')
-      return
-    }
-    recordTrackRef.current?.stop()
-    const recordTrack = micTrack.clone()
-    recordTrackRef.current = recordTrack
-    const recordStream = new MediaStream([recordTrack])
+      await promise
+      countdownCancelRef.current = null
 
-    let recorder: MediaRecorder
-    try {
-      recorder = new MediaRecorder(recordStream, { mimeType, audioBitsPerSecond: 64000 })
-    } catch {
+      // The count-in ran for a full bar — the user may have cancelled (seek,
+      // pause, spacebar, ✕), the row may be unmounting, or the device may have
+      // dropped. Never start the recorder for a superseded take.
+      // (Read through a widened binding: TS otherwise keeps the 'armed'
+      // narrowing from the guard at the top and can't see the ref mutation.)
+      const stateAfterCountdown = stateRef.current as RecordState
+      if (takeGen !== takeGenRef.current || stateAfterCountdown !== 'countdown') return
+
+      // Re-check liveness AFTER the countdown, and clone only now. Cloning
+      // before the wait meant a device change/dropout during the count-in
+      // handed MediaRecorder a dead track — the exact "MediaStream is
+      // inactive" crash.
+      const micTrack = streamRef.current?.getAudioTracks().find(t => t.readyState === 'live')
+      if (!micTrack) throw new Error('Microphone not available')
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/mp4'
+
+      // Record from a dedicated CLONE of the mic track. The original track is held
+      // by the Web Audio monitor graph (createMediaStreamSource in startMeter);
+      // handing that same track to MediaRecorder makes Chrome capture silence —
+      // one MediaStreamTrack can't reliably feed both Web Audio and a recorder.
+      // A cloned track is an independent sink, so the monitor and the recorder
+      // each get live audio.
+      recordTrackRef.current?.stop()
+      const recordTrack = micTrack.clone()
+      recordTrackRef.current = recordTrack
+      const recordStream = new MediaStream([recordTrack])
+
+      let recorder: MediaRecorder
       try {
-        recorder = new MediaRecorder(recordStream, { mimeType })
+        recorder = new MediaRecorder(recordStream, { mimeType, audioBitsPerSecond: 128000 })
       } catch {
-        recordTrack.stop()
-        recordTrackRef.current = null
-        setError('Recording not supported in this browser')
-        setState('armed')
-        return
+        recorder = new MediaRecorder(recordStream, { mimeType })
       }
-    }
 
-    chunksRef.current = []
-    setRecordingSec(0)
-    setRecordingBars([])
-    setNudgeOffsetMs(0)
-
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-    recorder.onstop = () => {
-      // The recorder can stop on its own — a USB/Bluetooth mic dropping out, the
-      // OS switching the default device, or a browser resource limit on a long
-      // take. In that case we're still in 'recording' state, so run the same
-      // teardown the Stop button does; otherwise the captured take is stranded
-      // (playback left running, state stuck on 'recording', no way to Save it).
-      if (stateRef.current === 'recording') {
-        if (recordTimerRef.current) {
-          clearInterval(recordTimerRef.current)
-          recordTimerRef.current = null
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      recorder.onstop = () => {
+        // The recorder can stop on its own — a USB/Bluetooth mic dropping out, the
+        // OS switching the default device, or a browser resource limit on a long
+        // take. In that case we're still in 'recording' state, so run the same
+        // teardown the Stop button does; otherwise the captured take is stranded
+        // (playback left running, state stuck on 'recording', no way to Save it).
+        if (stateRef.current === 'recording' && takeGen === takeGenRef.current) {
+          finalizeTakeRef.current({ pausePlayback: true })
         }
-        recordTrackRef.current?.stop()
-        recordTrackRef.current = null
-        onPlaybackStop()
-        stopStream()
-        setFrozenTimelineBars(null)
-        setState('preview')
+        void processBlob(mimeType)
       }
-      void processBlob(mimeType)
-    }
-    recorder.onerror = () => {
-      // Salvage whatever was captured before the error instead of losing the take.
-      try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
-    }
-    // If the recorded mic track ends mid-take (device unplugged / lost — common
-    // with USB interfaces), stop cleanly so onstop fires and the partial take is
-    // preserved in preview rather than silently vanishing.
-    recordTrack.onended = () => {
-      try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
-    }
-    recorderRef.current = recorder
+      recorder.onerror = () => {
+        // Salvage whatever was captured before the error instead of losing the take.
+        try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+      }
+      // If the recorded mic track ends mid-take (device unplugged / lost — common
+      // with USB interfaces), stop cleanly so onstop fires and the partial take is
+      // preserved in preview rather than silently vanishing.
+      recordTrack.onended = () => {
+        try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+      }
+      recorderRef.current = recorder
 
-    // Snapshot the timeline width now so the live waveform keeps a constant bar
-    // width and fixed anchor as the take and playhead advance (see timelineBars).
-    const startPlayheadBar = barDurSec > 0 ? Math.ceil(getPlaybackMs() / 1000 / barDurSec) : 0
-    setFrozenTimelineBars(Math.max(totalBars, snapBar + 4, startPlayheadBar + 4))
-
-    await promise
-
-    setState('recording')
-    recorder.start(250)
-    recordTimerRef.current = setInterval(() => {
-      setRecordingSec(s => s + 0.25)
-    }, 250)
+      setRecState('recording')
+      applyMonitorGain()
+      recorder.start(250)
+      recordTimerRef.current = setInterval(() => {
+        setRecordingSec(s => s + 0.25)
+      }, 250)
+    } catch (err) {
+      // NOTHING in the record path is allowed to escape — an uncaught rejection
+      // here previously crashed the route ("MediaStream is inactive").
+      console.error('[RecordingTrackRow] start record failed:', err)
+      countdownCancelRef.current?.()
+      countdownCancelRef.current = null
+      try { recordTrackRef.current?.stop() } catch { /* ok */ }
+      recordTrackRef.current = null
+      recorderRef.current = null
+      // Only pause if WE started playback — pausing a never-started transport
+      // corrupts its offset bookkeeping and teleports the playhead.
+      if (playbackStarted) onPlaybackStop()
+      setFrozenTimelineBars(null)
+      setError(err instanceof Error && err.message === 'Microphone not available'
+        ? 'Microphone not available'
+        : 'Could not start recording')
+      setRecState(isMicStreamLive(streamRef.current) ? 'armed' : 'idle')
+    }
   }
 
-  function handleStopRecord() {
-    if (stateRef.current !== 'recording') return
+  /** Shared teardown when a live take ends (Stop button, seek, pause, recorder
+   *  self-stop). Transitions recording → preview and releases the mic. */
+  function finalizeTake({ pausePlayback = true }: { pausePlayback?: boolean } = {}) {
     if (recordTimerRef.current) {
       clearInterval(recordTimerRef.current)
       recordTimerRef.current = null
     }
-    recorderRef.current?.stop()
-    recorderRef.current = null
-    recordTrackRef.current?.stop()
+    try { recordTrackRef.current?.stop() } catch { /* ok */ }
     recordTrackRef.current = null
-    onPlaybackStop()
+    if (pausePlayback) onPlaybackStop()
     stopStream()
     setFrozenTimelineBars(null)
-    setState('preview')
+    setRecState('preview')
+  }
+  const finalizeTakeRef = useRef(finalizeTake)
+  finalizeTakeRef.current = finalizeTake
+
+  /** Stop the current take from ANY trigger: Stop button, spacebar, mobile
+   *  transport, timeline seek, transport pause, or end of the timeline.
+   *  Also cancels a pending count-in. */
+  function stopTake({ pausePlayback = true }: { pausePlayback?: boolean } = {}) {
+    if (stateRef.current === 'countdown') {
+      takeGenRef.current++
+      countdownCancelRef.current?.()
+      countdownCancelRef.current = null
+      if (pausePlayback) onPlaybackStop()
+      setFrozenTimelineBars(null)
+      setRecState('armed')
+      return
+    }
+    if (stateRef.current !== 'recording') return
+    takeGenRef.current++
+    const recorder = recorderRef.current
+    recorderRef.current = null
+    // Stop the recorder BEFORE its source track (finalizeTake) so the last
+    // buffered chunk flushes cleanly. onstop fires as a macrotask, after
+    // finalizeTake below has already set state 'preview' and bumped the take
+    // generation, so it only runs processBlob — not a second teardown.
+    try { if (recorder && recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+    finalizeTake({ pausePlayback })
   }
 
-  const handleStopRecordRef = useRef(handleStopRecord)
-  handleStopRecordRef.current = handleStopRecord
+  function handleStopRecord() {
+    stopTake()
+  }
+
+  const handleStopRecordRef = useRef(stopTake)
+  handleStopRecordRef.current = stopTake
 
   const handleArmRef = useRef(handleArm)
   handleArmRef.current = handleArm
@@ -715,11 +854,60 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     return () => registerControl(id, null)
   }, [id, registerControl])
 
+  // Global stop hook (spacebar, mobile transport). Registered during the
+  // count-in too, so a take can be cancelled before it starts.
   useEffect(() => {
-    if (!recordingStopRef || state !== 'recording') return
+    if (!recordingStopRef || (state !== 'recording' && state !== 'countdown')) return
     recordingStopRef.current = () => { handleStopRecordRef.current() }
     return () => { recordingStopRef.current = null }
   }, [state, recordingStopRef])
+
+  // ── Take must never outlive the transport ─────────────────────────────────
+  // Any seek or pause while counting in or recording stops the take. Without
+  // this, clicking the timeline or the transport stop button left the
+  // MediaRecorder running invisibly.
+  const takeActive = state === 'countdown' || state === 'recording'
+
+  // Baselines captured at take start. Our own bar-snap seek in
+  // handleStartRecord bumps seekEpoch in the same commit that enters
+  // 'countdown', so reading the prop here already includes it.
+  useEffect(() => {
+    seenPlayingRef.current = false
+    if (takeActive) seekEpochBaselineRef.current = seekEpoch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [takeActive])
+
+  useEffect(() => {
+    if (!takeActive) return
+    if (seekEpoch !== seekEpochBaselineRef.current) {
+      // User seeked — kill the take but let playback continue from the new spot.
+      handleStopRecordRef.current({ pausePlayback: false })
+      return
+    }
+    if (isPlaying) {
+      seenPlayingRef.current = true
+      return
+    }
+    // Playback WAS running for this take and stopped (pause button, spacebar
+    // fallback, end of timeline) — the take stops with it.
+    if (seenPlayingRef.current) handleStopRecordRef.current({ pausePlayback: false })
+  }, [takeActive, seekEpoch, isPlaying])
+
+  // ── Auto-arm (fallback) ────────────────────────────────────────────────────
+  // Prefer a stream prefetched in the "Record track" click (via registerControl).
+  // That path keeps user activation so the permission prompt actually appears.
+  // This effect only covers the case where another recording released, or the
+  // prefetched arm missed (e.g. remount after permission already granted).
+  // Declared AFTER registerControl so the prefetched arm wins the race.
+  useEffect(() => {
+    if (isActiveRecording || stateRef.current !== 'idle') return
+    if (errorRef.current) return // denied / failed — user retries explicitly
+    const t = window.setTimeout(() => {
+      if (isActiveRecording || stateRef.current !== 'idle' || errorRef.current) return
+      void handleArmRef.current()
+    }, 0)
+    return () => clearTimeout(t)
+  }, [isActiveRecording])
 
   const previewMutedRef = useRef(previewMuted)
   previewMutedRef.current = previewMuted
@@ -782,7 +970,14 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       if (playNowSec < recordingEndSec) {
         const src = audioCtx.createBufferSource()
         src.buffer = buf
-        src.connect(getMasterOutput())
+        // Route through the take-gain node so the Vol slider shapes the preview
+        // exactly like the saved WAV. Slider changes update the node directly
+        // (no source restart needed).
+        const gainNode = audioCtx.createGain()
+        gainNode.gain.value = takeGainRef.current
+        src.connect(gainNode)
+        gainNode.connect(getMasterOutput())
+        previewGainRef.current = gainNode
 
         const acxNow  = audioCtx.currentTime
         const acxZero = acxNow - playNowSec
@@ -800,8 +995,10 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
     return () => {
       cancelled = true
-      previewSrcRef.current?.stop()
+      try { previewSrcRef.current?.stop() } catch { /* ok */ }
       previewSrcRef.current = null
+      try { previewGainRef.current?.disconnect() } catch { /* ok */ }
+      previewGainRef.current = null
     }
   }, [isPlaying, seekEpoch, state, previewMuted, recordedDurationSec, nudgeOffsetMs, bpm, timeSig, getPlaybackMs])
 
@@ -814,7 +1011,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   }, [state, nudgeOffsetMs, recordedDurationSec, bpm, timeSig, id])
 
   async function handleReRecord() {
-    previewSrcRef.current?.stop()
+    try { previewSrcRef.current?.stop() } catch { /* ok */ }
     previewSrcRef.current = null
     audioBufferRef.current = null
     notifyPreviewTimeline(null)
@@ -824,8 +1021,9 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     setRecordingSec(0)
     setRecordingBars([])
     setNudgeOffsetMs(0)
+    setTakeGain(1)
     setFrozenTimelineBars(null)
-    setState('armed')
+    setRecState('armed')
     const gen = armGenRef.current
     try {
       const stream = await acquireMic(selectedDevice, gen)
@@ -838,14 +1036,16 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   async function handleSave() {
     const decoded = audioBufferRef.current
     if (!decoded) return
-    setState('saving')
+    setRecState('saving')
     setError('')
     setUploadProgress(0)
-    previewSrcRef.current?.stop()
+    try { previewSrcRef.current?.stop() } catch { /* ok */ }
     previewSrcRef.current = null
     notifyPreviewTimeline(null)
     try {
-      const adjusted = applyNudgeToBuffer(decoded, nudgeOffsetMs)
+      // Bake nudge + take volume into the file so the saved track plays back
+      // exactly as previewed.
+      const adjusted = applyGainToBuffer(applyNudgeToBuffer(decoded, nudgeOffsetMs), takeGain)
       const wavBlob  = encodeWAV(adjusted, 0)
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
       const filename = `${safeName.replace(/\s+/g, '_')}_${Date.now()}.wav`
@@ -895,7 +1095,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
     } catch (err) {
       console.error('[RecordingTrackRow] save error:', err)
       setError(err instanceof Error ? err.message : String(err))
-      setState('preview')
+      setRecState('preview')
     }
   }
 
@@ -905,9 +1105,20 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
   }
 
   function handleDelete() {
-    previewSrcRef.current?.stop()
-    recorderRef.current?.stop()
-    recordTrackRef.current?.stop()
+    armGenRef.current++
+    takeGenRef.current++
+    countdownCancelRef.current?.()
+    countdownCancelRef.current = null
+    try { previewSrcRef.current?.stop() } catch { /* ok */ }
+    const recorder = recorderRef.current
+    recorderRef.current = null
+    if (recorder) {
+      recorder.ondataavailable = null
+      recorder.onstop = null
+      recorder.onerror = null
+      try { if (recorder.state !== 'inactive') recorder.stop() } catch { /* ok */ }
+    }
+    try { recordTrackRef.current?.stop() } catch { /* ok */ }
     recordTrackRef.current = null
     stopStream()
     notifyPreviewTimeline(null)
@@ -1105,19 +1316,33 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
 
   const controlsBlock = (
     <>
-      {isIdle && (
+      {isIdle && !error && isActiveRecording && (
+        <span className="text-[9px] uppercase tracking-widest text-muted-foreground">
+          Waiting — another recording is active
+        </span>
+      )}
+      {isIdle && error && (
         <button
           type="button"
-          onClick={() => void handleArm()}
-          disabled={isActiveRecording}
-          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime disabled:opacity-30 transition w-fit"
+          onClick={() => { setError(''); void handleArm() }}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime transition w-fit"
         >
           <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
-          Arm
+          Retry mic
         </button>
       )}
       {isPermitting && (
         <span className="text-[9px] uppercase tracking-widest text-muted-foreground">Requesting mic…</span>
+      )}
+      {isIdle && !error && !isActiveRecording && (
+        <button
+          type="button"
+          onClick={() => { void handleArm() }}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime transition w-fit"
+        >
+          <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-destructive" />
+          Enable mic
+        </button>
       )}
       {showDeviceSelect && (
         <select
@@ -1145,7 +1370,14 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         </button>
       )}
       {isCounting && (
-        <span className="text-[9px] uppercase tracking-widest text-amber">Count-in…</span>
+        <button
+          type="button"
+          onClick={() => handleStopRecordRef.current()}
+          className="text-[9px] uppercase tracking-widest text-amber hover:text-foreground w-fit"
+          title="Cancel count-in"
+        >
+          Count-in… ✕
+        </button>
       )}
       {isRecording && (
         <button
@@ -1184,6 +1416,27 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
               Discard
             </button>
           </div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[9px] uppercase tracking-widest text-muted-foreground shrink-0">Vol</span>
+            <input
+              type="range"
+              min={0}
+              max={3}
+              step={0.01}
+              value={takeGain}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                setTakeGain(v)
+                // Live-update the preview without restarting the source.
+                if (previewGainRef.current) previewGainRef.current.gain.value = v
+              }}
+              className="flex-1 min-w-0 accent-lime"
+              aria-label="Take volume (applied on save)"
+            />
+            <span className="text-[9px] tabular-nums text-muted-foreground shrink-0 w-9 text-right">
+              {Math.round(takeGain * 100)}%
+            </span>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -1216,7 +1469,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
           {uploadProgress > 0 ? `Saving ${uploadProgress}%…` : 'Saving…'}
         </span>
       )}
-      {showControls && !mobileScrollableTimeline && (
+      {showControls && (
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[9px] uppercase tracking-widest text-muted-foreground shrink-0">Mon</span>
           <input
@@ -1228,12 +1481,16 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
             onChange={e => handleMonitorChange(parseFloat(e.target.value))}
             disabled={isRecording}
             className="flex-1 min-w-0 accent-lime"
+            aria-label="Input monitor level"
           />
+          <span className="text-[9px] tabular-nums text-muted-foreground shrink-0 w-8 text-right">
+            {isRecording ? '0%' : `${Math.round(monitorVol * 100)}%`}
+          </span>
         </div>
       )}
-      {showControls && !mobileScrollableTimeline && (
+      {showControls && (
         <p className="text-[8px] leading-tight text-muted-foreground opacity-60 m-0">
-          {isArmed ? 'Mic ready' : isRecording ? 'Recording…' : 'Demo quality · mono'}
+          {isArmed ? 'Mic ready' : isRecording ? 'Recording — monitor muted' : 'Count-in…'}
         </p>
       )}
       {error && (
