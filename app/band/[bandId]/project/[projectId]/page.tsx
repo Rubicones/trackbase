@@ -2222,6 +2222,13 @@ function usePlayer(
     } catch { /* decode failed — track will reload on next version switch */ }
   }, [noteTrackDuration, recomputeTransportDuration])
 
+  // Same bus project tracks use (transport master). Take preview must route here
+  // so Vol-adjusted previews match the saved track after Save.
+  const getPreviewOutput = useCallback(
+    () => masterGainRef.current ?? getMasterOutput(),
+    [],
+  )
+
   return {
     playing, currentTime,
     duration: getTransportDuration(),
@@ -2250,6 +2257,7 @@ function usePlayer(
     noteTrackDuration,
     setEditPreview,
     reloadTrack,
+    getPreviewOutput,
   }
 }
 
@@ -5600,14 +5608,6 @@ export default function ProjectPage() {
     [],
   )
 
-  // Take preview must hit the transport master gain — same bus as saved tracks.
-  // Wiring through getMasterOutput() skips the volume fader and makes the
-  // preview louder than the track after Save.
-  const getRecordingPreviewOutput = useCallback(
-    () => masterGainRef.current ?? getMasterOutput(),
-    [],
-  )
-
   useEffect(() => {
     for (const stream of pendingMicStreamsRef.current.values()) {
       stream.getTracks().forEach(t => t.stop())
@@ -6834,7 +6834,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                 playCountdown={beginRecordingCountdown}
                 registerControl={registerRecordingControl}
                 onStateChange={handleRecordingStateChange}
-                getPreviewOutput={getRecordingPreviewOutput}
+                getPreviewOutput={player.getPreviewOutput}
                 mobileScrollableTimeline
               />
             )),
@@ -7520,7 +7520,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   playCountdown={beginRecordingCountdown}
                   registerControl={registerRecordingControl}
                   onStateChange={handleRecordingStateChange}
-                  getPreviewOutput={getRecordingPreviewOutput}
+                  getPreviewOutput={player.getPreviewOutput}
                 />
               ))}
 
