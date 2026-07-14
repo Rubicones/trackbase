@@ -122,7 +122,7 @@ export async function POST(
     let flac: Buffer
     let durationMs: number
     try {
-      const result = await renderEditedFlac(sourcePath, segments, barDurSec)
+      const result = await renderEditedFlac(sourcePath, segments, barDurSec, sourceDurSec)
       flac = result.flac
       durationMs = result.durationMs
     } catch (err) {

@@ -1,5 +1,6 @@
 import ffmpeg from 'fluent-ffmpeg'
 import ffmpegStatic from 'ffmpeg-static'
+import ffprobeStatic from 'ffprobe-static'
 import { execSync } from 'child_process'
 import { existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -41,12 +42,49 @@ function resolveFfmpegPath(): string {
   )
 }
 
+/**
+ * Resolve the ffprobe binary. ffmpeg-static ships ONLY ffmpeg, so ffprobe is
+ * absent in production (Vercel) — without this, ffmpeg.ffprobe() spawns a
+ * non-existent `ffprobe` on PATH, fails, and callers silently get duration 0.
+ * ffprobe-static bundles a per-platform binary; fall back to system ffprobe for
+ * local dev.
+ */
+function resolveFfprobePath(): string | null {
+  const candidates: string[] = []
+
+  const staticPath = (ffprobeStatic as { path?: string } | undefined)?.path
+  if (staticPath) candidates.push(staticPath)
+
+  // Traced binary layout on Vercel (mirrors the ffmpeg-static handling above).
+  candidates.push(
+    path.join(process.cwd(), 'node_modules/ffprobe-static/bin', process.platform, process.arch, 'ffprobe'),
+  )
+  if (typeof __dirname !== 'undefined') {
+    candidates.push(
+      path.join(__dirname, 'node_modules/ffprobe-static/bin', process.platform, process.arch, 'ffprobe'),
+    )
+  }
+
+  for (const p of candidates) {
+    if (p && existsSync(p)) return p
+  }
+
+  try {
+    const p = execSync('which ffprobe', { encoding: 'utf8' }).trim()
+    if (p && existsSync(p)) return p
+  } catch { /* not in PATH */ }
+
+  return null
+}
+
 let ffmpegPathConfigured = false
 
 /** Resolve and configure ffmpeg only when a conversion runs (not at import time). */
 export function ensureFfmpegConfigured(): void {
   if (ffmpegPathConfigured) return
   ffmpeg.setFfmpegPath(resolveFfmpegPath())
+  const ffprobePath = resolveFfprobePath()
+  if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath)
   ffmpegPathConfigured = true
 }
 
@@ -187,16 +225,33 @@ export async function renderEditedFlac(
   sourcePath: string,
   segments: RenderEditSegment[],
   barDurSec: number,
+  /**
+   * Known source duration in seconds (e.g. the track's stored duration_ms). The
+   * render does NOT depend on ffprobe: ffprobe is unavailable in production
+   * (ffmpeg-static ships only the ffmpeg binary), so probing there returns 0 and
+   * would silence every clip. We only need the source duration to decide which
+   * clips fall entirely past the end of the audio (→ pure silence). When it is
+   * unknown we treat clips as audible and let ffmpeg's atrim stop naturally at
+   * EOF while apad fills the remaining slot.
+   */
+  sourceDurSecHint?: number,
 ): Promise<{ flac: Buffer; durationMs: number }> {
   ensureFfmpegConfigured()
   const id = randomUUID()
   const outPath = path.join(tmpdir(), `${id}.flac`)
 
-  const sourceDurSec = await new Promise<number>((resolve) => {
-    ffmpeg.ffprobe(sourcePath, (_err, meta) => {
-      resolve(_err ? 0 : (meta?.format?.duration ?? 0))
+  // Prefer the caller-provided duration. Only fall back to ffprobe (which may
+  // not exist in prod). If both are unavailable, treat the source as long
+  // enough that no clip is pre-silenced.
+  let sourceDurSec = sourceDurSecHint && sourceDurSecHint > 0 ? sourceDurSecHint : 0
+  if (sourceDurSec <= 0) {
+    sourceDurSec = await new Promise<number>((resolve) => {
+      ffmpeg.ffprobe(sourcePath, (_err, meta) => {
+        resolve(_err ? 0 : (meta?.format?.duration ?? 0))
+      })
     })
-  })
+  }
+  const sourceDurKnown = sourceDurSec > 0
 
   const FMT = 'aformat=sample_fmts=s32:sample_rates=48000:channel_layouts=stereo'
 
@@ -216,7 +271,12 @@ export async function renderEditedFlac(
     for (const clip of seg.clips) {
       const slotSec = clip.lenBars * barDurSec
       const srcStartSec = clip.srcBar * barDurSec
-      const audibleSec = Math.min(slotSec, Math.max(0, sourceDurSec - srcStartSec))
+      // When the source duration is known, a clip starting past EOF is pure
+      // silence. When it's unknown, assume it's audible (atrim will stop at the
+      // real EOF and apad backfills the slot) rather than silencing everything.
+      const audibleSec = sourceDurKnown
+        ? Math.min(slotSec, Math.max(0, sourceDurSec - srcStartSec))
+        : slotSec
       if (audibleSec <= 0.001) {
         pieces.push({ kind: 'silence', durSec: slotSec })
       } else {
@@ -226,6 +286,14 @@ export async function renderEditedFlac(
     }
   }
   if (pieces.length === 0) throw new Error('Nothing to render')
+
+  // Total duration is fully determined by the timeline (each clip's slot is
+  // guaranteed to be filled by apad), so compute it directly instead of
+  // re-probing the output — probing is unavailable in prod.
+  const totalDurSec = pieces.reduce(
+    (sum, p) => sum + (p.kind === 'silence' ? p.durSec : p.slotSec),
+    0,
+  )
 
   // A filter input pad can only be consumed once — asplit the source when
   // several pieces slice it.
@@ -271,13 +339,7 @@ export async function renderEditedFlac(
         .run()
     })
 
-    const durationMs = await new Promise<number>((resolve) => {
-      ffmpeg.ffprobe(outPath, (_err, meta) => {
-        resolve(_err ? 0 : Math.round((meta?.format?.duration ?? 0) * 1000))
-      })
-    })
-
-    return { flac: await readFile(outPath), durationMs }
+    return { flac: await readFile(outPath), durationMs: Math.round(totalDurSec * 1000) }
   } finally {
     await unlink(outPath).catch(() => {})
   }
