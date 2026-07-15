@@ -22,6 +22,7 @@ export type MobileExperienceProps = {
   versionSwitchDisabled?: boolean
   player: ReadingModePlayer
   sections: Section[]
+  onSectionsChange?: (updater: (prev: Section[]) => Section[]) => void
   projectId: string
   barDurationMs: number
   sectionLoopOn: boolean
@@ -53,6 +54,7 @@ export function MobileExperience({
   versionSwitchDisabled = false,
   player,
   sections,
+  onSectionsChange,
   projectId,
   barDurationMs,
   sectionLoopOn,
@@ -187,6 +189,7 @@ export function MobileExperience({
             project={project}
             player={player}
             sections={sections}
+            onSectionsChange={onSectionsChange}
             versions={versions}
             activeVersionId={activeVersionId}
             onVersionChange={onVersionChange}

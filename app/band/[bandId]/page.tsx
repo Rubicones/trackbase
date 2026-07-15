@@ -31,6 +31,9 @@ import { trackEvent } from '@/lib/analytics'
 const BAND_CACHE_TTL_MS = 30_000
 const bandDataCache = new Map<string, { data: object; cachedAt: number }>()
 
+// Max times we retry the band fetch after a cold-load 401 before surfacing an error.
+const MAX_AUTH_RETRIES = 2
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Band { id: string; name: string; created_at: string }
@@ -619,6 +622,9 @@ export default function BandPage() {
   const [storageLimitBytes, setStorageLimitBytes] = useState(BAND_STORAGE_LIMIT_BYTES)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
+  // Bumped when a 401 suggests our fetch beat the client cookie sync; drives a
+  // bounded retry once auth resolves (see the retry effect below).
+  const [authRetry, setAuthRetry] = useState(0)
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'projects' | 'activity'>('projects')
@@ -762,7 +768,14 @@ export default function BandPage() {
       const res = await fetch(`/api/bands/${bandId}`, signal ? { signal } : undefined)
       if (!res.ok) {
         if (signal?.aborted) return
-        if (res.status === 401) return  // auth redirect effect handles nav
+        if (res.status === 401) {
+          // Cold-load race: this request beat the client-side cookie sync
+          // (AuthContext POSTs tokens to /api/auth/session on mount). Keep the
+          // skeleton up and let the retry effect re-run once auth resolves —
+          // cookies are guaranteed set by then. Don't clear `loading` here.
+          setAuthRetry(n => n + 1)
+          return
+        }
         const body = await res.json().catch(() => ({}))
         if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
         else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
@@ -776,7 +789,9 @@ export default function BandPage() {
       applyBandData(data)
     } catch (err) {
       if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
-      throw err
+      // Never leave the page stuck on skeletons for an unexpected/network error.
+      setError('unknown')
+      setLoading(false)
     }
   }
 
@@ -811,6 +826,23 @@ export default function BandPage() {
     void loadBand(controller.signal)
     return () => controller.abort()
   }, [bandId]) // eslint-disable-line
+
+  // Self-heal the cold-load 401 race: once auth has resolved with a signed-in user
+  // (cookies now set), retry the band fetch. Bounded so a persistent 401 surfaces an
+  // error instead of looping. If auth resolves with no user, the redirect effect above
+  // takes over. Skips entirely on the happy path (authRetry stays 0).
+  useEffect(() => {
+    if (authRetry === 0 || !loading) return
+    if (authLoading || !user) return
+    if (authRetry > MAX_AUTH_RETRIES) {
+      setError('unknown')
+      setLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    void loadBand(controller.signal)
+    return () => controller.abort()
+  }, [authRetry, authLoading, user, loading]) // eslint-disable-line
 
   // Show band welcome modal once
   const showBandWelcome =

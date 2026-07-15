@@ -148,6 +148,8 @@ interface ActiveCommentInput {
 // ─── Upload helpers ───────────────────────────────────────────────────────────
 
 const MAX_CONCURRENT_UPLOADS = 3
+// Max times we retry the project fetch after a cold-load 401 before surfacing an error.
+const MAX_AUTH_RETRIES = 2
 
 // Style for bottom sheet action buttons (short landscape topbar overflow)
 const sheetBtnStyle: import('react').CSSProperties = {
@@ -4578,7 +4580,7 @@ export default function ProjectPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const cache = useVersionCache()
-  const { user, profile, updateOnboarding } = useAuth()
+  const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
   const { open: chatOpen, openChat, closeChat } = useChatPanel()
   const [chatUnread, setChatUnread] = useState(0)
@@ -4591,6 +4593,9 @@ export default function ProjectPage() {
   const versionDeepLinkApplied = useRef(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
+  // Bumped on a cold-load 401 (fetch beat the client cookie sync) to drive a bounded
+  // retry once auth resolves — mirrors the band page. See the retry effect below.
+  const [authRetry, setAuthRetry] = useState(0)
   const [showBranchModal, setShowBranchModal] = useState(false)
   const [masterEditModal, setMasterEditModal] = useState<{
     pending: () => void | Promise<void>
@@ -4803,15 +4808,24 @@ export default function ProjectPage() {
   }
 
   async function loadProject(keepActiveVersion = true, force = false) {
+    // Set true when a 401 schedules an auth-ready retry, so `finally` keeps the
+    // skeleton up instead of flashing an error screen (see the retry effect below).
+    let retrying = false
     try {
       // Cache hit: if the active version is already cached, skip the full re-fetch
       if (!force && keepActiveVersion && activeVersionIdRef.current && cache.getVersion(activeVersionIdRef.current)) {
-        console.log('[cache] hit on loadProject, skipping fetch for:', activeVersionIdRef.current)
         return
       }
 
       const res = await fetch(`/api/projects/${projectId}`)
       if (!res.ok) {
+        if (res.status === 401) {
+          // Cold-load race: our fetch beat the client cookie sync. Retry once auth
+          // resolves rather than surfacing a spurious error.
+          setAuthRetry(n => n + 1)
+          retrying = true
+          return
+        }
         const body = await res.json().catch(() => ({}))
         if (res.status === 403 || body?.code === 'ACCESS_DENIED') {
           setError('access_denied')
@@ -4858,11 +4872,26 @@ export default function ProjectPage() {
     } catch {
       setError('unknown')
     } finally {
-      setLoading(false)
+      if (!retrying) setLoading(false)
     }
   }
 
   useEffect(() => { loadProject(false) }, [projectId]) // eslint-disable-line
+
+  // Self-heal the cold-load 401 race once auth resolves with a signed-in user
+  // (cookies now set). Bounded so a persistent 401 surfaces an error instead of
+  // looping. No-op on the happy path (authRetry stays 0).
+  useEffect(() => {
+    if (authRetry === 0 || !loading) return
+    if (authLoading || !user) return
+    if (authRetry > MAX_AUTH_RETRIES) {
+      setError('unknown')
+      setLoading(false)
+      return
+    }
+    loadProject(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authRetry, authLoading, user, loading])
 
   useEffect(() => {
     versionDeepLinkApplied.current = false
@@ -4984,10 +5013,7 @@ export default function ProjectPage() {
   // On version switch: serve from cache if available, otherwise fetch fresh data.
   async function loadVersionData(versionId: string) {
     if (!versionId) return
-    if (cache.getVersion(versionId)) {
-      console.log('cache hit:', versionId)
-      return
-    }
+    if (cache.getVersion(versionId)) return
     // Cache miss — full project refresh to get this version's tracks + comments
     setVersionLoading(true)
     try { await loadProject() }
@@ -6721,6 +6747,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             currentTimeRef: player.currentTimeRef,
           }}
           sections={sections}
+          onSectionsChange={setSections}
           projectId={projectId}
           barDurationMs={projBarDurationMs}
           sectionLoopOn={player.sectionLoopOn}

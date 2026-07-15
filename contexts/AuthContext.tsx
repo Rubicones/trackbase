@@ -39,6 +39,11 @@ interface AuthContextValue extends AuthState {
   updateOnboarding: (key: keyof OnboardingData, value: boolean) => Promise<void>
 }
 
+// Profile fetch is retried on transient failure so the avatar/dropdown doesn't
+// vanish on a flaky first load. Backoff grows linearly: 300ms, 600ms.
+const PROFILE_FETCH_RETRIES = 3
+const PROFILE_FETCH_BACKOFF_MS = 300
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextValue>({
@@ -68,16 +73,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = getSupabaseClient()
 
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, username, display_name, avatar_color, onboarding')
-      .eq('id', userId)
-      .single()
-    if (!data) return null
-    return {
-      ...data,
-      onboarding: (data.onboarding as OnboardingData) ?? {},
+    // The profile query can transiently fail (network blip, token still refreshing,
+    // or a just-signed-up row the DB trigger hasn't materialised yet). Previously any
+    // failure returned null, leaving `profile` null so the avatar/dropdown silently
+    // disappeared until a manual reload. Retry a few times with backoff, and only give
+    // up early when the row genuinely does not exist (PostgREST "no rows" = PGRST116).
+    for (let attempt = 0; attempt < PROFILE_FETCH_RETRIES; attempt++) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_color, onboarding')
+        .eq('id', userId)
+        .single()
+
+      if (data) {
+        return { ...data, onboarding: (data.onboarding as OnboardingData) ?? {} }
+      }
+      if (error?.code === 'PGRST116') return null // definitively no such row
+
+      if (attempt < PROFILE_FETCH_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, PROFILE_FETCH_BACKOFF_MS * (attempt + 1)))
+      }
     }
+    return null
   }, [supabase])
 
   const refreshProfile = useCallback(async () => {

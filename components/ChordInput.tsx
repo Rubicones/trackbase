@@ -158,6 +158,7 @@ export function ChordInput({
   compact?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const chipRefs = useRef<Map<number, HTMLElement>>(new Map())
   const skipNextInputRef = useRef(false)
   const committingRef = useRef(false)
   const touchInputRef = useRef(false)
@@ -209,6 +210,29 @@ export function ChordInput({
   const focusCursor = useCallback((index: number) => {
     setCursorIndex(index)
     inputRef.current?.focus({ preventScroll: true })
+  }, [])
+
+  /**
+   * Nearest gap for a click that landed on the container background (not on a chip
+   * or an insert slot). Chips render in reading order (flex-wrap, ascending `order`),
+   * so we count how many come before the click — earlier row, or same row and left
+   * of the click — and insert there. Without this, background clicks between chords
+   * always fell through to `chords.length`, snapping the caret to the end.
+   */
+  const insertIndexFromPoint = useCallback((x: number, y: number): number => {
+    let insertAt = 0
+    for (let i = 0; i < chordsRef.current.length; i++) {
+      const el = chipRefs.current.get(i)
+      if (!el) { insertAt = i + 1; continue }
+      const r = el.getBoundingClientRect()
+      let before: boolean
+      if (r.bottom < y) before = true
+      else if (r.top > y) before = false
+      else before = x > r.left + r.width / 2
+      if (before) insertAt = i + 1
+      else break
+    }
+    return insertAt
   }, [])
 
   const deleteSelected = useCallback(() => {
@@ -489,7 +513,15 @@ export function ChordInput({
     }
     if (slot < chords.length) {
       slotNodes.push(
-        <span key={`chip-${slot}`} className={`inline-flex ${chipGap}`} style={{ order: slot * 2 + 1 }}>
+        <span
+          key={`chip-${slot}`}
+          ref={el => {
+            if (el) chipRefs.current.set(slot, el)
+            else chipRefs.current.delete(slot)
+          }}
+          className={`inline-flex ${chipGap}`}
+          style={{ order: slot * 2 + 1 }}
+        >
           <ChordChip
             chord={chords[slot]}
             compact={compact}
@@ -512,7 +544,7 @@ export function ChordInput({
         }`}
         onClick={e => {
           if (disabled) return
-          if (e.target === e.currentTarget) focusCursor(chords.length)
+          if (e.target === e.currentTarget) focusCursor(insertIndexFromPoint(e.clientX, e.clientY))
         }}
       >
         {slotNodes}

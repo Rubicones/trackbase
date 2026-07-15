@@ -11,7 +11,7 @@ import { TbMenuButton } from '@/components/design/TbButton'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { Spinner } from '@/components/ui/Spinner'
 import type { Section, Version, Project, ProjectResource } from '@/lib/types'
-import { buildChordTimeline, findActiveChordGlobalIndex } from '@/lib/chords'
+import { buildChordTimeline, findActiveChordGlobalIndex, formatBarDuration } from '@/lib/chords'
 import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { sortMobileVersions } from '@/lib/versionSort'
 import { VersionListName } from '@/components/VersionListName'
@@ -40,7 +40,48 @@ export type ReadingModePlayer = {
 
 type ChordView = 'big' | 'list'
 
+/** Section notes are capped server-side (see PUT /api/sections/[id]). */
+const NOTE_MAX_LEN = 40
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Inline, editable section comment for the rehearsal list view. Keeps a local draft
+ * while focused so live parent updates don't clobber typing, and commits on blur or
+ * Enter — only when the trimmed value actually changed.
+ */
+function SectionNoteEditor({ note, onSave }: { note: string; onSave: (value: string) => void }) {
+  const [draft, setDraft] = useState(note)
+  const [focused, setFocused] = useState(false)
+
+  useEffect(() => {
+    if (!focused) setDraft(note)
+  }, [note, focused])
+
+  function commit() {
+    const trimmed = draft.trim().slice(0, NOTE_MAX_LEN)
+    if (trimmed === note.trim()) return
+    onSave(trimmed)
+  }
+
+  return (
+    <input
+      value={draft}
+      maxLength={NOTE_MAX_LEN}
+      onChange={e => setDraft(e.target.value)}
+      onClick={e => e.stopPropagation()}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit() }}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+        else if (e.key === 'Escape') { setDraft(note); e.currentTarget.blur() }
+      }}
+      placeholder="Add a comment…"
+      aria-label="Section comment"
+      className="w-full bg-transparent text-[10px] leading-none text-muted-foreground placeholder:text-muted-foreground/40 outline-none focus:text-foreground border-b border-transparent focus:border-border/60 py-1 transition-colors"
+    />
+  )
+}
 
 function fmt(secs: number): string {
   const s = Math.floor(secs)
@@ -251,10 +292,13 @@ export function ReadingMode({
   isCounting,
   onToggleMetronome,
   onToggleCountdown,
+  onSectionsChange,
 }: {
   project: Project
   player: ReadingModePlayer
   sections: Section[]
+  /** Optional — enables inline section-comment editing in the list view. */
+  onSectionsChange?: (updater: (prev: Section[]) => Section[]) => void
   versions: Version[]
   activeVersionId: string
   onVersionChange: (id: string) => void
@@ -520,6 +564,16 @@ export function ReadingMode({
     player.seek(ratio * player.duration)
   }
 
+  function saveSectionNote(sectionId: string, noteRaw: string) {
+    const note = noteRaw.trim().slice(0, NOTE_MAX_LEN) || null
+    onSectionsChange?.(prev => prev.map(s => (s.id === sectionId ? { ...s, note } : s)))
+    fetch(`/api/sections/${sectionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    }).catch(() => {})
+  }
+
   const isLoadingTracks = player.total > 0 && player.loaded < player.total
   const awaitingPlayback = player.total > 0 && !player.playbackReady
 
@@ -743,48 +797,64 @@ export function ReadingMode({
                 const isCurrent = section.id === currentSection?.id
                 const chords = timeline.filter(t => t.sectionId === section.id)
                 return (
-                  <button
+                  <div
                     key={section.id}
-                    type="button"
-                    onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
-                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition ${
-                      isCurrent ? 'bg-lime/[0.06]' : 'hover:bg-surface/40'
-                    }`}
+                    className={`transition ${isCurrent ? 'bg-lime/[0.06]' : ''}`}
                   >
-                    <span
-                      className={`tb-section-name text-[9px] font-bold uppercase tracking-widest w-16 shrink-0 pt-0.5 ${
-                        isCurrent ? 'text-lime' : 'text-muted-foreground'
-                      }`}
+                    <button
+                      type="button"
+                      onClick={() => player.seek((section.start_bar * barDurationMs) / 1000 + 0.001)}
+                      className="w-full flex items-start gap-3 px-4 pt-3 pb-1.5 text-left transition hover:bg-surface/40"
                     >
-                      {sectionLabel(section)}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap gap-1">
-                        {chords.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        ) : chords.map(c => (
-                          <span
-                            key={c.sectionChordIndex}
-                            className={`text-[10px] px-1.5 py-0.5 border ${
-                              c.globalIndex === displayChordIndex
-                                ? 'bg-lime text-primary-foreground border-lime'
-                                : 'border-border text-foreground'
-                            }`}
-                          >
-                            {c.name}
-                          </span>
-                        ))}
-                      </div>
-                      {section.note?.trim() && (
-                        <div className="text-[10px] text-muted-foreground mt-1.5">
-                          {section.note}
+                      <span
+                        className={`tb-section-name text-[9px] font-bold uppercase tracking-widest w-16 shrink-0 pt-0.5 ${
+                          isCurrent ? 'text-lime' : 'text-muted-foreground'
+                        }`}
+                      >
+                        {sectionLabel(section)}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap gap-1">
+                          {chords.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : chords.map(c => {
+                            const isActiveChord = c.globalIndex === displayChordIndex
+                            const showDuration = Math.abs(c.duration - 1) >= 0.001
+                            return (
+                              <span
+                                key={c.sectionChordIndex}
+                                className={`inline-flex items-center gap-1 text-[10px] px-2 py-1 border ${
+                                  isActiveChord
+                                    ? 'bg-lime text-primary-foreground border-lime'
+                                    : 'border-border text-foreground'
+                                }`}
+                              >
+                                <span className="leading-none">{c.name}</span>
+                                {showDuration && (
+                                  <span
+                                    className={`text-[8px] font-mono leading-none ${
+                                      isActiveChord ? 'text-primary-foreground/80' : 'text-muted-foreground'
+                                    }`}
+                                  >
+                                    {formatBarDuration(c.duration)}
+                                  </span>
+                                )}
+                              </span>
+                            )
+                          })}
                         </div>
-                      )}
+                      </div>
+                      <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 pt-0.5">
+                        {sectionStartTime(section.start_bar)}
+                      </span>
+                    </button>
+                    <div className="pl-[92px] pr-4 pb-2.5">
+                      <SectionNoteEditor
+                        note={section.note ?? ''}
+                        onSave={value => saveSectionNote(section.id, value)}
+                      />
                     </div>
-                    <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0 pt-0.5">
-                      {sectionStartTime(section.start_bar)}
-                    </span>
-                  </button>
+                  </div>
                 )
               })}
             </div>

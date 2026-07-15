@@ -48,7 +48,7 @@ function formatDuration(ms: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-import { formatChordsDisplay } from '@/lib/chords'
+import { parseChordsString, formatBarDuration } from '@/lib/chords'
 interface PreviewProject {
   id: string
   name: string
@@ -626,11 +626,34 @@ export function StructurePreviewPanel({
                           {sectionLabel(section).toUpperCase()}
                         </span>
                         <div className="min-w-0">
-                          <span className="text-muted-foreground font-mono text-left whitespace-normal break-words leading-relaxed block">
-                            {formatChordsDisplay(section.chords)}
-                          </span>
+                          {(() => {
+                            const chords = parseChordsString(section.chords)
+                            if (chords.length === 0) {
+                              return <span className="text-xs text-muted-foreground">—</span>
+                            }
+                            return (
+                              <div className="flex flex-wrap gap-1">
+                                {chords.map((c, i) => {
+                                  const showDuration = Math.abs(c.duration - 1) >= 0.001
+                                  return (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center gap-1 text-[10px] px-2 py-1 border border-border text-foreground"
+                                    >
+                                      <span className="leading-none">{c.name}</span>
+                                      {showDuration && (
+                                        <span className="text-[8px] font-mono leading-none text-muted-foreground">
+                                          {formatBarDuration(c.duration)}
+                                        </span>
+                                      )}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })()}
                           {section.note?.trim() && (
-                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                            <div className="text-[10px] text-muted-foreground mt-1.5">
                               {section.note}
                             </div>
                           )}
