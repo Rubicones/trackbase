@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, BellOff, UserPlus, AtSign, Check } from 'lucide'
+import { Bell, UserPlus, AtSign, Check } from 'lucide'
 import { trackEvent } from '@/lib/analytics'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { TbModal } from '@/components/design/TbModal'
@@ -26,26 +26,37 @@ export function PushPermissionModal({
 }) {
   const [phase, setPhase] = useState<ModalPhase>('prompt')
   const [enabling, setEnabling] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (open) setPhase('prompt')
+    if (open) {
+      setPhase('prompt')
+      setError('')
+      setEnabling(false)
+    }
   }, [open])
 
   const handleEnable = useCallback(async () => {
     setEnabling(true)
+    setError('')
     try {
-      const permission = await Notification.requestPermission()
-      if (permission === 'granted') {
-        await subscribeToPush()
-        markPermissionGranted()
-        trackEvent('push_enabled')
-        setPhase('success')
-        onSubscribed?.()
-        setTimeout(onClose, 1500)
-      } else {
+      // Permission may already be granted from an earlier visit — subscribeToPush
+      // handles that and re-syncs the existing browser subscription to the server.
+      await subscribeToPush()
+      markPermissionGranted()
+      trackEvent('push_enabled')
+      setPhase('success')
+      onSubscribed?.()
+      window.setTimeout(onClose, 1200)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not enable notifications'
+      console.error('[push] enable failed:', err)
+      if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
         markPermissionDenied()
         trackEvent('push_declined', { reason: 'denied' })
         setPhase('denied')
+      } else {
+        setError(message)
       }
     } finally {
       setEnabling(false)
@@ -102,15 +113,19 @@ export function PushPermissionModal({
             </p>
           )}
 
+          {error && phase === 'prompt' && (
+            <p className="text-xs text-destructive/90 mb-4 m-0 leading-relaxed">{error}</p>
+          )}
+
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <TbButton variant="ghost" className="w-full sm:w-auto" onClick={handleLater}>
+            <TbButton variant="ghost" className="w-full sm:w-auto" onClick={handleLater} disabled={enabling}>
               Maybe later
             </TbButton>
             <TbButton
               variant="primary"
               className="w-full sm:w-auto"
-              onClick={handleEnable}
-              disabled={enabling}
+              onClick={() => void handleEnable()}
+              disabled={enabling || phase === 'denied'}
             >
               {enabling ? 'Enabling…' : 'Enable notifications'}
             </TbButton>

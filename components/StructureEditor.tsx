@@ -243,7 +243,7 @@ function NamePickerPortal({
         <button type="button" onClick={onCancel} className="size-5 grid place-items-center text-muted-foreground hover:text-foreground" aria-label="Close">×</button>
       </div>
       <div className="p-3 space-y-3">
-        <div>
+        <div data-tour="structure-section-name">
           <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1.5">Section</div>
           {customMode ? (
             <div className="space-y-2">
@@ -601,7 +601,7 @@ export function SectionEditPopover({
       </div>
 
       <div className="p-3 space-y-3">
-          <div>
+          <div data-tour="structure-section-name">
             <div className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1.5">Section</div>
             {customMode ? (
               <div className="space-y-2">
@@ -646,7 +646,7 @@ export function SectionEditPopover({
             </div>
           )}
 
-          <div>
+          <div data-tour="structure-chords">
             <div className="flex items-center justify-between mb-1">
               <div className="text-[9px] uppercase tracking-widest text-muted-foreground">
                 Chords
@@ -658,6 +658,7 @@ export function SectionEditPopover({
               {audioTracks.length > 0 && !trackPickerOpen && (
                 <button
                   type="button"
+                  data-tour="structure-detect-chords"
                   disabled={detectingChords}
                   onClick={() => {
                     setSelectedTrackIds(new Set())
@@ -714,7 +715,7 @@ export function SectionEditPopover({
             )}
           </div>
 
-          <div>
+          <div data-tour="structure-performance-note">
             <div className="flex items-center justify-between mb-1">
               <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Performance note</div>
               {noteFocused && (
@@ -931,6 +932,9 @@ export default function StructureOverlay({
   waveformBounds, currentTimeMs = 0,
   currentTimeRef, playing = false,
   onSeek, compact = false, seekEnabled = true,
+  tourOpenFirstSection = false,
+  onNamingChange,
+  onActiveEditChange,
 }: {
   project: Project
   versionId: string
@@ -949,6 +953,12 @@ export default function StructureOverlay({
   compact?: boolean
   /** False while tracks are still loading — disables ruler/structure scrub. */
   seekEnabled?: boolean
+  /** Feature tour: open the first section popover once a section exists. */
+  tourOpenFirstSection?: boolean
+  /** Feature tour: true while the name picker is open after a drag. */
+  onNamingChange?: (naming: boolean) => void
+  /** Feature tour: true while a section edit popover is open. */
+  onActiveEditChange?: (open: boolean) => void
 }) {
   const [selMode, setSelMode] = useState<SelMode>('idle')
   const [selStart, setSelStart] = useState<number | null>(null)
@@ -968,6 +978,35 @@ export default function StructureOverlay({
   activeEditRef.current = activeEdit
 
   const audioTracks = tracks.filter(t => t.file_type !== 'midi')
+
+  // Feature tour: open first section so chords / detect / notes anchors exist
+  useEffect(() => {
+    if (!tourOpenFirstSection || !editMode || compact || activeEdit) return
+    const first = sections[0]
+    const el = stripRef.current
+    if (!first || !el) return
+    const rect = el.getBoundingClientRect()
+    const { totalBars: bars } = getBarMath(project, totalDurationMs)
+    const leftFrac = first.start_bar / Math.max(1, bars)
+    const widthFrac = (first.end_bar - first.start_bar) / Math.max(1, bars)
+    setActiveEdit({
+      sectionId: first.id,
+      cellPos: {
+        top: rect.top,
+        left: rect.left + leftFrac * rect.width,
+        width: Math.max(40, widthFrac * rect.width),
+        height: rect.height,
+      },
+    })
+  }, [tourOpenFirstSection, editMode, compact, sections, activeEdit, project, totalDurationMs])
+
+  useEffect(() => {
+    onNamingChange?.(selMode === 'naming')
+  }, [selMode, onNamingChange])
+
+  useEffect(() => {
+    onActiveEditChange?.(activeEdit != null)
+  }, [activeEdit, onActiveEditChange])
 
   // Reset when leaving edit mode
   useEffect(() => {
@@ -1614,6 +1653,7 @@ export default function StructureOverlay({
             {/* Structure row */}
             <div
               ref={stripRef}
+              data-tour={editMode && !compact ? 'structure-add-section' : undefined}
               onMouseDown={handleStripMouseDown}
               className={`relative overflow-hidden shrink-0 ${editMode ? 'bg-lime-soft/30' : 'bg-lime-soft/40'}`}
               style={{ height: RIBBON_H, cursor: stripCursor }}

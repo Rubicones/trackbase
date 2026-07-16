@@ -15,6 +15,19 @@ import { barDurationSecFor, contentBarsFor } from '@/lib/trackEdit'
 const MAX_SEGMENTS = 256
 const MAX_CLIPS_PER_SEGMENT = 512
 const MAX_BAR = 100_000
+/** Finest bar subdivision accepted from clients (matches trackEdit MIN_EDIT_BAR_UNIT). */
+const MIN_BAR_UNIT = 0.25
+
+function isQuarterBarMultiple(n: number): boolean {
+  return Number.isFinite(n) && Math.abs(n * 4 - Math.round(n * 4)) < 1e-6
+}
+
+function parseBarNumber(raw: unknown, min: number): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null
+  if (raw < min - 1e-9 || raw > MAX_BAR) return null
+  if (!isQuarterBarMultiple(raw)) return null
+  return Math.round(raw * 4) / 4
+}
 
 function parseSegments(raw: unknown): RenderEditSegment[] | null {
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SEGMENTS) return null
@@ -22,23 +35,25 @@ function parseSegments(raw: unknown): RenderEditSegment[] | null {
   for (const s of raw) {
     if (typeof s !== 'object' || s === null) return null
     const { startBar, clips } = s as { startBar?: unknown; clips?: unknown }
-    if (!Number.isInteger(startBar) || (startBar as number) < 0 || (startBar as number) > MAX_BAR) return null
+    const parsedStart = parseBarNumber(startBar, 0)
+    if (parsedStart == null) return null
     if (!Array.isArray(clips) || clips.length === 0 || clips.length > MAX_CLIPS_PER_SEGMENT) return null
     const parsedClips = []
     for (const c of clips) {
       if (typeof c !== 'object' || c === null) return null
       const { srcBar, lenBars } = c as { srcBar?: unknown; lenBars?: unknown }
-      if (!Number.isInteger(srcBar) || (srcBar as number) < 0 || (srcBar as number) > MAX_BAR) return null
-      if (!Number.isInteger(lenBars) || (lenBars as number) < 1 || (lenBars as number) > MAX_BAR) return null
-      parsedClips.push({ srcBar: srcBar as number, lenBars: lenBars as number })
+      const parsedSrc = parseBarNumber(srcBar, 0)
+      const parsedLen = parseBarNumber(lenBars, MIN_BAR_UNIT)
+      if (parsedSrc == null || parsedLen == null) return null
+      parsedClips.push({ srcBar: parsedSrc, lenBars: parsedLen })
     }
-    segments.push({ startBar: startBar as number, clips: parsedClips })
+    segments.push({ startBar: parsedStart, clips: parsedClips })
   }
   // Segments must not overlap on the timeline.
   const sorted = [...segments].sort((a, b) => a.startBar - b.startBar)
   let cursor = 0
   for (const seg of sorted) {
-    if (seg.startBar < cursor) return null
+    if (seg.startBar < cursor - 1e-9) return null
     cursor = seg.startBar + seg.clips.reduce((sum, c) => sum + c.lenBars, 0)
     if (cursor > MAX_BAR) return null
   }

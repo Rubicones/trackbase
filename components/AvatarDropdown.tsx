@@ -1,294 +1,152 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { getSupabaseClient } from '@/lib/supabase/client'
-import { setAuthCookies } from '@/lib/auth/cookies'
 import { avatarInitials } from '@/lib/avatarTheme'
-import { Button } from '@/components/ui/button'
+import { DESIGN_THEMES, useDesignTheme } from '@/lib/design-theme'
 import { UserAvatar } from '@/components/ui/avatar'
 import { ThemePicker } from '@/components/design/ThemePicker'
 import { TbMenuButton } from '@/components/design/TbButton'
-import { Spinner } from '@/components/ui/Spinner'
+import { PreferencesModal } from '@/components/PreferencesModal'
 
-type ActiveSection = null | 'email' | 'username'
+function ThemeSwatches({ colors, size = 10 }: { colors: string[]; size?: number }) {
+  return (
+    <span className="flex gap-px shrink-0" aria-hidden>
+      {colors.map((c, i) => (
+        <span
+          key={i}
+          className="border border-border/50"
+          style={{ width: size, height: size, background: c }}
+        />
+      ))}
+    </span>
+  )
+}
 
 export function AvatarDropdown() {
-  const router = useRouter()
-  const { user, profile, signOut, refreshProfile } = useAuth()
+  const { profile } = useAuth()
+  const { theme } = useDesignTheme()
   const [open, setOpen] = useState(false)
-  const [activeSection, setActiveSection] = useState<ActiveSection>(null)
+  const [themeOpen, setThemeOpen] = useState(false)
+  const [prefsOpen, setPrefsOpen] = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
-
-  const [newUsername, setNewUsername] = useState('')
-  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'saving' | 'saved'>('idle')
-  const usernameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const [newEmail, setNewEmail] = useState('')
-  const [emailStatus, setEmailStatus] = useState<'idle' | 'saving' | 'sent' | 'error'>('idle')
-  const [emailError, setEmailError] = useState('')
 
   useEffect(() => {
     if (!open) return
     function handler(e: MouseEvent) {
       if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
         setOpen(false)
-        setActiveSection(null)
+        setThemeOpen(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  function openSection(s: ActiveSection) {
-    setActiveSection(s)
-    if (s === 'username') {
-      setNewUsername(profile?.username ?? '')
-      setUsernameStatus('idle')
-    }
-    if (s === 'email') {
-      setNewEmail(user?.email ?? '')
-      setEmailStatus('idle')
-      setEmailError('')
-    }
-  }
-
-  useEffect(() => {
-    if (activeSection !== 'username') return
-    if (usernameDebounce.current) clearTimeout(usernameDebounce.current)
-    const clean = newUsername.trim().toLowerCase()
-    if (!clean || clean === profile?.username) { setUsernameStatus('idle'); return }
-    if (!/^[a-z0-9_]{3,20}$/.test(clean)) { setUsernameStatus('invalid'); return }
-
-    setUsernameStatus('checking')
-    usernameDebounce.current = setTimeout(async () => {
-      const res = await fetch(`/api/auth/username-check?username=${encodeURIComponent(clean)}`)
-      const { available } = await res.json()
-      setUsernameStatus(available ? 'available' : 'taken')
-    }, 500)
-    return () => { if (usernameDebounce.current) clearTimeout(usernameDebounce.current) }
-  }, [newUsername, activeSection, profile?.username])
-
-  async function handleSaveUsername() {
-    const clean = newUsername.trim().toLowerCase()
-    if (!clean || clean === profile?.username || usernameStatus !== 'available') return
-    setUsernameStatus('saving')
-    try {
-      const supabase = getSupabaseClient()
-      const { error: profileErr } = await supabase.from('profiles').update({ username: clean }).eq('id', user!.id)
-      if (profileErr) throw profileErr
-      const { error: metaErr } = await supabase.auth.updateUser({ data: { username: clean } })
-      if (metaErr) throw metaErr
-      const { data: { session } } = await supabase.auth.refreshSession()
-      if (session) {
-        void setAuthCookies(session)
-      }
-      await refreshProfile()
-      setUsernameStatus('saved')
-      setTimeout(() => { setActiveSection(null); setUsernameStatus('idle') }, 1000)
-    } catch (err) {
-      setUsernameStatus('idle')
-      console.error(err)
-    }
-  }
-
-  async function handleSaveEmail() {
-    const trimmed = newEmail.trim()
-    if (!trimmed || trimmed === user?.email) return
-    setEmailStatus('saving')
-    setEmailError('')
-    try {
-      const supabase = getSupabaseClient()
-      const { error } = await supabase.auth.updateUser({ email: trimmed })
-      if (error) throw error
-      setEmailStatus('sent')
-    } catch (err) {
-      setEmailStatus('error')
-      setEmailError(err instanceof Error ? err.message : 'Failed to update email')
-    }
-  }
-
-  async function handleSignOut() {
-    setOpen(false)
-    await signOut()
-    router.replace('/auth')
-  }
-
   if (!profile) return null
 
   const triggerInitials = avatarInitials(profile.username, 'user')
+  const currentTheme = DESIGN_THEMES.find(t => t.id === theme) ?? DESIGN_THEMES[0]
 
   return (
-    <div ref={dropRef} className="relative font-display">
-      <button
-        type="button"
-        aria-label="Account menu"
-        aria-expanded={open}
-        onClick={() => { setOpen(o => !o); if (open) setActiveSection(null) }}
-        className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase hover:border-lime transition-colors"
-      >
-        {triggerInitials}
-      </button>
+    <>
+      <div ref={dropRef} className="relative font-mono">
+        <button
+          type="button"
+          aria-label="Account menu"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(o => !o)
+            if (open) setThemeOpen(false)
+          }}
+          className="size-8 border border-border bg-surface-2 grid place-items-center text-[10px] font-bold uppercase hover:border-lime transition-colors"
+        >
+          {triggerInitials}
+        </button>
 
-      {open && (
-        <div className="absolute right-0 top-[calc(100%+8px)] z-100 w-[288px] border border-border bg-popover shadow-2xl">
-          <div className="px-3 py-3 border-b border-border">
-            <div className="flex items-center gap-3 min-w-0">
-              <UserAvatar seed={profile.username} size={40} kind="user" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground m-0 truncate">@{profile.username}</p>
-                <p className="text-xs text-muted-foreground m-0 mt-0.5 truncate">{user?.email}</p>
+        {open && (
+          <div className="absolute right-0 top-[calc(100%+8px)] z-100 w-[280px] border border-border bg-popover shadow-2xl">
+            <div className="px-3 py-2 border-b border-border">
+              <div className="flex items-center gap-2 min-w-0">
+                <UserAvatar seed={profile.username} size={24} kind="user" />
+                <p className="text-[11px] text-foreground m-0 truncate">
+                  @{profile.username}
+                </p>
               </div>
             </div>
-          </div>
 
-          <MenuRow
-            icon={<EmailIcon />}
-            label="Change email"
-            active={activeSection === 'email'}
-            onClick={() => openSection(activeSection === 'email' ? null : 'email')}
-          />
-          {activeSection === 'email' && (
-            <div className="px-3 pb-3 space-y-2 border-b border-border">
-              <input
-                value={newEmail}
-                onChange={e => setNewEmail(e.target.value)}
-                type="email"
-                autoFocus
-                disabled={emailStatus === 'saving' || emailStatus === 'sent'}
-                className="flex h-9 w-full border border-border bg-transparent px-3 py-1 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-              />
-              {emailStatus === 'sent' && (
-                <p className="text-[11px] text-online m-0">Confirmation link sent to new address</p>
-              )}
-              {emailStatus === 'error' && (
-                <p className="text-[11px] text-destructive m-0">{emailError}</p>
-              )}
-              {emailStatus !== 'sent' && (
-                <>
-                  <p className="text-[11px] text-muted-foreground m-0 leading-snug">
-                    A confirmation link will be sent to the new email address.
-                  </p>
-                  <Button
-                    size="sm"
-                    className="uppercase tracking-widest text-[10px] font-bold"
-                    onClick={handleSaveEmail}
-                    disabled={emailStatus === 'saving' || !newEmail.trim() || newEmail.trim() === user?.email}
-                  >
-                    {emailStatus === 'saving' ? 'Sending…' : 'Save'}
-                  </Button>
-                </>
-              )}
+            <div className="flex flex-col overflow-hidden">
+              <TbMenuButton
+                className="gap-2.5"
+                onClick={() => {
+                  setOpen(false)
+                  setThemeOpen(false)
+                  setPrefsOpen(true)
+                }}
+              >
+                <span className="text-muted-foreground shrink-0"><PrefsIcon /></span>
+                Preferences
+              </TbMenuButton>
+
+              <TbMenuButton
+                active={themeOpen}
+                className="gap-2.5"
+                aria-expanded={themeOpen}
+                onClick={() => setThemeOpen(o => !o)}
+              >
+                <span className="text-muted-foreground shrink-0"><ThemeIcon /></span>
+                <span className="flex-1 min-w-0">Theme</span>
+                <ThemeSwatches colors={currentTheme.swatches} size={9} />
+                <span
+                  className={`text-muted-foreground shrink-0 transition-transform duration-150 ${themeOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                >
+                  <ChevronIcon />
+                </span>
+              </TbMenuButton>
             </div>
-          )}
 
-          <MenuRow
-            icon={<AtIcon />}
-            label="Edit username"
-            active={activeSection === 'username'}
-            onClick={() => openSection(activeSection === 'username' ? null : 'username')}
-          />
-          {activeSection === 'username' && (
-            <div className="px-3 pb-3 space-y-2 border-b border-border">
-              <div className="relative">
-                <input
-                  value={newUsername}
-                  onChange={e => setNewUsername(e.target.value)}
-                  autoFocus
-                  maxLength={20}
-                  disabled={usernameStatus === 'saving' || usernameStatus === 'saved'}
-                  className={`flex h-9 w-full border bg-transparent px-3 py-1 pr-8 text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 ${
-                    usernameStatus === 'available' || usernameStatus === 'saved'
-                      ? 'border-online'
-                      : usernameStatus === 'taken' || usernameStatus === 'invalid'
-                        ? 'border-destructive'
-                        : 'border-border'
-                  }`}
-                />
-                <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                  {usernameStatus === 'checking' && <Spinner size={11} tone="muted" />}
-                  {(usernameStatus === 'available' || usernameStatus === 'saved') && (
-                    <span className="text-[11px] text-online">✓</span>
-                  )}
-                  {(usernameStatus === 'taken' || usernameStatus === 'invalid') && (
-                    <span className="text-[11px] text-destructive">✗</span>
-                  )}
-                </div>
+            {themeOpen && (
+              <div className="border-t border-border max-h-[300px] overflow-y-auto">
+                <ThemePicker />
               </div>
-              {usernameStatus === 'saved' ? (
-                <p className="text-[11px] text-online m-0">Username updated!</p>
-              ) : (
-                <>
-                  <p className="text-[11px] text-muted-foreground m-0">
-                    {usernameStatus === 'invalid' ? '3–20 chars, letters/numbers/underscore'
-                      : usernameStatus === 'taken' ? 'Already taken'
-                      : '3–20 characters'}
-                  </p>
-                  <Button
-                    size="sm"
-                    className="uppercase tracking-widest text-[10px] font-bold"
-                    onClick={handleSaveUsername}
-                    disabled={usernameStatus !== 'available'}
-                  >
-                    {usernameStatus === 'saving' ? 'Saving…' : 'Save'}
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="px-3 py-2 border-b border-border">
-            <p className="text-[9px] uppercase tracking-widest text-muted-foreground m-0">Theme</p>
+            )}
           </div>
-          <ThemePicker />
+        )}
+      </div>
 
-          <div className="border-t border-border flex flex-col overflow-hidden">
-            <TbMenuButton danger className="gap-2.5" onClick={handleSignOut}>
-              <span className="text-muted-foreground shrink-0"><LogoutIcon /></span>
-              Sign out
-            </TbMenuButton>
-          </div>
-        </div>
-      )}
-    </div>
+      {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
+    </>
   )
 }
 
-function MenuRow({ icon, label, active, onClick }: {
-  icon: React.ReactNode; label: string; active?: boolean; onClick: () => void
-}) {
-  return (
-    <TbMenuButton active={active} className="gap-2.5" onClick={onClick}>
-      <span className="text-muted-foreground shrink-0">{icon}</span>
-      {label}
-    </TbMenuButton>
-  )
-}
-
-function EmailIcon() {
+function PrefsIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <rect x="1" y="3" width="12" height="8" rx="1" stroke="currentColor" strokeWidth="1" />
-      <path d="M1 5l6 4 6-4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <circle cx="7" cy="7" r="2" stroke="currentColor" strokeWidth="1" />
+      <path
+        d="M7 1.5v1.2M7 11.3V12.5M1.5 7h1.2M11.3 7H12.5M2.9 2.9l.85.85M10.25 10.25l.85.85M2.9 11.1l.85-.85M10.25 3.75l.85-.85"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
 
-function AtIcon() {
+function ThemeIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1" />
-      <path d="M9.5 7a2.5 2.5 0 0 0 2.5 2.5V7a5 5 0 1 0-2 4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1" />
+      <path d="M7 2a5 5 0 0 1 0 10V2z" fill="currentColor" opacity="0.35" />
     </svg>
   )
 }
 
-function LogoutIcon() {
+function ChevronIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-      <path d="M5 12H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-      <path d="M9 10l3-3-3-3M12 7H5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

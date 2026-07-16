@@ -739,7 +739,7 @@ function DiffTransportBar({
       </span>
 
       {/* Listen toggle: current target vs. cherry-picked result */}
-      <div className="flex border border-border shrink-0">
+      <div data-tour="cherrypick-listen" className="flex border border-border shrink-0">
         {([['a', targetName], ['b', 'Result preview']] as const).map(([mode, label], i) => {
           const active = abMode === mode
           return (
@@ -1107,7 +1107,10 @@ export function CherryPickDiff({
     <div className="flex flex-1 overflow-hidden bg-background">
 
       {/* ── Left: changes list (replaces the versions/resources toolbar) ── */}
-      <aside className="w-[240px] shrink-0 flex flex-col h-full overflow-hidden border-r border-border bg-surface/30">
+      <aside
+        data-tour="cherrypick-diff-list"
+        className="w-[240px] shrink-0 flex flex-col h-full overflow-hidden border-r border-border bg-surface/30"
+      >
         <div className="px-4 pt-4 pb-3 border-b border-border shrink-0">
           <SectionLabel>{'// Cherry-pick apply'}</SectionLabel>
           <div className="mt-2 text-[13px] font-display font-bold uppercase tracking-tight text-foreground truncate" title={branchName}>

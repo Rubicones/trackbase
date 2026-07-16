@@ -388,6 +388,30 @@ export default function PianoRollEditor({
     return () => obs.disconnect()
   }, [])
 
+  // Keep wheel gestures inside the piano roll (don't scroll the track list / page).
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.stopPropagation()
+      const { scrollTop, scrollHeight, clientHeight, scrollLeft, scrollWidth, clientWidth } = el
+      const atTop = scrollTop <= 0
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1
+      const atLeft = scrollLeft <= 0
+      const atRight = scrollLeft + clientWidth >= scrollWidth - 1
+      const dy = e.deltaY
+      const dx = e.deltaX
+      const blockedY = (dy < 0 && atTop) || (dy > 0 && atBottom)
+      const blockedX = (dx < 0 && atLeft) || (dx > 0 && atRight)
+      // Dominant axis: block page scroll-chaining when that axis is exhausted.
+      if (Math.abs(dy) >= Math.abs(dx) ? blockedY : blockedX) {
+        e.preventDefault()
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [loading, loadError])
+
   // ── Close instrument menu on outside click ─────────────────────────────────
   useEffect(() => {
     if (!showInstrumentMenu) return
@@ -1014,7 +1038,10 @@ export default function PianoRollEditor({
   }
 
   return (
-    <div className="bg-surface border-y border-border h-[460px] flex flex-col select-none relative z-[2]">
+    <div
+      className="bg-surface border-y border-border h-[460px] flex flex-col select-none relative z-[2]"
+      style={{ overscrollBehavior: 'contain' }}
+    >
       {/* ── Toolbar ── */}
       <div className="h-10 shrink-0 bg-card border-b border-border flex items-center px-3 gap-2.5">
         {/* Mode toggle */}
@@ -1134,7 +1161,13 @@ export default function PianoRollEditor({
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div
           ref={scrollContainerRef}
-          style={{ flex: 1, overflow: 'scroll', minHeight: 0, minWidth: 0 }}
+          style={{
+            flex: 1,
+            overflow: 'scroll',
+            minHeight: 0,
+            minWidth: 0,
+            overscrollBehavior: 'contain',
+          }}
         >
           <div style={{ display: 'flex', flexShrink: 0, width: NOTE_HEIGHT + gridCanvasW }}>
             {/* Key column + corner */}

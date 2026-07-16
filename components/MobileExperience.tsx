@@ -129,7 +129,7 @@ export function MobileExperience({
               className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
             >
               <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
-                Bands
+                Spaces
               </Link>
               <span className="text-border shrink-0">/</span>
               <Link

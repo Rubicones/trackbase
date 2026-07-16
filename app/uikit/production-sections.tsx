@@ -646,7 +646,7 @@ export function ProductionShellSection() {
         <Tile>
           <Caption className="mb-2">Breadcrumb entity names</Caption>
           <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
-            <span className="shrink-0">Bands</span>
+            <span className="shrink-0">Spaces</span>
             <span className="text-border shrink-0">/</span>
             <span className="tb-type-name text-xs truncate min-w-0">Test! Test!</span>
             <span className="text-border shrink-0">/</span>

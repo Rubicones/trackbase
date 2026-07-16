@@ -1636,9 +1636,9 @@ export default function CompareMode({
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  return (
+    return (
     <>
-    <div className="flex flex-col flex-1 overflow-hidden bg-background">
+    <div data-tour="compare-waveforms" className="flex flex-col flex-1 overflow-hidden bg-background">
 
       {/* A/B Compare bar */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-surface/40 shrink-0 flex-wrap">
@@ -1647,8 +1647,8 @@ export default function CompareMode({
         </span>
 
         {/* A/B/Both tabs */}
-        <div className="flex border border-border shrink-0">
-          {(['a', 'both', 'b'] as const).map((mode, i) => {
+        <div className="flex border border-border shrink-0" data-tour="compare-ab-transport">
+          {(['a', 'both', 'b'] as const).map((mode) => {
             const label = mode === 'both' ? 'Sync' : mode.toUpperCase()
             const isActive = audio.abMode === mode
             return (
@@ -1683,6 +1683,7 @@ export default function CompareMode({
         {/* Loop toggle */}
         <button
           type="button"
+          data-tour="compare-loop"
           onClick={toggleLoop}
           className={`text-[9px] uppercase tracking-widest px-2.5 py-1 border transition shrink-0 ${
             loopOn

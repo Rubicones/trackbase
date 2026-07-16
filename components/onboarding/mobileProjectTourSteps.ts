@@ -10,17 +10,27 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
     {
       target: 'mobile-mode-switch',
       title: 'Rehearsal & Mixer',
-      body: 'Rehearsal is for practice — big sections, lyrics, and transport controls. Mixer is where you upload tracks, record, and leave comments.',
+      body: 'Rehearsal is for practice — big chords, lyrics, and transport. Mixer is where you upload tracks, record, and leave comments.',
     },
     {
       target: 'mobile-rehearse-sections',
-      title: 'Jump to any section',
-      body: 'Tap a section to seek there instantly. Loop a section from the transport bar when you want to drill a part.',
+      title: 'Now playing',
+      body: 'See the current section and chord up large, or switch to List to tap any section and jump there instantly.',
+    },
+    {
+      target: 'mobile-rehearse-chord-view',
+      title: 'Now or List',
+      body: '◆ Now keeps the current chord huge while you play. ≡ List shows every section with its chords — tap a row to seek.',
+    },
+    {
+      target: 'mobile-rehearse-lyrics',
+      title: 'Lyrics teleprompter',
+      body: 'Turn on Autoscroll and nudge the speed so lyrics rise with the song while you rehearse.',
     },
     {
       target: 'mobile-rehearse-transport',
       title: 'Play along',
-      body: 'Use play/pause, metronome, count-in, and section loop while you rehearse. The waveform shows your full mix.',
+      body: 'Play/pause plus Metro, Count-in, and Loop for the current structure section — drill a part until it sticks.',
     },
     {
       target: 'mobile-mode-switch',
@@ -58,11 +68,6 @@ export function buildMobileProjectTourSteps(getMode: () => 'rehearse' | 'mixer')
       target: 'mobile-mixer-comments',
       title: 'Comments on the waveform',
       body: 'Turn on comment mode, then tap and drag on any waveform to mark a time range for the band — same as desktop.',
-    },
-    {
-      target: 'mobile-chat',
-      title: 'Band chat',
-      body: 'Tap Chat above the mode switch to message the band, @mention teammates, and link versions or time ranges on a track — from rehearsal or mixer.',
     },
   ]
 }

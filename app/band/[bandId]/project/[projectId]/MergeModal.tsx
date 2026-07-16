@@ -13,6 +13,7 @@ import { MergePreviewLoading, MergeTargetSelector } from '@/components/merge/Mer
 import { useMergePreview } from '@/components/merge/useMergePreview'
 import { mergeTargetVersions } from '@/lib/versionSort'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 export type {
   MergePreview,
@@ -87,9 +88,10 @@ function autoMergeBadge(item: AutoMergeItem): string {
 }
 
 function MergeShell({ children, wide }: { children: ReactNode; wide?: boolean }) {
+  useBodyScrollLock(true)
   return (
-    <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-      <div className={`w-full border border-border bg-popover shadow-2xl flex flex-col max-h-[90vh] ${wide ? 'max-w-[660px]' : 'max-w-md'}`}>
+    <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 overflow-y-auto overscroll-none">
+      <div className={`w-full border border-border bg-popover shadow-2xl flex flex-col max-h-[90vh] my-auto ${wide ? 'max-w-[660px]' : 'max-w-md'}`}>
         {children}
       </div>
     </div>
@@ -520,6 +522,7 @@ function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onCli
   return (
     <button
       type="button"
+      data-tour="cherrypick-entry-button"
       disabled={disabled}
       onClick={onClick}
       className="hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-lime hover:text-lime transition disabled:opacity-50 disabled:pointer-events-none"

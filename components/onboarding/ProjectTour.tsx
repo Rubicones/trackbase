@@ -15,6 +15,8 @@ export interface TourStep {
   /** When set, Next stays disabled until this returns true (e.g. user switches tab). */
   gate?: () => boolean
   gateHint?: string
+  /** When true, advance automatically the moment gate() becomes true. */
+  autoAdvance?: boolean
 }
 
 type Placement = 'above' | 'below' | 'left' | 'right' | 'center'
@@ -184,12 +186,14 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
   const [gateOpen, setGateOpen] = useState(true)
   const cardRef = useRef<HTMLDivElement>(null)
   const tourStartedRef = useRef(false)
+  const autoAdvancedForStepRef = useRef<number | null>(null)
 
   useEffect(() => setMounted(true), [])
 
   useEffect(() => {
     if (!show) {
       tourStartedRef.current = false
+      autoAdvancedForStepRef.current = null
       return
     }
     if (!tourStartedRef.current) {
@@ -197,6 +201,7 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
       trackEvent('tour_started')
     }
     setStepIndex(0)
+    autoAdvancedForStepRef.current = null
   }, [show])
 
   useEffect(() => {
@@ -271,18 +276,6 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
     return () => window.removeEventListener('resize', handleResize)
   }, [show, stepIndex, visibleSteps, goToStep])
 
-  useEffect(() => {
-    const step = visibleSteps[stepIndex]
-    if (!show || !step?.gate) {
-      setGateOpen(true)
-      return
-    }
-    const tick = () => setGateOpen(step.gate!())
-    tick()
-    const id = window.setInterval(tick, 200)
-    return () => window.clearInterval(id)
-  }, [show, stepIndex, visibleSteps])
-
   const handleNext = useCallback(() => {
     const step = visibleSteps[stepIndex]
     if (step?.gate && !step.gate()) return
@@ -293,6 +286,32 @@ export function ProjectTour({ projectName, show, steps = ALL_STEPS, onFinish, on
       onFinish()
     }
   }, [stepIndex, visibleSteps, onFinish])
+
+  useEffect(() => {
+    const step = visibleSteps[stepIndex]
+    if (!show || !step?.gate) {
+      setGateOpen(true)
+      return
+    }
+    const tick = () => {
+      const open = step.gate!()
+      setGateOpen(open)
+      if (open && step.autoAdvance && autoAdvancedForStepRef.current !== stepIndex) {
+        autoAdvancedForStepRef.current = stepIndex
+        window.requestAnimationFrame(() => {
+          if (stepIndex < visibleSteps.length - 1) {
+            setStepIndex(i => i + 1)
+          } else {
+            trackEvent('tour_completed')
+            onFinish()
+          }
+        })
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, 200)
+    return () => window.clearInterval(id)
+  }, [show, stepIndex, visibleSteps, onFinish])
 
   const handleBack = useCallback(() => {
     if (stepIndex > 0) setStepIndex(i => i - 1)

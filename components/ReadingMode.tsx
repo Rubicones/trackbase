@@ -212,7 +212,7 @@ function VersionDropdown({
 
 function ChordViewToggle({ view, onChange }: { view: ChordView; onChange: (v: ChordView) => void }) {
   return (
-    <div className="flex border border-border shrink-0">
+    <div className="flex border border-border shrink-0" data-tour="mobile-rehearse-chord-view">
       <button
         type="button"
         onClick={() => onChange('big')}
@@ -596,7 +596,7 @@ export function ReadingMode({
               className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden"
             >
               <Link href="/dashboard" className="hover:text-foreground no-underline shrink-0">
-                Bands
+                Spaces
               </Link>
               <span className="text-border shrink-0">/</span>
               <Link
@@ -865,6 +865,7 @@ export function ReadingMode({
             enough that scrolling the page reveals a larger lyrics viewport. */}
         <section
           ref={lyricsSectionRef}
+          data-tour="mobile-rehearse-lyrics"
           className={
             scrollableRehearsal
               ? 'flex flex-col border-t border-border'

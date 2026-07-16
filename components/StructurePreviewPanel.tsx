@@ -13,6 +13,7 @@ import { SongRoadmap, fetchProjectRoadmap } from '@/components/SongRoadmap'
 import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
 import type { ProjectRoadmap } from '@/lib/roadmap'
 import { trackEvent } from '@/lib/analytics'
+import { lockBodyScroll } from '@/lib/bodyScrollLock'
 import type { Project, Section } from '@/lib/types'
 import { getVersionDisplayName } from '@/lib/versionSort'
 
@@ -146,19 +147,18 @@ export function StructurePreviewPanel({
   useEffect(() => {
     if (projectId) {
       setMounted(true)
-      document.body.style.overflow = 'hidden'
+      const unlock = lockBodyScroll()
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setPanelOpen(true))
       })
+      return () => { unlock() }
     } else {
       setPanelOpen(false)
       const t = setTimeout(() => {
         setMounted(false)
-        document.body.style.overflow = ''
       }, 250)
       return () => clearTimeout(t)
     }
-    return () => { document.body.style.overflow = '' }
   }, [projectId])
 
   useEffect(() => {

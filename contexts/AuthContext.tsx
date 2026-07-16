@@ -16,6 +16,14 @@ export interface OnboardingData {
   project_tour_skipped?: boolean
   mobile_project_tour_completed?: boolean
   mobile_project_tour_skipped?: boolean
+  compare_tour_completed?: boolean
+  compare_tour_skipped?: boolean
+  structure_tour_completed?: boolean
+  structure_tour_skipped?: boolean
+  cherrypick_tour_completed?: boolean
+  cherrypick_tour_skipped?: boolean
+  track_edit_tour_completed?: boolean
+  track_edit_tour_skipped?: boolean
 }
 
 export interface Profile {

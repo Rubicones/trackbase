@@ -63,14 +63,13 @@ async function markOnboardingComplete() {
 function OnboardingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user, loading: authLoading, refreshProfile } = useAuth()
+  const { user, loading: authLoading, refreshProfile, updateOnboarding } = useAuth()
   const [step, setStep] = useState<OnboardingStep>(1)
   const [username, setUsername] = useState('')
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle')
   const usernameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [bandMode, setBandMode] = useState<BandMode>('create')
-  const [bandName, setBandName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [codeStatus, setCodeStatus] = useState<CodeStatus>('idle')
   const [codeInfo, setCodeInfo] = useState<{
@@ -85,6 +84,8 @@ function OnboardingContent() {
   const [submitting, setSubmitting] = useState(false)
   const [savingUsername, setSavingUsername] = useState(false)
   const [error, setError] = useState('')
+  /** Set before markOnboardingComplete so the effect doesn't race to /dashboard. */
+  const finishingRef = useRef(false)
 
   useEffect(() => {
     if (authLoading) return
@@ -95,6 +96,10 @@ function OnboardingContent() {
 
     void syncSupabaseSessionFromCookies()
 
+    // While finishing create/join, navigation is handled by handleFinish — don't
+    // bounce through /dashboard (that flashes the spaces welcome modal).
+    if (finishingRef.current) return
+
     if (user.user_metadata?.onboarding_complete) {
       router.replace('/dashboard')
       return
@@ -103,6 +108,7 @@ function OnboardingContent() {
     fetch('/api/me/setup-status')
       .then(r => r.json())
       .then(async status => {
+        if (finishingRef.current) return
         if (status.band_count > 0) {
           await markOnboardingComplete()
           await refreshProfile()
@@ -205,14 +211,21 @@ function OnboardingContent() {
   }
 
   async function handleFinish() {
+    const resolvedUsername =
+      username.trim().toLowerCase() ||
+      (typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : '') ||
+      'user'
+    const personalSpaceName = `${resolvedUsername}'s space`
+
     const canSubmit =
       bandMode === 'create'
-        ? bandName.trim().length > 0
+        ? true
         : codeStatus === 'valid' && codeInfo !== null
     if (!canSubmit || submitting || !user) return
 
     setSubmitting(true)
     setError('')
+    finishingRef.current = true
     try {
       if (!user.user_metadata?.username) {
         await persistUsername(username)
@@ -222,11 +235,13 @@ function OnboardingContent() {
         const bandRes = await fetch('/api/bands', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: bandName.trim() }),
+          body: JSON.stringify({ name: personalSpaceName }),
         })
-        if (!bandRes.ok) throw new Error((await bandRes.json()).error ?? 'Band creation failed')
+        if (!bandRes.ok) throw new Error((await bandRes.json()).error ?? 'Space creation failed')
         const { band } = await bandRes.json()
         trackEvent('onboarding_band_created')
+        // Skipped the spaces list — don't show that welcome if we ever hit /dashboard.
+        await updateOnboarding('dashboard_seen', true)
         await markOnboardingComplete()
         await refreshProfile()
         router.replace(`/band/${band.id}`)
@@ -244,6 +259,7 @@ function OnboardingContent() {
       await refreshProfile()
       router.replace('/dashboard')
     } catch (err) {
+      finishingRef.current = false
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setSubmitting(false)
@@ -254,7 +270,7 @@ function OnboardingContent() {
   if (!user) return <AuthLoadingScreen label="Redirecting to sign in" />
 
   const canProceed =
-    bandMode === 'create' ? bandName.trim().length > 0 : codeStatus === 'valid'
+    bandMode === 'create' ? true : codeStatus === 'valid'
 
   const usernameFieldStatus =
     usernameStatus === 'checking'
@@ -275,14 +291,14 @@ function OnboardingContent() {
           : undefined
 
   const stepTitle =
-    step === 1 ? 'Choose your theme' : step === 2 ? 'Pick a username' : 'Create or join a band'
+    step === 1 ? 'Choose your theme' : step === 2 ? 'Pick a username' : 'Create or join a space'
 
   const stepSubtitle =
     step === 1
       ? 'Pick a look for sonicdesk — you can change this anytime in settings.'
       : step === 2
         ? 'This is how your bandmates will see you across sonicdesk'
-        : 'Start your own collective or request to join one with an invite code.'
+        : 'Start your own space, or request to join one with an invite code.'
 
   return (
     <AuthShell>
@@ -371,8 +387,8 @@ function OnboardingContent() {
                   selected={bandMode === 'create'}
                   onClick={() => setBandMode('create')}
                   icon={<PlusIcon />}
-                  title="Create a band"
-                  description="Start fresh and share your invite code"
+                  title="Create a personal space"
+                  description="Your own workspace to get started — invite collaborators whenever you're ready."
                 />
                 <AuthModeCard
                   selected={bandMode === 'join'}
@@ -384,21 +400,7 @@ function OnboardingContent() {
                 />
               </div>
 
-              {bandMode === 'create' ? (
-                <div className="space-y-1.5">
-                  <AuthFieldLabel htmlFor="band-name">Band name</AuthFieldLabel>
-                  <AuthInput
-                    id="band-name"
-                    value={bandName}
-                    onChange={e => setBandName(e.target.value.slice(0, 50))}
-                    placeholder="e.g. The Noise"
-                    autoFocus
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleFinish()
-                    }}
-                  />
-                </div>
-              ) : (
+              {bandMode === 'join' && (
                 <div className="space-y-1.5">
                   <AuthFieldLabel htmlFor="invite-code">Invite code</AuthFieldLabel>
                   <div className="relative">
@@ -433,7 +435,7 @@ function OnboardingContent() {
                 {submitting
                   ? 'Setting up…'
                   : bandMode === 'create'
-                    ? 'Create band & continue →'
+                    ? 'Create space & continue →'
                     : codeInfo?.pending_request
                       ? 'Continue to dashboard →'
                       : 'Send join request →'}

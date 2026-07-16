@@ -14,7 +14,7 @@ export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?:
         <SonicdeskWordmark href="/dashboard" />
         <div className="hidden md:flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground min-w-0">
           <Link href="/dashboard" className="hover:text-foreground transition-colors no-underline text-muted-foreground">
-            Bands
+            Spaces
           </Link>
           {crumbs && (
             <>

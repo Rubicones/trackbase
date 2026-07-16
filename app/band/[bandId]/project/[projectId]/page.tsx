@@ -19,6 +19,14 @@ import {
 import { allTracksLoaded } from '@/lib/transportStatus'
 import { barOffsetToMs } from '@/lib/commentTimecodes'
 import { ProjectTour, TourHelpButton } from '@/components/onboarding/ProjectTour'
+import {
+  COMPARE_TOUR_STEPS,
+  buildStructureTourSteps,
+  featureTourCompletedKey,
+  featureTourSkippedKey,
+  isFeatureTourPending,
+  type FeatureTourId,
+} from '@/components/onboarding/featureTourSteps'
 import CompareMode from '@/components/CompareMode'
 import { CommentTooltip } from '@/components/CommentTooltip'
 import { CherryPickDiff } from '@/components/merge/CherryPickDiff'
@@ -46,6 +54,7 @@ import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChatDock } from '@/components/chat/ChatDock'
 import { TrackGainSlider } from '@/components/TrackGainSlider'
@@ -87,6 +96,7 @@ import {
 import {
   TrackEditArea,
   TrackEditConfirmModal,
+  TrackEditShortcutsModal,
   PencilIcon,
   CheckIcon,
   XIcon,
@@ -2956,7 +2966,7 @@ const TrackRow = React.memo(function TrackRow({
       ref={trackRowRef}
       data-track-row={track.id}
       className={`relative flex group/track hover:bg-surface/30 overflow-visible border-b border-border ${
-        showColorPicker ? 'z-30' : ''
+        showColorPicker ? 'z-30' : editMode ? 'z-20' : ''
       } ${
         resourceFilterActive ? 'bg-lime-soft/40 ring-1 ring-inset ring-lime/40' : ''
       }`}
@@ -3140,9 +3150,11 @@ const TrackRow = React.memo(function TrackRow({
             </button>
           )}
           {!isMidi && !compact && track.file_size_bytes ? (
-            <span className="ml-auto text-[8px] font-mono text-muted-foreground tabular-nums pr-2">
-              {fmtSize(track.file_size_bytes)}
-            </span>
+            <HoverTooltip label="Stored as FLAC. Download exports a larger WAV.">
+              <span className="ml-auto text-[8px] font-mono text-muted-foreground tabular-nums pr-2 cursor-help">
+                {fmtSize(track.file_size_bytes)}
+              </span>
+            </HoverTooltip>
           ) : null}
         </div>
 
@@ -4072,6 +4084,7 @@ function NewBranchModal({ onConfirm, onCancel }: { onConfirm: (n: string, tag: s
   const isDark = resolvedTheme === 'dark'
   const [step, setStep] = useState<'name' | 'tag'>('name')
   const [name, setName] = useState('')
+  useBodyScrollLock(true)
   const [nameError, setNameError] = useState('')
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [customTag, setCustomTag] = useState('')
@@ -4190,6 +4203,7 @@ function DeleteVersionModal({
   onCancel: () => void
   onConfirm: () => void
 }) {
+  useBodyScrollLock(true)
   return (
     <div
       className="fixed inset-0 z-[8000] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
@@ -4270,7 +4284,7 @@ function MobilePortraitSkeleton() {
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <SonicdeskWordmark href="/dashboard" className="text-sm" />
           <nav className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground min-w-0 overflow-hidden">
-            <span className="shrink-0">Bands</span>
+            <span className="shrink-0">Spaces</span>
             <span className="text-border shrink-0">/</span>
             <Skeleton width={60} height={10} className="shrink-0" />
             <span className="text-border shrink-0">/</span>
@@ -4655,6 +4669,16 @@ export default function ProjectPage() {
   const [sections, setSections] = useState<Section[]>([])
   const [editStructure, setEditStructure] = useState(false)
   const [showTour, setShowTour] = useState(false)
+  const [featureTour, setFeatureTour] = useState<FeatureTourId | null>(null)
+  const [structureNaming, setStructureNaming] = useState(false)
+  const structureNamingRef = useRef(false)
+  structureNamingRef.current = structureNaming
+  const [structureSectionOpen, setStructureSectionOpen] = useState(false)
+  const structureSectionOpenRef = useRef(false)
+  structureSectionOpenRef.current = structureSectionOpen
+  /** Frozen when the structure tour starts — existing vs empty strip. */
+  const [structureTourHadSections, setStructureTourHadSections] = useState(false)
+  const [trackEditShortcutsOpen, setTrackEditShortcutsOpen] = useState(false)
   const [showMobileTour, setShowMobileTour] = useState(false)
 
   // ── Compare mode ──────────────────────────────────────────────────────────
@@ -5009,6 +5033,65 @@ export default function ProjectPage() {
       return () => clearTimeout(t)
     }
   }, [loading, profile, isMobilePortrait])
+
+  const mainTourOpen = showTour || showMobileTour
+  const structureTourSteps = useMemo(
+    () => buildStructureTourSteps({
+      hasExistingSections: structureTourHadSections,
+      hasDragEnded: () => structureNamingRef.current || sections.length > 0,
+      hasSection: () => sections.length > 0,
+      hasSectionOpen: () => structureSectionOpenRef.current,
+    }),
+    [structureTourHadSections, sections.length],
+  )
+
+  function finishFeatureTour(id: FeatureTourId, skipped: boolean) {
+    setFeatureTour(null)
+    if (id === 'structure') {
+      setStructureSectionOpen(false)
+      setStructureTourHadSections(false)
+    }
+    void updateOnboarding(skipped ? featureTourSkippedKey(id) : featureTourCompletedKey(id), true)
+    trackEvent(skipped ? 'feature_tour_skipped' : 'feature_tour_completed', { tour: id })
+  }
+
+  // Compare tour — first time the user opens Compare (already open; no splash / open step)
+  useEffect(() => {
+    if (!isDesktopMixer || !compareActive || !profile || mainTourOpen || featureTour) return
+    if (!isFeatureTourPending(profile.onboarding, 'compare')) return
+    setFeatureTour('compare')
+  }, [isDesktopMixer, compareActive, profile, mainTourOpen, featureTour])
+
+  // Structure tour — first time Edit structure is on
+  useEffect(() => {
+    if (!isDesktopMixer || !editStructure || !profile || mainTourOpen || featureTour) return
+    if (!isFeatureTourPending(profile.onboarding, 'structure')) return
+    setStructureTourHadSections(sections.length > 0)
+    setStructureSectionOpen(false)
+    setFeatureTour('structure')
+  }, [isDesktopMixer, editStructure, profile, mainTourOpen, featureTour, sections.length])
+
+  // Track edit — shortcuts modal instead of a spotlight tour
+  useEffect(() => {
+    if (!isDesktopMixer || !editSession || !profile || mainTourOpen || featureTour) return
+    if (!isFeatureTourPending(profile.onboarding, 'track_edit')) return
+    setTrackEditShortcutsOpen(true)
+  }, [isDesktopMixer, editSession, profile, mainTourOpen, featureTour])
+
+  useEffect(() => {
+    if (!editSession) setTrackEditShortcutsOpen(false)
+  }, [editSession])
+
+  // Leaving a feature mid-tour marks it skipped so Finish/skip persist correctly
+  useEffect(() => {
+    if (featureTour === 'compare' && !compareActive) finishFeatureTour('compare', true)
+  }, [featureTour, compareActive])
+  useEffect(() => {
+    if (featureTour === 'structure' && !editStructure) {
+      setStructureNaming(false)
+      finishFeatureTour('structure', true)
+    }
+  }, [featureTour, editStructure])
 
   // On version switch: serve from cache if available, otherwise fetch fresh data.
   async function loadVersionData(versionId: string) {
@@ -7187,39 +7270,50 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   >
                     + New Version
                   </button>
-                  {versions.length >= 2 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const other = versions.find(v => v.id !== activeVersionId)
-                        if (!other) return
-                        const enterCompare = () => {
-                          setCompareVersionBId(other.id)
-                          setCompareActive(true)
-                          if (playerRef.current.playing) playerRef.current.pause()
-                        }
-                        if (editSessionRef.current) {
-                          setEditConfirm({
-                            title: 'Unsaved track edits',
-                            body: `Discard all changes to “${editingTrackNameRef.current}”? Compare mode ends the edit session.`,
-                            cancelLabel: 'Keep editing',
-                            confirmLabel: 'Discard changes',
-                            danger: true,
-                            action: () => {
-                              discardEditSession()
-                              enterCompare()
-                            },
-                          })
-                          return
-                        }
-                        enterCompare()
-                      }}
-                      className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition"
-                    >
-                      <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
-                      Compare
-                    </button>
-                  )}
+                  {(() => {
+                    const canCompare = versions.length >= 2
+                    const compareBtn = (
+                      <button
+                        type="button"
+                        data-tour="compare-button"
+                        disabled={!canCompare}
+                        onClick={() => {
+                          const other = versions.find(v => v.id !== activeVersionId)
+                          if (!other) return
+                          const enterCompare = () => {
+                            setCompareVersionBId(other.id)
+                            setCompareActive(true)
+                            if (playerRef.current.playing) playerRef.current.pause()
+                          }
+                          if (editSessionRef.current) {
+                            setEditConfirm({
+                              title: 'Unsaved track edits',
+                              body: `Discard all changes to “${editingTrackNameRef.current}”? Compare mode ends the edit session.`,
+                              cancelLabel: 'Keep editing',
+                              confirmLabel: 'Discard changes',
+                              danger: true,
+                              action: () => {
+                                discardEditSession()
+                                enterCompare()
+                              },
+                            })
+                            return
+                          }
+                          enterCompare()
+                        }}
+                        className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition disabled:opacity-40 disabled:pointer-events-none disabled:hover:border-border disabled:hover:text-muted-foreground"
+                      >
+                        <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                        Compare
+                      </button>
+                    )
+                    if (canCompare) return compareBtn
+                    return (
+                      <HoverTooltip label="Create a version first to compare">
+                        <span className="inline-flex">{compareBtn}</span>
+                      </HoverTooltip>
+                    )
+                  })()}
                   {activeVersion?.type === 'branch' && (
                     <button
                       type="button"
@@ -7372,6 +7466,13 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               onSeek={player.seek}
               compact={isMobileLandscape}
               seekEnabled={waveformsInteractive}
+              tourOpenFirstSection={
+                featureTour === 'structure'
+                && !structureTourHadSections
+                && sections.length > 0
+              }
+              onNamingChange={setStructureNaming}
+              onActiveEditChange={setStructureSectionOpen}
             />
           )}
 
@@ -7810,6 +7911,30 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           updateOnboarding('project_tour_skipped', true)
         }}
       />
+
+      <ProjectTour
+        projectName={project?.name ?? 'this project'}
+        show={featureTour === 'compare' && isDesktopMixer}
+        steps={COMPARE_TOUR_STEPS}
+        onFinish={() => finishFeatureTour('compare', false)}
+        onSkip={() => finishFeatureTour('compare', true)}
+      />
+      <ProjectTour
+        projectName={project?.name ?? 'this project'}
+        show={featureTour === 'structure' && isDesktopMixer}
+        steps={structureTourSteps}
+        onFinish={() => finishFeatureTour('structure', false)}
+        onSkip={() => finishFeatureTour('structure', true)}
+      />
+
+      {trackEditShortcutsOpen && (
+        <TrackEditShortcutsModal
+          onDismiss={() => {
+            setTrackEditShortcutsOpen(false)
+            finishFeatureTour('track_edit', false)
+          }}
+        />
+      )}
 
       {masterEditModal && (
         <MasterEditConfirmModal

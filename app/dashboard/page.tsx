@@ -221,7 +221,7 @@ function NewBandModal({ onClose, onCreated }: {
 
   return (
     <TbModal onClose={onClose}>
-      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New band</p>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New space</p>
       <form onSubmit={handleCreate} className="flex flex-col gap-3">
         <TbInput
           value={name}
@@ -677,7 +677,7 @@ export default function DashboardPage() {
               ref={searchRef}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Find a band…"
+              placeholder="Find a space…"
               className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none text-foreground min-w-0"
             />
             <kbd className="hidden sm:inline text-[10px] uppercase tracking-widest text-muted-foreground/60 ml-2 shrink-0 border border-border px-1.5 py-0.5 bg-background">
@@ -705,7 +705,7 @@ export default function DashboardPage() {
               ))}
             </div>
             <TbButton variant="primary" onClick={openNewBandModal} className="h-10 px-4 shrink-0">
-              + New band
+              + New space
             </TbButton>
             <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
               Join band
@@ -738,7 +738,7 @@ export default function DashboardPage() {
         ) : (
           <>
             <div className="flex items-center justify-between mb-6">
-              <SectionLabel>{filteredBands.length} ACTIVE COLLECTIVE{filteredBands.length !== 1 ? 'S' : ''}</SectionLabel>
+              <SectionLabel>{filteredBands.length} ACTIVE SPACE{filteredBands.length !== 1 ? 'S' : ''}</SectionLabel>
               <div className="relative" ref={sortRef}>
                 <button
                   type="button"
@@ -799,7 +799,7 @@ export default function DashboardPage() {
                     className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-lime hover:bg-surface transition-colors min-h-[200px]"
                   >
                     <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-lime">+</div>
-                    <div className="font-display text-sm uppercase tracking-widest">Create new band</div>
+                    <div className="font-display text-sm uppercase tracking-widest">Create new space</div>
                     <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
                   </button>
                 )}

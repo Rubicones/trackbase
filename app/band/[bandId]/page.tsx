@@ -644,6 +644,7 @@ export default function BandPage() {
   const [inviteCopying, setInviteCopying] = useState(false)
   const [inviteCode, setInviteCode] = useState<string | null>(null)
   const [regeneratingCode, setRegeneratingCode] = useState(false)
+  const [showRegenerateCodeModal, setShowRegenerateCodeModal] = useState(false)
   const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(null)
   const [editingMember, setEditingMember] = useState<string | null>(null)
@@ -874,7 +875,7 @@ export default function BandPage() {
 
   async function handleRegenerateInviteCode() {
     if (myRole !== 'owner' || regeneratingCode) return
-    if (!window.confirm('Regenerate invite code? The old code will stop working immediately.')) return
+    setShowRegenerateCodeModal(false)
     setRegeneratingCode(true)
     try {
       const res = await fetch(`/api/bands/${bandId}/invite-code`, { method: 'POST' })
@@ -1694,7 +1695,7 @@ export default function BandPage() {
                 </p>
                 <button
                   type="button"
-                  onClick={handleRegenerateInviteCode}
+                  onClick={() => setShowRegenerateCodeModal(true)}
                   disabled={regeneratingCode}
                   className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
                 >
@@ -1797,7 +1798,30 @@ export default function BandPage() {
         right={<span className="uppercase tracking-widest hidden sm:inline">SYNC OK · 24MS</span>}
       />
 
-      {/* Modals */}
+      {showRegenerateCodeModal && (
+        <TbModal onClose={() => { if (!regeneratingCode) setShowRegenerateCodeModal(false) }}>
+          <p className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-2">
+            Regenerate invite code?
+          </p>
+          <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-5">
+            The current code will stop working immediately. Anyone still holding the old code
+            will need the new one to request access.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <TbButton onClick={() => setShowRegenerateCodeModal(false)} disabled={regeneratingCode}>
+              Cancel
+            </TbButton>
+            <TbButton
+              variant="danger"
+              onClick={handleRegenerateInviteCode}
+              disabled={regeneratingCode}
+            >
+              {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
+            </TbButton>
+          </div>
+        </TbModal>
+      )}
+
       {showNewProject && (
         <NewProjectModal
           bandId={bandId}

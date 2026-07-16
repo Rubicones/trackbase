@@ -4,9 +4,9 @@
  * Edit-mode waveform area for a single track row in the desktop mixer.
  *
  * Replaces the normal waveform clip while a track is in edit mode:
- *  - bar-snapped selection by dragging across the waveform
- *  - bar-snapped playhead placement by clicking
- *  - per-segment drag handles (top strip) to move segments
+ *  - grid-snapped selection by dragging across the waveform (1 / ½ / ¼ bar)
+ *  - grid-snapped playhead placement by clicking
+ *  - per-segment drag handles (top strip): click to select whole segment, drag to move
  *  - per-segment edge thumbs to trim or extend trimmed audio
  *  - right-click context menu + keyboard shortcuts for edit operations
  *
@@ -19,6 +19,8 @@ import { createPortal } from 'react-dom'
 import {
   type TrackEditSession,
   type EditSelection,
+  type EditGridStep,
+  EDIT_GRID_STEPS,
   canSplitAtBar,
   canRemoveSelection,
   clampSegmentStart,
@@ -26,9 +28,12 @@ import {
   clampSegmentEndEdge,
   segmentAtBar,
   segmentDisplays,
+  segmentEndBar,
   segmentLenBars,
   segmentWaveformBars,
   previewTrimmedSegment,
+  snapEditBar,
+  quantizeEditBar,
 } from '@/lib/trackEdit'
 import { waveformBarsCache } from '@/lib/waveformCache'
 import { WaveformBarsPlayhead } from '@/components/WaveformBars'
@@ -60,6 +65,85 @@ export function XIcon({ size = 10 }: { size?: number }) {
 }
 
 // ─── Confirm modal ────────────────────────────────────────────────────────────
+
+const EDIT_SHORTCUTS: { keys: string; label: string }[] = [
+  { keys: 'Drag selection', label: 'Select bars on a segment' },
+  { keys: 'Top thumb click', label: 'Select a whole sub-track' },
+  { keys: 'Top thumb drag', label: 'Move a sub-track' },
+  { keys: 'Edge thumbs', label: 'Trim or extend ends' },
+  { keys: 'Right-click', label: 'Open the edit menu' },
+  { keys: '⌘E', label: 'Separate at playhead' },
+  { keys: '⌘D', label: 'Duplicate selection' },
+  { keys: '⌘C / ⌘V', label: 'Copy / paste at playhead' },
+  { keys: '⌫', label: 'Remove selection' },
+  { keys: '⌘Z / ⌘⇧Z', label: 'Undo / redo' },
+]
+
+/** One-shot intro when entering track edit (replaces the old spotlight tour). */
+export function TrackEditShortcutsModal({
+  onDismiss,
+}: {
+  onDismiss: () => void
+}) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.stopPropagation()
+        onDismiss()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onDismiss])
+
+  if (!mounted) return null
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[8500] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-md border border-border bg-popover p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Track edit shortcuts"
+        onClick={e => e.stopPropagation()}
+      >
+        <p className="font-display text-lg uppercase tracking-tight text-foreground mb-2 m-0">
+          Edit a track
+        </p>
+        <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-4">
+          Trim, cut, duplicate, and rearrange audio in place. Right-click the edit area for the full menu — and drag a sub-track’s top thumb to move it on the timeline.
+        </p>
+        <ul className="m-0 mb-5 p-0 list-none space-y-1.5 border border-border bg-surface/40">
+          {EDIT_SHORTCUTS.map(row => (
+            <li
+              key={row.keys}
+              className="flex items-baseline justify-between gap-3 px-3 py-1.5 border-b border-border last:border-b-0"
+            >
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground shrink-0 font-mono">
+                {row.keys}
+              </span>
+              <span className="text-xs text-foreground text-right">{row.label}</span>
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="w-full inline-flex items-center justify-center text-[10px] uppercase tracking-widest px-3 py-2 border border-lime bg-lime text-primary-foreground font-display font-bold transition hover:opacity-90"
+        >
+          Got it
+        </button>
+      </div>
+    </div>,
+    document.body,
+  )
+}
 
 export function TrackEditConfirmModal({
   title,
@@ -214,6 +298,16 @@ const HANDLE_H = 7
 const TRIM_THUMB_W = 10
 const SEG_TOP_RADIUS = 4
 
+const GRID_STEP_LABELS: Record<EditGridStep, string> = {
+  1: '1',
+  0.5: '½',
+  0.25: '¼',
+}
+
+function formatBarCount(n: number): string {
+  return String(quantizeEditBar(n))
+}
+
 function TrimThumb({
   side,
   onMouseDown,
@@ -322,6 +416,11 @@ export function TrackEditArea({
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [gridStep, setGridStep] = useState<EditGridStep>(1)
+  const gridStepRef = useRef(gridStep)
+  gridStepRef.current = gridStep
+  const [gridAnchor, setGridAnchor] = useState<{ top: number; right: number } | null>(null)
+  const [gridPortalMounted, setGridPortalMounted] = useState(false)
 
   // Live drag previews
   const [movePreview, setMovePreview] = useState<{ segId: string; startBar: number } | null>(null)
@@ -367,13 +466,16 @@ export function TrackEditArea({
 
   const getPlayheadBar = useCallback((): number => {
     const t = currentTimeRef.current ?? 0
-    return Math.max(0, Math.floor(t / barDurSec + 1e-6))
+    const raw = barDurSec > 0 ? t / barDurSec : 0
+    return Math.max(0, snapEditBar(raw, gridStepRef.current))
   }, [currentTimeRef, barDurSec])
 
   // Focus the area when entering edit mode so shortcuts work immediately.
   useEffect(() => {
     containerRef.current?.focus()
   }, [session.trackId])
+
+  useEffect(() => setGridPortalMounted(true), [])
 
   useEffect(() => {
     const el = containerRef.current
@@ -385,6 +487,37 @@ export function TrackEditArea({
     setTimelineWidthPx(el.getBoundingClientRect().width)
     return () => ro.disconnect()
   }, [])
+
+  // Pin the grid control in a portal so it can paint over the structure bar
+  // and neighboring waveforms (track-list overflow would otherwise clip it).
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const update = () => {
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) {
+        setGridAnchor(null)
+        return
+      }
+      setGridAnchor({
+        top: rect.top - 22,
+        right: window.innerWidth - rect.right + 4,
+      })
+    }
+
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    window.addEventListener('resize', update)
+    // Capture scroll from the track list (and any ancestors).
+    window.addEventListener('scroll', update, true)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [session.trackId, rowH, labelW])
 
   const beginPointerInteraction = useCallback((kind: 'select' | 'move' | 'trim' | 'area') => {
     setActiveInteraction(kind)
@@ -439,12 +572,13 @@ export function TrackEditArea({
     containerRef.current?.focus()
     beginPointerInteraction('area')
     const exact = exactBarForClientX(e.clientX)
-    const seg = segmentAtBar(sessionRef.current.state, Math.floor(exact))
+    const step = gridStepRef.current
+    const seg = segmentAtBar(sessionRef.current.state, Math.max(0, exact - 1e-9))
     selDragRef.current = {
       startClientX: e.clientX,
       anchorExactBar: exact,
       segStartBar: seg?.startBar ?? -1,
-      segEndBar: seg ? seg.startBar + (seg.clips.reduce((s, c) => s + c.lenBars, 0)) : -1,
+      segEndBar: seg ? segmentEndBar(seg) : -1,
       active: false,
     }
 
@@ -458,11 +592,13 @@ export function TrackEditArea({
       }
       if (d.segStartBar < 0) return // drag started in silence — no selection
       const cur = exactBarForClientX(ev.clientX)
-      let a = Math.round(Math.min(d.anchorExactBar, cur))
-      let b = Math.round(Math.max(d.anchorExactBar, cur))
+      let a = snapEditBar(Math.min(d.anchorExactBar, cur), step)
+      let b = snapEditBar(Math.max(d.anchorExactBar, cur), step)
       // Clamp to the segment the drag started in (audio content only)
       a = Math.max(d.segStartBar, Math.min(d.segEndBar, a))
       b = Math.max(d.segStartBar, Math.min(d.segEndBar, b))
+      a = quantizeEditBar(a)
+      b = quantizeEditBar(b)
       const next = a < b ? { startBar: a, endBar: b } : null
       dragSelRef.current = next
       setDragSel(next)
@@ -476,8 +612,11 @@ export function TrackEditArea({
       endPointerInteraction()
       if (!d) return
       if (!d.active) {
-        // Plain click — move playhead to the start of the clicked bar, clear selection
-        const bar = Math.max(0, Math.min(totalBars, Math.floor(exactBarForClientX(ev.clientX))))
+        // Plain click — move playhead to the snapped grid point, clear selection
+        const bar = Math.max(
+          0,
+          Math.min(totalBars, snapEditBar(exactBarForClientX(ev.clientX), step)),
+        )
         dragSelRef.current = null
         setDragSel(null)
         onSelect(null)
@@ -493,13 +632,12 @@ export function TrackEditArea({
     window.addEventListener('mouseup', onUp)
   }, [applyStatus, exactBarForClientX, onSeekBar, onSelect, totalBars, beginPointerInteraction, endPointerInteraction])
 
-  // ── Segment move drag (handle) ───────────────────────────────────────────────
+  // ── Segment handle: click = select whole sub-track; drag = move ─────────────
   const handleSegmentHandleMouseDown = useCallback((e: React.MouseEvent, segId: string) => {
     if (e.button !== 0 || applyStatus === 'processing') return
     e.preventDefault()
     e.stopPropagation()
     containerRef.current?.focus()
-    beginPointerInteraction('move')
     const el = containerRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
@@ -511,12 +649,24 @@ export function TrackEditArea({
     const seg = sessionRef.current.state.segments.find(s => s.id === segId)
     if (!seg) return
     const origStart = seg.startBar
+    const segLen = segmentLenBars(seg)
     const startX = e.clientX
+    let moved = false
     let lastPreview = origStart
 
     const onMove = (ev: MouseEvent) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - startX) <= SELECT_THRESHOLD_PX) return
+        moved = true
+        beginPointerInteraction('move')
+      }
       const desired = origStart + (ev.clientX - startX) * barsPerPx
-      const clamped = clampSegmentStart(sessionRef.current.state, segId, desired)
+      const clamped = clampSegmentStart(
+        sessionRef.current.state,
+        segId,
+        desired,
+        gridStepRef.current,
+      )
       lastPreview = clamped
       setMovePreview({ segId, startBar: clamped })
     }
@@ -525,11 +675,19 @@ export function TrackEditArea({
       window.removeEventListener('mouseup', onUp)
       setMovePreview(null)
       endPointerInteraction()
-      if (lastPreview !== origStart) onMoveSegment(segId, lastPreview)
+      if (!moved) {
+        // Click — select every bar of this sub-track
+        onSelect({
+          startBar: quantizeEditBar(origStart),
+          endBar: quantizeEditBar(origStart + segLen),
+        })
+        return
+      }
+      if (Math.abs(lastPreview - origStart) > 1e-9) onMoveSegment(segId, lastPreview)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [applyStatus, barDurationMs, totalDurationMs, totalBars, onMoveSegment, beginPointerInteraction, endPointerInteraction])
+  }, [applyStatus, barDurationMs, totalDurationMs, totalBars, onMoveSegment, onSelect, beginPointerInteraction, endPointerInteraction])
 
   const handleTrimStartMouseDown = useCallback((e: React.MouseEvent, segId: string) => {
     if (e.button !== 0 || applyStatus === 'processing') return
@@ -549,6 +707,7 @@ export function TrackEditArea({
         segId,
         bar,
         sessionRef.current.contentBars,
+        gridStepRef.current,
       )
       lastPreview = clamped
       setTrimPreview({ segId, startBar: clamped })
@@ -558,7 +717,7 @@ export function TrackEditArea({
       window.removeEventListener('mouseup', onUp)
       setTrimPreview(null)
       endPointerInteraction()
-      if (lastPreview !== origStart) onTrimSegmentStart(segId, lastPreview)
+      if (Math.abs(lastPreview - origStart) > 1e-9) onTrimSegmentStart(segId, lastPreview)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -572,7 +731,7 @@ export function TrackEditArea({
     beginPointerInteraction('trim')
     const seg = sessionRef.current.state.segments.find(s => s.id === segId)
     if (!seg) return
-    const origEnd = seg.startBar + seg.clips.reduce((s, c) => s + c.lenBars, 0)
+    const origEnd = segmentEndBar(seg)
     let lastPreview = origEnd
 
     const onMove = (ev: MouseEvent) => {
@@ -582,6 +741,7 @@ export function TrackEditArea({
         segId,
         bar,
         sessionRef.current.contentBars,
+        gridStepRef.current,
       )
       lastPreview = clamped
       setTrimPreview({ segId, endBar: clamped })
@@ -591,7 +751,7 @@ export function TrackEditArea({
       window.removeEventListener('mouseup', onUp)
       setTrimPreview(null)
       endPointerInteraction()
-      if (lastPreview !== origEnd) onTrimSegmentEnd(segId, lastPreview)
+      if (Math.abs(lastPreview - origEnd) > 1e-9) onTrimSegmentEnd(segId, lastPreview)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -725,8 +885,12 @@ export function TrackEditArea({
 
   const barLines = useMemo(() => {
     const lines: React.ReactNode[] = []
-    for (let b = 1; b < totalBars; b++) {
-      const heavy = b % 4 === 0
+    const step: number = gridStep
+    // Draw every grid subdivision; weight bar / tact lines more heavily.
+    for (let b = step; b < totalBars; b = quantizeEditBar(b + step)) {
+      const onBar = Math.abs(b - Math.round(b)) < 1e-9
+      const heavy = onBar && Math.round(b) % 4 === 0
+      const medium = onBar && !heavy
       lines.push(
         <div
           key={b}
@@ -736,22 +900,25 @@ export function TrackEditArea({
             width: 0,
             borderLeft: heavy
               ? '1px solid color-mix(in srgb, var(--foreground) 22%, transparent)'
-              : '1px solid color-mix(in srgb, var(--foreground) 10%, transparent)',
+              : medium
+                ? '1px solid color-mix(in srgb, var(--foreground) 10%, transparent)'
+                : '1px solid color-mix(in srgb, var(--foreground) 6%, transparent)',
           }}
         />,
       )
     }
     return lines
-  }, [totalBars, fracForBar])
+  }, [totalBars, fracForBar, gridStep])
 
   return (
     <div
       ref={containerRef}
       data-no-resource-filter
+      data-tour="track-edit-area"
       tabIndex={0}
       role="application"
       aria-label="Track edit mode"
-      className="absolute top-0 bottom-0 right-0 z-[2] outline-none overflow-hidden"
+      className="absolute top-0 bottom-0 right-0 z-[2] outline-none overflow-visible"
       style={{
         left: labelW,
         minHeight: rowH,
@@ -763,6 +930,48 @@ export function TrackEditArea({
       onKeyDown={handleKeyDown}
       onContextMenu={handleContextMenu}
     >
+      {gridPortalMounted && gridAnchor && createPortal(
+        <div
+          className="fixed flex items-center gap-0.5 rounded border border-border bg-background p-0.5 shadow-md"
+          style={{
+            top: gridAnchor.top,
+            right: gridAnchor.right,
+            zIndex: 40,
+          }}
+          onMouseDown={e => e.stopPropagation()}
+          role="group"
+          aria-label="Edit grid"
+          data-tour="track-edit-grid"
+        >
+          <span className="px-1 text-[8px] uppercase tracking-widest text-muted-foreground">Grid</span>
+          {EDIT_GRID_STEPS.map(step => {
+            const active = gridStep === step
+            return (
+              <button
+                key={step}
+                type="button"
+                title={`${GRID_STEP_LABELS[step]} bar grid`}
+                aria-pressed={active}
+                onClick={e => {
+                  e.stopPropagation()
+                  setGridStep(step)
+                }}
+                className={`min-w-[22px] px-1 py-0.5 text-[9px] font-mono tabular-nums transition ${
+                  active
+                    ? 'bg-lime text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {GRID_STEP_LABELS[step]}
+              </button>
+            )
+          })}
+        </div>,
+        document.body,
+      )}
+
+      {/* Clip content inside the row */}
+      <div className="absolute inset-0 overflow-hidden">
       {/* Prominent bar grid */}
       {barLines}
 
@@ -820,9 +1029,9 @@ export function TrackEditArea({
               borderTopRightRadius: SEG_TOP_RADIUS,
             }}
           >
-            {/* Drag handle — move the whole segment; sits above side thumbs at the corner */}
+            {/* Top thumb — click selects the whole sub-track; drag moves it */}
             <div
-              title="Drag to move"
+              title="Click to select · Drag to move"
               onMouseDown={e => handleSegmentHandleMouseDown(e, d.id)}
               className="absolute top-0 left-0 right-0 z-[4] cursor-grab active:cursor-grabbing"
               style={{
@@ -864,8 +1073,10 @@ export function TrackEditArea({
                 style={{ top: HANDLE_H + 2, left: 3, lineHeight: '1.3' }}
               >
                 {moving && movePreview
-                  ? (movePreview.startBar === 0 ? 'Bar 1' : `Bar ${movePreview.startBar + 1}`)
-                  : `${layoutLen} bar${layoutLen !== 1 ? 's' : ''}`}
+                  ? (movePreview.startBar === 0
+                    ? 'Bar 1'
+                    : `Bar ${formatBarCount(movePreview.startBar + 1)}`)
+                  : `${formatBarCount(layoutLen)} bar${layoutLen !== 1 ? 's' : ''}`}
               </span>
             )}
           </div>
@@ -885,7 +1096,7 @@ export function TrackEditArea({
           }}
         >
           <span className="absolute top-[9px] left-1 text-[8px] font-mono tabular-nums text-lime bg-background/80 px-1 rounded">
-            {selection.endBar - selection.startBar} bar{selection.endBar - selection.startBar !== 1 ? 's' : ''}
+            {formatBarCount(selection.endBar - selection.startBar)} bar{selection.endBar - selection.startBar !== 1 ? 's' : ''}
           </span>
         </div>
       )}
@@ -943,6 +1154,7 @@ export function TrackEditArea({
           </button>
         </div>
       )}
+      </div>
 
       {/* Context menu */}
       {menu && (

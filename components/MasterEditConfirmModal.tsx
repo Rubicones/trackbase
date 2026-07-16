@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 export function MasterEditConfirmModal({
   onConfirm,
@@ -16,6 +17,7 @@ export function MasterEditConfirmModal({
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => setMounted(true), [])
+  useBodyScrollLock(mounted)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

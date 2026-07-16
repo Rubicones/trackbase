@@ -1,13 +1,13 @@
 /**
  * Non-destructive track edit session model.
  *
- * Everything here works in whole-bar units on the project timeline. A session
- * describes the edited track as a list of non-overlapping SEGMENTS; each
- * segment is a contiguous run of audio tiled by CLIPS that reference
- * bar-aligned ranges of the ORIGINAL source file. No audio is touched until
- * the user applies, at which point the segment list is rendered server-side
- * with ffmpeg into a single new file (leading/gap silence baked in,
- * start_bar reset to 0).
+ * Everything here works in bar units on the project timeline (whole bars by
+ * default; the UI can snap to 1/2 or 1/4 bar). A session describes the edited
+ * track as a list of non-overlapping SEGMENTS; each segment is a contiguous
+ * run of audio tiled by CLIPS that reference bar-aligned ranges of the
+ * ORIGINAL source file. No audio is touched until the user applies, at which
+ * point the segment list is rendered server-side with ffmpeg into a single
+ * new file (leading/gap silence baked in, start_bar reset to 0).
  *
  * Ableton-style semantics:
  *  - Separate splits a segment at the playhead into two segments.
@@ -21,11 +21,32 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Finest editable subdivision (1/4 bar). All stored bar values snap here. */
+export const MIN_EDIT_BAR_UNIT = 0.25
+
+export const EDIT_GRID_STEPS = [1, 0.5, 0.25] as const
+export type EditGridStep = (typeof EDIT_GRID_STEPS)[number]
+
+/** Snap a bar position to the given grid step (default: finest unit). */
+export function snapEditBar(bar: number, gridStep: number = MIN_EDIT_BAR_UNIT): number {
+  if (!Number.isFinite(bar) || gridStep <= 0) return 0
+  return Math.round(bar / gridStep) * gridStep
+}
+
+/** Quantize to the finest edit unit to avoid float drift. */
+export function quantizeEditBar(bar: number): number {
+  return snapEditBar(bar, MIN_EDIT_BAR_UNIT)
+}
+
+function nearlyEqual(a: number, b: number, eps = 1e-9): boolean {
+  return Math.abs(a - b) < eps
+}
+
 /** Bar-aligned reference into the original source file. */
 export interface EditClip {
   /** Bar offset into the source file's own bar grid (0 = file start). */
   srcBar: number
-  /** Length in bars (≥ 1). */
+  /** Length in bars (≥ MIN_EDIT_BAR_UNIT). */
   lenBars: number
 }
 
@@ -122,12 +143,17 @@ function sortSegments(segments: EditSegment[]): EditSegment[] {
 function normalizeClips(clips: EditClip[]): EditClip[] {
   const out: EditClip[] = []
   for (const c of clips) {
-    if (c.lenBars <= 0) continue
+    const lenBars = quantizeEditBar(c.lenBars)
+    if (lenBars <= 0) continue
+    const srcBar = quantizeEditBar(c.srcBar)
     const prev = out[out.length - 1]
-    if (prev && prev.srcBar + prev.lenBars === c.srcBar) {
-      out[out.length - 1] = { srcBar: prev.srcBar, lenBars: prev.lenBars + c.lenBars }
+    if (prev && nearlyEqual(prev.srcBar + prev.lenBars, srcBar)) {
+      out[out.length - 1] = {
+        srcBar: prev.srcBar,
+        lenBars: quantizeEditBar(prev.lenBars + lenBars),
+      }
     } else {
-      out.push({ ...c })
+      out.push({ srcBar, lenBars })
     }
   }
   return out
@@ -261,9 +287,10 @@ export function sessionRedo(session: TrackEditSession): TrackEditSession {
 
 /** Split the segment containing `bar` into two independent segments. */
 export function splitAtBar(state: TrackEditState, bar: number): TrackEditState | null {
-  const seg = state.segments.find(s => s.startBar < bar && bar < segmentEndBar(s))
+  const splitBar = quantizeEditBar(bar)
+  const seg = state.segments.find(s => s.startBar < splitBar && splitBar < segmentEndBar(s))
   if (!seg) return null
-  const offset = bar - seg.startBar
+  const offset = splitBar - seg.startBar
   const left: EditSegment = {
     id: newSegmentId(),
     startBar: seg.startBar,
@@ -271,7 +298,7 @@ export function splitAtBar(state: TrackEditState, bar: number): TrackEditState |
   }
   const right: EditSegment = {
     id: newSegmentId(),
-    startBar: bar,
+    startBar: splitBar,
     clips: sliceClips(seg.clips, offset, segmentLenBars(seg) - offset),
   }
   return {
@@ -281,7 +308,8 @@ export function splitAtBar(state: TrackEditState, bar: number): TrackEditState |
 
 /** Can Separate run at this playhead bar? (strictly inside a segment) */
 export function canSplitAtBar(state: TrackEditState, bar: number): boolean {
-  return state.segments.some(s => s.startBar < bar && bar < segmentEndBar(s))
+  const splitBar = quantizeEditBar(bar)
+  return state.segments.some(s => s.startBar < splitBar && splitBar < segmentEndBar(s))
 }
 
 function segmentSourceRange(seg: EditSegment): { minSrc: number; maxSrcEnd: number } {
@@ -297,15 +325,16 @@ export function clampSegmentStartEdge(
   segId: string,
   desiredStartBar: number,
   contentBars: number,
+  gridStep: number = MIN_EDIT_BAR_UNIT,
 ): number {
   const seg = state.segments.find(s => s.id === segId)
-  if (!seg) return Math.max(0, Math.round(desiredStartBar))
+  if (!seg) return Math.max(0, snapEditBar(desiredStartBar, gridStep))
   const oldLen = segmentLenBars(seg)
   const oldStart = seg.startBar
   const oldEnd = oldStart + oldLen
-  let newStart = Math.round(desiredStartBar)
+  let newStart = snapEditBar(desiredStartBar, gridStep)
 
-  newStart = Math.min(newStart, oldEnd - 1)
+  newStart = Math.min(newStart, quantizeEditBar(oldEnd - MIN_EDIT_BAR_UNIT))
 
   const { minSrc } = segmentSourceRange(seg)
   const minStartFromSource = oldStart - minSrc
@@ -313,11 +342,11 @@ export function clampSegmentStartEdge(
   let minStartFromNeighbor = 0
   for (const other of state.segments) {
     if (other.id === segId) continue
-    if (segmentEndBar(other) <= oldStart) {
+    if (segmentEndBar(other) <= oldStart + 1e-9) {
       minStartFromNeighbor = Math.max(minStartFromNeighbor, segmentEndBar(other))
     }
   }
-  return Math.max(newStart, minStartFromNeighbor, minStartFromSource, 0)
+  return quantizeEditBar(Math.max(newStart, minStartFromNeighbor, minStartFromSource, 0))
 }
 
 /** Clamp a dragged right edge to valid trim/extend bounds. */
@@ -326,15 +355,16 @@ export function clampSegmentEndEdge(
   segId: string,
   desiredEndBar: number,
   contentBars: number,
+  gridStep: number = MIN_EDIT_BAR_UNIT,
 ): number {
   const seg = state.segments.find(s => s.id === segId)
-  if (!seg) return Math.max(1, Math.round(desiredEndBar))
+  if (!seg) return Math.max(MIN_EDIT_BAR_UNIT, snapEditBar(desiredEndBar, gridStep))
   const oldLen = segmentLenBars(seg)
   const oldStart = seg.startBar
   const oldEnd = oldStart + oldLen
-  let newEnd = Math.round(desiredEndBar)
+  let newEnd = snapEditBar(desiredEndBar, gridStep)
 
-  newEnd = Math.max(newEnd, oldStart + 1)
+  newEnd = Math.max(newEnd, quantizeEditBar(oldStart + MIN_EDIT_BAR_UNIT))
 
   const { maxSrcEnd } = segmentSourceRange(seg)
   const maxEndFromSource = oldEnd + Math.max(0, contentBars - maxSrcEnd)
@@ -342,11 +372,11 @@ export function clampSegmentEndEdge(
   let maxEndFromNeighbor = Number.MAX_SAFE_INTEGER
   for (const other of state.segments) {
     if (other.id === segId) continue
-    if (other.startBar >= oldEnd) {
+    if (other.startBar >= oldEnd - 1e-9) {
       maxEndFromNeighbor = Math.min(maxEndFromNeighbor, other.startBar)
     }
   }
-  return Math.min(newEnd, maxEndFromSource, maxEndFromNeighbor)
+  return quantizeEditBar(Math.min(newEnd, maxEndFromSource, maxEndFromNeighbor))
 }
 
 /** Move a segment's left edge (trim or extend into trimmed source). Right edge stays fixed. */
@@ -362,7 +392,7 @@ export function setSegmentStartEdge(
   const oldStart = seg.startBar
   const oldEnd = oldStart + oldLen
   const newStart = clampSegmentStartEdge(state, segId, desiredStartBar, contentBars)
-  if (newStart === oldStart) return state
+  if (nearlyEqual(newStart, oldStart)) return state
 
   const delta = newStart - oldStart
   let newClips: EditClip[]
@@ -376,11 +406,11 @@ export function setSegmentStartEdge(
       ...seg.clips.slice(1),
     ])
   }
-  if (newClips.length === 0 || clipsLenBars(newClips) < 1) return null
+  if (newClips.length === 0 || clipsLenBars(newClips) < MIN_EDIT_BAR_UNIT - 1e-9) return null
   return {
     segments: sortSegments(
       state.segments.map(s =>
-        s.id === segId ? { ...s, startBar: newStart, clips: newClips } : s,
+        s.id === segId ? { ...s, startBar: quantizeEditBar(newStart), clips: newClips } : s,
       ),
     ),
   }
@@ -399,7 +429,7 @@ export function setSegmentEndEdge(
   const oldStart = seg.startBar
   const oldEnd = oldStart + oldLen
   const newEnd = clampSegmentEndEdge(state, segId, desiredEndBar, contentBars)
-  if (newEnd === oldEnd) return state
+  if (nearlyEqual(newEnd, oldEnd)) return state
 
   const delta = oldEnd - newEnd
   let newClips: EditClip[]
@@ -413,7 +443,7 @@ export function setSegmentEndEdge(
       { srcBar: last.srcBar, lenBars: last.lenBars + ext },
     ])
   }
-  if (newClips.length === 0 || clipsLenBars(newClips) < 1) return null
+  if (newClips.length === 0 || clipsLenBars(newClips) < MIN_EDIT_BAR_UNIT - 1e-9) return null
   return {
     segments: sortSegments(
       state.segments.map(s =>
@@ -462,7 +492,10 @@ export function removeSelection(state: TrackEditState, sel: EditSelection): Trac
     startBar: sel.endBar,
     clips: sliceClips(seg.clips, relEnd, len - relEnd),
   }
-  if (clipsLenBars(left.clips) < 1 || clipsLenBars(right.clips) < 1) return null
+  if (
+    clipsLenBars(left.clips) < MIN_EDIT_BAR_UNIT - 1e-9
+    || clipsLenBars(right.clips) < MIN_EDIT_BAR_UNIT - 1e-9
+  ) return null
   return {
     segments: sortSegments([
       ...state.segments.filter(s => s.id !== seg.id),
@@ -481,18 +514,19 @@ export function clampSegmentStart(
   state: TrackEditState,
   segId: string,
   desiredStartBar: number,
+  gridStep: number = MIN_EDIT_BAR_UNIT,
 ): number {
   const seg = state.segments.find(s => s.id === segId)
-  if (!seg) return Math.max(0, desiredStartBar)
+  if (!seg) return Math.max(0, snapEditBar(desiredStartBar, gridStep))
   const len = segmentLenBars(seg)
   let lo = 0
   let hi = Number.MAX_SAFE_INTEGER
   for (const other of state.segments) {
     if (other.id === segId) continue
-    if (segmentEndBar(other) <= seg.startBar) lo = Math.max(lo, segmentEndBar(other))
-    if (other.startBar >= segmentEndBar(seg)) hi = Math.min(hi, other.startBar - len)
+    if (segmentEndBar(other) <= seg.startBar + 1e-9) lo = Math.max(lo, segmentEndBar(other))
+    if (other.startBar >= segmentEndBar(seg) - 1e-9) hi = Math.min(hi, other.startBar - len)
   }
-  return Math.max(lo, Math.min(hi, Math.round(desiredStartBar)))
+  return quantizeEditBar(Math.max(lo, Math.min(hi, snapEditBar(desiredStartBar, gridStep))))
 }
 
 /** Move a whole segment to a new start bar (already clamped by caller or re-clamped here). */
@@ -501,7 +535,7 @@ export function moveSegment(
   segId: string,
   newStartBar: number,
 ): TrackEditState {
-  const clamped = clampSegmentStart(state, segId, newStartBar)
+  const clamped = quantizeEditBar(clampSegmentStart(state, segId, newStartBar))
   return {
     segments: sortSegments(
       state.segments.map(s => (s.id === segId ? { ...s, startBar: clamped } : s)),
@@ -608,8 +642,11 @@ export function editStateToPayload(state: TrackEditState): {
 } {
   return {
     segments: sortSegments(state.segments).map(s => ({
-      startBar: s.startBar,
-      clips: s.clips.map(c => ({ srcBar: c.srcBar, lenBars: c.lenBars })),
+      startBar: quantizeEditBar(s.startBar),
+      clips: s.clips.map(c => ({
+        srcBar: quantizeEditBar(c.srcBar),
+        lenBars: quantizeEditBar(c.lenBars),
+      })),
     })),
   }
 }
