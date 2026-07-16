@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePaywall } from '@/contexts/PaywallContext'
 import { avatarInitials } from '@/lib/avatarTheme'
 import { DESIGN_THEMES, useDesignTheme } from '@/lib/design-theme'
 import { UserAvatar } from '@/components/ui/avatar'
@@ -25,6 +26,7 @@ function ThemeSwatches({ colors, size = 10 }: { colors: string[]; size?: number 
 
 export function AvatarDropdown() {
   const { profile } = useAuth()
+  const { enabled: paywallEnabled, openPaywall } = usePaywall()
   const { theme } = useDesignTheme()
   const [open, setOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
@@ -111,6 +113,23 @@ export function AvatarDropdown() {
                 <ThemePicker />
               </div>
             )}
+
+            {/* Test-mode paywall entry — only rendered while "Show paywall" is ON */}
+            {paywallEnabled && (
+              <div className="border-t border-border">
+                <TbMenuButton
+                  className="gap-2.5"
+                  onClick={() => {
+                    setOpen(false)
+                    setThemeOpen(false)
+                    openPaywall('avatar_menu')
+                  }}
+                >
+                  <span className="text-lime shrink-0"><StarIcon /></span>
+                  Upgrade plan
+                </TbMenuButton>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -139,6 +158,19 @@ function ThemeIcon() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
       <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1" />
       <path d="M7 2a5 5 0 0 1 0 10V2z" fill="currentColor" opacity="0.35" />
+    </svg>
+  )
+}
+
+function StarIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path
+        d="M7 1.5l1.7 3.44 3.8.55-2.75 2.68.65 3.78L7 10.16l-3.4 1.79.65-3.78L1.5 5.49l3.8-.55L7 1.5z"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

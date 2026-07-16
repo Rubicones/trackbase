@@ -8,6 +8,8 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project, Section, MidiTrackData } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePaywallGate } from '@/contexts/PaywallContext'
+import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 import { trackEvent } from '@/lib/analytics'
 import {
   buildOnboardingDisplayVersions,
@@ -2568,6 +2570,8 @@ const TrackRow = React.memo(function TrackRow({
   // All state/refs must come before computed values that read state
   const [waveformReady, setWaveformReady] = useState(false)
   useEffect(() => { setWaveformReady(false) }, [track.id])
+  // Test-mode paywall — gates the Edit (pencil) entry point only
+  const { locked: trackEditLocked, onLockedClick: onTrackEditLockedClick } = usePaywallGate('track_edit')
   const [showColorPicker, setShowColorPicker] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showTools, setShowTools] = useState(false)
@@ -3101,7 +3105,18 @@ const TrackRow = React.memo(function TrackRow({
             onClick={onToggleSolo}
           />
           {editable && !isMidi && !compact && (
-            editMode ? (
+            trackEditLocked && !editMode ? (
+              <PaywallLockWrap>
+                <button
+                  type="button"
+                  onClick={onTrackEditLockedClick}
+                  aria-label="Edit track"
+                  className={`size-5 border text-[9px] grid place-items-center border-border text-muted-foreground ${paywallLockedButtonClass}`}
+                >
+                  <PencilIcon />
+                </button>
+              </PaywallLockWrap>
+            ) : editMode ? (
               <>
                 <HoverTooltip label={editBusy ? 'Rendering…' : 'Apply changes'}>
                   <button
@@ -4682,6 +4697,8 @@ export default function ProjectPage() {
   const [showMobileTour, setShowMobileTour] = useState(false)
 
   // ── Compare mode ──────────────────────────────────────────────────────────
+  // Test-mode paywall — gates the A/B Compare entry button only
+  const { locked: abCompareLocked, onLockedClick: onAbCompareLockedClick } = usePaywallGate('ab_compare')
   const [compareActive, setCompareActive] = useState(false)
   const [compareVersionBId, setCompareVersionBId] = useState<string>('')
   // Portal slot for compare transport bar (same DOM position as MasterPlayerBar)
@@ -7271,6 +7288,21 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     + New Version
                   </button>
                   {(() => {
+                    if (abCompareLocked) {
+                      return (
+                        <PaywallLockWrap className="shrink-0">
+                          <button
+                            type="button"
+                            data-tour="compare-button"
+                            onClick={onAbCompareLockedClick}
+                            className={`inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground ${paywallLockedButtonClass}`}
+                          >
+                            <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                            Compare
+                          </button>
+                        </PaywallLockWrap>
+                      )
+                    }
                     const canCompare = versions.length >= 2
                     const compareBtn = (
                       <button

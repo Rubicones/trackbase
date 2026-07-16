@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { ThemeProvider } from 'next-themes'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { PaletteProvider } from '@/contexts/PaletteContext'
+import { PaywallProvider } from '@/contexts/PaywallContext'
 import { DesignThemeProvider, NEXT_THEMES_STORAGE_KEY } from '@/lib/design-theme'
 import { NavigationPlaybackCleanup } from '@/components/NavigationPlaybackCleanup'
 import { PushNotificationProvider } from '@/components/push/PushNotificationProvider'
@@ -15,13 +16,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <DesignThemeProvider>
         <PaletteProvider>
           <AuthProvider>
-            <PushNotificationProvider>
-              <Suspense fallback={null}>
-                <NavigationPlaybackCleanup />
-                <PageViewTracker />
-              </Suspense>
-              {children}
-            </PushNotificationProvider>
+            <PaywallProvider>
+              <PushNotificationProvider>
+                <Suspense fallback={null}>
+                  <NavigationPlaybackCleanup />
+                  <PageViewTracker />
+                </Suspense>
+                {children}
+              </PushNotificationProvider>
+            </PaywallProvider>
           </AuthProvider>
         </PaletteProvider>
       </DesignThemeProvider>

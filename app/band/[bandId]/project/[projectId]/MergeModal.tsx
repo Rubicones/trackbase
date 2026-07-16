@@ -14,6 +14,8 @@ import { useMergePreview } from '@/components/merge/useMergePreview'
 import { mergeTargetVersions } from '@/lib/versionSort'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import { usePaywallGate } from '@/contexts/PaywallContext'
+import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 
 export type {
   MergePreview,
@@ -519,6 +521,32 @@ function CommentChangesSection({
 // ─── Cherry-pick entry button ─────────────────────────────────────────────────
 
 function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
+  // Test-mode paywall — locked button stays clickable and opens the plans modal
+  const { locked, onLockedClick } = usePaywallGate('cherry_pick')
+
+  const icon = (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M1.5 3h6M1.5 6h9M1.5 9h4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+      <path d="M9 2l1.5 1L9 4M11.5 8.25l-1.75 1.75-1-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+
+  if (locked) {
+    return (
+      <PaywallLockWrap className="hidden sm:inline-flex">
+        <button
+          type="button"
+          data-tour="cherrypick-entry-button"
+          onClick={onLockedClick}
+          className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground ${paywallLockedButtonClass}`}
+        >
+          {icon}
+          Show &amp; cherry-pick differences
+        </button>
+      </PaywallLockWrap>
+    )
+  }
+
   return (
     <button
       type="button"
@@ -527,10 +555,7 @@ function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onCli
       onClick={onClick}
       className="hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-lime hover:text-lime transition disabled:opacity-50 disabled:pointer-events-none"
     >
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-        <path d="M1.5 3h6M1.5 6h9M1.5 9h4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-        <path d="M9 2l1.5 1L9 4M11.5 8.25l-1.75 1.75-1-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      {icon}
       Show &amp; cherry-pick differences
     </button>
   )

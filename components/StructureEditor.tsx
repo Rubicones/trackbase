@@ -16,6 +16,8 @@ import {
   sliceSectionFromToneBuffer,
 } from '@/lib/mergedAudioBuffer'
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
+import { usePaywallGate } from '@/contexts/PaywallContext'
+import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 import { TbButton } from '@/components/design/TbButton'
 
 /** Stored on section rows for merge/API; UI uses lime tokens, not this value. */
@@ -371,6 +373,8 @@ export function SectionEditPopover({
   const wasDetectingRef = useRef(detectingChords)
   const [trackPickerOpen, setTrackPickerOpen] = useState(false)
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set())
+  // Test-mode paywall — gates only this in-app Detect button, never /tools/chord-detector
+  const { locked: chordDetectLocked, onLockedClick: onChordDetectLockedClick } = usePaywallGate('chord_detect')
 
   useEffect(() => {
     setSelectedTrackIds(new Set())
@@ -656,18 +660,31 @@ export function SectionEditPopover({
                 {!detectingChords && saveStatus === 'saved' && <span className="text-online"> · saved</span>}
               </div>
               {audioTracks.length > 0 && !trackPickerOpen && (
-                <button
-                  type="button"
-                  data-tour="structure-detect-chords"
-                  disabled={detectingChords}
-                  onClick={() => {
-                    setSelectedTrackIds(new Set())
-                    setTrackPickerOpen(true)
-                  }}
-                  className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50"
-                >
-                  Detect
-                </button>
+                chordDetectLocked ? (
+                  <PaywallLockWrap>
+                    <button
+                      type="button"
+                      data-tour="structure-detect-chords"
+                      onClick={onChordDetectLockedClick}
+                      className={`text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 text-muted-foreground ${paywallLockedButtonClass}`}
+                    >
+                      Detect
+                    </button>
+                  </PaywallLockWrap>
+                ) : (
+                  <button
+                    type="button"
+                    data-tour="structure-detect-chords"
+                    disabled={detectingChords}
+                    onClick={() => {
+                      setSelectedTrackIds(new Set())
+                      setTrackPickerOpen(true)
+                    }}
+                    className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50"
+                  >
+                    Detect
+                  </button>
+                )
               )}
             </div>
             <div style={{ borderColor: isDirty && saveStatus === 'idle' ? '#F59E0B' : undefined }}>

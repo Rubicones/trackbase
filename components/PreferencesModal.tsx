@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { AtSign, LogOut, Mail, Trash2, X, type IconNode } from 'lucide'
+import { AtSign, CreditCard, LogOut, Mail, Trash2, X, type IconNode } from 'lucide'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePaywall } from '@/contexts/PaywallContext'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 import { UserAvatar } from '@/components/ui/avatar'
@@ -20,6 +21,7 @@ type DeleteStep = 'idle' | 'warn' | 'confirm'
 export function PreferencesModal({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const { user, profile, signOut, refreshProfile } = useAuth()
+  const { enabled: paywallEnabled, setEnabled: setPaywallEnabled } = usePaywall()
 
   const [newUsername, setNewUsername] = useState(profile?.username ?? '')
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle')
@@ -290,6 +292,39 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
             >
               {signingOut ? 'Signing out…' : 'Sign out'}
             </TbButton>
+          </div>
+        </section>
+
+        {/* Testing */}
+        <section className="px-5 py-5 border-b border-border">
+          <SectionEyebrow>Testing</SectionEyebrow>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm text-foreground m-0 mb-1 flex items-center gap-2">
+                <LucideIcon icon={CreditCard} size={14} className="text-muted-foreground shrink-0" />
+                Show paywall
+              </p>
+              <p className="font-mono text-[10px] text-muted-foreground m-0 leading-relaxed">
+                Preview subscription gating (testing only)
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={paywallEnabled}
+              aria-label="Show paywall"
+              onClick={() => setPaywallEnabled(!paywallEnabled)}
+              className={`relative h-5 w-9 shrink-0 border transition-colors ${
+                paywallEnabled ? 'border-lime bg-lime/20' : 'border-border bg-surface'
+              }`}
+            >
+              <span
+                className={`absolute top-1/2 -translate-y-1/2 size-3 transition-[left,background-color] duration-150 ${
+                  paywallEnabled ? 'left-[calc(100%-1rem)] bg-lime' : 'left-1 bg-muted-foreground'
+                }`}
+                aria-hidden
+              />
+            </button>
           </div>
         </section>
 
