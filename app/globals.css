@@ -2085,7 +2085,7 @@ html:has(.landing-page) body {
 .landing-page .bg-lime,
 .landing-page .tb-btn-accent {
   box-shadow: 0 0 9px var(--lime-shine);
-}
+} 
 
 /* Full-box borders only — side borders (border-l-*, etc.) stay sharp without a halo */
 .landing-page .border-lime:not([class*="border-l-"]):not([class*="border-r-"]):not([class*="border-t-"]):not([class*="border-b-"]) {
