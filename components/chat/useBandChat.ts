@@ -13,6 +13,7 @@ import {
   type BandMessage,
   type ChannelKey,
 } from '@/lib/chat'
+import { fetchBandData } from '@/lib/bandDataCache'
 
 export interface ChatChannelProject {
   id: string
@@ -117,44 +118,51 @@ export function useBandChat({ bandId, open, currentUserId, initialChannelKey }: 
   }, [])
 
   // ── Load channels + members ──
+  // Shares /api/bands/[id] with the band page via fetchBandData (cache + in-flight dedupe).
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     readsRef.current = readStoredReads(bandId)
     async function load() {
       try {
-        const res = await fetch(`/api/bands/${bandId}`, { cache: 'no-store' })
-        if (!res.ok) return
-        const data = await res.json()
+        const data = await fetchBandData(bandId, controller.signal)
         if (cancelled) return
+
+        const projectRows =
+          (data.projects as { id: string; name: string; version_count?: number }[] | undefined) ?? []
+        const memberRows =
+          (data.members as {
+            user_id: string
+            role: string
+            profiles: { username: string; display_name: string | null; avatar_color: string | null } | null
+          }[] | undefined) ?? []
+
         setProjects(
-          (data.projects ?? []).map((p: { id: string; name: string; version_count?: number }) => ({
+          projectRows.map(p => ({
             id: p.id,
             name: p.name,
             version_count: Number(p.version_count) || 0,
           })),
         )
         setMembers(
-          (data.members ?? []).map(
-            (m: {
-              user_id: string
-              role: string
-              profiles: { username: string; display_name: string | null; avatar_color: string | null } | null
-            }) => ({
-              user_id: m.user_id,
-              username: m.profiles?.username ?? 'unknown',
-              display_name: m.profiles?.display_name ?? null,
-              avatar_color: m.profiles?.avatar_color ?? null,
-              role: m.role,
-            }),
-          ),
+          memberRows.map(m => ({
+            user_id: m.user_id,
+            username: m.profiles?.username ?? 'unknown',
+            display_name: m.profiles?.display_name ?? null,
+            avatar_color: m.profiles?.avatar_color ?? null,
+            role: m.role,
+          })),
         )
+      } catch (err) {
+        if (cancelled || (err instanceof DOMException && err.name === 'AbortError')) return
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
-    load()
+    void load()
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [bandId])
 

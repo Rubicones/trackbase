@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { trackEvent } from '@/lib/analytics'
+import { fetchProjectJson, fetchProjectResourcesJson } from '@/lib/projectDataCache'
 import type { ProjectResource, Version } from '@/lib/types'
 import { SectionLabel } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
@@ -188,8 +189,7 @@ export function ResourcesCard({
     if (fetchedVersionsFor.current === projectId) return
     fetchedVersionsFor.current = projectId
     let cancelled = false
-    fetch(`/api/projects/${projectId}`)
-      .then(r => (r.ok ? r.json() : null))
+    void fetchProjectJson<{ versions?: Version[] }>(projectId)
       .then(data => {
         if (!cancelled && data?.versions) setVersionsLocal(data.versions)
       })
@@ -225,14 +225,12 @@ export function ResourcesCard({
   const isEmpty = !(!hideLyrics && lyrics) && allFiles.length === 0 && allLinks.length === 0
   const isFilteredEmpty = filterTrackId && files.length === 0 && links.length === 0 && !isEmpty
 
-  // Load resources
+  // Load resources (shared in-flight cache — survives Strict Mode + Sidebar remount)
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`/api/projects/${projectId}/resources`)
-      if (!res.ok) throw new Error('Failed to load')
-      const { resources: data } = await res.json()
+      const { resources: data } = await fetchProjectResourcesJson<{ resources?: ProjectResource[] }>(projectId)
       setResources(data ?? [])
     } catch {
       setError('Failed to load resources')

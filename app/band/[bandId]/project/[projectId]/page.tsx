@@ -56,6 +56,13 @@ import { MobileMixerVersionBar } from '@/components/MobileMixerVersionBar'
 import { getTrackIconSwatches, trackAccentColor, needsTrackIconColor, pickTrackIconColor } from '@/lib/trackIcon'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { BAND_STORAGE_LIMIT_BYTES, formatStorageLimit, storageQuotaError } from '@/lib/bandStorage'
+import { fetchBandData } from '@/lib/bandDataCache'
+import {
+  fetchProjectChecklistJson,
+  fetchProjectJson,
+  fetchProjectStorageJson,
+  fetchVersionSectionsJson,
+} from '@/lib/projectDataCache'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { clampTrackStartBar, formatTrackStartBar } from '@/lib/trackMerge'
 import { ChatDock } from '@/components/chat/ChatDock'
@@ -3808,7 +3815,7 @@ function formatBytes(b: number): string {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameVersion, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack, versionSwitchDisabled = false }: {
+function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameVersion, storageUsed, storageLimit, storageFull, commentCounts, projectId, projectName, isOpen, compact = false, isDark = false, resourceFilterTrackId = null, resourceFilterTrackName = null, onClearResourceFilter, onNavigateResourceVersion, onNavigateResourceTrack, versionSwitchDisabled = false, deferResources = false }: {
   versions: Version[]; activeId: string
   onSelect: (id: string) => void; onNewBranch: () => void; onMerge: (id: string) => void
   onRenameVersion?: (id: string, name: string) => void
@@ -3827,6 +3834,8 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameV
   onNavigateResourceVersion?: (versionId: string) => void
   onNavigateResourceTrack?: (trackId: string, versionId: string) => void
   versionSwitchDisabled?: boolean
+  /** Skip mounting ResourcesCard (loading skeleton) so it does not fetch then remount. */
+  deferResources?: boolean
 }) {
   const [hideMerged, setHideMerged] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -4025,7 +4034,7 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameV
       </div>
 
       {/* ── Resources: collapsible, fills remaining space ── */}
-      {!compact && (
+      {!compact && !deferResources && (
         <div
           className="flex flex-col min-h-0 overflow-hidden border-b border-border"
           style={{ flex: resourcesOpen ? '1 1 0' : '0 0 auto' }}
@@ -4048,6 +4057,13 @@ function Sidebar({ versions, activeId, onSelect, onNewBranch, onMerge, onRenameV
               onToggleCollapse={toggleResourcesOpen}
             />
           </div>
+        </div>
+      )}
+      {!compact && deferResources && (
+        <div className="flex flex-col shrink-0 overflow-hidden border-b border-border px-4 py-3 gap-2">
+          <SectionLabel>RESOURCES</SectionLabel>
+          <Skeleton width="70%" height={12} />
+          <Skeleton width="45%" height={12} />
         </div>
       )}
 
@@ -4708,7 +4724,7 @@ export default function ProjectPage() {
 
   // ── Roadmap + checklist ──────────────────────────────────────────────────────
   const [planOpen, setPlanOpen] = useState(false)
-  const { roadmap, setRoadmap } = useProjectRoadmap(projectId)
+  // Roadmap/checklist UI is desktop-only (Plan panel). Skip the fetches on mobile.
   const [checklist, setChecklist] = useState<ChecklistItem[]>([])
   const [checklistMembers, setChecklistMembers] = useState<ChecklistMember[]>([])
   const [waveformBounds, setWaveformBounds] = useState<{ left: number; right: number } | null>(null)
@@ -4731,6 +4747,8 @@ export default function ProjectPage() {
     return window.innerWidth > window.innerHeight && window.innerWidth < 1024
   })
   const isDesktopMixer = !isMobilePortrait && !isMobileLandscape
+
+  const { roadmap, setRoadmap } = useProjectRoadmap(isDesktopMixer ? projectId : null)
 
   // Structure editing is desktop-only — keep mobile mixer light
   useEffect(() => {
@@ -4858,31 +4876,36 @@ export default function ProjectPage() {
         return
       }
 
-      const res = await fetch(`/api/projects/${projectId}`)
-      if (!res.ok) {
-        if (res.status === 401) {
+      let data: {
+        project: Project
+        versions: Version[]
+      }
+      try {
+        data = await fetchProjectJson<{ project: Project; versions: Version[] }>(projectId)
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        const body = ((err as { body?: { code?: string } }).body ?? {}) as { code?: string }
+        if (status === 401) {
           // Cold-load race: our fetch beat the client cookie sync. Retry once auth
           // resolves rather than surfacing a spurious error.
           setAuthRetry(n => n + 1)
           retrying = true
           return
         }
-        const body = await res.json().catch(() => ({}))
-        if (res.status === 403 || body?.code === 'ACCESS_DENIED') {
+        if (status === 403 || body?.code === 'ACCESS_DENIED') {
           setError('access_denied')
-        } else if (res.status === 404 || body?.code === 'NOT_FOUND') {
+        } else if (status === 404 || body?.code === 'NOT_FOUND') {
           setError('not_found')
         } else {
           setError('unknown')
         }
         return
       }
-      const data = await res.json()
       setProject(data.project)
       setVersions(data.versions)
 
       // Populate cache for all fetched versions
-      for (const v of (data.versions as Version[])) {
+      for (const v of data.versions) {
         const comments: Record<string, TrackComment[]> = {}
         for (const t of v.tracks) {
           comments[t.id] = t.comments ?? []
@@ -4890,7 +4913,7 @@ export default function ProjectPage() {
         cache.setVersion(v.id, { tracks: v.tracks, comments, fetchedAt: Date.now() })
       }
 
-      const main = data.versions.find((v: Version) => v.type === 'main')
+      const main = data.versions.find(v => v.type === 'main')
       const fallbackId = main?.id ?? data.versions[0]?.id ?? ''
       const selectedId = activeVersionIdRef.current
 
@@ -4900,15 +4923,17 @@ export default function ProjectPage() {
       } else if (!selectedId) {
         // First load with no selection yet.
         setActiveVersionId(fallbackId)
-      } else if (!data.versions.some((v: Version) => v.id === selectedId)) {
+      } else if (!data.versions.some(v => v.id === selectedId)) {
         // Previously selected version was deleted.
         setActiveVersionId(fallbackId)
       }
       // else: keep the user's current branch selection
 
-      fetch(`/api/projects/${projectId}/storage`)
-        .then(r => r.json())
-        .then(d => { setStorageUsed(d.used_bytes ?? 0); setStorageLimit(d.limit_bytes ?? BAND_STORAGE_LIMIT_BYTES) })
+      void fetchProjectStorageJson(projectId)
+        .then(d => {
+          setStorageUsed(d.used_bytes ?? 0)
+          setStorageLimit(d.limit_bytes ?? BAND_STORAGE_LIMIT_BYTES)
+        })
         .catch(() => {})
     } catch {
       setError('unknown')
@@ -5004,32 +5029,28 @@ export default function ProjectPage() {
     }
   }, [versions, searchParams])
 
-  // Load stage, checklist, and band members in parallel once projectId is known
+  // Checklist + assignee list — desktop Plan panel only (ChatDock loads band separately).
   useEffect(() => {
-    if (!projectId) return
-    // Stage is included in the project response (loaded above); fetch checklist + members separately
-    fetch(`/api/projects/${projectId}/checklist`)
-      .then(r => r.ok ? r.json() : null)
+    if (!isDesktopMixer || !projectId) return
+    void fetchProjectChecklistJson<{ items?: ChecklistItem[] }>(projectId)
       .then(d => { if (d) setChecklist(d.items ?? []) })
       .catch(() => {})
-    fetch(`/api/bands/${bandId}/members`)
-      .then(r => r.ok ? r.json() : null)
+    void fetchBandData(bandId)
       .then(d => {
-        if (d?.members) {
-          // /api/bands/[id]/members already returns { user_id, username, display_name }
-          // flat (no nested `profiles`) — unlike the full band payload used elsewhere.
-          setChecklistMembers(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (d.members as any[]).map((m: any) => ({
-              user_id: m.user_id,
-              username: m.username ?? m.user_id,
-              display_name: m.display_name ?? null,
-            }))
-          )
-        }
+        const members = (d.members as {
+          user_id: string
+          profiles?: { username?: string; display_name?: string | null } | null
+        }[] | undefined) ?? []
+        setChecklistMembers(
+          members.map(m => ({
+            user_id: m.user_id,
+            username: m.profiles?.username ?? m.user_id,
+            display_name: m.profiles?.display_name ?? null,
+          })),
+        )
       })
       .catch(() => {})
-  }, [projectId, bandId]) // eslint-disable-line
+  }, [isDesktopMixer, projectId, bandId]) // eslint-disable-line
 
   // Sync stage from project once loaded — roadmap loads via useProjectRoadmap
 
@@ -5134,8 +5155,7 @@ export default function ProjectPage() {
     let cancelled = false
     setVersionContentLoading(true)
     setSections([])
-    fetch(`/api/versions/${activeVersionId}/sections`)
-      .then(r => r.json())
+    void fetchVersionSectionsJson<{ sections?: Section[] }>(activeVersionId)
       .then(d => {
         if (cancelled) return
         setSections(d.sections ?? [])
@@ -7828,6 +7848,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             compact={isMobileLandscape}
             isDark={resolvedTheme === 'dark'}
             versionSwitchDisabled
+            deferResources
           />
           <main className="flex flex-col flex-1 overflow-hidden min-w-0 bg-background">
             {/* Project name / meta header — name + meta skeletons; action buttons are real */}

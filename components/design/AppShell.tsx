@@ -1,21 +1,37 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { PushBellButton } from '@/components/push/PushBellButton'
 import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 
+/** Exact current-route match — avoid prefetching the page you're already on. */
+function isCurrentPath(pathname: string, href: string) {
+  return pathname === href
+}
+
 export function AppHeader({ crumbs, right, left }: { crumbs?: ReactNode; right?: ReactNode; left?: ReactNode }) {
+  const pathname = usePathname()
+  const onSpaces = isCurrentPath(pathname, '/dashboard')
+
   return (
     <nav className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-background/85 px-6 backdrop-blur-md">
       <div className="flex items-center gap-4 min-w-0">
         {left}
-        <SonicdeskWordmark href="/dashboard" />
+        <SonicdeskWordmark href={onSpaces ? undefined : '/dashboard'} />
         <div className="hidden md:flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-muted-foreground min-w-0">
-          <Link href="/dashboard" className="hover:text-foreground transition-colors no-underline text-muted-foreground">
-            Spaces
-          </Link>
+          {onSpaces ? (
+            <span className="text-foreground">Spaces</span>
+          ) : (
+            <Link
+              href="/dashboard"
+              className="hover:text-foreground transition-colors no-underline text-muted-foreground"
+            >
+              Spaces
+            </Link>
+          )}
           {crumbs && (
             <>
               <span className="text-border">/</span>
@@ -45,8 +61,10 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
       </div>
       <div className="flex gap-6 items-center shrink-0">
         {right}
+        {/* Dev/brand reference — never worth a production RSC prefetch on every app page. */}
         <Link
           href="/uikit"
+          prefetch={false}
           className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime no-underline"
           title="UI Kit & Brandbook"
         >

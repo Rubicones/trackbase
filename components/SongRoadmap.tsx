@@ -16,6 +16,7 @@ import {
   type RoadmapStep,
 } from '@/lib/roadmap'
 import { trackEvent } from '@/lib/analytics'
+import { fetchProjectRoadmapJson } from '@/lib/projectDataCache'
 
 function roadmapStepMetrics(count: number) {
   if (count <= 5) return { col: '4.5rem', box: 'size-7', labelClass: 'text-[9px]' }
@@ -389,13 +390,13 @@ export function SongRoadmap({
   )
 }
 
-// Load roadmap from API
+// Load roadmap from API (shared in-flight cache with the mixer page)
 export async function fetchProjectRoadmap(projectId: string): Promise<ProjectRoadmap> {
-  const res = await fetch(`/api/projects/${projectId}/roadmap`)
-  if (!res.ok) {
+  try {
+    return await fetchProjectRoadmapJson<ProjectRoadmap>(projectId)
+  } catch {
     return { steps: [], stepIndex: null, stageSince: null, configured: false }
   }
-  return res.json()
 }
 
 export function useProjectRoadmap(projectId: string | null) {

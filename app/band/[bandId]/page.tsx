@@ -23,13 +23,7 @@ import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { trackEvent } from '@/lib/analytics'
-
-// ─── Session-level band data cache ───────────────────────────────────────────
-// Prevents re-fetching band data when navigating back from a project.
-// Cache key = bandId. TTL = 30 seconds (short enough to catch new projects
-// after create-and-return; explicit invalidation on mutations).
-const BAND_CACHE_TTL_MS = 30_000
-const bandDataCache = new Map<string, { data: object; cachedAt: number }>()
+import { BandFetchError, fetchBandData, invalidateBandData } from '@/lib/bandDataCache'
 
 // Max times we retry the band fetch after a cold-load 401 before surfacing an error.
 const MAX_AUTH_RETRIES = 2
@@ -758,18 +752,13 @@ export default function BandPage() {
 
   async function loadBand(signal?: AbortSignal) {
     try {
-      // Serve from cache on back-navigation — avoids refetch for data that hasn't changed.
-      // TTL prevents stale data after project creation or other cross-page mutations.
-      const entry = bandDataCache.get(bandId)
-      if (entry && Date.now() - entry.cachedAt < BAND_CACHE_TTL_MS) {
-        applyBandData(entry.data as Record<string, unknown>)
-        return
-      }
-
-      const res = await fetch(`/api/bands/${bandId}`, signal ? { signal } : undefined)
-      if (!res.ok) {
-        if (signal?.aborted) return
-        if (res.status === 401) {
+      // Shared cache + in-flight dedupe (also used by ChatDock / useBandChat).
+      const data = await fetchBandData(bandId, signal)
+      applyBandData(data)
+    } catch (err) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
+      if (err instanceof BandFetchError) {
+        if (err.status === 401) {
           // Cold-load race: this request beat the client-side cookie sync
           // (AuthContext POSTs tokens to /api/auth/session on mount). Keep the
           // skeleton up and let the retry effect re-run once auth resolves —
@@ -777,19 +766,13 @@ export default function BandPage() {
           setAuthRetry(n => n + 1)
           return
         }
-        const body = await res.json().catch(() => ({}))
-        if (res.status === 403 || body?.code === 'ACCESS_DENIED') setError('access_denied')
-        else if (res.status === 404 || body?.code === 'NOT_FOUND') setError('not_found')
+        const code = err.body?.code
+        if (err.status === 403 || code === 'ACCESS_DENIED') setError('access_denied')
+        else if (err.status === 404 || code === 'NOT_FOUND') setError('not_found')
         else setError('unknown')
         setLoading(false)
         return
       }
-      if (signal?.aborted) return
-      const data = await res.json()
-      bandDataCache.set(bandId, { data, cachedAt: Date.now() })
-      applyBandData(data)
-    } catch (err) {
-      if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
       // Never leave the page stuck on skeletons for an unexpected/network error.
       setError('unknown')
       setLoading(false)
@@ -799,7 +782,7 @@ export default function BandPage() {
   // Invalidates the cache entry for this band (call after any mutation that
   // changes the band's shape — member changes, project create/delete, etc.)
   function invalidateBandCache() {
-    bandDataCache.delete(bandId)
+    invalidateBandData(bandId)
   }
 
   async function loadActivity() {

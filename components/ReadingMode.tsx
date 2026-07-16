@@ -11,6 +11,7 @@ import { TbMenuButton } from '@/components/design/TbButton'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { Spinner } from '@/components/ui/Spinner'
 import type { Section, Version, Project, ProjectResource } from '@/lib/types'
+import { fetchProjectResourcesJson } from '@/lib/projectDataCache'
 import { buildChordTimeline, findActiveChordGlobalIndex, formatBarDuration } from '@/lib/chords'
 import { buildSectionRanges, findSectionRangeAtTime } from '@/lib/sectionPlayback'
 import { sortMobileVersions } from '@/lib/versionSort'
@@ -326,11 +327,12 @@ export function ReadingMode({
   const [autoscrollOn, setAutoscrollOn] = useState(true)
   const [lyricsSpeed, setLyricsSpeed] = useState(1)
 
+  // Lyrics live on the resources endpoint (no lighter lyrics-only API yet).
+  // The desktop Resources panel is not mounted on mobile — this is teleprompter only.
   useEffect(() => {
     if (!visible) return
     let cancelled = false
-    fetch(`/api/projects/${projectId}/resources`)
-      .then(r => r.ok ? r.json() : null)
+    void fetchProjectResourcesJson<{ resources?: ProjectResource[] }>(projectId)
       .then(data => {
         if (cancelled || !data?.resources) return
         setLyrics(data.resources.find((r: ProjectResource) => r.type === 'lyrics') ?? null)

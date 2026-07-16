@@ -622,7 +622,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
-      <AppHeader crumbs={<span className="text-foreground">Dashboard</span>} />
+      <AppHeader />
 
       {/* Hero */}
       <section className="border-b border-border bg-surface/40">
