@@ -2076,6 +2076,35 @@ html:has(.landing-page) body {
   color: oklch(0.13 0 0);
 }
 
+/* Soft neon bloom on accent (lime) — same spirit as the branch-board square */
+.landing-page {
+  --lime-shine: color-mix(in oklab, var(--lime) 50%, transparent);
+  --lime-shine-soft: color-mix(in oklab, var(--lime) 28%, transparent);
+}
+
+.landing-page .bg-lime,
+.landing-page .tb-btn-accent {
+  box-shadow: 0 0 9px var(--lime-shine);
+}
+
+/* Full-box borders only — side borders (border-l-*, etc.) stay sharp without a halo */
+.landing-page .border-lime:not([class*="border-l-"]):not([class*="border-r-"]):not([class*="border-t-"]):not([class*="border-b-"]) {
+  box-shadow: 0 0 10px var(--lime-shine-soft);
+}
+
+.landing-page .text-lime {
+  text-shadow: 0 0 15px var(--lime-shine-soft);
+}
+
+.landing-page .hover\:text-lime:hover,
+.landing-page .group:hover .group-hover\:text-lime {
+  text-shadow: 0 0 12px var(--lime-shine-soft);
+}
+
+.landing-page svg.text-lime {
+  filter: drop-shadow(0 0 15px var(--lime-shine));
+}
+
 @layer utilities {
   .landing-page .text-foreground { color: oklch(0.93 0 0); }
   .landing-page .text-muted-foreground { color: oklch(0.58 0 0); }

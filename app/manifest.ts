@@ -6,7 +6,9 @@ export default function manifest(): MetadataRoute.Manifest {
     name: SITE_NAME,
     short_name: SITE_SHORT_NAME,
     description: SEO_DEFAULT_DESCRIPTION,
-    start_url: '/',
+    // Installed PWAs skip marketing — users already saw the landing before install.
+    start_url: '/dashboard',
+    scope: '/',
     display: 'standalone',
     background_color: '#070707',
     theme_color: '#DFFF00',

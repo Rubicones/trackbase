@@ -8,8 +8,8 @@ import {
   useInView,
   AnimatePresence,
 } from "motion/react";
-import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type ReactNode, type ComponentType, type ComponentProps } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { UserAvatar } from "@/components/ui/avatar";
 import { MetronomeIcon } from "@/components/design/TransportIcons";
 import { sectionLabel } from "@/components/StructureEditor";
@@ -17,6 +17,36 @@ import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { SeededWaveform } from "@/components/WaveformBars";
 import { SEO_FAQS } from "@/lib/seo";
+
+const LANDING_NAV_ITEMS: Array<[string, string]> = [
+  ["#top", "HOME"],
+  ["#versioning", "VERSIONING"],
+  ["#features", "FEATURES"],
+  ["#mobile", "MOBILE"],
+  ["#philosophy", "PHILOSOPHY"],
+  ["#themes", "THEMES"],
+  ["#system", "SYSTEM"],
+  ["#roadmap", "ROADMAP"],
+  ["#faq", "FAQ"],
+];
+
+/** Widest mobile section label — keeps the status dot pinned while the wheel rolls. */
+const LONGEST_NAV_LABEL = LANDING_NAV_ITEMS.reduce(
+  (longest, [, label]) => (label.length > longest.length ? label : longest),
+  "",
+);
+
+function isStandaloneDisplay(): boolean {
+  if (typeof window === "undefined") return false;
+  const mqStandalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches ||
+    window.matchMedia("(display-mode: minimal-ui)").matches;
+  const iosStandalone =
+    "standalone" in navigator &&
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  return mqStandalone || iosStandalone;
+}
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History,
@@ -305,11 +335,10 @@ function Waveform({
  * ============================================================ */
 
 /**
- * Reused as-is on standalone pages outside the landing page itself (e.g.
- * /tools/*) so they share the exact same header. Nav items are hash anchors
- * into sections of "/" — hrefFor() prefixes them with "/" when we're not
- * already on the homepage, so they still resolve there instead of being a
- * no-op on the current page.
+ * Landing header. Desktop: full section nav. Mobile: accent logo left,
+ * section label right (picker-wheel swap on scroll); tap opens the list.
+ * Nav items are hash anchors into sections of "/" — hrefFor() prefixes them
+ * with "/" when we're not already on the homepage.
  */
 export function TopBar({
   authHref = "/auth",
@@ -323,6 +352,45 @@ export function TopBar({
   const hrefFor = (hash: string) => (isHome ? hash : `/${hash}`);
   const [time, setTime] = useState("");
   const [open, setOpen] = useState(false);
+  const [activeLabel, setActiveLabel] = useState("HOME");
+  const [leavingLabel, setLeavingLabel] = useState<string | null>(null);
+  const [scrimTop, setScrimTop] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
+  const activeLabelRef = useRef(activeLabel);
+  activeLabelRef.current = activeLabel;
+  const leavingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const el = barRef.current;
+      if (!el) return;
+      setScrimTop(el.getBoundingClientRect().bottom);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure);
+    };
+  }, [open]);
+
+  const rollToLabel = useCallback((next: string) => {
+    const prev = activeLabelRef.current;
+    if (prev === next) return;
+    setLeavingLabel(prev);
+    if (leavingTimerRef.current) clearTimeout(leavingTimerRef.current);
+    leavingTimerRef.current = setTimeout(() => setLeavingLabel(null), 380);
+    setActiveLabel(next);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (leavingTimerRef.current) clearTimeout(leavingTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     const update = () =>
       setTime(
@@ -336,60 +404,84 @@ export function TopBar({
     const id = setInterval(update, 1000 * 30);
     return () => clearInterval(id);
   }, []);
+
+  // Track which landing section is in view — drives the mobile section wheel.
   useEffect(() => {
-    if (!open) return;
+    if (!isHome) return;
 
-    const mq = window.matchMedia("(max-width: 767px)");
-    if (!mq.matches) return;
+    const sections = LANDING_NAV_ITEMS.map(([hash, label]) => ({
+      id: hash.slice(1),
+      label,
+    }));
 
-    const prevBodyOverflow = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
+    const ratios = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          ratios.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        }
+        let bestId = "top";
+        let bestRatio = -1;
+        for (const { id } of sections) {
+          const r = ratios.get(id) ?? 0;
+          if (r > bestRatio) {
+            bestRatio = r;
+            bestId = id;
+          }
+        }
+        const match = sections.find((s) => s.id === bestId);
+        if (match) rollToLabel(match.label);
+      },
+      { rootMargin: "-18% 0px -55% 0px", threshold: [0, 0.15, 0.35, 0.55, 0.75] },
+    );
 
-    const unlock = () => {
-      document.body.style.overflow = prevBodyOverflow;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-    };
+    for (const { id } of sections) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [isHome, rollToLabel]);
 
-    const onViewportChange = (e: MediaQueryListEvent) => {
-      if (!e.matches) unlock();
-    };
-    mq.addEventListener("change", onViewportChange);
-
-    return () => {
-      mq.removeEventListener("change", onViewportChange);
-      unlock();
-    };
-  }, [open]);
-  const navItems: Array<[string, string]> = [
-    ["#top", "HOME"],
-    ["#versioning", "VERSIONING"],
-    ["#features", "FEATURES"],
-    ["#mobile", "MOBILE"],
-    ["#philosophy", "PHILOSOPHY"],
-    ["#themes", "THEMES"],
-    ["#system", "SYSTEM"],
-    ["#roadmap", "ROADMAP"],
-    ["#faq", "FAQ"],
-  ];
+  function goToSection(hash: string, label: string) {
+    const id = hash.replace(/^#/, "");
+    rollToLabel(label);
+    setOpen(false);
+    // Defer scroll until the overlay unmounts — avoids the old body-lock jump to top.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      try {
+        history.replaceState(null, "", hrefFor(hash));
+      } catch {
+        /* ignore */
+      }
+    });
+  }
 
   return (
-    <div className="landing-full-bleed sticky top-0 z-40 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md">
-      <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between gap-3 px-4 py-3 md:px-8">
+    <div
+      ref={barRef}
+      className={`landing-full-bleed relative sticky top-0 z-50 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] ${
+        open
+          ? "bg-background"
+          : "bg-[color-mix(in_oklab,var(--background)_95%,transparent)] backdrop-blur-md"
+      }`}
+    >
+      {/* Desktop header */}
+      <div className="mx-auto hidden w-full max-w-[1920px] items-center justify-between gap-3 px-4 py-3 md:flex md:px-8">
         <div className="flex min-w-0 items-center gap-6 md:gap-10">
           <a href={hrefFor("#top")} className="flex shrink-0 items-center gap-2 text-foreground">
-            <span
-              className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl"
-            >
+            <span className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl">
               sonicdesk.
             </span>
             <span className="hidden font-mono-tb text-[10px] text-muted-foreground sm:inline">
               // v0.1
             </span>
           </a>
-          <nav className="hidden items-center gap-6 md:flex">
-            {navItems.map(([href, label]) => (
+          <nav className="flex items-center gap-6">
+            {LANDING_NAV_ITEMS.map(([href, label]) => (
               <a
                 key={href}
                 href={hrefFor(href)}
@@ -410,75 +502,120 @@ export function TopBar({
           </span>
           <a
             href={authHref}
-            className="tb-btn-accent hidden items-center gap-2 bg-lime px-3 py-2 text-[11px] uppercase text-primary-foreground transition-colors sm:inline-flex"
+            className="tb-btn-accent inline-flex items-center gap-2 bg-lime px-3 py-2 text-[11px] uppercase text-primary-foreground transition-colors"
           >
             {authLabel}
           </a>
-          <button
-            onClick={() => setOpen((o) => !o)}
-            aria-label={open ? "Close menu" : "Open menu"}
-            aria-expanded={open}
-            className="group inline-flex items-center gap-2.5 py-1 md:hidden"
-          >
-            <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground transition-colors group-hover:text-lime">
-              {open ? "Close" : "Menu"}
-            </span>
-            <span className="relative flex h-3 w-5 flex-col justify-between" aria-hidden>
-              <motion.span
-                initial={false}
-                animate={{ rotate: open ? 45 : 0, y: open ? 6 : 0 }}
-                className="block h-px w-full origin-left bg-lime transition-colors"
-              />
-              <motion.span
-                initial={false}
-                animate={{ opacity: open ? 0 : 1, scaleX: open ? 0 : 1 }}
-                className="block h-px w-3 self-end bg-muted-foreground transition-colors group-hover:bg-lime/70"
-              />
-              <motion.span
-                initial={false}
-                animate={{ rotate: open ? -45 : 0, y: open ? -6 : 0 }}
-                className="block h-px w-full origin-left bg-lime transition-colors"
-              />
-            </span>
-          </button>
         </div>
       </div>
+
+      {/* Mobile header — accent logo left, section wheel right */}
+      <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between gap-3 px-4 py-3 md:hidden">
+        <a href={hrefFor("#top")} className="shrink-0 text-foreground">
+          {/* text-lime must live on a span — unlayered `a { color: inherit }` beats utilities on <a> */}
+          <span className="font-display-tb text-base font-bold tracking-tight text-lime">
+            sonicdesk.
+          </span>
+        </a>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? "Close sections" : `Current section: ${activeLabel}. Open sections`}
+          aria-expanded={open}
+          className="flex shrink-0 items-center gap-1 py-1"
+        >
+          <span className="size-1.5 shrink-0 rounded-full bg-lime translate-y-px mr-1" aria-hidden />
+          {/* Fixed width = longest section name; labels right-align so the name hugs the edge */}
+          <span className="relative inline-grid h-[14px] place-items-end overflow-hidden">
+            <span
+              aria-hidden
+              className="invisible col-start-1 row-start-1 whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-[0.22em]"
+            >
+              {LONGEST_NAV_LABEL}
+            </span>
+            {leavingLabel && (
+              <span
+                key={`out-${leavingLabel}`}
+                aria-hidden
+                className="rm-note-rise-out col-start-1 row-start-1 justify-self-end whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground"
+              >
+                {leavingLabel}
+              </span>
+            )}
+            <span
+              key={`in-${activeLabel}`}
+              className="rm-note-rise-in col-start-1 row-start-1 justify-self-end whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-[0.22em] text-foreground"
+            >
+              {activeLabel}
+            </span>
+          </span>
+        </button>
+      </div>
+
+      {/* Overlay: blur only the page behind the menu — header bar stays sharp */}
       <AnimatePresence>
         {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-background md:hidden"
-          >
-            <nav className="flex flex-col px-4 py-2">
-              {navItems.map(([href, label], i) => (
-                <motion.a
-                  key={href}
-                  href={hrefFor(href)}
+          <>
+            <motion.button
+              type="button"
+              aria-label="Dismiss sections"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setOpen(false)}
+              style={{ top: scrimTop }}
+              className="fixed inset-x-0 bottom-0 z-40 bg-background/40 backdrop-blur-sm md:hidden"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute left-0 right-0 top-full z-50 border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-background/70 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-md md:hidden"
+            >
+              <nav className="flex flex-col px-4 py-2">
+                {LANDING_NAV_ITEMS.map(([href, label], i) => {
+                  const active = label === activeLabel;
+                  return (
+                    <motion.a
+                      key={href}
+                      href={hrefFor(href)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        goToSection(href, label);
+                      }}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.03 * i }}
+                      className={`group flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_40%,transparent)] py-3 font-mono-tb text-[12px] uppercase tracking-[0.22em] transition-colors ${
+                        active ? "text-lime" : "text-muted-foreground hover:text-lime"
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <span
+                          className={`size-1.5 rounded-full bg-lime transition-opacity ${
+                            active ? "opacity-100" : "opacity-40 group-hover:opacity-100"
+                          }`}
+                        />
+                        {label}
+                      </span>
+                      <span className={`text-lime transition-opacity ${active ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
+                        →
+                      </span>
+                    </motion.a>
+                  );
+                })}
+                <a
+                  href={authHref}
                   onClick={() => setOpen(false)}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.04 * i }}
-                  className="group flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_40%,transparent)] py-3 font-mono-tb text-[12px] uppercase tracking-[0.22em] text-muted-foreground transition-colors hover:text-lime"
+                  className="tb-btn-accent mt-3 mb-2 flex items-center justify-center gap-2 bg-lime px-4 py-3 text-[11px] uppercase text-primary-foreground"
                 >
-                  <span className="flex items-center gap-3">
-                    <span className="size-1.5 bg-lime opacity-50 transition-opacity group-hover:opacity-100" />
-                    {label}
-                  </span>
-                  <span className="text-lime opacity-0 transition-opacity group-hover:opacity-100">→</span>
-                </motion.a>
-              ))}
-              <a
-                href={authHref}
-                onClick={() => setOpen(false)}
-                className="tb-btn-accent mt-3 mb-2 flex items-center justify-center gap-2 bg-lime px-4 py-3 text-[11px] uppercase text-primary-foreground"
-              >
-                {authLabel}
-              </a>
-            </nav>
-          </motion.div>
+                  {authLabel}
+                </a>
+              </nav>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>
@@ -3302,6 +3439,19 @@ function Footer() {
 
 export default function LandingPage() {
   const { authHref, authLabel } = useLandingAuth()
+  const router = useRouter()
+  const [standaloneRedirect, setStandaloneRedirect] = useState(false)
+
+  // Installed PWA: never show marketing — go straight to the app shell.
+  useEffect(() => {
+    if (!isStandaloneDisplay()) return
+    setStandaloneRedirect(true)
+    router.replace("/dashboard")
+  }, [router])
+
+  if (standaloneRedirect) {
+    return <div className="min-h-screen bg-background" data-theme="lime" />
+  }
 
   return (
     <div className="landing-page min-h-screen" data-theme="lime">
