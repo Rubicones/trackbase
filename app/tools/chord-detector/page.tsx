@@ -1,6 +1,6 @@
 import ChordDetectorPage from '@/components/landing/ChordDetectorPage'
 import { JsonLd } from '@/components/seo/JsonLd'
-import { buildSlicePageMetadata, buildSlicePageJsonLd } from '@/lib/seo'
+import { buildSlicePageMetadata, buildChordDetectorJsonLd } from '@/lib/seo'
 
 const seo = {
   title: 'Free Chord Detector — Find the Chords of Any Song',
@@ -17,7 +17,7 @@ export const dynamic = 'force-static'
 export default function Page() {
   return (
     <>
-      <JsonLd data={buildSlicePageJsonLd(seo)} />
+      <JsonLd data={buildChordDetectorJsonLd()} />
       <ChordDetectorPage />
     </>
   )

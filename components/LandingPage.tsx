@@ -1896,23 +1896,27 @@ function Features() {
  * ============================================================ */
 
 function FeatureIndex() {
-  type Item = { label: string; icon: ComponentType<{ size?: number; className?: string }> };
-  const groups: Array<{ n: string; t: string; accent: string; items: Item[] }> = [
+  type Item = {
+    label: string;
+    icon: ComponentType<{ size?: number; className?: string }>;
+    href?: string;
+  };
+  const groups: Array<{ n: string; t: string; accent: string; href?: string; items: Item[] }> = [
     {
       n: "06.1", t: "ORGANIZATION", accent: "var(--wave-violet)",
       items: [
         { label: "Bands & invite codes", icon: Users },
-        { label: "Custom role tags · guitarist, vocalist, producer", icon: Tag },
+        { label: "Custom role tags · guitarist, vocalist, producer", icon: Tag, href: "/audience/producer" },
         { label: "Real-time activity feed", icon: Activity },
         { label: "Group statistics — versions, applies, comments", icon: BarChart3 },
       ],
     },
     {
-      n: "06.2", t: "VERSIONING", accent: "var(--lime)",
+      n: "06.2", t: "VERSIONING", accent: "var(--lime)", href: "/features/versions",
       items: [
-        { label: "Branch off for experiments — master mix stays untouched", icon: GitBranch },
-        { label: "Compare any version to master · review overlaps · apply changes", icon: GitMerge },
-        { label: "Full version history · creation date and tags", icon: History },
+        { label: "Branch off for experiments — master mix stays untouched", icon: GitBranch, href: "/features/versions" },
+        { label: "Compare any version to master · review overlaps · apply changes", icon: GitMerge, href: "/features/versions" },
+        { label: "Full version history · creation date and tags", icon: History, href: "/features/versions" },
       ],
     },
     {
@@ -1922,25 +1926,25 @@ function FeatureIndex() {
         { label: "Mute · Solo · Offset · Replace", icon: Volume2 },
         { label: "Record straight into the project", icon: Mic },
         { label: "Metronome · count-in · loop section", icon: Timer },
-        { label: "Range comments with threads", icon: MessageSquare },
+        { label: "Range comments with threads", icon: MessageSquare, href: "/features/comments" },
         { label: "MIDI editor · draw & select · snap-to-grid · undo/redo", icon: MessageSquare },
       ],
     },
     {
-      n: "06.4", t: "STRUCTURE & CHORDS", accent: "var(--wave-amber)",
+      n: "06.4", t: "STRUCTURE & CHORDS", accent: "var(--wave-amber)", href: "/features/structure",
       items: [
-        { label: "Mark every part of the track — chorus, bridge, or super-mega-breakdown", icon: LayoutGrid },
-        { label: "Chord-per-section · auto-detect", icon: Music2 },
-        { label: "Structure overlay above waveforms", icon: Layers },
-        { label: "Chord chart for rehearsal", icon: ListMusic },
+        { label: "Mark every part of the track — chorus, bridge, or super-mega-breakdown", icon: LayoutGrid, href: "/features/structure" },
+        { label: "Chord-per-section · auto-detect", icon: Music2, href: "/tools/chord-detector" },
+        { label: "Structure overlay above waveforms", icon: Layers, href: "/features/structure" },
+        { label: "Chord chart for rehearsal", icon: ListMusic, href: "/tools/chord-detector" },
       ],
     },
     {
-      n: "06.5", t: "A/B VERSION COMPARISON", accent: "var(--wave-sky)",
+      n: "06.5", t: "A/B VERSION COMPARISON", accent: "var(--wave-sky)", href: "/features/versions",
       items: [
-        { label: "Side-by-side version comparison", icon: GitCompare },
-        { label: "Solo individual tracks while comparing", icon: Headphones },
-        { label: "Synced playback — hear both versions at once", icon: Play },
+        { label: "Side-by-side version comparison", icon: GitCompare, href: "/features/versions" },
+        { label: "Solo individual tracks while comparing", icon: Headphones, href: "/features/versions" },
+        { label: "Synced playback — hear both versions at once", icon: Play, href: "/features/versions" },
       ],
     },
     {
@@ -1955,11 +1959,11 @@ function FeatureIndex() {
       ],
     },
     {
-      n: "06.7", t: "MOBILE", accent: "var(--lime-bright)",
+      n: "06.7", t: "MOBILE", accent: "var(--lime-bright)", href: "/features/mobile",
       items: [
-        { label: "Rehearsal view · preview mix, chords, and structure on the go", icon: Smartphone },
-        { label: "Mixer · work on tracks anytime, anywhere", icon: SlidersHorizontal },
-        { label: "Recording with built-in mic", icon: Mic },
+        { label: "Rehearsal view · preview mix, chords, and structure on the go", icon: Smartphone, href: "/features/mobile" },
+        { label: "Mixer · work on tracks anytime, anywhere", icon: SlidersHorizontal, href: "/features/mobile" },
+        { label: "Recording with built-in mic", icon: Mic, href: "/features/mobile" },
       ],
     },
     {
@@ -1971,6 +1975,17 @@ function FeatureIndex() {
         { label: "Per-project & per-band chat with @mentions, version & track refs", icon: Hash },
       ],
     },
+  ];
+
+  const deepDives: { label: string; href: string }[] = [
+    { label: "Versions & A/B", href: "/features/versions" },
+    { label: "Comments on bars", href: "/features/comments" },
+    { label: "Structure & chords", href: "/features/structure" },
+    { label: "Mobile rehearsal", href: "/features/mobile" },
+    { label: "Free chord detector", href: "/tools/chord-detector" },
+    { label: "For indie bands", href: "/audience/indie-band" },
+    { label: "For producers", href: "/audience/producer" },
+    { label: "For cover bands", href: "/audience/cover-band" },
   ];
 
   return (
@@ -2003,14 +2018,17 @@ function FeatureIndex() {
               </span>
               <span className="landing-hover-dot size-1.5 opacity-60 transition-opacity group-hover:opacity-100" style={{ background: g.accent }} />
             </div>
-            <h3
-              className="font-display-tb font-bold tracking-tight text-lg"
-
-            >
-              {g.t}
+            <h3 className="font-display-tb font-bold tracking-tight text-lg">
+              {g.href ? (
+                <a href={g.href} className="transition-colors hover:text-lime">
+                  {g.t}
+                </a>
+              ) : (
+                g.t
+              )}
             </h3>
             <ul className="mt-4 space-y-2.5">
-              {g.items.map(({ label, icon: Icon }) => (
+              {g.items.map(({ label, icon: Icon, href }) => (
                 <LandingHoverItem
                   key={label}
                   className="group/item landing-hover-item-text flex items-start gap-2.5 font-mono-tb text-[11px] leading-relaxed text-muted-foreground transition-colors hover:text-foreground"
@@ -2021,13 +2039,37 @@ function FeatureIndex() {
                   >
                     <Icon size={11} />
                   </span>
-                  <span>{label}</span>
+                  {href ? (
+                    <a href={href} className="underline-offset-2 hover:underline">
+                      {label}
+                    </a>
+                  ) : (
+                    <span>{label}</span>
+                  )}
                 </LandingHoverItem>
               ))}
             </ul>
           </LandingHoverCard>
         ))}
       </div>
+
+      <nav aria-label="Deep dives" className="mt-10 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-5 md:p-6">
+        <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime">
+          Deep dives
+        </div>
+        <ul className="flex flex-wrap gap-x-5 gap-y-2">
+          {deepDives.map((item) => (
+            <li key={item.href}>
+              <a
+                href={item.href}
+                className="font-mono-tb text-[11px] uppercase tracking-[0.14em] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+              >
+                {item.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </section>
   );
 }

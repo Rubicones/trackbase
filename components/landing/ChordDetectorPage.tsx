@@ -25,6 +25,7 @@ import {
 } from "@/components/landing/SliceChrome";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { PROJECT_TIME_SIGNATURES, barDurationSec } from "@/lib/metronomeAudio";
+import { CHORD_DETECTOR_FAQS } from "@/lib/seo";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 const ACCEPTED_EXTENSIONS = ["mp3", "wav", "flac", "ogg", "m4a"];
@@ -724,37 +725,6 @@ function WhyMore() {
  * Tool-specific FAQ (single-open accordion, no tag filter)
  * ============================================================ */
 
-const TOOL_FAQ_ITEMS: { q: string; a: ReactNode }[] = [
-  {
-    q: "Is this chord detector really free?",
-    a: "Yes. Upload a track, confirm the tempo, get chords back with timestamps, bar numbers, and key — no sign-up, no credit card. Up to 5 free analyses per hour.",
-  },
-  {
-    q: "How do I find the chords of a song?",
-    a: "Upload an MP3, WAV, FLAC, OGG or M4A (up to 10 MB), enter the track's BPM (and time signature if it's not 4/4), and you get a chord-by-chord timeline with timestamps, bar numbers, and detected key.",
-  },
-  {
-    q: "Why do you ask for tempo before analyzing?",
-    a: "Chord detection is bar-quantized — one chord per bar — and a bar's length is defined by tempo and time signature. Get those right first and the bar boundaries (and the chords) line up correctly.",
-  },
-  {
-    q: "What if I don't know the time signature?",
-    a: "Leave it on 4/4 — that's the default and it's correct for the large majority of songs.",
-  },
-  {
-    q: "Does it detect the key of the song too?",
-    a: "Yes — alongside the chord timeline, it returns the detected root note and major/minor scale (e.g. \"C major\") for the whole track.",
-  },
-  {
-    q: "What kind of audio works best?",
-    a: "Recordings with clear harmonic content — piano, guitar, keys, pads — analyze most accurately. Melody-only lines, heavy drums, and dense bass can reduce accuracy. A 30–90 second clip works best.",
-  },
-  {
-    q: "Do you keep my audio?",
-    a: "No. Your file is analyzed in memory on the server and discarded immediately — nothing is stored once the analysis finishes.",
-  },
-];
-
 function ToolFaq() {
   const [open, setOpen] = useState<number | null>(0);
 
@@ -765,10 +735,10 @@ function ToolFaq() {
           Chord detector <span className="text-lime">FAQ.</span>
         </h2>
         <div className="mt-8 border-t border-[color-mix(in_oklab,var(--border)_60%,transparent)]">
-          {TOOL_FAQ_ITEMS.map((item, i) => {
+          {CHORD_DETECTOR_FAQS.map((item, i) => {
             const isOpen = open === i;
             return (
-              <div key={i} className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)]">
+              <div key={item.question} className="border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)]">
                 <button
                   type="button"
                   onClick={() => setOpen(isOpen ? null : i)}
@@ -781,7 +751,7 @@ function ToolFaq() {
                       isOpen ? "text-lime" : "text-foreground group-hover:text-lime"
                     }`}
                   >
-                    {item.q}
+                    {item.question}
                   </span>
                   <motion.span
                     animate={{ rotate: isOpen ? 45 : 0 }}
@@ -791,20 +761,16 @@ function ToolFaq() {
                     +
                   </motion.span>
                 </button>
-                <AnimatePresence initial={false}>
-                  {isOpen && (
-                    <motion.div
-                      id={`tool-faq-panel-${i}`}
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <p className="pb-5 pr-8 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">{item.a}</p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                {/* Keep answers in the DOM for crawlers; only visually collapse when closed. */}
+                <div
+                  id={`tool-faq-panel-${i}`}
+                  role="region"
+                  className={isOpen ? "block" : "hidden"}
+                >
+                  <p className="pb-5 pr-8 font-mono-tb text-[12px] leading-relaxed text-muted-foreground">
+                    {item.answer}
+                  </p>
+                </div>
               </div>
             );
           })}

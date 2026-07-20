@@ -7543,7 +7543,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           )}
 
           {/* Track list */}
-          <div ref={trackListRef} className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none relative">
+          <div ref={trackListRef} data-track-scroll className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none relative">
             <div ref={tracksBodyRef} className="relative">
 
               {/* Tact grid + section boundary overlays */}
@@ -7645,6 +7645,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                   editArea={editSession?.trackId === t.id ? (
                     <TrackEditArea
                       session={editSession}
+                      isFirstTrack={i === 0}
                       color={trackAccentColor(t.icon_color, i)}
                       labelW={TRACK_LABEL_W}
                       rowH={TRACK_ROW_H}

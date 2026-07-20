@@ -267,6 +267,17 @@ export function buildSlicePageMetadata({
     alternates: {
       canonical: getCanonicalUrl(path),
     },
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        'max-image-preview': 'large',
+        'max-snippet': -1,
+        'max-video-preview': -1,
+      },
+    },
     openGraph: {
       ...sharedOpenGraph,
       type: 'article',
@@ -365,16 +376,30 @@ export function buildSlicePageJsonLd({
  * visible page content (same rule the homepage FAQ follows — see
  * buildHomeJsonLd's commented-out FAQPage block below).
  */
+/**
+ * Single source of truth for /tools/chord-detector FAQ copy + FAQPage JSON-LD.
+ * Visible accordion and structured data must stay identical (Google policy).
+ */
 export const CHORD_DETECTOR_FAQS: { question: string; answer: string }[] = [
   {
     question: 'Is this chord detector really free?',
     answer:
-      'Yes. Upload a track and get its chords, key, and bar positions back with no sign-up and no credit card — up to 5 free analyses per hour per person.',
+      'Yes. Upload a track, confirm the tempo, get chords back with timestamps, bar numbers, and key — no sign-up, no credit card. Up to 5 free analyses per hour.',
   },
   {
     question: 'How do I find the chords of a song?',
     answer:
-      'Upload an MP3, WAV, FLAC, OGG, or M4A file (up to 10 MB), enter the track’s BPM, and the detector returns a chord-by-chord timeline with timestamps, bar numbers, and the song’s key.',
+      "Upload an MP3, WAV, FLAC, OGG or M4A (up to 10 MB), enter the track's BPM (and time signature if it's not 4/4), and you get a chord-by-chord timeline with timestamps, bar numbers, and detected key.",
+  },
+  {
+    question: 'Why do you ask for tempo before analyzing?',
+    answer:
+      "Chord detection is bar-quantized — one chord per bar — and a bar's length is defined by tempo and time signature. Get those right first and the bar boundaries (and the chords) line up correctly.",
+  },
+  {
+    question: "What if I don't know the time signature?",
+    answer:
+      "Leave it on 4/4 — that's the default and it's correct for the large majority of songs.",
   },
   {
     question: 'Does it detect the key of the song too?',
@@ -382,13 +407,14 @@ export const CHORD_DETECTOR_FAQS: { question: string; answer: string }[] = [
       'Yes — alongside the chord timeline, it returns the detected root note and major/minor scale (e.g. "C major") for the whole track.',
   },
   {
-    question: 'What kind of audio works best for chord recognition?',
+    question: 'What kind of audio works best?',
     answer:
-      'Recordings with clear harmonic content — piano, guitar, keys, or pads — analyze most accurately. Melody-only lines, heavy drums, and dense bass can reduce accuracy; a shorter 30–90 second clip with a stems-only version (if you have one) works best.',
+      'Recordings with clear harmonic content — piano, guitar, keys, pads — analyze most accurately. Melody-only lines, heavy drums, and dense bass can reduce accuracy. A 30–90 second clip works best.',
   },
   {
-    question: 'What audio formats and file sizes are supported?',
-    answer: 'MP3, WAV, FLAC, OGG, and M4A files up to 10 MB.',
+    question: 'Do you keep my audio?',
+    answer:
+      'No. Your file is analyzed in memory on the server and discarded immediately — nothing is stored once the analysis finishes.',
   },
 ]
 

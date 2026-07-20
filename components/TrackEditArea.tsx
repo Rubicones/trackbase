@@ -363,6 +363,7 @@ function TrimThumb({
 
 export function TrackEditArea({
   session,
+  isFirstTrack = false,
   color,
   labelW,
   rowH,
@@ -388,6 +389,7 @@ export function TrackEditArea({
   onRetryApply,
 }: {
   session: TrackEditSession
+  isFirstTrack?: boolean
   color: string
   labelW: number
   rowH: number
@@ -494,15 +496,32 @@ export function TrackEditArea({
     const el = containerRef.current
     if (!el) return
 
+    const CHIP_H = 26
+    const scroller = el.closest('[data-track-scroll]') as HTMLElement | null
+
     const update = () => {
       const rect = el.getBoundingClientRect()
       if (rect.width <= 0 || rect.height <= 0) {
         setGridAnchor(null)
         return
       }
+      // Top of the track-list viewport = just below the sticky structure/chords
+      // header. The chip must never paint above this line.
+      const clipTop = scroller ? scroller.getBoundingClientRect().top : 0
+      // First track has no room above it, so drop the control at its bottom
+      // edge; every other track shows it above the row.
+      let top = isFirstTrack ? rect.bottom - CHIP_H - 2 : rect.top - CHIP_H
+      // Hide once the row has scrolled up under the header.
+      if (rect.bottom <= clipTop) {
+        setGridAnchor(null)
+        return
+      }
+      if (top < clipTop + 2) top = clipTop + 2
       setGridAnchor({
-        top: rect.top - 22,
-        right: window.innerWidth - rect.right + 4,
+        top,
+        // Clear the collapsed chat rail (fixed right-0, ~34px wide on lg) so
+        // the ¼ button isn't overlapped in track edit mode.
+        right: window.innerWidth - rect.right + 38,
       })
     }
 
@@ -517,7 +536,7 @@ export function TrackEditArea({
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
     }
-  }, [session.trackId, rowH, labelW])
+  }, [session.trackId, rowH, labelW, isFirstTrack])
 
   const beginPointerInteraction = useCallback((kind: 'select' | 'move' | 'trim' | 'area') => {
     setActiveInteraction(kind)
@@ -956,7 +975,9 @@ export function TrackEditArea({
                   e.stopPropagation()
                   setGridStep(step)
                 }}
-                className={`min-w-[22px] px-1 py-0.5 text-[9px] font-mono tabular-nums transition ${
+                className={`inline-flex h-6 items-center justify-center min-w-[28px] px-1 leading-none font-mono tabular-nums transition ${
+                  step === 1 ? 'text-[9px]' : 'text-[18px]'
+                } ${
                   active
                     ? 'bg-lime text-primary-foreground'
                     : 'text-muted-foreground hover:text-foreground'

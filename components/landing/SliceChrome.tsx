@@ -241,6 +241,17 @@ export function SliceCardGrid({
  * Footer — big "see the whole workspace" CTA + slim bar
  * ============================================================ */
 
+const SLICE_RELATED_LINKS: { label: string; href: string }[] = [
+  { label: "Versions & A/B", href: "/features/versions" },
+  { label: "Comments on bars", href: "/features/comments" },
+  { label: "Structure & chords", href: "/features/structure" },
+  { label: "Mobile", href: "/features/mobile" },
+  { label: "Chord detector", href: "/tools/chord-detector" },
+  { label: "Indie bands", href: "/audience/indie-band" },
+  { label: "Producers", href: "/audience/producer" },
+  { label: "Cover bands", href: "/audience/cover-band" },
+];
+
 export function SliceFooter({ kind, label }: { kind: SliceKind; label: string }) {
   const { authHref } = useLandingAuth();
 
@@ -284,6 +295,29 @@ export function SliceFooter({ kind, label }: { kind: SliceKind; label: string })
           </div>
         </div>
       </section>
+
+      <nav
+        aria-label="More deep dives"
+        className="border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-8 sm:px-6"
+      >
+        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4">
+          <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime">
+            More deep dives
+          </span>
+          <ul className="flex flex-wrap gap-x-5 gap-y-2">
+            {SLICE_RELATED_LINKS.map((item) => (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className="font-mono-tb text-[11px] uppercase tracking-[0.14em] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                >
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </nav>
 
       <footer className="border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-8 sm:px-6">
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
