@@ -34,17 +34,6 @@ fbq('init', '${META_PIXEL_ID}');
 fbq('track', 'PageView');`}
       </Script>
 
-      <noscript>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          height="1"
-          width="1"
-          style={{ display: 'none' }}
-          alt=""
-          src={`https://www.facebook.com/tr?id=${META_PIXEL_ID}&ev=PageView&noscript=1`}
-        />
-      </noscript>
-
       {/* useSearchParams must live under a Suspense boundary in the App Router. */}
       <Suspense fallback={null}>
         <RouteChangePageView />

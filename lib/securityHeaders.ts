@@ -37,6 +37,8 @@ export function buildContentSecurityPolicy(): string {
     "'wasm-unsafe-eval'",
     'https://va.vercel-scripts.com',
     'https://www.googletagmanager.com',
+    // Meta Pixel base script
+    'https://connect.facebook.net',
   ]
 
   const connectSrc = [
@@ -54,6 +56,9 @@ export function buildContentSecurityPolicy(): string {
     'https://*.google-analytics.com',
     'https://www.googletagmanager.com',
     'https://analytics.google.com',
+    // Meta Pixel (fbevents.js sends events to www.facebook.com/tr)
+    'https://www.facebook.com',
+    'https://connect.facebook.net',
   ]
 
   return [
@@ -61,7 +66,7 @@ export function buildContentSecurityPolicy(): string {
     `script-src ${scriptSrc.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https://www.facebook.com",
     `connect-src ${connectSrc.join(' ')}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
