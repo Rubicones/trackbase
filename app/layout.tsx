@@ -7,6 +7,7 @@ import { PALETTE_STORAGE_KEY } from '@/lib/palettes'
 import { buildRootMetadata } from '@/lib/seo'
 import { Analytics } from "@vercel/analytics/next"
 import { GoogleAnalytics } from '@next/third-parties/google'
+import { MetaPixel } from '@/components/analytics/MetaPixel'
 
 const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
 
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>{children}</Providers>
         <Analytics />
         {gaId ? <GoogleAnalytics gaId={gaId} /> : null}
+        <MetaPixel />
       </body>
     </html>
   )
