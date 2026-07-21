@@ -1,0 +1,14 @@
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+
+> Build error occurred
+Error: EPERM: operation not permitted, unlink '/sessions/determined-laughing-einstein/mnt/band-git/.next/BUILD_ID'
+    at ignore-listed frames {
+  errno: -1,
+  code: 'EPERM',
+  syscall: 'unlink',
+  path: '/sessions/determined-laughing-einstein/mnt/band-git/.next/BUILD_ID'
+}

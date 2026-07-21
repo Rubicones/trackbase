@@ -73,7 +73,9 @@ export function buildContentSecurityPolicy(): string {
     `media-src 'self' blob: ${r2Origins.join(' ')}`,
     "object-src 'none'",
     "base-uri 'self'",
-    "form-action 'self'",
+    // Meta Pixel posts events via a hidden form and iframe to www.facebook.com/tr.
+    "form-action 'self' https://www.facebook.com",
+    "frame-src 'self' https://www.facebook.com",
     "frame-ancestors 'none'",
     ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
