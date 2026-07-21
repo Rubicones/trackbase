@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { PushBellButton } from '@/components/push/PushBellButton'
 import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
+import { FeedbackLauncher } from '@/components/feedback/FeedbackLauncher'
 
 /** Exact current-route match — avoid prefetching the page you're already on. */
 function isCurrentPath(pathname: string, href: string) {
@@ -61,15 +62,7 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
       </div>
       <div className="flex gap-6 items-center shrink-0">
         {right}
-        {/* Dev/brand reference — never worth a production RSC prefetch on every app page. */}
-        <Link
-          href="/uikit"
-          prefetch={false}
-          className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime no-underline"
-          title="UI Kit & Brandbook"
-        >
-          UI Kit
-        </Link>
+        <FeedbackLauncher />
         <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk // v0.9</span>
       </div>
     </footer>

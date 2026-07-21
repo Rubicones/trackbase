@@ -12,15 +12,72 @@
  */
 
 import type { NextRequest } from 'next/server'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
+  decodeJwt,
   refreshAccessToken,
 } from '@/lib/auth/session'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 
 export type { VerifiedUser as JwtPayload }
+
+/**
+ * Return a currently-valid access token from the request cookies, refreshing
+ * via the refresh cookie when the access token has expired. Null when neither
+ * cookie yields a usable token.
+ */
+async function getValidAccessToken(req: NextRequest): Promise<string | null> {
+  const accessToken = req.cookies.get(ACCESS_COOKIE)?.value
+  // decodeJwt returns null once the token is past its exp, so a truthy result
+  // means the access token is still good to send as a Bearer credential.
+  if (accessToken && decodeJwt(accessToken)) return accessToken
+
+  const refreshToken = req.cookies.get(REFRESH_COOKIE)?.value
+  if (!refreshToken) return null
+
+  const refreshed = await refreshAccessToken(refreshToken)
+  return refreshed?.access_token ?? null
+}
+
+export interface AuthedRequest {
+  /** Supabase client that acts as the user — RLS policies apply to its queries. */
+  client: SupabaseClient
+  user: { id: string; email: string | null }
+}
+
+/**
+ * Build a Supabase client bound to the requesting user's access token, so
+ * inserts/selects run under their JWT and RLS is enforced (unlike the shared
+ * service-role `supabase` client). Returns null when the request is not
+ * authenticated. Use this for user-owned rows the user is allowed to write
+ * directly (e.g. feedback); keep using requireBandMember + service role for
+ * resource access that RLS does not model.
+ */
+export async function getRequestAuthedClient(
+  req: NextRequest,
+): Promise<AuthedRequest | null> {
+  const token = await getValidAccessToken(req)
+  if (!token) return null
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !key) return null
+
+  const client = createClient(url, key, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+
+  // Pass the token explicitly: there is no persisted session server-side, so
+  // getUser() must validate the JWT it's given rather than reading from storage.
+  const { data, error } = await client.auth.getUser(token)
+  if (error || !data.user) return null
+
+  return { client, user: { id: data.user.id, email: data.user.email ?? null } }
+}
 
 /**
  * Verify an access token and return the user id, or null if invalid.
