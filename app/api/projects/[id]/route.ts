@@ -274,7 +274,7 @@ export async function GET(
   }
 }
 
-// DELETE /api/projects/[id] — owner deletes project, cleans up R2
+// DELETE /api/projects/[id] — any band member deletes project, cleans up R2
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -282,13 +282,10 @@ export async function DELETE(
   try {
     const { id: projectId } = await params
 
+    // Any band member can delete a project (not just the owner).
     const access = await requireBandMember(req, projectId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
-    const { userId, project, role } = access
-
-    if (role !== 'owner') {
-      return NextResponse.json({ error: 'Only band owners can delete projects' }, { status: 403 })
-    }
+    const { userId, project } = access
 
     const { data: projectMeta } = await supabase
       .from('projects')

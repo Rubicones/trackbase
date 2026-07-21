@@ -42,7 +42,7 @@ import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import { SongRoadmap, useProjectRoadmap } from '@/components/SongRoadmap'
 import { SongChecklist, type ChecklistItem, type ChecklistMember } from '@/components/SongChecklist'
-import { Toast } from '@/components/design/Toast'
+import { Toast, type ToastVariant } from '@/components/design/Toast'
 import { TactGrid } from '@/components/design/TactGrid'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { FloatingPopover } from '@/components/design/FloatingPopover'
@@ -4692,7 +4692,7 @@ export default function ProjectPage() {
   cherryPickDiffRef.current = cherryPickDiff !== null
   const [deleteVersionModal, setDeleteVersionModal] = useState<{ id: string; name: string } | null>(null)
   const [deletingVersion, setDeletingVersion] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; variant?: ToastVariant } | null>(null)
   const [storageUsed, setStorageUsed] = useState(0)
   const [storageLimit, setStorageLimit] = useState(BAND_STORAGE_LIMIT_BYTES)
   const storageFull = storageUsed >= storageLimit
@@ -5772,7 +5772,7 @@ export default function ProjectPage() {
   // the row sticks on "Requesting mic…". Same pattern as the mobile Rec button.
   async function handleAddRecordingTrack() {
     if (storageFull) {
-      setToast(storageQuotaError(storageUsed, storageLimit))
+      setToast({ message: storageQuotaError(storageUsed, storageLimit), variant: 'error' })
       setTimeout(() => setToast(null), 4000)
       return
     }
@@ -5789,7 +5789,7 @@ export default function ProjectPage() {
     } catch {
       pendingMicStreamsRef.current.delete(id)
       if (pendingMobileArmRef.current === id) pendingMobileArmRef.current = null
-      setToast('Microphone access denied')
+      setToast({ message: 'Microphone access denied', variant: 'error' })
       setTimeout(() => setToast(null), 4000)
     } finally {
       addRecordingInFlightRef.current = false
@@ -6419,7 +6419,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
   function handleUploadFiles(files: File[]) {
     if (!files.length || !activeVersionId) return
     if (storageFull) {
-      setToast(storageQuotaError(storageUsed, storageLimit))
+      setToast({ message: storageQuotaError(storageUsed, storageLimit), variant: 'error' })
       setTimeout(() => setToast(null), 4000)
       return
     }
@@ -6427,7 +6427,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     const newUploads: UploadItem[] = []
     for (const file of files) {
       if (file.size > MAX_FILE_SIZE) {
-        setToast(`${file.name} is too large (max 200MB)`)
+        setToast({ message: `${file.name} is too large (max 200MB)`, variant: 'error' })
         setTimeout(() => setToast(null), 4000)
         continue
       }
@@ -6477,7 +6477,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     e.preventDefault(); setIsDragging(false); setIsDraggingAddRow(false)
     const files = Array.from(e.dataTransfer.files).filter(isAcceptedFile)
     if (!files.length) {
-      setToast('Only WAV, MP3, and MIDI files are supported')
+      setToast({ message: 'Only WAV, MP3, and MIDI files are supported', variant: 'error' })
       setTimeout(() => setToast(null), 3000)
       return
     }
@@ -6636,8 +6636,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     const main = versions.find(v => v.type === 'main')
     setActiveVersionId(main?.id ?? branchId ?? '')
     const intoLabel = targetName ?? 'Master'
-    const msg = `✓ "${branchName}" applied to ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
-    setToast(msg)
+    const msg = `"${branchName}" applied to ${intoLabel} — ${tracksUpdated} track${tracksUpdated !== 1 ? 's' : ''} updated`
+    setToast({ message: msg, variant: 'success' })
     setTimeout(() => setToast(null), 3000)
   }
 
@@ -6993,7 +6993,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             setShowMobileTour(false)
             exitOnboardingTourView()
             updateOnboarding('mobile_project_tour_completed', true)
-            setToast("You're all set! Tap ? anytime for a refresher.")
+            setToast({ message: "You're all set! Tap ? anytime for a refresher.", variant: 'success' })
             setTimeout(() => setToast(null), 4000)
           }}
           onTourSkip={() => {
@@ -7956,7 +7956,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           setShowTour(false)
           exitOnboardingTourView()
           updateOnboarding('project_tour_completed', true)
-          setToast("You're all set! Click the ? icon anytime for a refresher.")
+          setToast({ message: "You're all set! Click the ? icon anytime for a refresher.", variant: 'success' })
           setTimeout(() => setToast(null), 4000)
         }}
         onSkip={() => {
@@ -8049,7 +8049,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
       )}
 
       {/* Toast */}
-      {toast && <Toast message={toast} />}
+      {toast && <Toast message={toast.message} variant={toast.variant} />}
 
       <ChatDock
         bandId={bandId}

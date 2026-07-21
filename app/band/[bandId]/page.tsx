@@ -389,7 +389,7 @@ const PreviewMixTimeline = memo(function PreviewMixTimeline({
 
 const ProjectRow = memo(function ProjectRow({
   project, index, playing, loading, error, showTimeline, playbackTime, playbackDuration, onSeek,
-  onPlay, onOpen, onQuick, onRename, onDelete, onMetaUpdated, isOwner,
+  onPlay, onOpen, onQuick, onRename, onDelete, onMetaUpdated,
 }: {
   project: EnhancedProject
   index: number
@@ -406,7 +406,6 @@ const ProjectRow = memo(function ProjectRow({
   onRename: (projectId: string, name: string) => void
   onDelete?: (projectId: string, name: string) => void
   onMetaUpdated: (projectId: string, patch: { bpm: number | null; key: string | null; time_signature: string | null }) => void
-  isOwner: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -527,14 +526,12 @@ const ProjectRow = memo(function ProjectRow({
                   variant="menu"
                 />
               </div>
-              {isOwner && (
-                <TbMenuButton
-                  danger
-                  onClick={() => { setMenuOpen(false); onDelete?.(project.id, project.name) }}
-                >
-                  Delete project
-                </TbMenuButton>
-              )}
+              <TbMenuButton
+                danger
+                onClick={() => { setMenuOpen(false); onDelete?.(project.id, project.name) }}
+              >
+                Delete project
+              </TbMenuButton>
             </div>
           )}
         </div>
@@ -1428,7 +1425,6 @@ export default function BandPage() {
                       onRename={openRenameProject}
                       onDelete={openDeleteProject}
                       onMetaUpdated={updateProjectMeta}
-                      isOwner={myRole === 'owner'}
                     />
                   ))
                 )}

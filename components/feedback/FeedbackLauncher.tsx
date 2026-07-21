@@ -18,7 +18,7 @@ export function FeedbackLauncher() {
         type="button"
         onClick={() => setOpen(true)}
         title="Feedback & Bug Report"
-        className="hidden sm:inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime transition-colors"
+        className="inline-block text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime transition-colors"
       >
         Feedback &amp; Report
       </button>

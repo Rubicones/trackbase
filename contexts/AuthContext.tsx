@@ -52,6 +52,30 @@ interface AuthContextValue extends AuthState {
 const PROFILE_FETCH_RETRIES = 3
 const PROFILE_FETCH_BACKOFF_MS = 300
 
+// Upper bound for the initial getSession() call. A stale/expired refresh token
+// can make the Supabase client stall (or throw) while it tries to recover the
+// session — without a cap, `loading` would stay true forever and the app renders
+// skeletons indefinitely with no requests firing. On timeout we fall back to the
+// HttpOnly-cookie bootstrap, which the server refreshes independently.
+const GET_SESSION_TIMEOUT_MS = 4000
+
+/** Reject after `ms` so a hung promise can't stall session init forever. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms)
+    promise.then(
+      v => { clearTimeout(timer); resolve(v) },
+      e => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
+/** A stored session whose access token has already expired (10s safety margin). */
+function isSessionExpired(session: Session): boolean {
+  if (!session.expires_at) return false
+  return Date.now() / 1000 > session.expires_at - 10
+}
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextValue>({
@@ -142,49 +166,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    const syncingRef = { current: false }
 
-    async function syncSession() {
-      const { data: { session: existing } } = await supabase.auth.getSession()
-
-      if (existing) {
-        if (cancelled) return
-        await setAuthCookies(existing)
-        await syncSupabaseRealtimeAuth(existing.access_token)
-        const profile = await fetchProfile(existing.user.id)
-        if (cancelled) return
-        setState({ user: existing.user, profile, session: existing, loading: false })
-        return
-      }
-
-      // HttpOnly cookies may exist when localStorage was cleared — bootstrap once.
+    // Recover a session from the HttpOnly auth cookies. The server refreshes the
+    // cookie tokens independently of localStorage, so this works even when the
+    // client's stored refresh token has gone stale (the exact case that used to
+    // hang the app on an old tab / relaunched PWA). Returns true when a session
+    // was established and state was set.
+    async function bootstrapFromCookies(): Promise<boolean> {
       try {
         const res = await fetch('/api/auth/session', { credentials: 'same-origin' })
-        if (res.ok) {
-          const tokens = (await res.json()) as { access_token: string; refresh_token: string }
-          const { data, error } = await supabase.auth.setSession({
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-          })
-          if (!error && data.session) {
-            if (cancelled) return
-            await setAuthCookies(data.session)
-            await syncSupabaseRealtimeAuth(data.session.access_token)
-            const profile = await fetchProfile(data.session.user.id)
-            if (cancelled) return
-            setState({ user: data.session.user, profile, session: data.session, loading: false })
-            return
-          }
-        }
+        if (!res.ok) return false
+        const tokens = (await res.json()) as { access_token?: string; refresh_token?: string }
+        if (!tokens.access_token || !tokens.refresh_token) return false
+        const { data, error } = await supabase.auth.setSession({
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+        })
+        if (error || !data.session) return false
+        if (cancelled) return true
+        await setAuthCookies(data.session)
+        await syncSupabaseRealtimeAuth(data.session.access_token)
+        const profile = await fetchProfile(data.session.user.id)
+        if (cancelled) return true
+        setState({ user: data.session.user, profile, session: data.session, loading: false })
+        return true
       } catch {
-        /* ignore network errors */
+        return false
       }
+    }
 
-      if (!cancelled) setState(prev => ({ ...prev, loading: false }))
+    async function syncSession() {
+      if (syncingRef.current) return
+      syncingRef.current = true
+      let resolved = false
+      try {
+        let existing: Session | null = null
+        try {
+          // Cap this call: a stale token can make it hang or throw. Either way we
+          // stop waiting and fall through to the cookie bootstrap below.
+          const { data } = await withTimeout(supabase.auth.getSession(), GET_SESSION_TIMEOUT_MS)
+          existing = data.session
+        } catch {
+          existing = null
+        }
+
+        // Only trust a non-expired client session. An expired one would 401 every
+        // query; recover via cookies instead (server-side refresh).
+        if (existing && !isSessionExpired(existing)) {
+          if (cancelled) { resolved = true; return }
+          await setAuthCookies(existing)
+          await syncSupabaseRealtimeAuth(existing.access_token)
+          const profile = await fetchProfile(existing.user.id)
+          if (cancelled) { resolved = true; return }
+          setState({ user: existing.user, profile, session: existing, loading: false })
+          resolved = true
+          return
+        }
+
+        // No usable client session (missing, expired, or errored) — recover from
+        // HttpOnly cookies.
+        if (await bootstrapFromCookies()) resolved = true
+      } finally {
+        // Guarantee we always leave the loading state, even on an unexpected throw,
+        // so the UI can proceed instead of showing skeletons forever.
+        if (!resolved && !cancelled) setState(prev => ({ ...prev, loading: false }))
+        syncingRef.current = false
+      }
     }
 
     void syncSession()
 
-    const syncingRef = { current: false }
+    // An old tab or a relaunched PWA can resume with an expired in-memory session.
+    // Re-sync when it becomes visible again so tokens/cookies refresh before the
+    // next request, instead of silently 401-ing.
+    function handleVisibility() {
+      if (document.visibilityState === 'visible' && !cancelled && !syncingRef.current) {
+        void syncSession()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         // INITIAL_SESSION is handled by syncSession; avoid duplicate profile/cookie work.
@@ -213,6 +275,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', handleVisibility)
       subscription.unsubscribe()
     }
   }, [supabase, fetchProfile])

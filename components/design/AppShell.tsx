@@ -54,14 +54,15 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
   return (
     <footer className="sticky bottom-0 left-0 right-0 h-[var(--shell-footer-h)] border-t border-border bg-background/95 backdrop-blur px-6 flex items-center justify-between text-[10px] text-muted-foreground z-40">
       <div className="flex gap-6 items-center min-w-0">
-        <div className="hidden sm:flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="size-1.5 rounded-full bg-online animate-pulse-dot" />
           <span className="uppercase tracking-widest">SYS OK</span>
         </div>
-        {left}
+        {/* Page stats are desktop-only — mobile footer keeps just SYS OK + feedback. */}
+        <span className="hidden sm:contents">{left}</span>
       </div>
       <div className="flex gap-6 items-center shrink-0">
-        {right}
+        <span className="hidden sm:contents">{right}</span>
         <FeedbackLauncher />
         <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk // v0.9</span>
       </div>
