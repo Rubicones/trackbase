@@ -1,12 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
-import { useTheme } from 'next-themes'
 import type { BarState } from '@/lib/sectionMerge'
 import { formatTrackStartBar } from '@/lib/trackMerge'
 import { SectionLabel } from '@/components/design/AppShell'
 import { UserAvatar } from '@/components/ui/avatar'
-import type { MergePreview, MergeResolution, AutoMergeItem, ConflictTrack, TrackSnapshot, CommentPreview, CommentChanges } from '@/lib/mergePreview'
+import type { MergeResolution, AutoMergeItem, ConflictTrack, TrackSnapshot, CommentPreview, CommentChanges } from '@/lib/mergePreview'
 import type { Version } from '@/lib/types'
 import { trackEvent } from '@/lib/analytics'
 import { MergePreviewLoading, MergeTargetSelector } from '@/components/merge/MergeTargetSelector'
