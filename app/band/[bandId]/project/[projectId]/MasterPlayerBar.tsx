@@ -14,6 +14,8 @@ export function MasterPlayerBar({
   onToggleMetronome, onToggleCountdown,
   sectionLoopOn, sectionLoopEnabled, onToggleSectionLoop,
   compact = false,
+  playbackReady = false,
+  playbackMix = 'full',
 }: {
   playing: boolean; currentTime: number
   /** Updated every rAF — used to drive the progress bar DOM directly. */
@@ -24,6 +26,10 @@ export function MasterPlayerBar({
   onToggleMetronome: () => void; onToggleCountdown: () => void
   sectionLoopOn: boolean; sectionLoopEnabled: boolean; onToggleSectionLoop: () => void
   compact?: boolean
+  /** True when the transport can start (all stems decoded OR preview mix loaded). */
+  playbackReady?: boolean
+  /** Which mix the transport would play right now. */
+  playbackMix?: 'preview' | 'full' | 'none'
 }) {
   const barRef = useRef<HTMLDivElement>(null)
   const fillRef = useRef<HTMLDivElement>(null)
@@ -35,7 +41,11 @@ export function MasterPlayerBar({
   const durationRef = useRef(duration)
   durationRef.current = duration
   const isLoading = loaded < total && total > 0
-  const playLoading = isLoading && !playing && !isCounting
+  // Stems still fetching but the cached preview mix is playable — let the user
+  // play/seek the preview instead of waiting, and show the badge over the bar.
+  const previewActive = isLoading && playbackReady && playbackMix === 'preview'
+  const canTransport = !isLoading || previewActive
+  const playLoading = isLoading && !previewActive && !playing && !isCounting
   const playBtnClass = playLoading
     ? 'size-10 border border-border bg-background grid place-items-center cursor-wait'
     : 'size-10 bg-lime text-primary-foreground grid place-items-center active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed'
@@ -45,7 +55,7 @@ export function MasterPlayerBar({
       onPause()
       return
     }
-    if (!isLoading && duration > 0) onPlay()
+    if (canTransport && duration > 0) onPlay()
   }
 
   // Drive progress bar fill + cursor via rAF — no React state per frame.
@@ -75,7 +85,7 @@ export function MasterPlayerBar({
   }
 
   function startDrag(clientX: number) {
-    if (isLoading) return
+    if (!canTransport) return
     draggingRef.current = true
     seekPreviewRef.current = clientXToPct(clientX) * durationRef.current
   }
@@ -90,6 +100,17 @@ export function MasterPlayerBar({
     seekPreviewRef.current = null
     if (t !== null) onSeek(t)
   }
+
+  // "tracks loading · preview mix" badge — floats above the bottom progress bar
+  // while stems fetch and the preview mix is what would play (mirrors the mobile
+  // mixer's transport badge above the play button).
+  const previewBadge = previewActive ? (
+    <span
+      className={`absolute ${compact ? '-top-5' : '-top-6'} left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1 uppercase tracking-widest text-[8.5px] px-1.5 py-px border border-border bg-surface text-muted-foreground whitespace-nowrap pointer-events-none`}
+    >
+      tracks loading · preview mix
+    </span>
+  ) : null
 
   const transportToggles = (
     <div className="flex items-center gap-1.5 shrink-0">
@@ -137,7 +158,7 @@ export function MasterPlayerBar({
         </button>
         <div
           ref={barRef}
-          className={`flex-1 min-w-0 h-1 bg-surface-2 relative select-none ${isLoading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
+          className={`flex-1 min-w-0 h-1 bg-surface-2 relative select-none ${canTransport ? 'cursor-pointer' : 'cursor-default pointer-events-none'}`}
           onMouseDown={e => startDrag(e.clientX)}
           onMouseMove={e => moveDrag(e.clientX)}
           onMouseUp={commitDrag}
@@ -146,6 +167,7 @@ export function MasterPlayerBar({
           onTouchMove={e => moveDrag(e.touches[0].clientX)}
           onTouchEnd={commitDrag}
         >
+          {previewBadge}
           <div ref={fillRefC} className="absolute inset-y-0 left-0 bg-lime" style={{ width: '0%' }} />
           <div ref={cursorRefC} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
         </div>
@@ -181,12 +203,13 @@ export function MasterPlayerBar({
 
       <div
         ref={barRef}
-        className={`flex-1 min-w-[200px] h-2 bg-surface-2 relative select-none ${isLoading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
+        className={`flex-1 min-w-[200px] h-2 bg-surface-2 relative select-none ${canTransport ? 'cursor-pointer' : 'cursor-default pointer-events-none'}`}
         onMouseDown={e => startDrag(e.clientX)}
         onMouseMove={e => moveDrag(e.clientX)}
         onMouseUp={commitDrag}
         onMouseLeave={commitDrag}
       >
+        {previewBadge}
         <div ref={fillRef} className="absolute inset-y-0 left-0 bg-lime" style={{ width: '0%' }} />
         <div ref={cursorRef} className="absolute top-0 bottom-0 w-px bg-foreground" style={{ left: '0%' }} />
       </div>

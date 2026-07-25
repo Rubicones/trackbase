@@ -48,7 +48,11 @@ export function getSiteUrl(): string {
   return LOCAL_SITE_URL
 }
 
-/** Post-auth magic-link callback URL. */
+/**
+ * Post-auth callback URL for the legacy magic-link path. Sign-in is email OTP
+ * now (`app/auth/page.tsx`); this is still passed as `emailRedirectTo` so the
+ * link variant in the Supabase email template keeps resolving.
+ */
 export function getAuthCallbackUrl(): string {
   return `${getSiteUrl()}/auth/callback`
 }

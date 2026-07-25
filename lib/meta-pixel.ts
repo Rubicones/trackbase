@@ -79,9 +79,10 @@ export function trackMetaPageView(): void {
  *   - Feedback submission is a customer-to-business contact -> Contact.
  *
  * Deliberately NOT mapped:
- *   - magic_link_sent / sign_in_clicked: the auth page is shared by new
- *     signups AND returning logins, so mapping to Lead/CompleteRegistration
- *     would inflate those conversions with existing users signing in.
+ *   - otp_code_sent / otp_code_resent / otp_verified / sign_in_clicked: the
+ *     auth page is shared by new signups AND returning logins, so mapping to
+ *     Lead/CompleteRegistration would inflate those conversions with existing
+ *     users signing in.
  *
  * Edit this map freely as conversion semantics change — it's the only place
  * that needs touching. Standard event names must be exact, case-sensitive

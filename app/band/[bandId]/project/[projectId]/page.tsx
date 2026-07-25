@@ -273,11 +273,12 @@ export default function ProjectPage() {
     if (isMobileLandscape && editStructure) setEditStructure(false)
   }, [isMobileLandscape, editStructure])
 
-  // Start streaming the cached preview mix as early as possible in rehearsal.
+  // Start streaming the cached preview mix as early as possible — it backs
+  // instant playback while the full stems fetch (rehearsal + both mixers).
   useEffect(() => {
-    if (!isMobilePortrait || !projectId) return
+    if (!projectId) return
     prefetchPreviewMixPlayback(projectId)
-  }, [isMobilePortrait, projectId])
+  }, [projectId])
 
   const [topbarSheetOpen, setTopbarSheetOpen] = useState(false)
   const trackListRef = useRef<HTMLDivElement>(null)
@@ -923,7 +924,10 @@ export default function ProjectPage() {
     recordingPreviewEndSec,
     timelineDurationSec,
     {
-      enabled: isMobilePortrait,
+      // Preview-mix fallback is enabled everywhere (rehearsal, mobile mixer,
+      // desktop mixer): while the full stems fetch, Master plays the cached
+      // preview MP3 and switches to the full mix once everything is decoded.
+      enabled: true,
       projectId,
       isMainVersion: activeVersion?.type === 'main',
     },
@@ -3318,6 +3322,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             duration={Math.max(player.duration, totalProjectDurationMs / 1000)}
             loaded={player.loaded}
             total={player.total}
+            playbackReady={player.playbackReady}
+            playbackMix={player.playbackMix}
             volume={player.volume}
             onPlay={player.play}
             onPause={player.pause}

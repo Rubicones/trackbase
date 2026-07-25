@@ -1,10 +1,20 @@
 'use client'
 
+/**
+ * Magic-link landing page — retained after the move to email OTP.
+ *
+ * Primary sign-in is now the one-time code entered at /auth. This route stays
+ * so that links already sitting in inboxes, and the link variant in the Supabase
+ * email template, still resolve to a session. Nothing in the OTP flow depends on
+ * it; if the email template ever drops `{{ .ConfirmationURL }}` entirely, this
+ * page and `getAuthCallbackUrl()` can go with it.
+ */
+
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabaseClient } from '@/lib/supabase/client'
-import { setAuthCookies } from '@/lib/auth/cookies'
 import { sanitizeRedirectPath } from '@/lib/auth/safe-redirect'
+import { resolvePostSignInPath, type PostSignInSession } from '@/lib/auth/post-sign-in'
 import {
   AuthShell,
   AuthCard,
@@ -79,45 +89,12 @@ export default function AuthCallbackPage() {
       setErrorMessage(message)
     }
 
-    async function resolveDestination(session: {
-      user: { id: string; user_metadata?: { username?: string; onboarding_complete?: boolean } }
-      access_token: string
-      refresh_token: string
-      expires_in?: number
-    }) {
+    // Shared with the OTP path in app/auth/page.tsx so the two entry points
+    // cannot diverge — see lib/auth/post-sign-in.ts.
+    async function resolveDestination(session: PostSignInSession) {
       if (settled) return
       settled = true
-      await setAuthCookies(session)
-
-      const meta = session.user.user_metadata
-      if (!meta?.username) {
-        router.replace('/onboarding')
-        return
-      }
-
-      if (meta.onboarding_complete) {
-        router.replace(readNext())
-        return
-      }
-
-      const statusRes = await fetch('/api/me/setup-status')
-      const status = statusRes.ok ? await statusRes.json() : null
-
-      if (status?.can_use_app) {
-        const { error } = await supabase.auth.updateUser({
-          data: { onboarding_complete: true },
-        })
-        if (!error) {
-          const { data: { session: refreshed } } = await supabase.auth.refreshSession()
-          if (refreshed) {
-            void setAuthCookies(refreshed)
-          }
-        }
-        router.replace(readNext())
-        return
-      }
-
-      router.replace('/onboarding?step=3')
+      router.replace(await resolvePostSignInPath(supabase, session, readNext()))
     }
 
     const timeoutId = window.setTimeout(() => {

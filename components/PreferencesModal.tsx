@@ -281,7 +281,7 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
                 Sign out
               </p>
               <p className="font-mono text-[10px] text-muted-foreground m-0 leading-relaxed">
-                Ends this device session. Sign back in anytime with a magic link.
+                Ends this device session. Sign back in anytime with an email code.
               </p>
             </div>
             <TbButton

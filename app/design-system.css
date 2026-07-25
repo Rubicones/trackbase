@@ -580,6 +580,71 @@ a.bg-accent:active:not([aria-disabled="true"]) {
   animation: tb-slide-in 0.6s cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
+/* OTP digit reveal — the same motion language as the band/project cards
+   (`animate-slide-in` / `tb-slide-in`): translateY + fade on the shared
+   cubic-bezier(0.32, 0.72, 0, 1) easing. Two deliberate differences, because
+   the moving thing is one glyph inside a 44px box rather than a whole card:
+   the travel is 8px instead of 20px (20px would start the digit outside its
+   own box) and the duration is 0.22s instead of 0.6s (a digit must land before
+   the next keystroke, and typing six digits at card speed reads as lag).
+   Approach, easing and direction are unchanged, so it reads as the same family.
+   `tb-otp-digit-out` is the reverse for deletion, mirroring the
+   rm-note-rise-in / rm-note-rise-out pairing convention in globals.css. */
+@keyframes tb-otp-digit-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes tb-otp-digit-out {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(-8px); opacity: 0; }
+}
+
+@utility animate-otp-digit-in {
+  animation: tb-otp-digit-in 0.22s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@utility animate-otp-digit-out {
+  animation: tb-otp-digit-out 0.16s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-otp-digit-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  /* The exiting digit is a ghost that outlives the real value by one timeout.
+     With motion reduced there is no animation to watch, so hide it immediately
+     rather than leaving a stale glyph visible until the timeout fires. */
+  .animate-otp-digit-out {
+    animation: none;
+    opacity: 0;
+    transform: none;
+  }
+}
+
+/* The real <input> that sits invisibly on top of the OTP boxes. It keeps the
+   text and caret transparent (the boxes draw the digits themselves) while
+   staying a genuine focusable text field, which is what preserves native
+   selection, paste, autofill and the mobile numeric keypad. Its own selection
+   highlight is suppressed because we paint the selected boxes instead. */
+.tb-otp-field {
+  color: transparent;
+  caret-color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.tb-otp-field::selection {
+  background-color: transparent;
+  color: transparent;
+}
+
+.tb-otp-field::-moz-selection {
+  background-color: transparent;
+  color: transparent;
+}
+
 @keyframes tb-roadmap-segment-in {
   from { opacity: 0; transform: scaleX(0.2); }
   to { opacity: 1; transform: scaleX(1); }

@@ -1,0 +1,114 @@
+<!--
+  sonicdesk — OTP verification email
+  Paste into: Supabase Dashboard → Authentication → Emails → "Magic Link"
+  (and "Confirm signup" for first-time users — same body works for both).
+
+  Token variable: {{ .Token }}  — Supabase's 6-digit OTP.
+  Do NOT rename it. {{ .TokenHash }} is the hashed form (for links, not display).
+
+  Table layout + inline CSS only. No <style>, no JS, no SVG, no web fonts.
+  Colors pulled from app/design-system.css [data-theme="lime"] / .landing-page:
+    --background      oklch(0 0 0)      -> #000000
+    --foreground      oklch(0.93 0 0)   -> #E8E8E8
+    --surface/card    oklch(0.16 0 0)   -> #0D0D0D
+    --muted-foreground oklch(0.58 0 0)  -> #7A7A7A
+    --border          oklch(0.26 0 0)   -> #242424
+    --lime / --accent                   -> #DFFF00
+    --primary-foreground oklch(0.13 0 0)-> #070707
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0;padding:0;background-color:#000000;">
+  <tr>
+    <td align="center" style="margin:0;padding:0;background-color:#000000;">
+
+      <!-- Preheader: shows in the inbox preview line, hidden in the body -->
+      <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#000000;">
+        Your sonicdesk verification code: {{ .Token }}
+      </div>
+
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#000000;border-collapse:collapse;">
+
+        <!-- Lime rule: the neo-brutalist accent bar -->
+        <tr>
+          <td style="height:6px;line-height:6px;font-size:6px;background-color:#DFFF00;">&nbsp;</td>
+        </tr>
+
+        <!-- Header: wordmark, top-left -->
+        <tr>
+          <td align="left" style="padding:28px 32px 24px 32px;border-bottom:1px solid #242424;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="left" style="font-family:'Archivo','Helvetica Neue',Helvetica,Arial,sans-serif;font-size:24px;line-height:24px;font-weight:700;letter-spacing:-0.5px;color:#DFFF00;">
+                  <a href="https://sonicdesk.studio" style="color:#DFFF00;text-decoration:none;">sonicdesk.</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 32px 8px 32px;">
+
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="left" style="font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:11px;line-height:16px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#7A7A7A;padding-bottom:14px;">
+                  Verification code
+                </td>
+              </tr>
+              <tr>
+                <td align="left" style="font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:15px;line-height:24px;color:#E8E8E8;padding-bottom:32px;">
+                  Enter this code to sign in to sonicdesk.
+                </td>
+              </tr>
+            </table>
+
+            <!-- The code -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              <tr>
+                <td align="center" bgcolor="#0D0D0D" style="background-color:#0D0D0D;border:2px solid #DFFF00;padding:30px 16px;">
+                  <!--[if mso]>
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="font-family:Consolas,'Courier New',Courier,monospace;font-size:38px;font-weight:700;color:#DFFF00;">
+                  <![endif]-->
+                  <span style="font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:38px;line-height:48px;font-weight:700;color:#DFFF00;letter-spacing:12px;text-indent:12px;white-space:nowrap;display:inline-block;">{{ .Token }}</span>
+                  <!--[if mso]>
+                  </td></tr></table>
+                  <![endif]-->
+                </td>
+              </tr>
+            </table>
+
+            <!-- Expiry + ignore -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="left" style="font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:13px;line-height:22px;color:#7A7A7A;padding-top:24px;">
+                  This code expires shortly and can only be used once.
+                </td>
+              </tr>
+              <tr>
+                <td align="left" style="font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:13px;line-height:22px;color:#7A7A7A;padding-top:8px;padding-bottom:36px;">
+                  If you didn&rsquo;t request it, ignore this email &mdash; nothing will happen.
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td align="left" style="padding:22px 32px 34px 32px;border-top:1px solid #242424;font-family:'JetBrains Mono',Consolas,Monaco,'Courier New',Courier,monospace;font-size:11px;line-height:18px;letter-spacing:1px;text-transform:uppercase;color:#7A7A7A;">
+            sonicdesk &middot; version control for bands<br />
+            <a href="https://sonicdesk.studio" style="color:#7A7A7A;text-decoration:none;">sonicdesk.studio</a>
+          </td>
+        </tr>
+
+      </table>
+
+      <!-- Breathing room below the card -->
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
+        <tr><td style="height:40px;line-height:40px;font-size:40px;">&nbsp;</td></tr>
+      </table>
+
+    </td>
+  </tr>
+</table>

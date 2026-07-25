@@ -6,7 +6,9 @@
  *
  * State machine:
  *   'none'      — no cache exists; generate synchronously, then redirect.
- *   'fresh'     — serve immediately via presigned redirect, no recompute.
+ *   'fresh'     — serve immediately via presigned redirect, no recompute
+ *                 (unless generated before PREVIEW_MIX_FORMAT_UPDATED_AT —
+ *                 then refreshed in the background like 'stale').
  *   'stale'     — serve existing cached file immediately (redirect), and
  *                 conditionally kick off a background recompute via after().
  *   'computing' — serve existing cached file immediately, no new recompute.
@@ -29,6 +31,7 @@ import {
   recomputePreviewMix,
   PREVIEW_DEBOUNCE_SECONDS,
   PREVIEW_STUCK_LOCK_MS,
+  PREVIEW_MIX_FORMAT_UPDATED_AT,
 } from '@/lib/previewMix'
 
 export async function GET(
@@ -45,7 +48,7 @@ export async function GET(
   // Fetch project preview state
   const { data: project } = await supabase
     .from('projects')
-    .select('preview_mix_status, preview_mix_storage_path, preview_mix_computing_started_at, main_version_modified_at')
+    .select('preview_mix_status, preview_mix_storage_path, preview_mix_computing_started_at, preview_mix_generated_at, main_version_modified_at')
     .eq('id', projectId)
     .single()
 
@@ -121,7 +124,15 @@ export async function GET(
     project.preview_mix_computing_started_at != null &&
     Date.now() - new Date(project.preview_mix_computing_started_at).getTime() > PREVIEW_STUCK_LOCK_MS
 
-  const shouldCheckDebounce = project.preview_mix_status === 'stale' || isStuck
+  // 'fresh' but generated before the current mix format (e.g. the loudness
+  // boost) — serve the old file now, refresh in the background like 'stale'.
+  const isOutdatedFormat =
+    project.preview_mix_status === 'fresh' &&
+    (!project.preview_mix_generated_at ||
+      new Date(project.preview_mix_generated_at) < PREVIEW_MIX_FORMAT_UPDATED_AT)
+
+  const shouldCheckDebounce =
+    project.preview_mix_status === 'stale' || isStuck || isOutdatedFormat
 
   if (shouldCheckDebounce && project.main_version_modified_at) {
     const secondsSinceChange =
@@ -129,8 +140,9 @@ export async function GET(
 
     if (secondsSinceChange >= PREVIEW_DEBOUNCE_SECONDS) {
       // Atomically claim the recompute slot.
-      // For the stuck case we match on 'computing'; for stale we match on 'stale'.
-      const matchStatus = isStuck ? 'computing' : 'stale'
+      // Stuck lock matches 'computing'; otherwise match the current status
+      // ('stale', or 'fresh' for the outdated-format refresh).
+      const matchStatus = isStuck ? 'computing' : project.preview_mix_status
       const { data: claimed } = await supabase
         .from('projects')
         .update({

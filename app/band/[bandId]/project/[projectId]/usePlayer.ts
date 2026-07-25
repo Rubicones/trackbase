@@ -620,8 +620,9 @@ export function usePlayer(
     return () => { cancelled = true }
   }, [versionId, audioTrackIdsKey, recomputeTransportDuration, volume, markPendingFullMixSwitchIfReady, audioTracks.length])
 
-  // Rehearsal (main only): stream preview MP3 via Audio element (fast canplay),
-  // then cache full bytes in the background for the waveform.
+  // Preview-mix fallback (main version only; rehearsal + mobile + desktop mixer):
+  // stream the preview MP3 via Audio element (fast canplay), then cache full
+  // bytes in the background for playback/waveform decode.
   useEffect(() => {
     const r = rehearsalRef.current
     if (!r.enabled || !r.isMainVersion || !r.projectId) {
@@ -956,7 +957,17 @@ export function usePlayer(
         }
       }
 
-      if (elapsed >= dur) { currentTimeRef.current = 0; setPlaying(false); setCurrentTime(0); offsetRef.current = 0; return }
+      if (elapsed >= dur) {
+        currentTimeRef.current = 0
+        playingRef.current = false
+        setPlaying(false)
+        setCurrentTime(0)
+        offsetRef.current = 0
+        // Natural end of playback — if the full mix finished loading while the
+        // preview mix was playing, swap now so the next play uses real stems.
+        trySwitchToFullMix()
+        return
+      }
       // Throttle React state to ~5 Hz so text display updates smoothly but cheaply.
       const bucket = Math.floor(elapsed * 5)
       if (bucket !== lastStateTick) {
@@ -966,7 +977,7 @@ export function usePlayer(
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [getTransportDuration, stopSources, ensurePlaybackGraph, ensureMetronomeBuffer, effectiveGainForTrack, ensurePreviewMixBuffer])
+  }, [getTransportDuration, stopSources, ensurePlaybackGraph, ensureMetronomeBuffer, effectiveGainForTrack, ensurePreviewMixBuffer, trySwitchToFullMix])
 
   playFnRef.current = play
 

@@ -42,8 +42,9 @@ this repo; mobile is the responsive web experience.
 - **Vercel** hosting (serverless functions; env vars set manually there).
 - **Tailwind CSS 4** via `@tailwindcss/postcss` + a large hand-rolled CSS
   variable design system (`app/globals.css`, `app/design-system.css`).
-- **Supabase** (`@supabase/supabase-js` v2) — Postgres, magic-link auth,
-  Realtime (chat + presence). No generated DB types; queries are untyped.
+- **Supabase** (`@supabase/supabase-js` v2) — Postgres, email OTP auth
+  (one-time codes; magic link retained as a legacy path), Realtime (chat +
+  presence). No generated DB types; queries are untyped.
 - **Cloudflare R2** via `@aws-sdk/client-s3` + `s3-request-presigner` —
   all audio/file storage (S3-compatible; `region: 'auto'`).
 - **ffmpeg** — `fluent-ffmpeg` + `ffmpeg-static` + `ffprobe-static`
@@ -126,9 +127,34 @@ Android directory.
 ## 4. Feature map
 
 ### Auth & onboarding
-Magic link (Supabase auth) from `app/auth/page.tsx`; callback page posts
-tokens to `POST /api/auth/session`, which verifies them and sets **HttpOnly
-cookies `sb-at` / `sb-rt`** (`lib/auth/session.ts`, `cookie-options.ts`).
+**Email OTP** (Supabase Auth) from `app/auth/page.tsx`: two steps —
+`signInWithOtp({ email })` requests a code, `verifyOtp({ email, token, type:
+'email' })` exchanges the typed code for a session. **Supabase Auth owns the
+code** (issue/hash/expiry/single-use live in the `auth` schema) — there is no
+app table or SQL involved. Code length is `OTP_LENGTH` in `lib/auth/otp.ts`
+(6, must match Supabase → Auth → Email → "Email OTP Length"); that file also
+holds the resend cooldown and the error-copy mapping. Supabase enforces a
+**minimum interval between auth emails per user** (Auth → Rate Limits,
+default 60 s); the resend button counts down from
+`OTP_RESEND_COOLDOWN_SECONDS` and self-corrects from the 429 message via
+`parseOtpRetryAfterSeconds()` instead of firing a request that would fail.
+The segmented code input is `components/auth/OtpInput.tsx` — **one real
+`<input>` overlaid on presentational boxes**, not N inputs, which is what
+gives it cross-box selection, bulk backspace, paste-from-any-box,
+`autocomplete="one-time-code"` autofill and a single screen-reader field (the
+component header explains the trade-off; don't "fix" it into N inputs).
+Digits reveal with `animate-otp-digit-in` / `-out`, the card `animate-slide-in`
+motion scaled to a glyph.
+
+Post-sign-in behaviour is shared, not duplicated:
+**`lib/auth/post-sign-in.ts` `resolvePostSignInPath()`** mirrors the session
+into cookies and resolves the destination, and is called by both the OTP
+success path and the retained magic-link callback. `app/auth/callback/page.tsx`
+is **legacy but live** — it still handles links already in inboxes and the link
+variant in the Supabase email template, and `emailRedirectTo` is still passed
+for that reason. It posts tokens to `POST /api/auth/session`, which verifies
+them and sets **HttpOnly cookies `sb-at` / `sb-rt`**
+(`lib/auth/session.ts`, `cookie-options.ts`).
 `middleware.ts` verifies/refreshes on every request and forces the onboarding
 flow until `user_metadata.username` and `user_metadata.onboarding_complete`
 are set. Onboarding (`app/onboarding/page.tsx`) is 3 steps: theme → username
@@ -274,9 +300,18 @@ audio). `GET /api/projects/[id]/preview-mix` serves it
 stale-while-revalidate: first-ever generation ('none') computes inline;
 'stale' serves old audio and recomputes in the background via `after()`
 (60 s debounce `PREVIEW_DEBOUNCE_SECONDS`, 5 min stuck-lock
-`PREVIEW_STUCK_LOCK_MS`); `.../preview-mix/recompute` forces it. Client
-cache/preload: `lib/previewMixClient.ts`. Used by the band page and
-Rehearsal View.
+`PREVIEW_STUCK_LOCK_MS`); `.../preview-mix/recompute` forces it. A 'fresh'
+mix generated before `PREVIEW_MIX_FORMAT_UPDATED_AT` is refreshed in the
+background like 'stale'. Loudness: the rendered mix is boosted ×1.5
+(`PREVIEW_MIX_LOUDNESS_BOOST`) unless any stem was originally an MP3
+(checked via `tracks.original_filename` — storage is always FLAC), since
+WAV-sourced previews otherwise play much quieter than the full stem mix.
+Client cache/preload: `lib/previewMixClient.ts`. Used by the band page,
+Rehearsal View, and both mixers: on the Master version, `usePlayer` plays
+the preview mix while stems fetch (mobile shows a transport status badge;
+desktop `MasterPlayerBar` shows a "tracks loading · preview mix" badge over
+the bottom progress bar) and switches to the full mix once all buffers are
+decoded and playback pauses/ends.
 
 ### Chat
 `components/chat/ChatDock.tsx` + `useBandChat.ts`; API

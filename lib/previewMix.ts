@@ -30,6 +30,23 @@ import path from 'path'
 export const PREVIEW_DEBOUNCE_SECONDS = 60
 export const PREVIEW_STUCK_LOCK_MS = 5 * 60 * 1000
 
+/**
+ * Loudness boost applied to the rendered preview mix when NONE of the source
+ * stems were uploaded as MP3s. WAV/FLAC-sourced projects come out noticeably
+ * quieter as a 128 kbps preview MP3 than their full stem mix, so we boost
+ * ~50% to keep the preview → full-mix handoff (mixers) and the band-page
+ * quick-play at a comparable level. If any stem is an MP3 the full mix is
+ * just as quiet, so no boost is applied.
+ */
+export const PREVIEW_MIX_LOUDNESS_BOOST = 1.5
+
+/**
+ * Mixes generated before this date predate the loudness boost. The GET
+ * endpoint treats an older 'fresh' mix as stale (serve it, recompute in the
+ * background) so cached previews converge to the new loudness.
+ */
+export const PREVIEW_MIX_FORMAT_UPDATED_AT = new Date('2026-07-23T00:00:00Z')
+
 const previewR2Key = (projectId: string) => `previews/${projectId}/mix.mp3`
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -117,7 +134,7 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
   // Fetch audio tracks only (skip MIDI — no server-side MIDI renderer in V1)
   const { data: tracks } = await supabase
     .from('tracks')
-    .select('id, storage_path, start_bar, file_type')
+    .select('id, storage_path, start_bar, file_type, original_filename')
     .eq('version_id', mainVersion.id)
     .neq('file_type', 'midi')
     .order('position', { ascending: true })
@@ -172,7 +189,17 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
     })
 
     const mixInputs = audioTracks.map((_, i) => `[d${i}]`).join('')
-    const mixFilter = `${mixInputs}amix=inputs=${audioTracks.length}:duration=longest[out]`
+
+    // Loudness: boost the mix ~50% unless any stem was originally an MP3
+    // (storage is always FLAC — the original upload format lives in
+    // original_filename). See PREVIEW_MIX_LOUDNESS_BOOST.
+    const hasMp3Stem = audioTracks.some(t =>
+      (t.original_filename ?? '').toLowerCase().endsWith('.mp3')
+    )
+    const boost = hasMp3Stem ? 1 : PREVIEW_MIX_LOUDNESS_BOOST
+    const mixFilter = boost !== 1
+      ? `${mixInputs}amix=inputs=${audioTracks.length}:duration=longest[mix];[mix]volume=${boost}[out]`
+      : `${mixInputs}amix=inputs=${audioTracks.length}:duration=longest[out]`
 
     const filterGraph = [...delayFilters, mixFilter].join(';')
 
