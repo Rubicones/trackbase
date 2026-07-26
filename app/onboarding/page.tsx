@@ -24,7 +24,8 @@ import {
   AuthModeCard,
 } from '@/components/auth/AuthPrimitives'
 import { ThemePicker } from '@/components/design/ThemePicker'
-import { trackEvent } from '@/lib/analytics'
+import { trackEvent, setUserProperties } from '@/lib/analytics'
+import { readAttribution, clearAttribution, DEFAULT_COHORT } from '@/lib/attribution'
 
 type OnboardingStep = 1 | 2 | 3
 
@@ -32,16 +33,51 @@ type BandMode = 'create' | 'join'
 type CodeStatus = 'idle' | 'checking' | 'valid' | 'invalid'
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
 
+/**
+ * Setting the username is the moment a placeholder profile row becomes a real
+ * account, so it is also the one moment campaign attribution can be written —
+ * see the long note in `app/api/profile/username/route.ts`. Anything the user
+ * picked up from a campaign link rides along with this request.
+ *
+ * The response tells us whether the write actually happened; we never assume it
+ * from the fact that we sent something. The server declines for an existing
+ * profile, and in that case firing `signup_attributed` would invent a signup
+ * that did not occur.
+ */
 async function persistUsername(username: string) {
+  const pending = readAttribution()
+
   const res = await fetch('/api/profile/username', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username }),
+    body: JSON.stringify({
+      username,
+      ...(pending
+        ? { acquisitionSource: pending.acquisitionSource, cohort: pending.cohort }
+        : {}),
+    }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     throw new Error(data.error ?? 'Could not save username')
   }
+
+  if (data.attributed) {
+    // Behaviour only — no email, no user id, consistent with the rest of the
+    // app's analytics.
+    trackEvent('signup_attributed', {
+      source: data.source,
+      cohort: data.cohort,
+    })
+    // Clear before anything else can await: the values have reached the
+    // profile, and leaving them behind would let the next person to sign up on
+    // this browser inherit someone else's campaign.
+    clearAttribution()
+  }
+  // Set for warm and cold alike — a segment is only meaningful if both sides of
+  // the comparison are labelled.
+  setUserProperties({ cohort: data.attributed ? data.cohort : DEFAULT_COHORT })
+
   await syncSupabaseSessionFromCookies()
   const supabase = getSupabaseClient()
   const { data: { session } } = await supabase.auth.refreshSession()

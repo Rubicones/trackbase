@@ -15,6 +15,7 @@ import { MetronomeIcon } from "@/components/design/TransportIcons";
 import { sectionLabel } from "@/components/StructureEditor";
 import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
+import { isRunningAsInstalledPWA } from "@/lib/pwa";
 import { SeededWaveform } from "@/components/WaveformBars";
 import { SEO_FAQS } from "@/lib/seo";
 
@@ -36,17 +37,6 @@ const LONGEST_NAV_LABEL = LANDING_NAV_ITEMS.reduce(
   "",
 );
 
-function isStandaloneDisplay(): boolean {
-  if (typeof window === "undefined") return false;
-  const mqStandalone =
-    window.matchMedia("(display-mode: standalone)").matches ||
-    window.matchMedia("(display-mode: fullscreen)").matches ||
-    window.matchMedia("(display-mode: minimal-ui)").matches;
-  const iosStandalone =
-    "standalone" in navigator &&
-    (navigator as Navigator & { standalone?: boolean }).standalone === true;
-  return mqStandalone || iosStandalone;
-}
 import {
   Users, Tag, Activity, BarChart3,
   GitBranch, GitMerge, History,
@@ -3484,9 +3474,19 @@ export default function LandingPage() {
   const router = useRouter()
   const [standaloneRedirect, setStandaloneRedirect] = useState(false)
 
-  // Installed PWA: never show marketing — go straight to the app shell.
+  // Installed PWA only: launched from the home-screen icon, the app's entry
+  // point should be the app shell, not marketing.
+  //
+  // This is gated on the display mode and NOTHING else — in particular not on
+  // whether the visitor has a session. A signed-in user opening the landing
+  // page in an ordinary browser tab is still a visitor reading the landing
+  // page, and redirecting them was the bug this replaced. `useLandingAuth`
+  // above is read only to label the nav CTA; it must never reach this effect.
+  //
+  // Where they land afterwards stays as-is: /dashboard, which the middleware
+  // forwards to /auth when there's no session.
   useEffect(() => {
-    if (!isStandaloneDisplay()) return
+    if (!isRunningAsInstalledPWA()) return
     setStandaloneRedirect(true)
     router.replace("/dashboard")
   }, [router])

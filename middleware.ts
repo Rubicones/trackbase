@@ -10,6 +10,7 @@ import {
 import { authCookieOptions } from '@/lib/auth/cookie-options'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 import { PRODUCTION_SITE_URL, REDIRECT_TO_CANONICAL_HOSTS } from '@/lib/site-url'
+import { isCampaignPath } from '@/lib/campaigns'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -27,7 +28,15 @@ const PUBLIC_EXACT = ['/']
 const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
 
 function isPublic(pathname: string) {
-  return PUBLIC_EXACT.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p))
+  return (
+    PUBLIC_EXACT.includes(pathname) ||
+    PUBLIC_PREFIXES.some(p => pathname.startsWith(p)) ||
+    // Campaign landing links (/maskeliade, …). These MUST be public: the page's
+    // only job is to run a line of client JS that records where the visitor came
+    // from, and the auth gate below would redirect a signed-out visitor — the
+    // exact person a campaign link exists for — before that JS ever ran.
+    isCampaignPath(pathname)
+  )
 }
 
 function isProfileExempt(pathname: string) {

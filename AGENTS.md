@@ -75,6 +75,7 @@ app/                        Pages + API routes (App Router)
                             skeletons.tsx, UploadRow.tsx, mixerChrome.tsx,
                             mixerUtils.ts, mixerTypes.ts, MergeModal.tsx
   auth/, onboarding/        Magic-link sign-in; 3-step onboarding
+  maskeliade/               Campaign landing link — 3-line redirect stub (§4)
   invite/[token]/           Legacy invite links (middleware 301s to onboarding)
   features/*, audience/*    Public SEO/marketing pages
   tools/chord-detector/     Public no-login chord detector tool
@@ -90,7 +91,7 @@ components/                 Reusable UI (flat) + subfolders:
   onboarding/               Welcome modals + ProjectTour + tour step defs
   paywall/                  PaywallLock, PlansModal
   push/                     Push permission UI + provider
-  landing/, seo/, tools/, feedback/, analytics/, auth/
+  landing/, seo/, tools/, feedback/, analytics/, auth/, campaign/
 contexts/                   AuthContext, PaletteContext, PaywallContext
 hooks/                      useBreakpoint, useVersionCache, etc.
 lib/                        Shared logic (flat). Highlights:
@@ -104,7 +105,11 @@ lib/                        Shared logic (flat). Highlights:
   trackMerge.ts             bar↔ms conversion, start_bar helpers
   chat.ts                   msToBar/beatsPerBar + chat types
   versionSort.ts            getVersionDisplayName ("Master" resolver)
-  analytics.ts              trackEvent wrapper (GA4 + Meta Pixel mirror)
+  analytics.ts              trackEvent wrapper (GA4 + Meta Pixel mirror),
+                            setUserProperties (GA4 user properties)
+  campaigns.ts              Campaign slug registry (edge-safe)
+  attribution.ts            Pending attribution in localStorage (client)
+  pwa.ts                    isRunningAsInstalledPWA() — installed-app detection
   audioContext.ts / recordingAudioContext.ts   The two-AudioContext pattern
   midi.ts, midiRender.ts, midiSoundfont.ts     MIDI engine
   serverEssentia.ts, serverChordDetection.ts, chordDetection.ts, chords.ts
@@ -163,6 +168,33 @@ are set. Onboarding (`app/onboarding/page.tsx`) is 3 steps: theme → username
 `profiles.onboarding` (jsonb) via `/api/profile/onboarding`; tours are in
 `components/onboarding/ProjectTour.tsx` + `featureTourSteps.ts` /
 `mobileProjectTourSteps.ts`.
+
+### Campaign attribution
+Dedicated landing links tag where a user came from, permanently, so a cohort
+recruited from one place can be compared against organic signups.
+`lib/campaigns.ts` is the **registry** (slug → `{ source, cohort }`) and the
+only file that knows which campaigns exist; `/maskeliade` (warm test, July
+2026) is the only one today. `app/maskeliade/page.tsx` is a 3-line stub
+rendering `components/campaign/CampaignRedirect.tsx`, which stores the values
+in **localStorage** (`acquisition_source`, `cohort` — `lib/attribution.ts`)
+in a layout effect and `router.replace`s to `/auth`. The path has no UI.
+**Campaign paths must be public in `middleware.ts`** (`isCampaignPath`) or the
+auth gate redirects the signed-out visitor before the storing JS runs.
+Adding a campaign = a registry entry + a copy of the stub; nothing else.
+
+Attribution is **first-touch and first-account**: `storeAttribution` never
+overwrites an earlier campaign, and the values are written to the profile only
+by `PATCH /api/profile/username`, guarded *inside* the UPDATE with
+`.eq('username', placeholderUsername(userId))`. That predicate is the test for
+"this profile is being created right now" — profiles are inserted by the
+`handle_new_user` trigger with a `user_<uuid>` placeholder, so the first
+username set is the moment the account becomes real. **Never** widen this to
+"acquisition_source is null": that would re-tag existing organic users the
+first time they open a campaign link. An existing profile falls through to a
+plain username update and is never touched. The route returns `attributed`;
+only then does the client fire `trackEvent('signup_attributed', { source,
+cohort })`, clear the two keys, and set the GA4 `cohort` user property
+(set for cold users too, so the segment has both sides).
 
 ### Bands
 Routes: `/api/bands` (create), `/api/bands/[id]` (get/update),
@@ -390,6 +422,22 @@ presentational; nothing is gated server-side.** Gated features:
 server-side). Not an entitlement table. NOTE: plan band-limits shown in the
 plans UI have known inconsistencies to resolve before real billing.
 
+### Landing page & installed-PWA detection
+`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The landing
+page forwards to `/dashboard` **only** when running as the installed app, via
+`isRunningAsInstalledPWA()` (`lib/pwa.ts`). That check matches
+`(display-mode: standalone)` — mirroring `display: 'standalone'` in
+`app/manifest.ts`, **keep the two in sync** — plus the legacy iOS
+`navigator.standalone`. It deliberately does **not** match
+`(display-mode: fullscreen)` (set by any page calling the Fullscreen API, and
+by Chrome for F11 — not evidence of an install) or `(display-mode: minimal-ui)`
+(never requested by the manifest; the shape low-chrome in-app webviews report).
+Matching those two previously redirected ordinary visitors off the marketing
+page. **The redirect must never depend on auth state** — `useLandingAuth`
+(`hooks/useLandingAuth.ts`) exists only to label the nav CTA; a signed-in user
+in a browser tab must see the landing page. `manifest.start_url` is
+`/dashboard`, so an install does not open `/` on launch anyway.
+
 ### Public tools & SEO
 `/tools/chord-detector` (page `app/tools/chord-detector/`, UI
 `components/tools/ChordDetectorTool.tsx`) with server API
@@ -422,7 +470,12 @@ have no CREATE files here. Columns below are inferred from actual queries.
   unique pending per (band,user). RLS.
 - **profiles** — id (= auth.users.id), username (unique), display_name,
   avatar_color, **onboarding jsonb** (tour flags, e.g.
-  `project_tour_completed`). RLS (public read, self update).
+  `project_tour_completed`), **acquisition_source** (text, null = direct) and
+  **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
+  account creation only, see Campaign attribution in §4. RLS (public read,
+  self update). Rows are inserted by the `handle_new_user` trigger
+  (`001_auth.sql`) with a `user_<uuid>` placeholder username, **not** by app
+  code.
 - **projects** — band_id, name, bpm, key, time_signature, stage,
   stage_since, roadmap_step_index, **preview-mix columns**:
   preview_mix_storage_path, preview_mix_status
@@ -526,6 +579,10 @@ default `Sheet1`).
   — best-effort only.
 - **Web fetches of Next docs:** this Next version differs from training
   data; check `node_modules/next/dist/docs/` (see the block at the top).
+- **Campaign attribution is immutable after account creation.** Only
+  `PATCH /api/profile/username` may write `profiles.acquisition_source` /
+  `cohort`, and only under its placeholder-username guard. No other route may
+  set or update them (see §4).
 - **Never name competitors** in any metadata, landing copy, or content
   (legal requirement; /vs pages were removed for this reason).
 - **No test suite exists** — verify with `npm run build` and `npm run lint`.

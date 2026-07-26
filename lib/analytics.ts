@@ -5,11 +5,27 @@ export type AnalyticsParams = Record<string, string | number | boolean>
 declare global {
   interface Window {
     gtag?: (
-      command: 'event' | 'config' | 'js',
+      command: 'event' | 'config' | 'js' | 'set',
       targetId: string,
       params?: Record<string, unknown>,
     ) => void
   }
+}
+
+/**
+ * Attach GA4 *user properties* — attributes of the person rather than of one
+ * action, applied to every event they send afterwards in the session. This is
+ * what lets a report split any existing event by cohort without adding a cohort
+ * parameter to all ~80 of them.
+ *
+ * Not mirrored to the Meta Pixel: the pixel has no equivalent concept, and
+ * `trackEvent` is the only path to it by design.
+ *
+ * Keep these non-identifying, same as event params — no email, no user id.
+ */
+export function setUserProperties(properties: AnalyticsParams) {
+  if (typeof window === 'undefined') return
+  window.gtag?.('set', 'user_properties', properties)
 }
 
 export function trackEvent(eventName: string, params?: AnalyticsParams) {
