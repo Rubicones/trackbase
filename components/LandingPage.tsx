@@ -31,6 +31,19 @@ const LANDING_NAV_ITEMS: Array<[string, string]> = [
   ["#faq", "FAQ"],
 ];
 
+/**
+ * Footer "PRODUCT" column — derived from the header nav so the footer can never
+ * drift from the sections the page actually has. Labels are title-cased for the
+ * footer's sentence-case link style; acronyms stay upper-case.
+ */
+const ACRONYM_NAV_LABELS = new Set(["FAQ"]);
+const FOOTER_PRODUCT_LINKS = LANDING_NAV_ITEMS.map(([href, label]) => ({
+  href,
+  label: ACRONYM_NAV_LABELS.has(label)
+    ? label
+    : label.charAt(0) + label.slice(1).toLowerCase(),
+}));
+
 /** Widest mobile section label — keeps the status dot pinned while the wheel rolls. */
 const LONGEST_NAV_LABEL = LANDING_NAV_ITEMS.reduce(
   (longest, [, label]) => (label.length > longest.length ? label : longest),
@@ -683,11 +696,13 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
   const reduce = useReducedMotion();
   const parallaxStyle = mounted && !reduce ? { y, opacity } : undefined;
 
-  const pills: Array<[string, string]> = [
-    ["▲", "Versions & diff"],
-    ["◆", "Comments on bars"],
-    ["●", "Structure + chords"],
-    ["◐", "Mobile companion"],
+  // `iconScale` optically evens out the glyphs: ▲ is drawn noticeably larger
+  // than ◆ / ● / ◐ at the same font size, so it gets scaled down on its own.
+  const pills: Array<{ icon: string; label: string; iconScale?: string }> = [
+    { icon: "▲", label: "Versions & diff", iconScale: "text-[0.78em]" },
+    { icon: "◆", label: "Comments on bars" },
+    { icon: "●", label: "Structure + chords" },
+    { icon: "◐", label: "Mobile companion" },
   ];
 
   return (
@@ -741,7 +756,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
               end-to-end.
             </motion.p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {pills.map(([icon, label], i) => (
+              {pills.map(({ icon, label, iconScale }, i) => (
                 <motion.span
                   key={label}
                   initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
@@ -749,7 +764,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
                   transition={{ delay: 0.4 + i * 0.08 }}
                   className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
                 >
-                  <span className="text-lime">{icon}</span>
+                  <span className={`inline-flex items-center text-lime ${iconScale ?? ""}`}>{icon}</span>
                   {label}
                 </motion.span>
               ))}
@@ -833,35 +848,6 @@ function Philosophy() {
         description="The product is the consequence of three convictions about how music actually gets made between humans."
       />
 
-      <div className="relative mt-12">
-        <div className="relative">
-          <div className="select-none font-display-tb text-[100px] leading-none text-[color-mix(in_oklab,var(--lime)_20%,transparent)]">
-            &ldquo;
-          </div>
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-15%" }}
-            transition={{ duration: 0.9 }}
-            className="-mt-6 font-display-tb text-[clamp(2.2rem,6vw,4.5rem)] font-bold leading-[1.05] tracking-[-0.02em] text-foreground"
-          >
-            Music is a{" "}
-            <span className="relative isolate inline-block">
-              <span
-                aria-hidden
-                className="tb-drift pointer-events-none absolute -inset-4 rounded-full bg-[color-mix(in_oklab,var(--lime)_28%,transparent)] blur-2xl"
-                style={{ zIndex: -1 }}
-              />
-              <span className="relative text-lime" style={{ zIndex: 1 }}>process.</span>
-            </span>{" "}
-            Not a file.
-          </motion.p>
-          <div className="mt-6 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            — Signed, the sonicdesk team
-          </div>
-        </div>
-      </div>
-
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-3">
         {pillars.map((p, i) => (
           <LandingHoverCard
@@ -885,6 +871,38 @@ function Philosophy() {
             <div className="landing-hover-divider mt-8 h-px w-full bg-[color-mix(in_oklab,var(--border)_60%,transparent)] transition-colors group-hover:bg-[color-mix(in_oklab,var(--lime)_60%,transparent)]" />
           </LandingHoverCard>
         ))}
+      </div>
+
+      {/* The quote closes the section — it reads as the sign-off on the three
+          pillars above rather than a preamble to them. The negative bottom
+          margin trims the section's standard py-28: the quote's blur glow
+          already reads as generous space, so the full padding looked like a
+          hole between this section and the next. */}
+      <div className="relative mt-8 -mb-6 md:mt-12 md:-mb-12">
+        <div className="select-none font-display-tb text-[72px] leading-none text-[color-mix(in_oklab,var(--lime)_20%,transparent)]">
+          &ldquo;
+        </div>
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-15%" }}
+          transition={{ duration: 0.9 }}
+          className="-mt-3 font-display-tb text-[clamp(2.2rem,6vw,4.5rem)] font-bold leading-[1.05] tracking-[-0.02em] text-foreground"
+        >
+          Music is a{" "}
+          <span className="relative isolate inline-block">
+            <span
+              aria-hidden
+              className="tb-drift pointer-events-none absolute -inset-4 rounded-full bg-[color-mix(in_oklab,var(--lime)_28%,transparent)] blur-2xl"
+              style={{ zIndex: -1 }}
+            />
+            <span className="relative text-lime" style={{ zIndex: 1 }}>process.</span>
+          </span>{" "}
+          Not a file.
+        </motion.p>
+        <div className="mt-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          — Signed, the sonicdesk team
+        </div>
       </div>
     </section>
   );
@@ -1906,6 +1924,7 @@ function FeatureIndex() {
       items: [
         { label: "Branch off for experiments — master mix stays untouched", icon: GitBranch, href: "/features/versions" },
         { label: "Compare any version to master · review overlaps · apply changes", icon: GitMerge, href: "/features/versions" },
+        { label: "Review every difference before you apply · cherry-pick tracks, bars and comments", icon: GitCompare, href: "/features/versions" },
         { label: "Full version history · creation date and tags", icon: History, href: "/features/versions" },
       ],
     },
@@ -3366,7 +3385,7 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
           <GhostButton variant="lime" href={signInHref}>+ Create my band</GhostButton>
-          <GhostButton variant="outline" href={signInHref}>Talk to us (studios)</GhostButton>
+          <GhostButton variant="outline" href="mailto:hi@sonicdesk.studio">Talk to us (studios)</GhostButton>
         </div>
       </div>
     </section>
@@ -3381,7 +3400,7 @@ function Footer() {
   return (
     <footer className="landing-full-bleed px-4 py-10 md:px-8">
       <div className="mx-auto w-full max-w-[1920px]">
-        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
+        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1fr_1.4fr_1.4fr]">
         <div>
           <div
             className="font-display-tb font-bold tracking-tight text-lime text-xl"
@@ -3394,26 +3413,7 @@ function Footer() {
           </p>
         </div>
         {[
-          [
-            "PRODUCT",
-            [
-              { label: "Mixer", href: "#system" },
-              { label: "Branches", href: "#versioning" },
-              { label: "Rehearsal View", href: "#rehearsal" },
-              { label: "Roadmap", href: "#roadmap" },
-              { label: "Chat", href: "#workflow" },
-            ],
-          ],
-          [
-            "FOR",
-            [
-              { label: "Bands", href: "#join" },
-              { label: "Studios", href: "#join" },
-              { label: "Schools", href: "#join" },
-              { label: "Labels", href: "#join" },
-              { label: "Producer centers", href: "#join" },
-            ],
-          ],
+          ["PRODUCT", FOOTER_PRODUCT_LINKS],
           [
             "DEEP DIVES",
             [
@@ -3427,24 +3427,17 @@ function Footer() {
               { label: "For producers", href: "/audience/producer" },
             ],
           ],
-          [
-            "CO",
-            [
-              { label: "About", href: "#philosophy" },
-              { label: "Brandbook v0.1", href: "/uikit" },
-              { label: "UI Kit", href: "/uikit" },
-              { label: "Pricing", href: "#pricing" },
-              { label: "Contact", href: "#join" },
-            ],
-          ],
         ].map(([t, items]) => (
           <div key={t as string}>
             <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime">
               {t as string}
             </div>
-            <ul className="space-y-2">
+            {/* CSS multi-column, not a grid: it flows top-to-bottom down the
+                first column before wrapping, so the reading order still matches
+                the page order. A grid would interleave the two halves. */}
+            <ul className="sm:columns-2 gap-x-6">
               {(items as Array<{ label: string; href: string }>).map((item) => (
-                <li key={item.label} className="font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+                <li key={item.label} className="mb-2 break-inside-avoid font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
                   <a href={item.href}>{item.label}</a>
                 </li>
               ))}

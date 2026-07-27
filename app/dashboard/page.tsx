@@ -8,6 +8,7 @@ import { formatActivityLine } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
+import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
@@ -533,6 +534,11 @@ export default function DashboardPage() {
     !!profile &&
     !profile.onboarding?.dashboard_seen
 
+  // Shown only to a just-signed-up user, and only once they've closed the
+  // welcome modal — never to someone who already saw the dashboard before this
+  // hint existed (they'd have `dashboard_seen` but no `feedback_hint_seen`).
+  const [showFeedbackHint, setShowFeedbackHint] = useState(false)
+
   useEffect(() => {
     if (!authLoading && !user) router.replace('/auth')
   }, [authLoading, user, router])
@@ -865,6 +871,16 @@ export default function DashboardPage() {
           onDismiss={() => {
             setShowWelcomeDismissed(true)
             updateOnboarding('dashboard_seen', true)
+            if (!profile?.onboarding?.feedback_hint_seen) setShowFeedbackHint(true)
+          }}
+        />
+      )}
+
+      {showFeedbackHint && (
+        <FeedbackHint
+          onDismiss={() => {
+            setShowFeedbackHint(false)
+            updateOnboarding('feedback_hint_seen', true)
           }}
         />
       )}

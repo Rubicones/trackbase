@@ -24,6 +24,8 @@ export interface OnboardingData {
   cherrypick_tour_skipped?: boolean
   track_edit_tour_completed?: boolean
   track_edit_tour_skipped?: boolean
+  /** Footer "Feedback & Report" spotlight, shown once after the first welcome modal. */
+  feedback_hint_seen?: boolean
 }
 
 export interface Profile {

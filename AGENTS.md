@@ -167,7 +167,12 @@ are set. Onboarding (`app/onboarding/page.tsx`) is 3 steps: theme → username
 (`/api/profile/complete-onboarding`). Feature-tour completion flags live in
 `profiles.onboarding` (jsonb) via `/api/profile/onboarding`; tours are in
 `components/onboarding/ProjectTour.tsx` + `featureTourSteps.ts` /
-`mobileProjectTourSteps.ts`.
+`mobileProjectTourSteps.ts`. Closing the dashboard welcome modal for the
+first time also fires a one-shot spotlight on the footer "Feedback & Report"
+button (`components/onboarding/FeedbackHint.tsx`, flag `feedback_hint_seen`,
+target `data-tour="feedback-launcher"`) — same lime-ring visual language as
+`ProjectTour` but single-target and non-blocking, so the button underneath
+stays clickable.
 
 ### Campaign attribution
 Dedicated landing links tag where a user came from, permanently, so a cohort
@@ -423,7 +428,10 @@ server-side). Not an entitlement table. NOTE: plan band-limits shown in the
 plans UI have known inconsistencies to resolve before real billing.
 
 ### Landing page & installed-PWA detection
-`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The landing
+`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The footer's
+PRODUCT column is **derived from `LANDING_NAV_ITEMS`** (`FOOTER_PRODUCT_LINKS`)
+so it can never drift from the sections the page actually has — add a section to
+the nav and the footer follows. The landing
 page forwards to `/dashboard` **only** when running as the installed app, via
 `isRunningAsInstalledPWA()` (`lib/pwa.ts`). That check matches
 `(display-mode: standalone)` — mirroring `display: 'standalone'` in
