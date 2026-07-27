@@ -2309,6 +2309,60 @@ html:has(.landing-page) body {
   animation: tb-lyrics-scroll 16s linear infinite;
 }
 
+/* ─── Hero version graph ────────────────────────────────────────────────────
+   Ported verbatim from the promo design file ("Promo - Stop Losing Track
+   Versions", feature card 4a · Versioning). Keyframe percentages are the
+   design's, unchanged; only the loop duration differs (the hero runs it at 4s,
+   double the design's 8s) — the branches draw in sequence
+   (master → darker-mix → alt-bridge → polishing), each dot/label landing at a
+   fixed beat, then the whole graph holds settled until the loop restarts.
+
+   `--vg-u` is the scale unit: 1 design pixel, expressed against the stage's
+   container width (100 / 1080 = 0.0926cqw). Everything non-SVG is sized in it,
+   so the labels scale with the artwork instead of staying fixed while the
+   graph shrinks — the SVG itself scales via its viewBox. */
+.tb-vg-stage {
+  container-type: inline-size;
+}
+
+.tb-vg-stage > * {
+  --vg-u: 0.0926cqw;
+}
+
+@keyframes vg-master { 0% { stroke-dashoffset: 100; } 3%, 100% { stroke-dashoffset: 0; } }
+@keyframes vg-b1 { 0%, 4% { stroke-dashoffset: 100; opacity: 0; } 5% { opacity: 1; } 32%, 100% { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes vg-b2 { 0%, 15% { stroke-dashoffset: 100; opacity: 0; } 16% { opacity: 1; } 43%, 100% { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes vg-b3 { 0%, 30% { stroke-dashoffset: 100; opacity: 0; } 31% { opacity: 1; } 58%, 100% { stroke-dashoffset: 0; opacity: 1; } }
+
+/* Start dots — fade in where each branch leaves master */
+@keyframes vg-dot-b1 { 0%, 4% { opacity: 0; transform: scale(0.3); } 7%, 100% { opacity: 1; transform: scale(1); } }
+@keyframes vg-dot-b2 { 0%, 15% { opacity: 0; transform: scale(0.3); } 18%, 100% { opacity: 1; transform: scale(1); } }
+@keyframes vg-dot-b3 { 0%, 30% { opacity: 0; transform: scale(0.3); } 33%, 100% { opacity: 1; transform: scale(1); } }
+
+/* Branch endpoints — a dead-end tip and two merge points */
+@keyframes vg-tip-b1 { 0%, 32% { opacity: 0; transform: scale(0.3); } 35%, 100% { opacity: 1; transform: scale(1); } }
+@keyframes vg-merge-b2 { 0%, 43% { opacity: 0; transform: scale(0.3); } 46%, 100% { opacity: 1; transform: scale(1); } }
+@keyframes vg-merge-b3 { 0%, 58% { opacity: 0; transform: scale(0.3); } 61%, 100% { opacity: 1; transform: scale(1); } }
+
+/* Labels land at ~50% of their branch's draw */
+@keyframes vg-lbl-1 { 0%, 18% { opacity: 0; transform: translate(-50%, calc(-50% + 6px)); } 22%, 100% { opacity: 1; transform: translate(-50%, -50%); } }
+@keyframes vg-lbl-2 { 0%, 29% { opacity: 0; transform: translate(-50%, calc(-50% + 6px)); } 33%, 100% { opacity: 1; transform: translate(-50%, -50%); } }
+@keyframes vg-lbl-3 { 0%, 44% { opacity: 0; transform: translate(-50%, calc(-50% + 6px)); } 48%, 100% { opacity: 1; transform: translate(-50%, -50%); } }
+
+/* Reduced motion: skip the draw, show the settled graph. The animations all
+   end on their final frame anyway, so pinning them there loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .tb-vg-stage .tb-vg-anim {
+    animation: none !important;
+    opacity: 1 !important;
+    stroke-dashoffset: 0 !important;
+    transform: none !important;
+  }
+  .tb-vg-stage .tb-vg-label {
+    transform: translate(-50%, -50%) !important;
+  }
+}
+
 /* Collapsible panels (sidebar resources, etc.) */
 .tb-accordion-panel {
   display: grid;

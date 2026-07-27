@@ -629,59 +629,221 @@ export function TopBar({
  * HERO
  * ============================================================ */
 
-function HeroMixerMock() {
-  const [time, setTime] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTime((t) => (t + 1) % 199), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const mm = Math.floor(time / 60);
-  const ss = (time % 60).toString().padStart(2, "0");
-  const tracks = [
-    { n: "GTR", color: "var(--wave-violet)", seed: 3.2 },
-    { n: "DRM", color: "var(--wave-mint)", seed: 5.4 },
-    { n: "BAS", color: "var(--wave-amber)", seed: 7.6 },
-    { n: "VOX", color: "var(--wave-coral)", seed: 9.1, rec: true },
-  ];
+/**
+ * Hero artwork — the animated version graph, ported from the promo design file
+ * ("Promo - Stop Losing Track Versions", feature card 4a · Versioning).
+ *
+ * Geometry, the 8s linear loop and every keyframe percentage come straight from
+ * that file and must stay in sync with it; the `vg-*` keyframes live in
+ * `app/globals.css`. Two deliberate departures from the design source:
+ *
+ *  1. Colors use the landing palette tokens instead of the design's literal
+ *     hexes (#f56161/#c084fc/#22d3ee) — they're the same colors, but as tokens
+ *     they follow the theme instead of pinning the graph to the dark palette.
+ *  2. Label sizing is in `--vg-u` (one design pixel, relative to the stage's
+ *     width) rather than fixed px, because the hero column is narrower than the
+ *     1080px promo canvas. At 1080px wide the two are pixel-identical.
+ */
+
+/** Design-canvas pixels → the responsive stage unit. */
+function vgu(px: number) {
+  return `calc(${px} * var(--vg-u))`;
+}
+
+/** Design file runs the loop at 8s; the hero plays it at double speed. */
+const VG_DURATION = "4s";
+
+/** Branch colors — design hex on the left, landing token actually used. */
+const VG_B1 = "var(--wave-coral)";   /* #f56161 — dead-end take */
+const VG_B2 = "var(--wave-violet)";  /* #c084fc — merged back */
+const VG_B3 = "var(--wave-sky)";     /* #22d3ee — merged back */
+
+function VersionGraphLabel({
+  color,
+  tag,
+  name,
+  status,
+  left,
+  top,
+  anim,
+}: {
+  color: string;
+  tag: string;
+  name: string;
+  status: string;
+  left: string;
+  top: string;
+  anim: string;
+}) {
+  return (
+    <div
+      className="tb-vg-anim tb-vg-label absolute inline-flex items-center whitespace-nowrap"
+      style={{
+        left,
+        top,
+        gap: vgu(10),
+        border: `${vgu(2)} solid ${color}`,
+        padding: `${vgu(8)} ${vgu(14)}`,
+        background: "var(--color-background)",
+        opacity: 0,
+        transform: "translate(-50%, -50%)",
+        animation: `${anim} ${VG_DURATION} linear infinite`,
+      }}
+    >
+      <span
+        className="font-mono-tb uppercase"
+        style={{
+          fontSize: vgu(9),
+          color: "var(--color-background)",
+          background: color,
+          padding: `${vgu(2)} ${vgu(6)}`,
+          fontWeight: 800,
+          letterSpacing: "0.14em",
+        }}
+      >
+        {tag}
+      </span>
+      <span
+        className="font-mono-tb uppercase"
+        style={{ fontSize: vgu(11), color, fontWeight: 700, letterSpacing: "0.16em" }}
+      >
+        {name}
+      </span>
+      <span
+        className="font-mono-tb uppercase text-muted-foreground"
+        style={{ fontSize: vgu(10) }}
+      >
+        {status}
+      </span>
+    </div>
+  );
+}
+
+function HeroVersionGraph() {
   return (
     <div className="relative overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
+      {/* meta strip */}
       <div className="flex items-center justify-between gap-2 border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] sm:px-4">
         <span className="truncate text-muted-foreground">
-          ACTIVE · <span className="text-foreground">MASTER</span> · 4 TRACKS
+          /03 · <span className="text-foreground">sonicdesk</span> · 3 versions · 2 merged
         </span>
-        <span className="shrink-0 text-lime">142 BPM · A#m</span>
+        <span className="shrink-0 text-lime">VERSIONS · 3</span>
       </div>
-      <div className="flex gap-2 p-3 sm:gap-3 sm:p-4">
-        <div className="flex shrink-0 flex-col justify-center gap-2" style={{ width: 52 }}>
-          {tracks.map((t) => (
-            <div key={t.n} className="flex h-7 items-center gap-1.5">
-              {t.rec ? (
-                <span className="tb-rec size-1.5 rounded-full" style={{ background: t.color }} />
-              ) : (
-                <span className="size-1.5 rounded-full" style={{ background: t.color }} />
-              )}
-              <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-foreground">{t.n}</span>
-            </div>
-          ))}
-        </div>
-        <div className="relative min-w-0 flex-1 space-y-2">
-          <div
+
+      {/* graph stage — locked to the design's 1080×560 canvas ratio so the
+          SVG geometry and the percentage-positioned labels stay aligned */}
+      <div className="tb-vg-stage relative w-full" style={{ aspectRatio: "1080 / 560" }}>
+        <div className="absolute inset-0">
+          <svg
+            viewBox="0 0 1080 560"
+            width="100%"
+            height="100%"
+            preserveAspectRatio="none"
+            className="absolute inset-0"
             aria-hidden
-            className="tb-playhead pointer-events-none absolute top-0 bottom-0"
-            style={{ width: 1, background: "var(--lime)", boxShadow: "0 0 8px var(--lime)" }}
+          >
+            {/* master */}
+            <line
+              className="tb-vg-anim"
+              x1="40" y1="280" x2="1040" y2="280"
+              stroke="var(--lime)" strokeWidth="5" strokeLinecap="round"
+              pathLength="100" strokeDasharray="100" strokeDashoffset="100"
+              style={{ animation: `vg-master ${VG_DURATION} linear infinite` }}
+            />
+            <circle cx="1040" cy="280" r="8" fill="var(--lime)" />
+
+            {/* B1 · darker-mix — branches up, dead-ends */}
+            <path
+              className="tb-vg-anim"
+              d="M 140 280 C 240 280, 240 210, 340 210 L 500 210"
+              fill="none" stroke={VG_B1} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"
+              pathLength="100" strokeDasharray="100" strokeDashoffset="100"
+              style={{ animation: `vg-b1 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="140" cy="280" r="6" fill={VG_B1}
+              style={{ opacity: 0, transformOrigin: "140px 280px", animation: `vg-dot-b1 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="500" cy="210" r="6" fill={VG_B1}
+              style={{ opacity: 0, transformOrigin: "500px 210px", animation: `vg-tip-b1 ${VG_DURATION} linear infinite` }}
+            />
+
+            {/* B2 · alt-bridge — branches down, merges back */}
+            <path
+              className="tb-vg-anim"
+              d="M 280 280 C 380 280, 380 350, 480 350 L 620 350 C 720 350, 720 280, 820 280"
+              fill="none" stroke={VG_B2} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"
+              pathLength="100" strokeDasharray="100" strokeDashoffset="100"
+              style={{ animation: `vg-b2 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="280" cy="280" r="6" fill={VG_B2}
+              style={{ opacity: 0, transformOrigin: "280px 280px", animation: `vg-dot-b2 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="820" cy="280" r="8" fill={VG_B2}
+              style={{ opacity: 0, transformOrigin: "820px 280px", animation: `vg-merge-b2 ${VG_DURATION} linear infinite` }}
+            />
+
+            {/* B3 · polishing — branches up, merges back */}
+            <path
+              className="tb-vg-anim"
+              d="M 560 280 C 660 280, 660 210, 760 210 L 860 210 C 960 210, 960 280, 1020 280"
+              fill="none" stroke={VG_B3} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"
+              pathLength="100" strokeDasharray="100" strokeDashoffset="100"
+              style={{ animation: `vg-b3 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="560" cy="280" r="6" fill={VG_B3}
+              style={{ opacity: 0, transformOrigin: "560px 280px", animation: `vg-dot-b3 ${VG_DURATION} linear infinite` }}
+            />
+            <circle
+              className="tb-vg-anim"
+              cx="1020" cy="280" r="8" fill={VG_B3}
+              style={{ opacity: 0, transformOrigin: "1020px 280px", animation: `vg-merge-b3 ${VG_DURATION} linear infinite` }}
+            />
+          </svg>
+
+          {/* MASTER label — always visible, anchored top-left (design: 60px, 310px) */}
+          <div
+            className="absolute inline-flex items-center whitespace-nowrap"
+            style={{
+              left: "5.556%",
+              top: "55.357%",
+              gap: vgu(8),
+              border: `${vgu(1)} solid var(--lime)`,
+              padding: `${vgu(6)} ${vgu(12)}`,
+              background: "var(--color-background)",
+            }}
+          >
+            <span style={{ width: vgu(8), height: vgu(8), background: "var(--lime)", display: "inline-block" }} />
+            <span
+              className="font-mono-tb uppercase text-lime"
+              style={{ fontSize: vgu(11), fontWeight: 700, letterSpacing: "0.16em" }}
+            >
+              MASTER
+            </span>
+          </div>
+
+          <VersionGraphLabel
+            color={VG_B1} tag="FIX" name="darker-mix" status="— dropped"
+            left="38.9%" top="26%" anim="vg-lbl-1"
           />
-          {tracks.map((t) => (
-            <div key={t.n} className="h-7 min-w-0">
-              <Waveform seed={t.seed} bars={64} color={t.color} height={28} />
-            </div>
-          ))}
+          <VersionGraphLabel
+            color={VG_B2} tag="EXP" name="alt-bridge" status="→ merged"
+            left="50.9%" top="74%" anim="vg-lbl-2"
+          />
+          <VersionGraphLabel
+            color={VG_B3} tag="ARR" name="polishing" status="→ merged"
+            left="75%" top="26%" anim="vg-lbl-3"
+          />
         </div>
-      </div>
-      <div className="flex items-center justify-between gap-2 border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:px-4">
-        <span className="truncate">
-          {mm}:{ss} <span className="text-foreground">▶ NORTHERN ROOM / v04</span>
-        </span>
-        <span className="shrink-0">3:18</span>
       </div>
     </div>
   );
@@ -735,7 +897,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="sr-only"> — the band workspace with version control, comments on bars, chord detection, and rehearsal mode for music bands</span>
         </h1>
 
-        <div className="relative mt-8 grid gap-10 lg:grid-cols-2 lg:items-end md:mt-12">
+        <div className="relative mt-8 grid gap-10 lg:grid-cols-2 lg:items-center md:mt-12">
           <div className="min-w-0">
             <motion.p
               initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
@@ -776,7 +938,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           </div>
 
           <div className="min-w-0">
-            <HeroMixerMock />
+            <HeroVersionGraph />
           </div>
         </div>
           </motion.div>

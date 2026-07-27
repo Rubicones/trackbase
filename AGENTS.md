@@ -428,7 +428,12 @@ server-side). Not an entitlement table. NOTE: plan band-limits shown in the
 plans UI have known inconsistencies to resolve before real billing.
 
 ### Landing page & installed-PWA detection
-`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The footer's
+`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The hero
+artwork is `HeroVersionGraph` — an animated branch/merge graph **ported from the
+promo design file** ("Promo - Stop Losing Track Versions", feature card 4a);
+geometry and keyframe percentages must stay in sync with that file, the `vg-*`
+keyframes live in `app/globals.css`, and label sizing uses the `--vg-u`
+container-query unit so it scales with the hero column. The footer's
 PRODUCT column is **derived from `LANDING_NAV_ITEMS`** (`FOOTER_PRODUCT_LINKS`)
 so it can never drift from the sections the page actually has — add a section to
 the nav and the footer follows. The landing
