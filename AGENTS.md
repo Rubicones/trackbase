@@ -57,7 +57,8 @@ this repo; mobile is the responsive web experience.
 - **web-push** — VAPID web push notifications.
 - **googleapis** — Google Sheets mirror of feedback submissions.
 - **GA4** via `@next/third-parties` + **Meta Pixel** (`lib/meta-pixel.ts`)
-  + **@vercel/analytics** (all wired in `app/layout.tsx`).
+  + **Yandex Metrica** (`lib/yandex-metrica.ts`) + **@vercel/analytics**
+  (all wired in `app/layout.tsx`).
 - **motion**, **lucide/lucide-react**, **next-themes**.
 
 ## 3. Directory map
@@ -105,8 +106,9 @@ lib/                        Shared logic (flat). Highlights:
   trackMerge.ts             bar↔ms conversion, start_bar helpers
   chat.ts                   msToBar/beatsPerBar + chat types
   versionSort.ts            getVersionDisplayName ("Master" resolver)
-  analytics.ts              trackEvent wrapper (GA4 + Meta Pixel mirror),
-                            setUserProperties (GA4 user properties)
+  analytics.ts              trackEvent wrapper (GA4 + Meta Pixel + Yandex
+                            Metrica mirror), setUserProperties (GA4 user
+                            properties + Metrica userParams)
   campaigns.ts              Campaign slug registry (edge-safe)
   attribution.ts            Pending attribution in localStorage (client)
   pwa.ts                    isRunningAsInstalledPWA() — installed-app detection
@@ -399,14 +401,34 @@ optional context chips pointing at a version/track):
 preview-mix player) and `MobileMixerPortrait.tsx` (mobile mixer), plus the
 mobile tour. Events: `rehearsal_mode_entered`, `mixer_opened_from_rehearsal`.
 
-### Analytics (GA4 + Meta Pixel)
+### Analytics (GA4 + Meta Pixel + Yandex Metrica)
 Always use `trackEvent(name, params)` from `lib/analytics.ts` — it sends to
-GA4 (`window.gtag`) and mirrors to Meta Pixel, adding `app_version`.
-~80 snake_case events exist; follow the taxonomy
+GA4 (`window.gtag`) and mirrors to **both** the Meta Pixel and Yandex Metrica,
+adding `app_version`. ~80 snake_case events exist; follow the taxonomy
 (`noun_verb`/`noun_verb_past`): e.g. `project_opened`, `merge_completed`,
 `comment_created`, `paywall_modal_opened`, `recording_saved`,
-`tour_skipped`. Page views: `components/analytics/PageViewTracker.tsx`.
-GA/Pixel/Vercel Analytics are mounted in `app/layout.tsx`.
+`tour_skipped`. `setUserProperties()` sets GA4 user properties and mirrors to
+Metrica `userParams`. **A new event needs no per-destination work** — adding a
+`trackEvent` call reaches all three.
+
+Each destination has one mirror module, and that module is the only place that
+knows about it: `mirrorToMetaPixel` (`lib/meta-pixel.ts`) and
+`mirrorToYandexMetrica` (`lib/yandex-metrica.ts`). Both skip `page_view`,
+because each vendor's own script already counts the initial load and its
+route-change tracker handles SPA navigations — mirroring would double-count.
+Page views: `components/analytics/PageViewTracker.tsx` (GA4),
+`MetaPixel.tsx` (`fbq PageView`), `YandexMetrica.tsx` (`ym hit`, passing the
+previous URL as `referer` since Metrica can't infer it on an SPA navigation).
+GA/Pixel/Metrica/Vercel Analytics are all mounted in `app/layout.tsx`, and
+Pixel + Metrica render nothing when their env var is absent.
+
+**Metrica goals must also be created in the counter UI** (Settings → Goals →
+"JavaScript event", Identifier = the exact event name) before they appear in
+reports; `reachGoal` calls for undeclared goals are silently dropped, so no
+allow-list is kept in code. Metrica runs with `clickmap`, `trackLinks` and
+`accurateTrackBounce`; **Webvisor session recording is deliberately off** —
+enabling it records user interaction in detail and needs a privacy-policy
+change first.
 
 ### Feedback modal
 `components/feedback/` → `POST /api/feedback` (type
@@ -547,7 +569,11 @@ format**), `GOOGLE_SHEETS_SPREADSHEET_ID`, `GOOGLE_SHEETS_TAB` (optional,
 default `Sheet1`).
 
 **Analytics** — `NEXT_PUBLIC_GA_MEASUREMENT_ID` (GA4),
-`NEXT_PUBLIC_META_PIXEL_ID` (Meta Pixel, optional).
+`NEXT_PUBLIC_META_PIXEL_ID` (Meta Pixel, optional),
+`NEXT_PUBLIC_YANDEX_METRICA_ID` (Yandex Metrica counter, optional; prod
+`111073087`). Set the Metrica ID in **Vercel production only** — an unset
+value makes the script and every mirrored goal no-op, which is what keeps dev
+and preview traffic out of the counter.
 
 **Site** — `NEXT_PUBLIC_SITE_URL` (canonical origin; prod
 `https://sonicdesk.studio`). Runtime also reads `NODE_ENV`, `VERCEL_ENV`.

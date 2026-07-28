@@ -335,6 +335,7 @@ export function SectionEditPopover({
   section, cellPos, detectingChords, audioTracks, totalBars,
   onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onNoteChange, onDelete, onClose,
   layout = 'popover',
+  animateIn = true,
 }: {
   section: Section
   cellPos: CellPos
@@ -350,6 +351,13 @@ export function SectionEditPopover({
   onDelete: (id: string) => void
   onClose: () => void
   layout?: 'popover' | 'sheet'
+  /**
+   * Play the entry animation on mount. False when this popover is taking over
+   * from the name picker on a just-created section: the two are separate
+   * components in separate portals, so an unsuppressed `animate-slide-in`
+   * reads as the same window closing and re-opening (see `handleConfirmNew`).
+   */
+  animateIn?: boolean
 }) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
@@ -588,11 +596,11 @@ export function SectionEditPopover({
   const panel = (
     <div
       ref={popoverRef}
-      className={
+      className={`${
         isSheet
-          ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto overscroll-contain border-t border-border bg-popover shadow-2xl animate-slide-in'
-          : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl animate-slide-in'
-      }
+          ? 'fixed inset-x-0 bottom-0 z-[220] max-h-[85vh] overflow-y-auto overscroll-contain border-t border-border bg-popover shadow-2xl'
+          : 'fixed z-[200] w-[320px] border border-border bg-popover shadow-2xl'
+      }${animateIn ? ' animate-slide-in' : ''}`}
       style={isSheet ? sheetPanelStyle : { top: popoverCoords.top, left: popoverCoords.left }}
       onClick={e => e.stopPropagation()}
     >
@@ -930,7 +938,12 @@ export function useSectionEditActions({
 // ─── Structure overlay ────────────────────────────────────────────────────────
 
 type SelMode = 'idle' | 'naming'
-type ActiveEdit = { sectionId: string; cellPos: CellPos }
+type ActiveEdit = {
+  sectionId: string
+  cellPos: CellPos
+  /** False when the edit popover replaces the name picker in the same commit. */
+  animateIn: boolean
+}
 type ResizeDrag = {
   sectionId: string
   edge: 'start' | 'end'
@@ -1014,6 +1027,7 @@ export default function StructureOverlay({
         width: Math.max(40, widthFrac * rect.width),
         height: rect.height,
       },
+      animateIn: true,
     })
   }, [tourOpenFirstSection, editMode, compact, sections, activeEdit, project, totalDurationMs])
 
@@ -1128,7 +1142,9 @@ export default function StructureOverlay({
     const el = stripRef.current
     if (!el || activeEditRef.current?.sectionId !== sectionId) return
     const rect = el.getBoundingClientRect()
-    setActiveEdit({
+    // Keep `animateIn` as it was — re-adding the class on a live popover would
+    // replay the entry animation while the user is only resizing the section.
+    setActiveEdit(prev => ({
       sectionId,
       cellPos: {
         left: rect.left + tp(start) * rect.width,
@@ -1136,7 +1152,8 @@ export default function StructureOverlay({
         width: (tp(end) - tp(start)) * rect.width,
         height: rect.height,
       },
-    })
+      animateIn: prev?.animateIn ?? true,
+    }))
   }
 
   function beginResize(e: React.MouseEvent, sectionId: string, edge: 'start' | 'end') {
@@ -1281,6 +1298,7 @@ export default function StructureOverlay({
       setActiveEdit({
         sectionId: hit.id,
         cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
+        animateIn: true,
       })
       return
     }
@@ -1339,7 +1357,7 @@ export default function StructureOverlay({
     window.addEventListener('mouseup', onDragUp)
   }
 
-  function openSectionEdit(section: Section) {
+  function openSectionEdit(section: Section, { animateIn = true } = {}) {
     const el = stripRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
@@ -1348,6 +1366,7 @@ export default function StructureOverlay({
     setActiveEdit({
       sectionId: section.id,
       cellPos: { left: sLeft, top: rect.top, width: sWidth, height: rect.height },
+      animateIn,
     })
   }
 
@@ -1417,9 +1436,13 @@ export default function StructureOverlay({
       onSectionsChange(prev =>
         [...prev, section].sort((a, b) => a.start_bar - b.start_bar),
       )
-      requestAnimationFrame(() => {
-        openSectionEdit(section)
-      })
+      // Hand the name picker over to the edit popover in ONE commit, with no
+      // entry animation. Opening it a frame later (rAF) left a blank frame and
+      // replayed `animate-slide-in`, which read as the window closing and
+      // re-opening just because a section name was picked.
+      openSectionEdit(section, { animateIn: false })
+      resetSel()
+      return
     } catch (err) {
       console.error(err)
     }
@@ -1819,6 +1842,7 @@ export default function StructureOverlay({
           onNoteChange={handleNoteChange}
           onDelete={handleDelete}
           onClose={closeActiveEdit}
+          animateIn={activeEdit.animateIn}
         />
       )}
 
