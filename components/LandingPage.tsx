@@ -713,8 +713,11 @@ function VersionGraphLabel({
       >
         {name}
       </span>
+      {/* Hidden on narrow stages — see `.tb-vg-status` in globals.css. It is
+          the least load-bearing third of the label: the branch already ends in
+          a dead-end tip or a merge dot, which says the same thing visually. */}
       <span
-        className="font-mono-tb uppercase text-muted-foreground"
+        className="tb-vg-status font-mono-tb uppercase text-muted-foreground"
         style={{ fontSize: vgu(10) }}
       >
         {status}

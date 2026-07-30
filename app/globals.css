@@ -2335,12 +2335,36 @@ html:has(.landing-page) body {
   --vg-u: max(0.0926cqw, 0.9px);
 }
 
-/* Floored labels are ~200px wide, so below ~640px of stage width the two
-   upper ones (darker-mix, polishing) would collide with each other and the
-   lower one with MASTER. Stack them in reading order instead — each keeps its
-   branch color, and the entry animations are untouched (they only drive
-   opacity/transform). */
-@container (max-width: 640px) {
+/* Both breakpoints below are derived from where the labels actually stop
+   fitting, not from device sizes — the stage is a container, so what matters
+   is its own width.
+
+   Label widths are ~222 design units with the status word and ~158 without
+   (border + padding + tag + name + gaps). The two upper labels sit at 38.9%
+   and 75% of the stage, so their centres are 36.1% of the width apart, and
+   they collide once that gap drops below half of each label:
+
+     with status     0.361·W < 0.9px · 214  →  W ≲ 600px
+     without status  0.361·W < 0.9px · 153  →  W ≲ 420px
+
+   (0.9px is the `--vg-u` floor; above ~970px the cqw term takes over and the
+   labels scale with the artwork, so they can never collide up there.) */
+
+/* Down to ~600px the full `tag · name · status` label still clears its
+   neighbour. Below that, drop the status: it is the least load-bearing third,
+   and the artwork already says the same thing — a dead-end tip vs. a merge
+   dot on the branch itself. */
+@container (max-width: 600px) {
+  .tb-vg-stage .tb-vg-status {
+    display: none;
+  }
+}
+
+/* Shortened labels keep their design positions for another ~180px. Only below
+   ~420px do they have to stack, in reading order — each keeps its branch
+   colour, and the entry animations are untouched (they only drive opacity and
+   transform). */
+@container (max-width: 420px) {
   .tb-vg-stage [data-vg-label="1"] {
     left: 50% !important;
     top: 13% !important;
@@ -2353,12 +2377,25 @@ html:has(.landing-page) body {
     left: 50% !important;
     top: 85% !important;
   }
+
+  /* Once stacked, take the scale floor down too. The 0.9px floor keeps label
+     text readable on a narrow stage, but it also means the labels barely
+     shrink while the graph does, which is what made them look oversized on a
+     phone. This value is the knob: raise it if the text reads too small,
+     lower it to shrink the badges further. */
+  .tb-vg-stage > * {
+    --vg-u: max(0.0926cqw, 0.72px);
+  }
 }
 
-/* Phone widths: give the stacked labels vertical breathing room. The SVG uses
+/* Give the stacked labels vertical breathing room. The SVG uses
    preserveAspectRatio="none" and every label is positioned in percentages, so
-   stretching the stage keeps the graph and its labels in register. */
-@media (max-width: 520px) {
+   stretching the stage keeps the graph and its labels in register.
+
+   This one has to stay a media query: a container query can't style its own
+   container, and 460px of viewport is where the stage (viewport minus the
+   hero's 2×16px padding) crosses the 420px stacking threshold above. */
+@media (max-width: 460px) {
   .tb-vg-stage {
     aspect-ratio: 1080 / 720;
   }
