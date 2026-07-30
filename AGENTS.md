@@ -116,6 +116,7 @@ lib/                        Shared logic (flat). Highlights:
   midi.ts, midiRender.ts, midiSoundfont.ts     MIDI engine
   serverEssentia.ts, serverChordDetection.ts, chordDetection.ts, chords.ts
   activity.ts               logActivity (band activity feed)
+  bandLimit.ts              per-user owned-band cap (server); bandLimitClient.ts (UI copy)
   bandStorage.ts            1 GB per-band storage quota
   googleSheets.ts, push/, rate-limit.ts, seo.ts, site-url.ts
 public/
@@ -217,6 +218,26 @@ notification to the owner. Legacy token invite links (`band_invites` table,
 301-redirects `/invite/*` to `/onboarding?step=3`. Activity feed:
 `lib/activity.ts` `logActivity()` → `band_activity`, read via
 `/api/bands/[id]/activity`.
+
+**Band ownership limit.** A user may own at most `profiles.band_limit` bands
+(default 3; users who already owned more at migration time carry a higher
+personal limit — **never replace the column read with a literal 3**). Only
+bands the user *owns* count; `band_members.role = 'owner'` is the definition of
+ownership, so bands they joined are free. `lib/bandLimit.ts` is the single
+server-side implementation: `createBandForUser()` (limit check + both inserts,
+atomic) and `getBandLimitStatus()`. **Both band-creation paths go through it** —
+`POST /api/bands` and `POST /api/projects` when no `band_id` is supplied (that
+one spins up an implicit band). Refusal is `403 { error: 'band_limit_reached',
+limit, current }`. Defence in depth is in the DB: `create_band_with_owner()`
+(atomic RPC) and the `trg_enforce_band_owner_limit` BEFORE INSERT/UPDATE trigger
+**on `band_members`** — ownership is a membership row, not a column on `bands`,
+so that is the only table where the constraint can fire at the right moment.
+Both raise SQLSTATE `BL001` / message `band_limit_reached`, which the route
+translates instead of leaking a 500. The UI reads `bandLimit` from
+`/api/dashboard` (dashboard) or `GET /api/me/band-limit` (onboarding) and locks
+the create action with copy from `lib/bandLimitClient.ts`; it is **UX only and
+never the gate**, and the client never sends the limit or the count to the
+server. Hitting the cap fires `trackEvent('band_limit_reached', { limit })`.
 
 ### Projects & the mixer
 `app/band/[bandId]/project/[projectId]/page.tsx` is the mixer orchestrator
@@ -447,7 +468,9 @@ presentational; nothing is gated server-side.** Gated features:
 `POST /api/paywall/intent` → upserts `subscription_intents`
 (plan `solo|band|band_plus`, unique per user+plan, email resolved
 server-side). Not an entitlement table. NOTE: plan band-limits shown in the
-plans UI have known inconsistencies to resolve before real billing.
+plans UI have known inconsistencies to resolve before real billing — and they
+are a **separate mechanism** from the beta-wide `profiles.band_limit` cap
+described under Bands. No plan logic reads or writes `band_limit` today.
 
 ### Landing page & installed-PWA detection
 `app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The hero
@@ -499,12 +522,16 @@ have no CREATE files here. Columns below are inferred from actual queries.
 
 - **bands** — id, name, invite_code (unique, nullable), created_at.
 - **band_members** — band_id, user_id, role (`owner`/member), role_label,
-  role_color. RLS referenced by most other policies.
+  role_color. RLS referenced by most other policies. **This table is where
+  ownership lives**, so the band-limit trigger
+  (`trg_enforce_band_owner_limit`) sits here, not on `bands`.
 - **band_invites** — legacy token links (token, uses_count, expires_at). RLS.
 - **band_join_requests** — status `pending|approved|rejected`, resolved_by;
   unique pending per (band,user). RLS.
 - **profiles** — id (= auth.users.id), username (unique), display_name,
-  avatar_color, **onboarding jsonb** (tour flags, e.g.
+  avatar_color, **band_limit** (integer not null default 3 — the user's
+  personal owned-band cap; grandfathered users hold a higher value, so always
+  read the column), **onboarding jsonb** (tour flags, e.g.
   `project_tour_completed`), **acquisition_source** (text, null = direct) and
   **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
   account creation only, see Campaign attribution in §4. RLS (public read,
@@ -622,6 +649,13 @@ and preview traffic out of the counter.
   `PATCH /api/profile/username` may write `profiles.acquisition_source` /
   `cohort`, and only under its placeholder-username guard. No other route may
   set or update them (see §4).
+- **The band limit is per-user, never a constant.** Read
+  `profiles.band_limit`; a hardcoded 3 silently demotes grandfathered users.
+  Any new code path that inserts into `bands` (or writes an owner row into
+  `band_members`) must go through `createBandForUser()` in `lib/bandLimit.ts`.
+  The beta-wide cap is **not** the subscription plan system — reconcile the two
+  deliberately when plans ship; `band_limit` is where a plan would write its
+  allowance.
 - **Never name competitors** in any metadata, landing copy, or content
   (legal requirement; /vs pages were removed for this reason).
 - **No test suite exists** — verify with `npm run build` and `npm run lint`.

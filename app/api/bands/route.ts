@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
+import {
+  createBandForUser,
+  BandLimitReachedError,
+  bandLimitReachedBody,
+  BAND_LIMIT_REACHED_STATUS,
+  isBandLimitUnknown,
+} from '@/lib/bandLimit'
 
 
 // GET /api/bands — return bands the current user is a member of
@@ -42,32 +49,34 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ bands })
 }
 
-// POST /api/bands — create a new band and add creator as owner
+// POST /api/bands — create a new band and add creator as owner.
+//
+// Subject to the per-user band limit (`profiles.band_limit`). The acting user
+// comes from the session cookie only, and the limit is read from the database
+// on every attempt — a user id, owner id or limit in the request body is
+// ignored, not honoured. See `lib/bandLimit.ts`.
 export async function POST(req: NextRequest) {
   const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
+    // `name` is the ONLY field read from the body, by design.
     const { name } = await req.json()
     if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
-    const { data: band, error: bandErr } = await supabase
-      .from('bands')
-      .insert({ name: name.trim() })
-      .select()
-      .single()
-    if (bandErr) throw bandErr
-
-    // Add creator as owner
-    const { error: memberErr } = await supabase
-      .from('band_members')
-      .insert({ band_id: band.id, user_id: userId, role: 'owner' })
-    if (memberErr) throw memberErr
+    const band = await createBandForUser(userId, name)
 
     await ensureBandInviteCode(band.id)
 
     return NextResponse.json({ band }, { status: 201 })
   } catch (err) {
+    if (err instanceof BandLimitReachedError) {
+      return NextResponse.json(bandLimitReachedBody(err), { status: BAND_LIMIT_REACHED_STATUS })
+    }
+    if (isBandLimitUnknown(err)) {
+      console.error('[bands] could not resolve band_limit for user', userId, err)
+      return NextResponse.json({ error: 'Could not verify your band limit' }, { status: 500 })
+    }
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

@@ -659,6 +659,7 @@ const VG_B2 = "var(--wave-violet)";  /* #c084fc — merged back */
 const VG_B3 = "var(--wave-sky)";     /* #22d3ee — merged back */
 
 function VersionGraphLabel({
+  index,
   color,
   tag,
   name,
@@ -667,6 +668,8 @@ function VersionGraphLabel({
   top,
   anim,
 }: {
+  /** Lets the narrow-screen container query re-stack the labels (see globals.css). */
+  index: 1 | 2 | 3;
   color: string;
   tag: string;
   name: string;
@@ -677,6 +680,7 @@ function VersionGraphLabel({
 }) {
   return (
     <div
+      data-vg-label={index}
       className="tb-vg-anim tb-vg-label absolute inline-flex items-center whitespace-nowrap"
       style={{
         left,
@@ -732,7 +736,7 @@ function HeroVersionGraph() {
 
       {/* graph stage — locked to the design's 1080×560 canvas ratio so the
           SVG geometry and the percentage-positioned labels stay aligned */}
-      <div className="tb-vg-stage relative w-full" style={{ aspectRatio: "1080 / 560" }}>
+      <div className="tb-vg-stage relative w-full">
         <div className="absolute inset-0">
           <svg
             viewBox="0 0 1080 560"
@@ -832,15 +836,15 @@ function HeroVersionGraph() {
           </div>
 
           <VersionGraphLabel
-            color={VG_B1} tag="FIX" name="darker-mix" status="— dropped"
+            index={1} color={VG_B1} tag="FIX" name="darker-mix" status="— dropped"
             left="38.9%" top="26%" anim="vg-lbl-1"
           />
           <VersionGraphLabel
-            color={VG_B2} tag="EXP" name="alt-bridge" status="→ merged"
+            index={2} color={VG_B2} tag="EXP" name="alt-bridge" status="→ merged"
             left="50.9%" top="74%" anim="vg-lbl-2"
           />
           <VersionGraphLabel
-            color={VG_B3} tag="ARR" name="polishing" status="→ merged"
+            index={3} color={VG_B3} tag="ARR" name="polishing" status="→ merged"
             left="75%" top="26%" anim="vg-lbl-3"
           />
         </div>

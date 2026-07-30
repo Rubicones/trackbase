@@ -2320,13 +2320,48 @@ html:has(.landing-page) body {
    `--vg-u` is the scale unit: 1 design pixel, expressed against the stage's
    container width (100 / 1080 = 0.0926cqw). Everything non-SVG is sized in it,
    so the labels scale with the artwork instead of staying fixed while the
-   graph shrinks — the SVG itself scales via its viewBox. */
+   graph shrinks — the SVG itself scales via its viewBox.
+
+   The unit is floored at 0.9px so the branch labels stay readable when the
+   stage is narrower than the 1080px design canvas (pure cqw scaling took the
+   name text down to ~4px on a phone). Past ~970px of stage width the cqw term
+   wins again, so the promo canvas is unchanged. */
 .tb-vg-stage {
   container-type: inline-size;
+  aspect-ratio: 1080 / 560;
 }
 
 .tb-vg-stage > * {
-  --vg-u: 0.0926cqw;
+  --vg-u: max(0.0926cqw, 0.9px);
+}
+
+/* Floored labels are ~200px wide, so below ~640px of stage width the two
+   upper ones (darker-mix, polishing) would collide with each other and the
+   lower one with MASTER. Stack them in reading order instead — each keeps its
+   branch color, and the entry animations are untouched (they only drive
+   opacity/transform). */
+@container (max-width: 640px) {
+  .tb-vg-stage [data-vg-label="1"] {
+    left: 50% !important;
+    top: 13% !important;
+  }
+  .tb-vg-stage [data-vg-label="3"] {
+    left: 50% !important;
+    top: 33% !important;
+  }
+  .tb-vg-stage [data-vg-label="2"] {
+    left: 50% !important;
+    top: 85% !important;
+  }
+}
+
+/* Phone widths: give the stacked labels vertical breathing room. The SVG uses
+   preserveAspectRatio="none" and every label is positioned in percentages, so
+   stretching the stage keeps the graph and its labels in register. */
+@media (max-width: 520px) {
+  .tb-vg-stage {
+    aspect-ratio: 1080 / 720;
+  }
 }
 
 @keyframes vg-master { 0% { stroke-dashoffset: 100; } 3%, 100% { stroke-dashoffset: 0; } }

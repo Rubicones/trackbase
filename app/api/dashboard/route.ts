@@ -5,11 +5,22 @@ import { createClient } from '@supabase/supabase-js'
 
 
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
+import { getBandLimitStatus, type BandLimitStatus } from '@/lib/bandLimit'
 
 // GET /api/dashboard — all data needed for the bands list page
 export async function GET(req: NextRequest) {
   const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Display value for the "create a space" affordance. Null (rather than a
+  // guessed number) when it can't be read — the UI then stays unlocked and the
+  // server still refuses the create, which is the safe way round.
+  let bandLimit: BandLimitStatus | null = null
+  try {
+    bandLimit = await getBandLimitStatus(userId)
+  } catch (err) {
+    console.error('[dashboard] band limit unavailable', err)
+  }
 
   const adminSupabase = createClient(
     process.env.SUPABASE_URL!,
@@ -73,6 +84,7 @@ export async function GET(req: NextRequest) {
       totalProjects: 0,
       totalCollaborators: 0,
       storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+      bandLimit,
     })
   }
 
@@ -232,5 +244,6 @@ export async function GET(req: NextRequest) {
     totalProjects,
     totalCollaborators: allCollaboratorIds.size,
     storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+    bandLimit,
   })
 }

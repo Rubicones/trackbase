@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Lock } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { formatActivityLine } from '@/lib/activityFormat'
@@ -15,6 +16,13 @@ import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
 import { Toast } from '@/components/design/Toast'
 import { trackEvent } from '@/lib/analytics'
+import {
+  type BandLimitInfo,
+  bandLimitMessage,
+  BAND_LIMIT_HINT,
+  parseBandLimitError,
+  reportBandLimitReached,
+} from '@/lib/bandLimitClient'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -195,49 +203,80 @@ function JoinBandModal({ onClose, onSubmitted }: {
   )
 }
 
-function NewBandModal({ onClose, onCreated }: {
-  onClose: () => void; onCreated: (bandId: string) => void
+function NewBandModal({ onClose, onCreated, onLimitReached }: {
+  onClose: () => void
+  onCreated: (bandId: string) => void
+  /** The server refused: refresh the dashboard's copy of the limit. */
+  onLimitReached: (info: BandLimitInfo) => void
 }) {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [limitInfo, setLimitInfo] = useState<BandLimitInfo | null>(null)
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!name.trim() || limitInfo) return
     setLoading(true); setError('')
     try {
       const res = await fetch('/api/bands', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Only the name. The limit and the count are never asserted by the client.
         body: JSON.stringify({ name: name.trim() }),
       })
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
-      const { band } = await res.json()
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        // Stale UI, a race, or a direct call — the server is the gate, so this
+        // gets the same plain explanation rather than a generic error.
+        const limit = parseBandLimitError(data)
+        if (limit) {
+          setLimitInfo(limit)
+          reportBandLimitReached(limit.limit)
+          onLimitReached(limit)
+          return
+        }
+        throw new Error(data.error ?? 'Failed')
+      }
+
       trackEvent('band_created')
-      onCreated(band.id)
+      onCreated(data.band.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally { setLoading(false) }
+    } finally {
+      // Always cleared: no spinner left running on the refusal path either.
+      setLoading(false)
+    }
   }
 
   return (
     <TbModal onClose={onClose}>
       <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New space</p>
-      <form onSubmit={handleCreate} className="flex flex-col gap-3">
-        <TbInput
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="The Noise, Blue Period…"
-          autoFocus
-        />
-        {error && <p className="text-destructive text-xs m-0">{error}</p>}
-        <div className="flex gap-2 justify-end mt-1">
-          <TbButton onClick={onClose}>Cancel</TbButton>
-          <TbButton type="submit" variant="primary" disabled={loading || !name.trim()} className="px-4">
-            {loading ? 'Creating…' : 'Create'}
-          </TbButton>
+      {limitInfo ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-foreground m-0">{bandLimitMessage(limitInfo.limit)}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed m-0">{BAND_LIMIT_HINT}</p>
+          <div className="flex justify-end mt-1">
+            <TbButton variant="primary" onClick={onClose} className="px-4">Got it</TbButton>
+          </div>
         </div>
-      </form>
+      ) : (
+        <form onSubmit={handleCreate} className="flex flex-col gap-3">
+          <TbInput
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="The Noise, Blue Period…"
+            autoFocus
+          />
+          {error && <p className="text-destructive text-xs m-0">{error}</p>}
+          <div className="flex gap-2 justify-end mt-1">
+            <TbButton onClick={onClose}>Cancel</TbButton>
+            <TbButton type="submit" variant="primary" disabled={loading || !name.trim()} className="px-4">
+              {loading ? 'Creating…' : 'Create'}
+            </TbButton>
+          </div>
+        </form>
+      )}
     </TbModal>
   )
 }
@@ -515,6 +554,9 @@ export default function DashboardPage() {
   const [totalProjects, setTotalProjects] = useState(0)
   const [totalCollaborators, setTotalCollaborators] = useState(0)
   const [loadingData, setLoadingData] = useState(true)
+  // Server-supplied, display only. Null while loading or if it couldn't be
+  // read — in that case the UI stays unlocked and the server still refuses.
+  const [bandLimit, setBandLimit] = useState<BandLimitInfo | null>(null)
 
   const [filter, setFilter] = useState<FilterTab>('all')
   const [search, setSearch] = useState('')
@@ -554,6 +596,7 @@ export default function DashboardPage() {
         setTotalBands(data.totalBands ?? 0)
         setTotalProjects(data.totalProjects ?? 0)
         setTotalCollaborators(data.totalCollaborators ?? 0)
+        setBandLimit(data.bandLimit ?? null)
         setLoadingData(false)
       })
       .catch(err => {
@@ -574,6 +617,7 @@ export default function DashboardPage() {
         setTotalBands(data.totalBands ?? 0)
         setTotalProjects(data.totalProjects ?? 0)
         setTotalCollaborators(data.totalCollaborators ?? 0)
+        setBandLimit(data.bandLimit ?? null)
       })
   }
 
@@ -601,7 +645,17 @@ export default function DashboardPage() {
     setToast(msg); setTimeout(() => setToast(null), 3000)
   }
 
+  const atBandLimit = bandLimit?.atLimit === true
+  const bandLimitCopy = bandLimit ? bandLimitMessage(bandLimit.limit) : ''
+
+  // The create action is locked, so this is the moment the user meets the cap.
+  // Guarded inside reportBandLimitReached so re-renders don't re-fire it.
+  useEffect(() => {
+    if (atBandLimit && bandLimit) reportBandLimitReached(bandLimit.limit)
+  }, [atBandLimit, bandLimit])
+
   function openNewBandModal() {
+    if (atBandLimit) return
     trackEvent('band_create_clicked')
     setShowNewBand(true)
   }
@@ -710,7 +764,13 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <TbButton variant="primary" onClick={openNewBandModal} className="h-10 px-4 shrink-0">
+            <TbButton
+              variant="primary"
+              onClick={openNewBandModal}
+              disabled={atBandLimit}
+              title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+              className="h-10 px-4 shrink-0"
+            >
               + New space
             </TbButton>
             <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
@@ -718,6 +778,19 @@ export default function DashboardPage() {
             </TbButton>
           </div>
         </div>
+
+        {/* Own row, separated from the controls above — it explains why the
+            create button is locked, so it must not compete with them for space. */}
+        {atBandLimit && (
+          <div className="border-t border-border">
+            <div className="mx-auto max-w-7xl px-6 py-3 flex items-start gap-2.5">
+              <Lock size={14} strokeWidth={1.5} className="text-muted-foreground mt-px shrink-0" />
+              <p className="text-xs text-muted-foreground m-0 leading-relaxed">
+                <span className="text-foreground">{bandLimitCopy}</span> {BAND_LIMIT_HINT}
+              </p>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Band grid */}
@@ -733,7 +806,12 @@ export default function DashboardPage() {
               Create your first band or request to join one with an invite code
             </p>
             <div className="flex flex-wrap gap-3 justify-center mt-2">
-              <TbButton variant="primary" onClick={openNewBandModal} className="px-4 py-2">
+              <TbButton
+                variant="primary"
+                onClick={openNewBandModal}
+                disabled={atBandLimit}
+                className="px-4 py-2"
+              >
                 Create a band
               </TbButton>
               <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
@@ -799,15 +877,32 @@ export default function DashboardPage() {
                 ))}
 
                 {filter === 'all' && !search && (
-                  <button
-                    type="button"
-                    onClick={openNewBandModal}
-                    className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-lime hover:bg-surface transition-colors min-h-[200px]"
-                  >
-                    <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-lime">+</div>
-                    <div className="font-display text-sm uppercase tracking-widest">Create new space</div>
-                    <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
-                  </button>
+                  atBandLimit ? (
+                    // Locked, not hidden: the affordance stays where the user
+                    // expects it and explains itself instead of failing later.
+                    <div
+                      aria-disabled="true"
+                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground min-h-[200px] text-center opacity-60"
+                    >
+                      <div className="size-12 border border-dashed border-border grid place-items-center text-muted-foreground">
+                        <Lock size={18} strokeWidth={1.5} />
+                      </div>
+                      <div className="font-display text-sm uppercase tracking-widest">{bandLimitCopy}</div>
+                      <div className="text-[10px] text-muted-foreground max-w-[15rem] leading-relaxed">
+                        {BAND_LIMIT_HINT}
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openNewBandModal}
+                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-lime hover:bg-surface transition-colors min-h-[200px]"
+                    >
+                      <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-lime">+</div>
+                      <div className="font-display text-sm uppercase tracking-widest">Create new space</div>
+                      <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
+                    </button>
+                  )
                 )}
               </div>
             )}
@@ -837,6 +932,7 @@ export default function DashboardPage() {
         <NewBandModal
           onClose={() => setShowNewBand(false)}
           onCreated={id => { setShowNewBand(false); router.push(`/band/${id}`) }}
+          onLimitReached={info => setBandLimit(info)}
         />
       )}
       {deletingBand && (

@@ -26,6 +26,13 @@ import {
 import { ThemePicker } from '@/components/design/ThemePicker'
 import { trackEvent, setUserProperties } from '@/lib/analytics'
 import { readAttribution, clearAttribution, DEFAULT_COHORT } from '@/lib/attribution'
+import {
+  type BandLimitInfo,
+  bandLimitMessage,
+  BAND_LIMIT_HINT,
+  parseBandLimitError,
+  reportBandLimitReached,
+} from '@/lib/bandLimitClient'
 
 type OnboardingStep = 1 | 2 | 3
 
@@ -120,6 +127,12 @@ function OnboardingContent() {
   const [submitting, setSubmitting] = useState(false)
   const [savingUsername, setSavingUsername] = useState(false)
   const [error, setError] = useState('')
+  /**
+   * Display only. Normally null here — someone in onboarding owns no bands —
+   * but a returning account with a used-up allowance must not be offered a
+   * "create a space" button that is going to fail.
+   */
+  const [bandLimit, setBandLimit] = useState<BandLimitInfo | null>(null)
   /** Set before markOnboardingComplete so the effect doesn't race to /dashboard. */
   const finishingRef = useRef(false)
 
@@ -164,6 +177,25 @@ function OnboardingContent() {
         if (user.user_metadata?.username) setStep(3)
       })
   }, [authLoading, user, router, searchParams, refreshProfile])
+
+  // Fetch the allowance once the create/join step is on screen, so the create
+  // card can be locked before the user commits to a name.
+  useEffect(() => {
+    if (step !== 3 || !user) return
+    let cancelled = false
+    fetch('/api/me/band-limit')
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: BandLimitInfo | null) => {
+        if (cancelled || !data) return
+        setBandLimit(data)
+        if (data.atLimit) {
+          reportBandLimitReached(data.limit)
+          setBandMode('join')
+        }
+      })
+      .catch(() => { /* leave unlocked — the server is still the gate */ })
+    return () => { cancelled = true }
+  }, [step, user])
 
   useEffect(() => {
     if (usernameDebounce.current) clearTimeout(usernameDebounce.current)
@@ -255,7 +287,7 @@ function OnboardingContent() {
 
     const canSubmit =
       bandMode === 'create'
-        ? true
+        ? bandLimit?.atLimit !== true
         : codeStatus === 'valid' && codeInfo !== null
     if (!canSubmit || submitting || !user) return
 
@@ -271,10 +303,26 @@ function OnboardingContent() {
         const bandRes = await fetch('/api/bands', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          // Name only — the client never asserts a limit or a count.
           body: JSON.stringify({ name: personalSpaceName }),
         })
-        if (!bandRes.ok) throw new Error((await bandRes.json()).error ?? 'Space creation failed')
-        const { band } = await bandRes.json()
+        const bandData = await bandRes.json().catch(() => ({}))
+        if (!bandRes.ok) {
+          // Server refused on the limit: switch the user to joining instead of
+          // showing a generic failure, and stop the spinner (the finally block
+          // does that on every exit from here).
+          const limit = parseBandLimitError(bandData)
+          if (limit) {
+            setBandLimit(limit)
+            reportBandLimitReached(limit.limit)
+            setBandMode('join')
+            setError(`${bandLimitMessage(limit.limit)} ${BAND_LIMIT_HINT}`)
+            finishingRef.current = false
+            return
+          }
+          throw new Error(bandData.error ?? 'Space creation failed')
+        }
+        const { band } = bandData
         trackEvent('onboarding_band_created')
         // Skipped the spaces list — don't show that welcome if we ever hit /dashboard.
         await updateOnboarding('dashboard_seen', true)
@@ -305,8 +353,11 @@ function OnboardingContent() {
   if (authLoading) return <AuthLoadingScreen />
   if (!user) return <AuthLoadingScreen label="Redirecting to sign in" />
 
+  const atBandLimit = bandLimit?.atLimit === true
+  const bandLimitCopy = bandLimit ? bandLimitMessage(bandLimit.limit) : ''
+
   const canProceed =
-    bandMode === 'create' ? true : codeStatus === 'valid'
+    bandMode === 'create' ? !atBandLimit : codeStatus === 'valid'
 
   const usernameFieldStatus =
     usernameStatus === 'checking'
@@ -420,11 +471,16 @@ function OnboardingContent() {
 
               <div className="flex flex-col sm:flex-row gap-3">
                 <AuthModeCard
-                  selected={bandMode === 'create'}
+                  selected={bandMode === 'create' && !atBandLimit}
                   onClick={() => setBandMode('create')}
+                  disabled={atBandLimit}
                   icon={<PlusIcon />}
                   title="Create a personal space"
-                  description="Your own workspace to get started — invite collaborators whenever you're ready."
+                  description={
+                    atBandLimit
+                      ? bandLimitCopy
+                      : "Your own workspace to get started — invite collaborators whenever you're ready."
+                  }
                 />
                 <AuthModeCard
                   selected={bandMode === 'join'}
@@ -435,6 +491,8 @@ function OnboardingContent() {
                   accent="online"
                 />
               </div>
+
+              {atBandLimit && <AuthHint>{BAND_LIMIT_HINT}</AuthHint>}
 
               {bandMode === 'join' && (
                 <div className="space-y-1.5">

@@ -2,9 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
+import {
+  createBandForUser,
+  BandLimitReachedError,
+  bandLimitReachedBody,
+  BAND_LIMIT_REACHED_STATUS,
+  isBandLimitUnknown,
+} from '@/lib/bandLimit'
 
 // POST /api/projects
 // Body: { name: string, band_id?: string, bpm?: number, key?: string }
+//
+// NOTE: omitting `band_id` makes this a band-creation path — it spins up an
+// implicit band owned by the caller. It therefore goes through the same
+// `createBandForUser` limit check as POST /api/bands.
 export async function POST(req: NextRequest) {
   try {
     const userId = await getRequestUserId(req)
@@ -30,18 +41,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 })
       }
     } else {
-      const { data: band, error: bandErr } = await supabase
-        .from('bands')
-        .insert({ name: `${name.trim()} — band` })
-        .select()
-        .single()
-      if (bandErr) throw bandErr
-
-      const { error: memberErr } = await supabase
-        .from('band_members')
-        .insert({ band_id: band.id, user_id: userId, role: 'owner' })
-      if (memberErr) throw memberErr
-
+      const band = await createBandForUser(userId, `${name.trim()} — band`)
       await ensureBandInviteCode(band.id)
       resolvedBandId = band.id
     }
@@ -67,6 +67,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ project, version }, { status: 201 })
   } catch (err) {
+    if (err instanceof BandLimitReachedError) {
+      return NextResponse.json(bandLimitReachedBody(err), { status: BAND_LIMIT_REACHED_STATUS })
+    }
+    if (isBandLimitUnknown(err)) {
+      console.error('[projects] could not resolve band_limit', err)
+      return NextResponse.json({ error: 'Could not verify your band limit' }, { status: 500 })
+    }
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

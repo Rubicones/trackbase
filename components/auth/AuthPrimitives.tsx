@@ -137,6 +137,7 @@ export function AuthModeCard({
   title,
   description,
   accent = 'lime',
+  disabled = false,
 }: {
   selected: boolean
   onClick: () => void
@@ -144,6 +145,8 @@ export function AuthModeCard({
   title: string
   description: string
   accent?: 'lime' | 'online'
+  /** Locked state — the option exists but isn't available to this user. */
+  disabled?: boolean
 }) {
   const accentClass = accent === 'online' ? 'border-online bg-online/5' : 'border-lime bg-lime-soft/40'
 
@@ -151,9 +154,13 @@ export function AuthModeCard({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      aria-disabled={disabled || undefined}
       className={[
         'flex-1 p-4 border text-left transition-colors flex flex-col gap-2 min-w-0',
-        selected ? accentClass : 'border-border bg-background hover:border-muted-foreground/40',
+        disabled
+          ? 'border-border bg-background opacity-50 cursor-default'
+          : selected ? accentClass : 'border-border bg-background hover:border-muted-foreground/40',
       ].join(' ')}
     >
       <span className={`text-2xl leading-none ${accent === 'online' ? 'text-online' : 'text-lime'}`}>
