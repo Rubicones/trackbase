@@ -220,16 +220,26 @@ or it redirects the signed-out visitor — the exact person a campaign link
 exists for — before the cookie is ever set.
 Adding a campaign = a registry entry + a copy of the stub; nothing else.
 
-Attribution is **first-touch and first-account**: `storeAttribution` never
-overwrites an earlier campaign, and the values are written to the profile only
-by `PATCH /api/profile/username`, guarded *inside* the UPDATE with
-`.eq('username', placeholderUsername(userId))`. That predicate is the test for
-"this profile is being created right now" — profiles are inserted by the
-`handle_new_user` trigger with a `user_<uuid>` placeholder, so the first
-username set is the moment the account becomes real. **Never** widen this to
-"acquisition_source is null": that would re-tag existing organic users the
-first time they open a campaign link. An existing profile falls through to a
-plain username update and is never touched. The route returns `attributed`;
+Attribution is **first-touch and first-account**: middleware never overwrites
+an earlier campaign cookie, and the values are written to the profile only by
+`PATCH /api/profile/username`, guarded by **`isFirstUsername()`** — "does this
+account have no `user_metadata.username` yet?". That route is the only writer
+of that metadata field and `middleware.ts` forces onboarding until it exists,
+so its absence means "has never completed the username step" = the account is
+being established right now. An existing user always has it and can never be
+re-tagged. **Never** widen this to "acquisition_source is null": that would
+re-tag existing organic users the first time they open a campaign link.
+
+The guard used to be `.eq('username', placeholderUsername(userId))` *inside*
+the UPDATE, which read better but made correctness depend on reproducing the
+`handle_new_user` trigger's placeholder string in TypeScript. Migrations here
+are applied by hand and `supabase/migrations/` is not a complete history, so
+the live trigger can disagree with the file — and when it did, the UPDATE
+matched zero rows and **every** campaign signup came out `cold`/NULL with no
+error anywhere. The write is now an `upsert` for the same reason: a missing
+profile row must not be another silent zero-row write. Both the inputs and the
+outcome are logged (`[profile/username] attribution`, Vercel Runtime Logs),
+because this write happens once per account and cannot be checked afterwards. The route returns `attributed`;
 only then does the client fire `trackEvent('signup_attributed', { source,
 cohort })`, clear the two keys, and set the GA4 `cohort` user property
 (set for cold users too, so the segment has both sides).

@@ -7,11 +7,37 @@ const USERNAME_RE = /^[a-z0-9_]{3,20}$/
 
 /**
  * The username the `handle_new_user` trigger (supabase/migrations/001_auth.sql)
- * writes when a row lands in `auth.users`. It is the fingerprint of a profile
- * nobody has claimed yet — see the attribution note below.
+ * is *believed* to write when a row lands in `auth.users`.
+ *
+ * Kept for logging only — **do not guard on it**. Migrations here are applied
+ * by hand and that file is not a complete history, so the live trigger can
+ * write a different placeholder than this reproduces, and when it does the
+ * guard silently matches zero rows and every signup comes out unattributed
+ * with no error anywhere. That is exactly what happened. The real test is
+ * `isFirstUsername()` below.
  */
 function placeholderUsername(userId: string) {
   return `user_${userId.replace(/-/g, '')}`
+}
+
+/**
+ * Whether this request is the first time this account has ever set a username —
+ * i.e. the moment a placeholder profile becomes a real account, and the one
+ * moment attribution may be written.
+ *
+ * `user_metadata.username` is the right signal because **this route is the only
+ * writer of it** (see the bottom of the handler) and `middleware.ts` forces the
+ * onboarding flow until it exists. So "no metadata username" means "has never
+ * completed the username step", for every account, regardless of what the
+ * database trigger chose to seed `profiles.username` with. Any pre-existing
+ * user necessarily has it set and can therefore never be re-tagged, which is
+ * the property that matters — an organic user must not be converted to a
+ * campaign cohort by clicking a campaign link years later.
+ */
+async function isFirstUsername(userId: string): Promise<boolean> {
+  const { data, error } = await supabase.auth.admin.getUserById(userId)
+  if (error || !data.user) return false
+  return !data.user.user_metadata?.username
 }
 
 /**
@@ -112,21 +138,44 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Username already taken' }, { status: 409 })
   }
 
-  const attribution = resolveAttribution(
-    req.cookies.get(CAMPAIGN_COOKIE)?.value,
-    body,
-  )
+  const cookieSlug = req.cookies.get(CAMPAIGN_COOKIE)?.value
+  const attribution = resolveAttribution(cookieSlug, body)
   let attributed = false
 
+  // Attribution is write-once and unobservable after the fact: if it doesn't
+  // land there is no retry and no error, just a permanently cold profile. So
+  // every attempt logs which inputs it had and what the guarded UPDATE did.
+  // Check Vercel → Runtime Logs, filter `[profile/username]`.
+  const trace: Record<string, unknown> = {
+    cookie: cookieSlug ?? null,
+    bodySource: typeof body.acquisitionSource === 'string' ? body.acquisitionSource : null,
+    resolved: attribution?.acquisition_source ?? null,
+    // Logged so a mismatch between the live trigger and this repo's SQL is
+    // visible next to the row it failed to match, instead of being invisible.
+    expectedPlaceholder: placeholderUsername(userId),
+  }
+
   if (attribution) {
-    // Matches only while the profile still holds its trigger-generated
-    // placeholder, i.e. only for an account being established right now.
-    const { data: claimed, error: claimErr } = await supabase
-      .from('profiles')
-      .update({ username, ...attribution })
-      .eq('id', userId)
-      .eq('username', placeholderUsername(userId))
-      .select('id')
+    // Read-then-write, deliberately. The previous version folded the test into
+    // the UPDATE (`.eq('username', placeholder)`) to close the gap between
+    // check and write — nice in theory, but it made correctness depend on
+    // reproducing a database trigger's string in TypeScript, and that is what
+    // broke. A first-username check cannot meaningfully race anyway: both
+    // requests would be the same user setting their first username, and the
+    // second one finds the metadata already written.
+    const firstUsername = await isFirstUsername(userId)
+    trace.firstUsername = firstUsername
+
+    // upsert, not update: if the `handle_new_user` trigger never ran (or does
+    // not exist in this environment) there is no row to update and the write
+    // would silently match zero rows — the same invisible failure as before,
+    // one layer down. Safe because it only runs for a first-ever username.
+    const { data: claimed, error: claimErr } = firstUsername
+      ? await supabase
+          .from('profiles')
+          .upsert({ id: userId, username, ...attribution }, { onConflict: 'id' })
+          .select('id')
+      : { data: null, error: null }
 
     if (claimErr && claimErr.code === '23505') {
       return NextResponse.json({ error: 'Username already taken' }, { status: 409 })
@@ -137,8 +186,21 @@ export async function PATCH(req: NextRequest) {
       console.error('[profile/username] attributed update error:', claimErr)
     } else {
       attributed = (claimed?.length ?? 0) > 0
+      trace.rowsMatched = claimed?.length ?? 0
     }
   }
+
+  // The row's actual username is the one fact the guard turns on and the one
+  // thing the UPDATE can't report back, so read it when the claim missed.
+  if (!attributed) {
+    const { data: row } = await supabase
+      .from('profiles')
+      .select('username, acquisition_source, cohort')
+      .eq('id', userId)
+      .maybeSingle()
+    trace.actualRow = row ?? 'NO PROFILE ROW'
+  }
+  console.log('[profile/username] attribution', JSON.stringify({ ...trace, attributed }))
 
   // Runs when there was no attribution to write, or when the profile turned out
   // to be an existing one (zero rows matched above) and so must keep whatever
