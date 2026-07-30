@@ -106,7 +106,7 @@ async function markOnboardingComplete() {
 function OnboardingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user, loading: authLoading, refreshProfile, updateOnboarding } = useAuth()
+  const { user, loading: authLoading, refreshProfile } = useAuth()
   const [step, setStep] = useState<OnboardingStep>(1)
   const [username, setUsername] = useState('')
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle')
@@ -324,8 +324,11 @@ function OnboardingContent() {
         }
         const { band } = bandData
         trackEvent('onboarding_band_created')
-        // Skipped the spaces list — don't show that welcome if we ever hit /dashboard.
-        await updateOnboarding('dashboard_seen', true)
+        // NB: `dashboard_seen` is deliberately NOT set here. This path lands the
+        // user in their new space without passing through /dashboard, and
+        // pre-marking it meant they never got the Spaces welcome — not on this
+        // visit, not ever. The welcome is one-shot on its own flag; let the
+        // dashboard set it the first time the user actually sees it.
         await markOnboardingComplete()
         await refreshProfile()
         router.replace(`/band/${band.id}`)

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { supabase } from '@/lib/supabase'
-import type { Cohort } from '@/lib/campaigns'
+import { getCampaign, CAMPAIGN_COOKIE, type Cohort } from '@/lib/campaigns'
 
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/
 
@@ -44,10 +44,29 @@ function placeholderUsername(userId: string) {
  * The chosen username can never collide with the placeholder: `user_` plus 32
  * hex characters is 37 long, and USERNAME_RE caps input at 20.
  */
-function parseAttribution(body: {
-  acquisitionSource?: unknown
-  cohort?: unknown
-}): { acquisition_source: string; cohort: Cohort } | null {
+type Attribution = { acquisition_source: string; cohort: Cohort }
+
+/**
+ * Two carriers, checked in order of trustworthiness:
+ *
+ *  1. **The `sd-campaign` cookie**, stamped by `middleware.ts` when the visitor
+ *     hit the campaign link. Server-set and server-read, so it works even if
+ *     the client never ran the storing effect or storage was unavailable — the
+ *     failure mode that produced unattributed signups. The slug is resolved
+ *     against the registry, so the values written are ours, not the client's.
+ *  2. **The request body**, populated from localStorage by the onboarding page.
+ *     Retained so a visitor who arrived before this cookie existed (or who is
+ *     mid-signup across the deploy) is still attributed.
+ */
+function resolveAttribution(
+  cookieSlug: string | undefined,
+  body: { acquisitionSource?: unknown; cohort?: unknown },
+): Attribution | null {
+  const campaign = cookieSlug ? getCampaign(cookieSlug) : null
+  if (campaign) {
+    return { acquisition_source: campaign.source, cohort: campaign.cohort }
+  }
+
   const source = typeof body.acquisitionSource === 'string' ? body.acquisitionSource.trim() : ''
   // Bounded because it arrives from client-controlled localStorage. Anything
   // outside the shape a campaign slug takes is discarded rather than stored.
@@ -93,7 +112,10 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Username already taken' }, { status: 409 })
   }
 
-  const attribution = parseAttribution(body)
+  const attribution = resolveAttribution(
+    req.cookies.get(CAMPAIGN_COOKIE)?.value,
+    body,
+  )
   let attributed = false
 
   if (attribution) {
@@ -148,7 +170,7 @@ export async function PATCH(req: NextRequest) {
   // `attributed` is the client's cue to fire the analytics event and drop the
   // stored values. It is true only when this request actually wrote them, so a
   // retry or a returning user cannot double-count a signup.
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     username,
     attributed,
@@ -156,4 +178,15 @@ export async function PATCH(req: NextRequest) {
       ? { source: attribution.acquisition_source, cohort: attribution.cohort }
       : {}),
   })
+
+  // Burn the cookie once this profile is settled — whether we attributed it or
+  // it turned out to be an existing account. Either way the campaign has had
+  // its one chance, and leaving it would let the next person to sign up in this
+  // browser inherit the tag (the same rule `clearAttribution` enforces for
+  // localStorage).
+  if (req.cookies.get(CAMPAIGN_COOKIE)) {
+    res.cookies.set(CAMPAIGN_COOKIE, '', { path: '/', maxAge: 0 })
+  }
+
+  return res
 }

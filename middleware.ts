@@ -10,7 +10,12 @@ import {
 import { authCookieOptions } from '@/lib/auth/cookie-options'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 import { PRODUCTION_SITE_URL, REDIRECT_TO_CANONICAL_HOSTS } from '@/lib/site-url'
-import { isCampaignPath } from '@/lib/campaigns'
+import {
+  isCampaignPath,
+  campaignSlugFromPath,
+  CAMPAIGN_COOKIE,
+  CAMPAIGN_COOKIE_MAX_AGE,
+} from '@/lib/campaigns'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -95,8 +100,26 @@ export async function middleware(request: NextRequest) {
   const hasUsername = !!verified?.user_metadata?.username
   const onboardingComplete = !!verified?.user_metadata?.onboarding_complete
 
+  // Campaign links stamp the slug into a cookie *here*, before any React code
+  // runs, so attribution survives a client that never executes the storing
+  // effect. First-touch: an existing cookie is never overwritten, matching
+  // `storeAttribution`. Cleared by PATCH /api/profile/username once claimed.
+  const campaignSlug = campaignSlugFromPath(pathname)
+  const hasCampaignCookie = !!request.cookies.get(CAMPAIGN_COOKIE)?.value
+
   function finalize(res: NextResponse) {
     if (refreshedSession) applyRefreshedCookies(res, refreshedSession)
+    if (campaignSlug && !hasCampaignCookie) {
+      res.cookies.set(CAMPAIGN_COOKIE, campaignSlug, {
+        // Readable by the server only — the client has no use for it, and the
+        // API returns what it wrote so the analytics event still fires.
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: CAMPAIGN_COOKIE_MAX_AGE,
+      })
+    }
     return res
   }
 

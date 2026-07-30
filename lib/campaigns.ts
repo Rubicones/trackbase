@@ -47,8 +47,30 @@ export function getCampaign(slug: string): Campaign | null {
   return (CAMPAIGNS as Record<string, Campaign>)[slug] ?? null
 }
 
+/** The slug for a campaign path, or null. `/maskeliade/` == `/maskeliade`. */
+export function campaignSlugFromPath(pathname: string): CampaignSlug | null {
+  const slug = pathname.replace(/^\/+/, '').replace(/\/+$/, '')
+  return slug in CAMPAIGNS ? (slug as CampaignSlug) : null
+}
+
 /** True for `/maskeliade` (and `/maskeliade/` — a trailing slash is the same link). */
 export function isCampaignPath(pathname: string): boolean {
-  const slug = pathname.replace(/^\/+/, '').replace(/\/+$/, '')
-  return slug in CAMPAIGNS
+  return campaignSlugFromPath(pathname) !== null
 }
+
+/**
+ * Cookie that carries the campaign from the landing link to the moment the
+ * account is created.
+ *
+ * localStorage (`lib/attribution.ts`) was the original and only carrier, but it
+ * puts the whole mechanism behind "a client effect ran, and nothing cleared
+ * storage in between" — which silently yields an unattributed signup with no
+ * trace of why. The cookie is stamped by `middleware.ts` before any React code
+ * exists, rides the request to `PATCH /api/profile/username` automatically, and
+ * is read there **server-side**, so attribution no longer depends on the client
+ * at all. localStorage is kept as a secondary source (see the route).
+ */
+export const CAMPAIGN_COOKIE = 'sd-campaign'
+
+/** 30 days: long enough to survive "clicked the link, signed up next week". */
+export const CAMPAIGN_COOKIE_MAX_AGE = 60 * 60 * 24 * 30

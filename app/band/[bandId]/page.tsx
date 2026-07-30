@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
+import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { activityCategoryLabel, activityColorClass, activityDescriptionParts, activityDotClass } from '@/lib/activityFormat'
@@ -652,6 +653,12 @@ export default function BandPage() {
   const previewProjectRef = useRef(previewProject)
   previewProjectRef.current = previewProject
   const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
+  // The feedback hint follows whichever welcome modal the user meets first.
+  // Onboarding drops a new user straight into their space, so for most people
+  // that is this page, not /dashboard — which is why the hint lives here too.
+  // `feedback_hint_seen` is the one-shot flag, so whichever page fires first
+  // wins and the other never does.
+  const [showFeedbackHint, setShowFeedbackHint] = useState(false)
   const [bandNameEditing, setBandNameEditing] = useState(false)
   const [bandNameValue, setBandNameValue] = useState('')
   const [bandNameFlash, setBandNameFlash] = useState(false)
@@ -1870,6 +1877,16 @@ export default function BandPage() {
           onDismiss={() => {
             setShowWelcomeDismissed(true)
             updateOnboarding('band_seen', true)
+            if (!profile?.onboarding?.feedback_hint_seen) setShowFeedbackHint(true)
+          }}
+        />
+      )}
+
+      {showFeedbackHint && (
+        <FeedbackHint
+          onDismiss={() => {
+            setShowFeedbackHint(false)
+            updateOnboarding('feedback_hint_seen', true)
           }}
         />
       )}

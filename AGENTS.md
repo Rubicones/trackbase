@@ -177,6 +177,15 @@ target `data-tour="feedback-launcher"`) — same lime-ring visual language as
 `ProjectTour` but single-target and non-blocking, so the button underneath
 stays clickable.
 
+**Welcome-modal ordering (easy to break):** onboarding's "create a space" path
+lands the user on `/band/[id]`, *not* `/dashboard`. So `BandWelcomeModal`
+(`band_seen`) is the first modal most new users ever see, and the feedback hint
+is chained to **both** it and `DashboardWelcomeModal` (`dashboard_seen`) —
+whichever fires first wins, since `feedback_hint_seen` is one-shot. Do **not**
+pre-set `dashboard_seen` from the onboarding flow: it was set there once to
+avoid a "stale" welcome and the result was that users who created a space never
+saw the Spaces welcome or the feedback hint at all.
+
 ### Campaign attribution
 Dedicated landing links tag where a user came from, permanently, so a cohort
 recruited from one place can be compared against organic signups.
@@ -186,9 +195,21 @@ only file that knows which campaigns exist; `/maskeliade` (warm test, July
 rendering `components/campaign/CampaignRedirect.tsx`, which stores the values
 in **localStorage** (`acquisition_source`, `cohort` — `lib/attribution.ts`)
 in an effect and `router.replace`s to **`/`** (the marketing landing page).
-The path has no UI. The destination is a free choice: attribution lives in
-localStorage, not the URL, so the visitor can browse the marketing site for as
-long as they like and sign up from any route with the values intact.
+The path has no UI. The destination is a free choice: attribution is not in the
+URL, so the visitor can browse the marketing site for as long as they like and
+sign up from any route with the values intact.
+
+**There are two carriers, and the cookie is the one that matters.**
+`middleware.ts` stamps an HttpOnly `sd-campaign` cookie (`CAMPAIGN_COOKIE`,
+30 days) on any campaign path *before React exists*, and
+`PATCH /api/profile/username` resolves it **server-side** through the registry.
+The localStorage pair is kept as a fallback for visitors who arrived before the
+cookie existed. This matters because localStorage-only attribution silently
+produced unattributed signups whenever the client effect didn't run or storage
+was cleared, with nothing in the data to say why. Both carriers are first-touch
+(middleware won't overwrite an existing cookie) and both are dropped once the
+profile is settled, so a second person signing up in the same browser cannot
+inherit the tag.
 **Campaign paths must be public in `middleware.ts`** (`isCampaignPath`) or the
 auth gate redirects the signed-out visitor before the storing JS runs.
 Adding a campaign = a registry entry + a copy of the stub; nothing else.
@@ -665,7 +686,9 @@ and preview traffic out of the counter.
 - **Campaign attribution is immutable after account creation.** Only
   `PATCH /api/profile/username` may write `profiles.acquisition_source` /
   `cohort`, and only under its placeholder-username guard. No other route may
-  set or update them (see §4).
+  set or update them (see §4). The trusted input is the `sd-campaign` cookie
+  set by `middleware.ts`, resolved through the registry server-side — never
+  store a client-supplied source without bounding it.
 - **The band limit is per-user, never a constant.** Read
   `profiles.band_limit`; a hardcoded 3 silently demotes grandfathered users.
   Any new code path that inserts into `bands` (or writes an owner row into
