@@ -1,29 +1,30 @@
 'use client'
 
 /**
- * Pending campaign attribution, parked in localStorage between "landed on the
- * campaign link" and "finished creating an account".
+ * Client-side view of the pending campaign attribution.
  *
- * Why localStorage and not a cookie: with email OTP the user types the code in
- * the same tab they started in, so a client-side value survives the whole
- * sign-up unaided. A cookie would ride along on every request to every route
- * for no reason, and this value is only ever needed at one moment on the
- * client — the call that establishes the profile.
+ * **The authoritative carrier is the `sd-campaign` cookie**, set by
+ * `middleware.ts` when the visitor hits a campaign link and read server-side by
+ * `PATCH /api/profile/username`. Attribution does not depend on anything in
+ * this file — the profile is tagged correctly even if no client code here ever
+ * runs.
  *
- * Two rules encoded here:
- *   - **First touch wins.** `storeAttribution` never overwrites. Someone who
- *     arrives via one campaign and then clicks another before signing up stays
- *     credited to the first.
- *   - **Nothing survives a signup.** `clearAttribution` runs as soon as the
- *     values reach a profile, so a second person signing up on the same browser
- *     cannot inherit the first person's tag.
+ * This module exists so the *browser* can also see which campaign a visitor
+ * arrived from (analytics, conditional copy, debugging). It reads the cookie
+ * first and falls back to the legacy localStorage pair, which is still present
+ * for anyone who clicked a campaign link before the cookie shipped.
  *
- * Every function is a no-op when localStorage is unavailable (SSR, Safari
- * private mode, storage disabled). Attribution is a nice-to-have; it must never
- * be the reason a sign-up fails.
+ * Why not sessionStorage: it is emptied when the tab closes, so a visitor who
+ * clicks the link, closes the tab and signs up an hour later would lose the
+ * campaign — the precise failure this mechanism exists to prevent. The cookie
+ * lasts 30 days and survives tab, window and browser restarts.
+ *
+ * Every function is a no-op when storage is unavailable (SSR, Safari private
+ * mode, storage disabled). Attribution is a nice-to-have; it must never be the
+ * reason a sign-up fails.
  */
 
-import type { Cohort } from './campaigns'
+import { getCampaign, CAMPAIGN_COOKIE, type Cohort } from './campaigns'
 
 const SOURCE_KEY = 'acquisition_source'
 const COHORT_KEY = 'cohort'
@@ -36,30 +37,26 @@ export interface PendingAttribution {
   cohort: Cohort
 }
 
-/**
- * Record attribution for a first-time visitor. Returns false if a value was
- * already present (first-touch wins) or if storage is unavailable.
- */
-export function storeAttribution(acquisitionSource: string, cohort: Cohort): boolean {
+function readCampaignCookie(): PendingAttribution | null {
   try {
-    if (localStorage.getItem(SOURCE_KEY)) return false
-    localStorage.setItem(SOURCE_KEY, acquisitionSource)
-    localStorage.setItem(COHORT_KEY, cohort)
-    return true
+    const match = document.cookie.match(
+      new RegExp(`(?:^|;\\s*)${CAMPAIGN_COOKIE}=([^;]*)`),
+    )
+    if (!match) return null
+    const campaign = getCampaign(decodeURIComponent(match[1]))
+    if (!campaign) return null
+    return { acquisitionSource: campaign.source, cohort: campaign.cohort }
   } catch {
-    return false
+    return null
   }
 }
 
-/**
- * Attribution waiting to be written to a profile, or null when the user came
- * in directly. The source is what makes the record meaningful, so a stored
- * cohort without a source is ignored; a source without a cohort falls back to
- * the column default.
- */
-export function readAttribution(): PendingAttribution | null {
+function readLegacyStorage(): PendingAttribution | null {
   try {
     const acquisitionSource = localStorage.getItem(SOURCE_KEY)
+    // The source is what makes the record meaningful, so a stored cohort
+    // without a source is ignored; a source without a cohort falls back to the
+    // column default.
     if (!acquisitionSource) return null
     const stored = localStorage.getItem(COHORT_KEY)
     return {
@@ -71,7 +68,20 @@ export function readAttribution(): PendingAttribution | null {
   }
 }
 
-/** Call immediately after attribution reaches a profile — see the header. */
+/**
+ * The campaign this visitor arrived from, or null for a direct visit. Cookie
+ * first (current mechanism), legacy localStorage second.
+ */
+export function readAttribution(): PendingAttribution | null {
+  return readCampaignCookie() ?? readLegacyStorage()
+}
+
+/**
+ * Drop the legacy localStorage pair once attribution has reached a profile, so
+ * a second person signing up in this browser cannot inherit the first person's
+ * campaign. The cookie half of that cleanup is done server-side by the route
+ * that claims it, since only the server knows the claim succeeded.
+ */
 export function clearAttribution(): void {
   try {
     localStorage.removeItem(SOURCE_KEY)

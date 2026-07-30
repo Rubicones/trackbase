@@ -11,7 +11,6 @@ import { authCookieOptions } from '@/lib/auth/cookie-options'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
 import { PRODUCTION_SITE_URL, REDIRECT_TO_CANONICAL_HOSTS } from '@/lib/site-url'
 import {
-  isCampaignPath,
   campaignSlugFromPath,
   CAMPAIGN_COOKIE,
   CAMPAIGN_COOKIE_MAX_AGE,
@@ -32,15 +31,12 @@ const PUBLIC_EXACT = ['/']
 
 const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
 
+// Campaign paths are absent on purpose: they are intercepted above the auth
+// gate entirely, so they never reach this check.
 function isPublic(pathname: string) {
   return (
     PUBLIC_EXACT.includes(pathname) ||
-    PUBLIC_PREFIXES.some(p => pathname.startsWith(p)) ||
-    // Campaign landing links (/maskeliade, …). These MUST be public: the page's
-    // only job is to run a line of client JS that records where the visitor came
-    // from, and the auth gate below would redirect a signed-out visitor — the
-    // exact person a campaign link exists for — before that JS ever ran.
-    isCampaignPath(pathname)
+    PUBLIC_PREFIXES.some(p => pathname.startsWith(p))
   )
 }
 
@@ -78,6 +74,33 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/onboarding?step=3', request.url), 301)
   }
 
+  // ── Campaign landing links ──────────────────────────────────────────────────
+  // Handled entirely here: stamp the slug, bounce to the landing page. There is
+  // no page component and no client render, which is the point —
+  //   * no loading screen: the browser goes straight from the link to `/`;
+  //   * attribution cannot be lost, because it never depended on a React effect
+  //     running, or on storage being writable, in the first place.
+  // 307 (not 301) on purpose: a permanent redirect would be cached by the
+  // browser and later clicks would skip middleware, and with it the cookie.
+  // First-touch — an existing cookie is never overwritten.
+  const campaignSlug = campaignSlugFromPath(pathname)
+  if (campaignSlug) {
+    const res = NextResponse.redirect(new URL('/', request.url))
+    if (!request.cookies.get(CAMPAIGN_COOKIE)?.value) {
+      res.cookies.set(CAMPAIGN_COOKIE, campaignSlug, {
+        // Readable by client code so the campaign is available to the browser
+        // too (see lib/attribution.ts). The value is a registry slug, not a
+        // secret, and the server re-resolves it rather than trusting it.
+        httpOnly: false,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: CAMPAIGN_COOKIE_MAX_AGE,
+      })
+    }
+    return res
+  }
+
   let verified: VerifiedUser | null = null
   let refreshedSession: RefreshedSession | null = null
 
@@ -100,26 +123,8 @@ export async function middleware(request: NextRequest) {
   const hasUsername = !!verified?.user_metadata?.username
   const onboardingComplete = !!verified?.user_metadata?.onboarding_complete
 
-  // Campaign links stamp the slug into a cookie *here*, before any React code
-  // runs, so attribution survives a client that never executes the storing
-  // effect. First-touch: an existing cookie is never overwritten, matching
-  // `storeAttribution`. Cleared by PATCH /api/profile/username once claimed.
-  const campaignSlug = campaignSlugFromPath(pathname)
-  const hasCampaignCookie = !!request.cookies.get(CAMPAIGN_COOKIE)?.value
-
   function finalize(res: NextResponse) {
     if (refreshedSession) applyRefreshedCookies(res, refreshedSession)
-    if (campaignSlug && !hasCampaignCookie) {
-      res.cookies.set(CAMPAIGN_COOKIE, campaignSlug, {
-        // Readable by the server only — the client has no use for it, and the
-        // API returns what it wrote so the analytics event still fires.
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: CAMPAIGN_COOKIE_MAX_AGE,
-      })
-    }
     return res
   }
 

@@ -76,7 +76,8 @@ app/                        Pages + API routes (App Router)
                             skeletons.tsx, UploadRow.tsx, mixerChrome.tsx,
                             mixerUtils.ts, mixerTypes.ts, MergeModal.tsx
   auth/, onboarding/        Magic-link sign-in; 3-step onboarding
-  maskeliade/               Campaign landing link — 3-line redirect stub (§4)
+                            (campaign links like /maskeliade have NO page —
+                             middleware handles them end to end, see §4)
   invite/[token]/           Legacy invite links (middleware 301s to onboarding)
   features/*, audience/*    Public SEO/marketing pages
   tools/chord-detector/     Public no-login chord detector tool
@@ -92,7 +93,7 @@ components/                 Reusable UI (flat) + subfolders:
   onboarding/               Welcome modals + ProjectTour + tour step defs
   paywall/                  PaywallLock, PlansModal
   push/                     Push permission UI + provider
-  landing/, seo/, tools/, feedback/, analytics/, auth/, campaign/
+  landing/, seo/, tools/, feedback/, analytics/, auth/
 contexts/                   AuthContext, PaletteContext, PaywallContext
 hooks/                      useBreakpoint, useVersionCache, etc.
 lib/                        Shared logic (flat). Highlights:
@@ -191,27 +192,32 @@ Dedicated landing links tag where a user came from, permanently, so a cohort
 recruited from one place can be compared against organic signups.
 `lib/campaigns.ts` is the **registry** (slug → `{ source, cohort }`) and the
 only file that knows which campaigns exist; `/maskeliade` (warm test, July
-2026) is the only one today. `app/maskeliade/page.tsx` is a 3-line stub
-rendering `components/campaign/CampaignRedirect.tsx`, which stores the values
-in **localStorage** (`acquisition_source`, `cohort` — `lib/attribution.ts`)
-in an effect and `router.replace`s to **`/`** (the marketing landing page).
-The path has no UI. The destination is a free choice: attribution is not in the
-URL, so the visitor can browse the marketing site for as long as they like and
-sign up from any route with the values intact.
+2026) is the only one today.
 
-**There are two carriers, and the cookie is the one that matters.**
-`middleware.ts` stamps an HttpOnly `sd-campaign` cookie (`CAMPAIGN_COOKIE`,
-30 days) on any campaign path *before React exists*, and
-`PATCH /api/profile/username` resolves it **server-side** through the registry.
-The localStorage pair is kept as a fallback for visitors who arrived before the
-cookie existed. This matters because localStorage-only attribution silently
-produced unattributed signups whenever the client effect didn't run or storage
-was cleared, with nothing in the data to say why. Both carriers are first-touch
-(middleware won't overwrite an existing cookie) and both are dropped once the
-profile is settled, so a second person signing up in the same browser cannot
-inherit the tag.
-**Campaign paths must be public in `middleware.ts`** (`isCampaignPath`) or the
-auth gate redirects the signed-out visitor before the storing JS runs.
+**A campaign link has no page component.** `middleware.ts` intercepts `/{slug}`
+above the auth gate, sets the `sd-campaign` cookie (`CAMPAIGN_COOKIE`, 30 days,
+first-touch — never overwritten) and 307-redirects to `/`. No React renders, so
+there is no loading screen and no client dependency;
+`PATCH /api/profile/username` then resolves the cookie **server-side** against
+the registry and clears it once the profile is settled (so the next person to
+sign up in that browser can't inherit the tag). 307 not 301 on purpose: a
+permanent redirect would be browser-cached and later clicks would skip
+middleware, and with it the cookie.
+
+**Adding a campaign is one registry entry.** No file to copy, no route to
+create.
+
+This replaced a localStorage-only mechanism (a `/{slug}` page whose client
+effect wrote the values). That design put attribution behind "React mounted,
+the effect ran, storage was writable", and when any of it failed the signup was
+simply unattributed with nothing in the data to say why. `lib/attribution.ts`
+survives as the *client's* view of the campaign — cookie first, legacy
+localStorage second — and is not on the write path at all. Note sessionStorage
+is deliberately not used anywhere here: it dies with the tab, so a visitor who
+clicks the link and signs up later would lose the campaign.
+**Campaign paths must be intercepted above the auth gate in `middleware.ts`**,
+or it redirects the signed-out visitor — the exact person a campaign link
+exists for — before the cookie is ever set.
 Adding a campaign = a registry entry + a copy of the stub; nothing else.
 
 Attribution is **first-touch and first-account**: `storeAttribution` never

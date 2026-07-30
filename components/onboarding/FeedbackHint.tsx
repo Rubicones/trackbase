@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { trackEvent } from '@/lib/analytics'
 import { TbButton } from '@/components/design/TbButton'
@@ -22,9 +22,9 @@ import { FEEDBACK_LAUNCHER_TOUR_ID } from '@/components/feedback/FeedbackLaunche
  */
 
 const CARD_W = 300
-const CARD_H_ESTIMATE = 190
 const PAD = 6
 const GAP = 12
+const EDGE = 8
 const POLL_MS = 60
 const MAX_POLLS = 12
 
@@ -37,6 +37,22 @@ interface Rect {
 
 export function FeedbackHint({ onDismiss }: { onDismiss: () => void }) {
   const [rect, setRect] = useState<Rect | null>(null)
+
+  /**
+   * The card's real height, measured rather than guessed.
+   *
+   * This used to be a 190px constant, which is where the clipping came from:
+   * the copy wraps to a different number of lines at every width, so on a
+   * narrow viewport the card is far taller than the estimate. Positioning
+   * `top` from a too-small height pushed the card down past the button and off
+   * the bottom of the screen, cutting off the "Got it" button — the one control
+   * that dismisses it.
+   *
+   * Null until the ResizeObserver's first callback, and the card stays
+   * `visibility: hidden` until then so it is never painted at the wrong place.
+   */
+  const [cardH, setCardH] = useState<number | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   const measure = useCallback(() => {
     const el = document.querySelector(`[data-tour="${FEEDBACK_LAUNCHER_TOUR_ID}"]`)
@@ -73,6 +89,20 @@ export function FeedbackHint({ onDismiss }: { onDismiss: () => void }) {
     }
   }, [measure])
 
+  // Measured via ResizeObserver rather than a one-off read: the card's height
+  // changes when the viewport reflows the copy, and the observer's initial
+  // callback covers the first measurement too.
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      const h = entries[0]?.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight
+      if (h > 0) setCardH(h)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [rect])
+
   useEffect(() => {
     trackEvent('feedback_hint_shown')
   }, [])
@@ -92,11 +122,17 @@ export function FeedbackHint({ onDismiss }: { onDismiss: () => void }) {
 
   if (!rect) return null
 
-  const cardTop = Math.max(8, rect.top - GAP - CARD_H_ESTIMATE)
+  // Always above the button (it lives in the footer, so there is room), and
+  // clamped so the card can never run off either end of the viewport.
+  const measuredH = cardH ?? 0
+  const cardTop = Math.min(
+    Math.max(EDGE, rect.top - GAP - measuredH),
+    Math.max(EDGE, window.innerHeight - measuredH - EDGE),
+  )
   const cardLeft = Math.max(
-    8,
+    EDGE,
     Math.min(
-      window.innerWidth - CARD_W - 8,
+      window.innerWidth - CARD_W - EDGE,
       rect.left + rect.width / 2 - CARD_W / 2,
     ),
   )
@@ -114,10 +150,17 @@ export function FeedbackHint({ onDismiss }: { onDismiss: () => void }) {
         }}
       />
       <div
+        ref={cardRef}
         role="dialog"
         aria-label="Feedback and report"
         className="fixed z-[302] border border-border bg-popover shadow-2xl p-4 animate-slide-in"
-        style={{ top: cardTop, left: cardLeft, width: CARD_W }}
+        style={{
+          top: cardTop,
+          left: cardLeft,
+          width: CARD_W,
+          // Hidden, not unmounted: it has to be in the DOM to be measured.
+          visibility: cardH === null ? 'hidden' : undefined,
+        }}
       >
         <div className="text-[10px] uppercase tracking-widest text-lime mb-2">
           One last thing
