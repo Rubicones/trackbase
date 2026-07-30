@@ -13,7 +13,7 @@ import { CampaignRedirect } from '@/components/campaign/CampaignRedirect'
 // A redirect stub with no content of its own; keep it out of the index so it
 // never competes with the real marketing pages in search results.
 export const metadata: Metadata = {
-  title: 'Sign in — sonicdesk',
+  title: 'sonicdesk',
   robots: { index: false, follow: false },
 }
 

@@ -7,6 +7,14 @@
  * localStorage.  It is presentation-layer only: nothing is gated server-side,
  * no capability changes.  With the toggle OFF the app is byte-for-byte the
  * same experience as before this feature existed.
+ *
+ * **Local development only.** `PAYWALL_TEST_MODE_AVAILABLE` gates both the
+ * toggle UI and `enabled` itself, so on any deployed build (preview included)
+ * the paywall cannot appear — not even for a user whose localStorage flag was
+ * left ON from before this restriction. Gating the *value* and not just the
+ * switch is the point: hiding only the switch would strand those users behind
+ * locks with no way to turn them off. The stored key is deliberately left in
+ * place rather than cleared, so flipping back to dev restores their setting.
  */
 
 import {
@@ -26,6 +34,15 @@ export type PaywallFeature = 'chord_detect' | 'cherry_pick' | 'track_edit' | 'ab
 export type PaywallSource = PaywallFeature | 'avatar_menu'
 
 const STORAGE_PREFIX = 'sd-paywall-test:'
+
+/**
+ * Whether the test paywall exists at all in this build.
+ *
+ * `next dev` only. NODE_ENV is 'production' for every `next build`, which
+ * includes Vercel preview deployments — so this is stricter than "not
+ * sonicdesk.studio" and hides the feature on preview URLs too.
+ */
+export const PAYWALL_TEST_MODE_AVAILABLE = process.env.NODE_ENV === 'development'
 
 // ── Per-user toggle store (localStorage + in-memory fallback) ────────────────
 
@@ -48,6 +65,8 @@ function subscribe(cb: () => void) {
 }
 
 function readEnabled(userId: string | null): boolean {
+  // Outside local dev the stored flag is ignored entirely (see the header).
+  if (!PAYWALL_TEST_MODE_AVAILABLE) return false
   if (!userId) return false
   try {
     return localStorage.getItem(STORAGE_PREFIX + userId) === '1'
@@ -116,6 +135,9 @@ export function PaywallProvider({ children }: { children: ReactNode }) {
 
   const setEnabled = useCallback(
     (next: boolean) => {
+      // Unreachable outside dev (the switch isn't rendered), but guarded so a
+      // future caller can't resurrect the paywall in production.
+      if (!PAYWALL_TEST_MODE_AVAILABLE) return
       if (userId) writeEnabled(userId, next)
       trackEvent('paywall_toggle_changed', { enabled: next })
     },

@@ -185,7 +185,10 @@ only file that knows which campaigns exist; `/maskeliade` (warm test, July
 2026) is the only one today. `app/maskeliade/page.tsx` is a 3-line stub
 rendering `components/campaign/CampaignRedirect.tsx`, which stores the values
 in **localStorage** (`acquisition_source`, `cohort` — `lib/attribution.ts`)
-in a layout effect and `router.replace`s to `/auth`. The path has no UI.
+in an effect and `router.replace`s to **`/`** (the marketing landing page).
+The path has no UI. The destination is a free choice: attribution lives in
+localStorage, not the URL, so the visitor can browse the marketing site for as
+long as they like and sign up from any route with the values intact.
 **Campaign paths must be public in `middleware.ts`** (`isCampaignPath`) or the
 auth gate redirects the signed-out visitor before the storing JS runs.
 Adding a campaign = a registry entry + a copy of the stub; nothing else.
@@ -459,10 +462,18 @@ Google Sheet (`lib/googleSheets.ts`; columns Timestamp|Email|Type|Message|
 Page URL; tab from `GOOGLE_SHEETS_TAB`, default `Sheet1`). Sheet failure
 never fails the request.
 
-### Paywall test mode (measurement only)
+### Paywall test mode (measurement only, LOCAL DEV ONLY)
 `contexts/PaywallContext.tsx` — a per-user localStorage toggle
 (`sd-paywall-test:{userId}`, surfaced in Preferences → Testing). **Purely
-presentational; nothing is gated server-side.** Gated features:
+presentational; nothing is gated server-side.**
+
+**`PAYWALL_TEST_MODE_AVAILABLE` (`process.env.NODE_ENV === 'development'`)
+gates both the toggle UI and `enabled` itself**, so the paywall cannot appear
+on any deployed build — preview deploys included, since `next build` always
+sets NODE_ENV=production. Gating the value and not just the switch is
+deliberate: hiding only the switch would strand users who had the flag ON
+behind locks they could no longer remove. The localStorage key is left in
+place, so running `next dev` restores the previous setting. Gated features:
 `chord_detect`, `cherry_pick`, `track_edit`, `ab_compare`
 (`components/paywall/PaywallLock.tsx`, `PlansModal.tsx`). "Subscribe" posts
 `POST /api/paywall/intent` → upserts `subscription_intents`

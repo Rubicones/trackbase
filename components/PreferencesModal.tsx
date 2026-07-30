@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { AtSign, CreditCard, LogOut, Mail, Trash2, X, type IconNode } from 'lucide'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePaywall } from '@/contexts/PaywallContext'
+import { usePaywall, PAYWALL_TEST_MODE_AVAILABLE } from '@/contexts/PaywallContext'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 import { UserAvatar } from '@/components/ui/avatar'
@@ -295,7 +295,9 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
           </div>
         </section>
 
-        {/* Testing */}
+        {/* Testing — local dev only; the whole section goes away on any
+            deployed build so there is no empty bordered block left behind. */}
+        {PAYWALL_TEST_MODE_AVAILABLE && (
         <section className="px-5 py-5 border-b border-border">
           <SectionEyebrow>Testing</SectionEyebrow>
           <div className="flex items-start justify-between gap-4">
@@ -327,6 +329,7 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </section>
+        )}
 
         {/* Danger zone */}
         <section className="px-5 py-5">
