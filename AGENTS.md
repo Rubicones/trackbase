@@ -232,14 +232,14 @@ re-tag existing organic users the first time they open a campaign link.
 
 The guard used to be `.eq('username', placeholderUsername(userId))` *inside*
 the UPDATE, which read better but made correctness depend on reproducing the
-`handle_new_user` trigger's placeholder string in TypeScript. Migrations here
-are applied by hand and `supabase/migrations/` is not a complete history, so
-the live trigger can disagree with the file — and when it did, the UPDATE
-matched zero rows and **every** campaign signup came out `cold`/NULL with no
-error anywhere. The write is now an `upsert` for the same reason: a missing
-profile row must not be another silent zero-row write. Both the inputs and the
-outcome are logged (`[profile/username] attribution`, Vercel Runtime Logs),
-because this write happens once per account and cannot be checked afterwards. The route returns `attributed`;
+`handle_new_user` trigger's output in TypeScript. **It never matched**: the
+live trigger is just `insert into public.profiles (id) values (new.id)`, so a
+new profile has `username` NULL and there is no placeholder — see §5. Every
+campaign signup came out `cold`/NULL, with no error anywhere. The write is now
+an `upsert` for the same class of reason: a missing profile row must not be
+another silent zero-row write. Both the inputs and the outcome are logged
+(`[profile/username] attribution`, Vercel Runtime Logs), because this write
+happens once per account and cannot be verified afterwards. The route returns `attributed`;
 only then does the client fire `trackEvent('signup_attributed', { source,
 cohort })`, clear the two keys, and set the GA4 `cohort` user property
 (set for cold users too, so the segment has both sides).
@@ -562,6 +562,13 @@ name competitors in any sonicdesk metadata or content.**
 > **Migrations are run manually by the project owner in the Supabase SQL
 > editor — never assume a migration auto-applies. Always provide SQL
 > separately from code changes.**
+>
+> **Corollary: these files are not evidence of what the database does.** Some
+> were edited after being applied, or applied in a different form —
+> `001_auth.sql`'s `handle_new_user` is a confirmed example (see `profiles`
+> below). Before writing code whose correctness depends on a trigger, default,
+> or constraint, read it out of the live database (`pg_get_functiondef`,
+> `information_schema.columns`) rather than trusting this directory.
 
 `supabase/migrations/` is **not a complete history**: core tables (`bands`,
 `band_members`, `projects`, `versions`, `tracks`, `track_comments`,
@@ -583,9 +590,14 @@ have no CREATE files here. Columns below are inferred from actual queries.
   `project_tour_completed`), **acquisition_source** (text, null = direct) and
   **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
   account creation only, see Campaign attribution in §4. RLS (public read,
-  self update). Rows are inserted by the `handle_new_user` trigger
-  (`001_auth.sql`) with a `user_<uuid>` placeholder username, **not** by app
-  code.
+  self update). Rows are inserted by the `handle_new_user` trigger, **not** by
+  app code. ⚠ **The deployed trigger is `insert into public.profiles (id)
+  values (new.id)` — nothing else.** `username` starts **NULL** and is first
+  set by `PATCH /api/profile/username`; there is no `user_<uuid>` placeholder,
+  despite what `supabase/migrations/001_auth.sql` shows. That file was never
+  applied in the form it records. Verify against the database, not the file:
+  `select pg_get_functiondef(oid) from pg_proc where proname =
+  'handle_new_user';`
 - **projects** — band_id, name, bpm, key, time_signature, stage,
   stage_since, roadmap_step_index, **preview-mix columns**:
   preview_mix_storage_path, preview_mix_status

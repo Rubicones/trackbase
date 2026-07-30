@@ -6,19 +6,18 @@ import { getCampaign, CAMPAIGN_COOKIE, type Cohort } from '@/lib/campaigns'
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/
 
 /**
- * The username the `handle_new_user` trigger (supabase/migrations/001_auth.sql)
- * is *believed* to write when a row lands in `auth.users`.
+ * ⚠ There is no placeholder username. The live `handle_new_user` trigger is
+ * `insert into public.profiles (id) values (new.id)` — it does not populate
+ * `username`, so a fresh profile carries **NULL** there.
  *
- * Kept for logging only — **do not guard on it**. Migrations here are applied
- * by hand and that file is not a complete history, so the live trigger can
- * write a different placeholder than this reproduces, and when it does the
- * guard silently matches zero rows and every signup comes out unattributed
- * with no error anywhere. That is exactly what happened. The real test is
- * `isFirstUsername()` below.
+ * `supabase/migrations/001_auth.sql` shows a `coalesce(..., 'user_' ||
+ * replace(new.id::text,'-',''))` version that is NOT what is deployed;
+ * migrations here are applied by hand and that file is not a complete history.
+ * Attribution used to be guarded with `.eq('username', <that placeholder>)`,
+ * which therefore matched zero rows on every signup — no error, no retry, just
+ * a permanently cold profile. Do not reintroduce a guard that depends on the
+ * shape of a value the database writes.
  */
-function placeholderUsername(userId: string) {
-  return `user_${userId.replace(/-/g, '')}`
-}
 
 /**
  * Whether this request is the first time this account has ever set a username —
@@ -150,19 +149,16 @@ export async function PATCH(req: NextRequest) {
     cookie: cookieSlug ?? null,
     bodySource: typeof body.acquisitionSource === 'string' ? body.acquisitionSource : null,
     resolved: attribution?.acquisition_source ?? null,
-    // Logged so a mismatch between the live trigger and this repo's SQL is
-    // visible next to the row it failed to match, instead of being invisible.
-    expectedPlaceholder: placeholderUsername(userId),
   }
 
   if (attribution) {
     // Read-then-write, deliberately. The previous version folded the test into
-    // the UPDATE (`.eq('username', placeholder)`) to close the gap between
-    // check and write — nice in theory, but it made correctness depend on
-    // reproducing a database trigger's string in TypeScript, and that is what
-    // broke. A first-username check cannot meaningfully race anyway: both
-    // requests would be the same user setting their first username, and the
-    // second one finds the metadata already written.
+    // the UPDATE to close the gap between check and write — nice in theory,
+    // but it made correctness depend on reproducing a database trigger's
+    // output in TypeScript, and that is what broke (see the note at the top).
+    // A first-username check cannot meaningfully race anyway: both requests
+    // would be the same user setting their first username, and the second one
+    // finds the metadata already written.
     const firstUsername = await isFirstUsername(userId)
     trace.firstUsername = firstUsername
 
