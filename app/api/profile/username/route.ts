@@ -141,10 +141,11 @@ export async function PATCH(req: NextRequest) {
   const attribution = resolveAttribution(cookieSlug, body)
   let attributed = false
 
-  // Attribution is write-once and unobservable after the fact: if it doesn't
-  // land there is no retry and no error, just a permanently cold profile. So
-  // every attempt logs which inputs it had and what the guarded UPDATE did.
-  // Check Vercel → Runtime Logs, filter `[profile/username]`.
+  // Attribution is write-once and unobservable after the fact: when it fails
+  // there is no error, no retry and no second chance — just a permanently cold
+  // profile, which is how it stayed broken unnoticed. So a campaign that
+  // arrives but does not land logs why (Vercel Runtime Logs,
+  // `[profile/username]`). The success path stays silent.
   const trace: Record<string, unknown> = {
     cookie: cookieSlug ?? null,
     bodySource: typeof body.acquisitionSource === 'string' ? body.acquisitionSource : null,
@@ -186,17 +187,17 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  // The row's actual username is the one fact the guard turns on and the one
-  // thing the UPDATE can't report back, so read it when the claim missed.
-  if (!attributed) {
+  // Only interesting when a campaign was present and still didn't land — an
+  // ordinary organic signup has nothing to report.
+  if (attribution && !attributed) {
     const { data: row } = await supabase
       .from('profiles')
       .select('username, acquisition_source, cohort')
       .eq('id', userId)
       .maybeSingle()
     trace.actualRow = row ?? 'NO PROFILE ROW'
+    console.warn('[profile/username] attribution not written', JSON.stringify(trace))
   }
-  console.log('[profile/username] attribution', JSON.stringify({ ...trace, attributed }))
 
   // Runs when there was no attribution to write, or when the profile turned out
   // to be an existing one (zero rows matched above) and so must keep whatever

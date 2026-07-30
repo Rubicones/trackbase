@@ -67,6 +67,17 @@ export function buildContentSecurityPolicy(): string {
   const isDev = process.env.NODE_ENV === 'development'
   const supabase = supabaseConnectOrigins()
 
+  /**
+   * Vercel's preview toolbar (`vercel.live`) — the comments/feedback widget.
+   * Allowed **outside production only**. It is a tool for us, never loaded for
+   * real visitors, so widening the production CSP with a third-party script
+   * origin to silence a console error we are the only ones who see would be a
+   * bad trade. `VERCEL_ENV` is the right switch here and NODE_ENV is not:
+   * `next build` sets NODE_ENV=production for preview deployments too.
+   */
+  const toolbarOrigins =
+    process.env.VERCEL_ENV === 'production' ? [] : ['https://vercel.live']
+
   const r2Origins = [
     'https://*.r2.cloudflarestorage.com',
     // Presigned URLs may be http:// in local dev (no upgrade-insecure-requests).
@@ -87,6 +98,7 @@ export function buildContentSecurityPolicy(): string {
     // Yandex's static CDN which tag.js pulls sub-resources from.
     ...yandexHttps,
     'https://yastatic.net',
+    ...toolbarOrigins,
   ]
 
   const connectSrc = [
@@ -111,6 +123,7 @@ export function buildContentSecurityPolicy(): string {
     // regional mirrors have to be here too).
     ...yandexHttps,
     ...yandexWss,
+    ...toolbarOrigins,
   ]
 
   const imgSrc = [
@@ -129,6 +142,12 @@ export function buildContentSecurityPolicy(): string {
     // Yandex Metrica: the <noscript> pixel plus GIF beacons (advert.gif,
     // sync pixels), which follow the same redirect chain as the hits.
     ...yandexHttps,
+    // Metrica's cross-service match pixel lives on the bare apex
+    // (yandex.ru/an/mapuid/...), not on an mc.* host, so it needs its own
+    // entry. Image-only, and blocking it costs no hit or goal data — this is
+    // purely to keep the console honest.
+    'https://yandex.ru',
+    ...toolbarOrigins,
   ]
 
   return [
@@ -147,7 +166,7 @@ export function buildContentSecurityPolicy(): string {
     "form-action 'self' https://www.facebook.com",
     // blob: + the Yandex hosts is what Metrica needs for the click map (and
     // would need for Session Replay, which is deliberately off).
-    `frame-src 'self' https://www.facebook.com blob: ${yandexHttps.join(' ')}`,
+    `frame-src 'self' https://www.facebook.com blob: ${[...yandexHttps, ...toolbarOrigins].join(' ')}`,
     "frame-ancestors 'none'",
     ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
