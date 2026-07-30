@@ -12,6 +12,45 @@
  * to forget until the console shows "Refused to load ... violates directive").
  */
 
+/**
+ * Yandex Metrica hosts, per Yandex's own CSP guidance:
+ * https://yandex.com/support/metrica/en/code/en/code/install-counter-csp
+ *
+ * The regional mirrors are NOT optional decoration. `mc.yandex.ru/watch/...`
+ * — which is the actual hit/goal delivery endpoint, not a side channel —
+ * redirects through these hosts for cross-service user sync, and CSP is
+ * re-evaluated on **every redirect hop**. Allowing only the primary host means
+ * the initial request passes and the redirect is blocked, which reads in the
+ * console as "mc.yandex.ru blocked" even though mc.yandex.ru is allowlisted,
+ * and drops the hit. Allow the whole documented set or expect missing data.
+ *
+ * `yastatic.net` serves tag sub-resources. `mc.webvisor.*` is omitted on
+ * purpose: those are Session Replay only, which is deliberately off.
+ */
+const YANDEX_METRICA_HOSTS = [
+  'mc.yandex.ru',
+  'mc.yandex.az',
+  'mc.yandex.by',
+  'mc.yandex.co.il',
+  'mc.yandex.com',
+  'mc.yandex.com.am',
+  'mc.yandex.com.ge',
+  'mc.yandex.com.tr',
+  'mc.yandex.ee',
+  'mc.yandex.fr',
+  'mc.yandex.kg',
+  'mc.yandex.kz',
+  'mc.yandex.lt',
+  'mc.yandex.lv',
+  'mc.yandex.md',
+  'mc.yandex.tj',
+  'mc.yandex.tm',
+  'mc.yandex.uz',
+]
+
+const yandexHttps = YANDEX_METRICA_HOSTS.map(h => `https://${h}`)
+const yandexWss = YANDEX_METRICA_HOSTS.map(h => `wss://${h}`)
+
 function supabaseConnectOrigins(): string[] {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!url) return []
@@ -44,9 +83,9 @@ export function buildContentSecurityPolicy(): string {
     'https://www.googletagmanager.com',
     // Meta Pixel base script
     'https://connect.facebook.net',
-    // Yandex Metrica: tag.js, plus Yandex's static CDN which tag.js pulls
-    // sub-resources from.
-    'https://mc.yandex.ru',
+    // Yandex Metrica: tag.js and the script-injected `watch` calls, plus
+    // Yandex's static CDN which tag.js pulls sub-resources from.
+    ...yandexHttps,
     'https://yastatic.net',
   ]
 
@@ -68,12 +107,28 @@ export function buildContentSecurityPolicy(): string {
     // Meta Pixel (fbevents.js sends events to www.facebook.com/tr)
     'https://www.facebook.com',
     'https://connect.facebook.net',
-    // Yandex Metrica hit/goal delivery. Only the primary host is allowed —
-    // Yandex also lists ~17 regional mirrors (mc.yandex.by/.kz/.com.tr/...)
-    // used for cross-service user sync, but blocking those costs nothing:
-    // hits, goals and reports all go to mc.yandex.ru.
-    'https://mc.yandex.ru',
-    'wss://mc.yandex.ru',
+    // Yandex Metrica hit/goal delivery (see YANDEX_METRICA_HOSTS on why the
+    // regional mirrors have to be here too).
+    ...yandexHttps,
+    ...yandexWss,
+  ]
+
+  const imgSrc = [
+    "'self'",
+    'data:',
+    'blob:',
+    // Meta Pixel
+    'https://www.facebook.com',
+    // GA4 delivers a share of its hits as *image* beacons, not just fetch:
+    // googletagmanager.com/td and google-analytics.com/g/collect. Without
+    // these, GA4 silently loses those hits — analytics endpoints belong in
+    // img-src as well as connect-src, not one or the other.
+    'https://www.googletagmanager.com',
+    'https://www.google-analytics.com',
+    'https://*.google-analytics.com',
+    // Yandex Metrica: the <noscript> pixel plus GIF beacons (advert.gif,
+    // sync pixels), which follow the same redirect chain as the hits.
+    ...yandexHttps,
   ]
 
   return [
@@ -81,8 +136,7 @@ export function buildContentSecurityPolicy(): string {
     `script-src ${scriptSrc.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    // mc.yandex.ru: the <noscript> tracking pixel and Metrica's GIF beacons.
-    "img-src 'self' data: blob: https://www.facebook.com https://mc.yandex.ru",
+    `img-src ${imgSrc.join(' ')}`,
     `connect-src ${connectSrc.join(' ')}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
@@ -91,9 +145,9 @@ export function buildContentSecurityPolicy(): string {
     "base-uri 'self'",
     // Meta Pixel posts events via a hidden form and iframe to www.facebook.com/tr.
     "form-action 'self' https://www.facebook.com",
-    // blob: + mc.yandex.ru is what Metrica needs for the click map (and would
-    // need for Session Replay, which is deliberately off).
-    "frame-src 'self' https://www.facebook.com blob: https://mc.yandex.ru",
+    // blob: + the Yandex hosts is what Metrica needs for the click map (and
+    // would need for Session Replay, which is deliberately off).
+    `frame-src 'self' https://www.facebook.com blob: ${yandexHttps.join(' ')}`,
     "frame-ancestors 'none'",
     ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
