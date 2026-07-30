@@ -620,6 +620,12 @@ and preview traffic out of the counter.
   `requireBandMember` / `requireBandMemberForVersion` /
   `requireBandMemberForTrack` (`lib/supabase/server.ts`) before reading or
   writing. RLS only protects direct client reads (Realtime).
+- **Any new third-party script must be added to the CSP** in
+  `lib/securityHeaders.ts` (`script-src`, plus `connect-src`/`img-src`/
+  `frame-src` as the vendor requires). The headers are only applied to real
+  responses, so a missing entry passes local dev and fails **silently in
+  production** with "Refused to load … violates directive" in the console —
+  this is exactly how the Yandex Metrica tag was blocked on first deploy.
 - **Never hardcode colors.** Use the CSS variables from `app/globals.css` /
   `app/design-system.css` (light + dark + multiple palettes via
   `PaletteContext` / `lib/design-theme.tsx`). `/uikit` is the living

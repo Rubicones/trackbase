@@ -4,7 +4,12 @@
  * CSP is tuned for sonicdesk: inline boot scripts in layout, Vercel Analytics,
  * direct R2 presigned uploads/downloads (preview mix MP3 + track blobs), the push SW, the
  * Essentia chord-detection web worker (requires unsafe-eval for Emscripten WASM),
- * soundfont-player MIDI samples (gleitz.github.io), and Google Analytics 4.
+ * soundfont-player MIDI samples (gleitz.github.io), Google Analytics 4, the
+ * Meta Pixel, and Yandex Metrica.
+ *
+ * ANY new third-party script must be added here in the same change, or it is
+ * silently blocked in production only (dev is same-origin, so this file is easy
+ * to forget until the console shows "Refused to load ... violates directive").
  */
 
 function supabaseConnectOrigins(): string[] {
@@ -39,6 +44,10 @@ export function buildContentSecurityPolicy(): string {
     'https://www.googletagmanager.com',
     // Meta Pixel base script
     'https://connect.facebook.net',
+    // Yandex Metrica: tag.js, plus Yandex's static CDN which tag.js pulls
+    // sub-resources from.
+    'https://mc.yandex.ru',
+    'https://yastatic.net',
   ]
 
   const connectSrc = [
@@ -59,6 +68,12 @@ export function buildContentSecurityPolicy(): string {
     // Meta Pixel (fbevents.js sends events to www.facebook.com/tr)
     'https://www.facebook.com',
     'https://connect.facebook.net',
+    // Yandex Metrica hit/goal delivery. Only the primary host is allowed —
+    // Yandex also lists ~17 regional mirrors (mc.yandex.by/.kz/.com.tr/...)
+    // used for cross-service user sync, but blocking those costs nothing:
+    // hits, goals and reports all go to mc.yandex.ru.
+    'https://mc.yandex.ru',
+    'wss://mc.yandex.ru',
   ]
 
   return [
@@ -66,7 +81,8 @@ export function buildContentSecurityPolicy(): string {
     `script-src ${scriptSrc.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: blob: https://www.facebook.com",
+    // mc.yandex.ru: the <noscript> tracking pixel and Metrica's GIF beacons.
+    "img-src 'self' data: blob: https://www.facebook.com https://mc.yandex.ru",
     `connect-src ${connectSrc.join(' ')}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
@@ -75,7 +91,9 @@ export function buildContentSecurityPolicy(): string {
     "base-uri 'self'",
     // Meta Pixel posts events via a hidden form and iframe to www.facebook.com/tr.
     "form-action 'self' https://www.facebook.com",
-    "frame-src 'self' https://www.facebook.com",
+    // blob: + mc.yandex.ru is what Metrica needs for the click map (and would
+    // need for Session Replay, which is deliberately off).
+    "frame-src 'self' https://www.facebook.com blob: https://mc.yandex.ru",
     "frame-ancestors 'none'",
     ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
