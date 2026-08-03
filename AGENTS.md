@@ -386,9 +386,21 @@ inserts the `tracks` row, deletes the temp object, and calls
 quota** (`lib/bandStorage.ts`).
 
 ### Export WAV
-`GET /api/versions/[id]/export` — all stems converted FLAC→WAV
-(`flacToWav`), each padded/trimmed by its `start_bar` offset converted to ms,
-streamed as a ZIP via archiver.
+`GET /api/versions/[id]/export` (`maxDuration = 300`) — audio stems converted
+FLAC→WAV (`flacToWavFile`), each padded/trimmed by its `start_bar` offset
+converted to ms, staged in a tmp dir and streamed back as a ZIP via archiver.
+Three constraints the route must keep:
+**MIDI tracks are copied out as raw `.mid`** — ffmpeg cannot decode MIDI
+without a soundfont, so routing a `file_type='midi'` row through the WAV
+transcode throws and fails the whole export.
+**Stems are processed sequentially, straight to disk** — a `Promise.all` here
+holds every FLAC *and* its decoded 24-bit WAV (~17 MB per stereo minute) in
+memory at once and exhausts the function's heap / the 512 MB `/tmp` budget.
+Use `flacToWavFile`, not the buffer-returning `flacToWav`.
+**Rows with a null `storage_path` are skipped**, not fatal.
+Errors respond `{ error, stage, detail }` and log `[versions/export] failed at
+stage=…` — keep the `stage` markers, they are the only way to localise a
+failure in Vercel's runtime logs.
 
 ### Preview mix
 `lib/previewMix.ts` — cached 128 kbps MP3 of Master at R2
@@ -707,6 +719,15 @@ and preview traffic out of the counter.
   sharing the hash before removing the R2 object.
 - **R2 temp-key formats are load-bearing:** presign and process routes must
   agree exactly (`lib/r2TempKey.ts`).
+- **Never interpolate a filename into a header.** HTTP header values are
+  latin-1, so a Cyrillic (or any non-ASCII) project / track / resource name in
+  `Content-Disposition` makes the `Response` constructor throw
+  `ERR_INVALID_CHAR` — which surfaces as a **500 on an otherwise-successful
+  download**, and only for the users whose names aren't ASCII. Always build the
+  value with `attachmentDisposition()` (`lib/contentDisposition.ts`), which
+  emits both the stripped ASCII `filename` and the RFC 5987
+  `filename*=UTF-8''…` form. Percent-encoding the whole name is not a fix: it
+  stops the throw but hands the user `%D0%9C%D0%BE%D1%8F.wav`.
 - **Rate limiting is in-memory per serverless instance** (`lib/rate-limit.ts`)
   — best-effort only.
 - **Web fetches of Next docs:** this Next version differs from training

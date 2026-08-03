@@ -169,10 +169,29 @@ export async function audioToFlacFromFile(
  * so exported/downloaded audio lines up with what plays in the app.
  */
 export async function flacToWav(flacBuffer: Buffer, delayMs = 0): Promise<Buffer> {
+  const outPath = path.join(tmpdir(), `${randomUUID()}.wav`)
+  try {
+    await flacToWavFile(flacBuffer, outPath, delayMs)
+    return await readFile(outPath)
+  } finally {
+    await unlink(outPath).catch(() => {})
+  }
+}
+
+/**
+ * Same conversion as flacToWav, but writes straight to `outPath` and never
+ * holds the decoded WAV in memory. 24-bit/48 kHz PCM is ~17 MB per stereo
+ * minute, so the buffer-returning variant is only safe for a single short
+ * track — bulk paths (stem export) must use this one or they exhaust the
+ * function's heap.
+ */
+export async function flacToWavFile(
+  flacBuffer: Buffer,
+  outPath: string,
+  delayMs = 0,
+): Promise<void> {
   ensureFfmpegConfigured()
-  const id = randomUUID()
-  const inPath = path.join(tmpdir(), `${id}.flac`)
-  const outPath = path.join(tmpdir(), `${id}.wav`)
+  const inPath = path.join(tmpdir(), `${randomUUID()}.flac`)
 
   try {
     await writeFile(inPath, flacBuffer)
@@ -193,10 +212,8 @@ export async function flacToWav(flacBuffer: Buffer, delayMs = 0): Promise<Buffer
         .on('error', (err) => reject(err))
         .run()
     })
-    return await readFile(outPath)
   } finally {
     await unlink(inPath).catch(() => {})
-    await unlink(outPath).catch(() => {})
   }
 }
 

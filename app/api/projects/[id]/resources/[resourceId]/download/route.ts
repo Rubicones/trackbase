@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { downloadFromR2 } from '@/lib/r2'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { attachmentDisposition } from '@/lib/contentDisposition'
 
 // ── GET /api/projects/[id]/resources/[resourceId]/download ────────────────────
 // Streams a file resource from R2 to the browser with Content-Disposition:
@@ -59,7 +60,7 @@ export async function GET(
     status: 200,
     headers: {
       'Content-Type': contentType,
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+      'Content-Disposition': attachmentDisposition(filename),
       'Content-Length': String(fileBuffer.byteLength),
       'Cache-Control': 'private, no-cache',
     },
