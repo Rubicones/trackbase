@@ -190,31 +190,45 @@ export async function flacToWavFile(
   outPath: string,
   delayMs = 0,
 ): Promise<void> {
-  ensureFfmpegConfigured()
   const inPath = path.join(tmpdir(), `${randomUUID()}.flac`)
-
   try {
     await writeFile(inPath, flacBuffer)
-    await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg(inPath).audioCodec('pcm_s24le').audioFrequency(48000)
-
-      const roundedDelay = Math.round(delayMs)
-      if (roundedDelay > 0) {
-        cmd.audioFilters(`adelay=${roundedDelay}:all=1`)
-      } else if (roundedDelay < 0) {
-        const trimSec = (-roundedDelay / 1000).toFixed(6)
-        cmd.audioFilters([`atrim=start=${trimSec}`, 'asetpts=PTS-STARTPTS'])
-      }
-
-      cmd
-        .output(outPath)
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run()
-    })
+    await flacFileToWavFile(inPath, outPath, delayMs)
   } finally {
     await unlink(inPath).catch(() => {})
   }
+}
+
+/**
+ * The file→file form of the same conversion: nothing about the track passes
+ * through the heap. Pair it with `streamR2ObjectToFile` when the source is in
+ * R2 (bulk stem export) so neither the FLAC nor the WAV is ever buffered.
+ * The caller owns `inPath`.
+ */
+export async function flacFileToWavFile(
+  inPath: string,
+  outPath: string,
+  delayMs = 0,
+): Promise<void> {
+  ensureFfmpegConfigured()
+
+  await new Promise<void>((resolve, reject) => {
+    const cmd = ffmpeg(inPath).audioCodec('pcm_s24le').audioFrequency(48000)
+
+    const roundedDelay = Math.round(delayMs)
+    if (roundedDelay > 0) {
+      cmd.audioFilters(`adelay=${roundedDelay}:all=1`)
+    } else if (roundedDelay < 0) {
+      const trimSec = (-roundedDelay / 1000).toFixed(6)
+      cmd.audioFilters([`atrim=start=${trimSec}`, 'asetpts=PTS-STARTPTS'])
+    }
+
+    cmd
+      .output(outPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .run()
+  })
 }
 
 // ─── Non-destructive track edit rendering ─────────────────────────────────────
