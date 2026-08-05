@@ -386,9 +386,53 @@ inserts the `tracks` row, deletes the temp object, and calls
 quota** (`lib/bandStorage.ts`).
 
 ### Export WAV
-`GET /api/versions/[id]/export` — all stems converted FLAC→WAV
-(`flacToWav`), each padded/trimmed by its `start_bar` offset converted to ms,
-streamed as a ZIP via archiver.
+`GET /api/versions/[id]/export` (`maxDuration = 300`) — audio stems converted
+FLAC→WAV, each padded/trimmed by its `start_bar` offset converted to ms,
+returned as a ZIP built by archiver.
+
+**There is no size limit, and that is load-bearing on the design.** The route
+is a streaming producer: exactly one stem exists on disk at a time. Each is
+pulled from R2 to a file (`streamR2ObjectToFile`), transcoded file→file
+(`flacFileToWavFile`), appended to the archive, and deleted before the next one
+starts. Peak `/tmp` is one stem no matter how large the version is, and no
+audio ever touches the heap. Every rule below is a production bug this replaced
+— the function has a 512 MB `/tmp` and a fixed heap, and earlier revisions blew
+through both:
+
+- **Never `Promise.all` the stems.** That held every FLAC *and* its decoded
+  24-bit WAV (~17 MB per stereo minute) in memory at once and exhausted the
+  heap.
+- **Never buffer.** `flacToWav` / `flacToWavFile` (buffer-taking) are for
+  single-track downloads only; bulk paths use `flacFileToWavFile`.
+- **Never write the ZIP to `/tmp` first.** That made peak disk the stems *plus*
+  a zipped copy of them and failed with a bare `ENOSPC: no space left on
+  device`. The archive goes to the response via `Readable.toWeb()`.
+- **`appendAndWait` is not an ornament.** Awaiting archiver's `entry` event is
+  both the signal that the staged file is safe to delete *and* the backpressure
+  — the archive drains only as fast as the client downloads, so a slow
+  connection throttles transcoding instead of letting stems pile up.
+- **Consequence: no `Content-Length`** (chunked response, no browser progress
+  bar), and a failure mid-stream can only present as a truncated archive since
+  the headers are long gone. Both are accepted trades; don't "fix" either by
+  buffering.
+- **`/tmp` is per-instance, not per-invocation** — shared with any other request
+  on the same warm Vercel instance and surviving between them, so cleanup runs
+  on the producer's own `finally` and on `req.signal` abort, never in the
+  handler's `finally` (which fires while the archive is still reading). The
+  `streaming` flag guards exactly that.
+- **MIDI tracks are copied out as raw `.mid`** — ffmpeg cannot decode MIDI
+  without a soundfont, so routing a `file_type='midi'` row through the WAV
+  transcode throws and fails the whole export.
+- **Rows with a null `storage_path` are skipped**, not fatal.
+
+The remaining ceiling is wall-clock, not size: the function stays alive for as
+long as the client is still downloading, so a very large export on a slow
+connection can hit `maxDuration`.
+
+
+Errors respond `{ error, stage, detail }` and log `[versions/export] failed at
+stage=…` — keep the `stage` markers, they are the only way to localise a
+failure in Vercel's runtime logs.
 
 ### Preview mix
 `lib/previewMix.ts` — cached 128 kbps MP3 of Master at R2
@@ -707,6 +751,15 @@ and preview traffic out of the counter.
   sharing the hash before removing the R2 object.
 - **R2 temp-key formats are load-bearing:** presign and process routes must
   agree exactly (`lib/r2TempKey.ts`).
+- **Never interpolate a filename into a header.** HTTP header values are
+  latin-1, so a Cyrillic (or any non-ASCII) project / track / resource name in
+  `Content-Disposition` makes the `Response` constructor throw
+  `ERR_INVALID_CHAR` — which surfaces as a **500 on an otherwise-successful
+  download**, and only for the users whose names aren't ASCII. Always build the
+  value with `attachmentDisposition()` (`lib/contentDisposition.ts`), which
+  emits both the stripped ASCII `filename` and the RFC 5987
+  `filename*=UTF-8''…` form. Percent-encoding the whole name is not a fix: it
+  stops the throw but hands the user `%D0%9C%D0%BE%D1%8F.wav`.
 - **Rate limiting is in-memory per serverless instance** (`lib/rate-limit.ts`)
   — best-effort only.
 - **Web fetches of Next docs:** this Next version differs from training

@@ -169,35 +169,66 @@ export async function audioToFlacFromFile(
  * so exported/downloaded audio lines up with what plays in the app.
  */
 export async function flacToWav(flacBuffer: Buffer, delayMs = 0): Promise<Buffer> {
-  ensureFfmpegConfigured()
-  const id = randomUUID()
-  const inPath = path.join(tmpdir(), `${id}.flac`)
-  const outPath = path.join(tmpdir(), `${id}.wav`)
-
+  const outPath = path.join(tmpdir(), `${randomUUID()}.wav`)
   try {
-    await writeFile(inPath, flacBuffer)
-    await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg(inPath).audioCodec('pcm_s24le').audioFrequency(48000)
-
-      const roundedDelay = Math.round(delayMs)
-      if (roundedDelay > 0) {
-        cmd.audioFilters(`adelay=${roundedDelay}:all=1`)
-      } else if (roundedDelay < 0) {
-        const trimSec = (-roundedDelay / 1000).toFixed(6)
-        cmd.audioFilters([`atrim=start=${trimSec}`, 'asetpts=PTS-STARTPTS'])
-      }
-
-      cmd
-        .output(outPath)
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run()
-    })
+    await flacToWavFile(flacBuffer, outPath, delayMs)
     return await readFile(outPath)
   } finally {
-    await unlink(inPath).catch(() => {})
     await unlink(outPath).catch(() => {})
   }
+}
+
+/**
+ * Same conversion as flacToWav, but writes straight to `outPath` and never
+ * holds the decoded WAV in memory. 24-bit/48 kHz PCM is ~17 MB per stereo
+ * minute, so the buffer-returning variant is only safe for a single short
+ * track — bulk paths (stem export) must use this one or they exhaust the
+ * function's heap.
+ */
+export async function flacToWavFile(
+  flacBuffer: Buffer,
+  outPath: string,
+  delayMs = 0,
+): Promise<void> {
+  const inPath = path.join(tmpdir(), `${randomUUID()}.flac`)
+  try {
+    await writeFile(inPath, flacBuffer)
+    await flacFileToWavFile(inPath, outPath, delayMs)
+  } finally {
+    await unlink(inPath).catch(() => {})
+  }
+}
+
+/**
+ * The file→file form of the same conversion: nothing about the track passes
+ * through the heap. Pair it with `streamR2ObjectToFile` when the source is in
+ * R2 (bulk stem export) so neither the FLAC nor the WAV is ever buffered.
+ * The caller owns `inPath`.
+ */
+export async function flacFileToWavFile(
+  inPath: string,
+  outPath: string,
+  delayMs = 0,
+): Promise<void> {
+  ensureFfmpegConfigured()
+
+  await new Promise<void>((resolve, reject) => {
+    const cmd = ffmpeg(inPath).audioCodec('pcm_s24le').audioFrequency(48000)
+
+    const roundedDelay = Math.round(delayMs)
+    if (roundedDelay > 0) {
+      cmd.audioFilters(`adelay=${roundedDelay}:all=1`)
+    } else if (roundedDelay < 0) {
+      const trimSec = (-roundedDelay / 1000).toFixed(6)
+      cmd.audioFilters([`atrim=start=${trimSec}`, 'asetpts=PTS-STARTPTS'])
+    }
+
+    cmd
+      .output(outPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .run()
+  })
 }
 
 // ─── Non-destructive track edit rendering ─────────────────────────────────────

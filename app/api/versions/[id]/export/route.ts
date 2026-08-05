@@ -1,34 +1,72 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { downloadFromR2 } from '@/lib/r2'
+import { downloadFromR2, streamR2ObjectToFile } from '@/lib/r2'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
-import { flacToWav } from '@/lib/ffmpeg'
+import { flacFileToWavFile } from '@/lib/ffmpeg'
 import { trackStartBar, startBarToMs } from '@/lib/trackMerge'
+import { attachmentDisposition } from '@/lib/contentDisposition'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
-import { writeFile, mkdir } from 'fs/promises'
+import { mkdir, writeFile, rm } from 'fs/promises'
 import path from 'path'
-import { createReadStream, createWriteStream } from 'fs'
+import { Readable } from 'stream'
 import archiver from 'archiver'
 
+// Transcoding every stem is minutes of work for a big project, and the
+// function stays alive for as long as the client is still downloading.
+export const maxDuration = 300
+
+interface ExportTrack {
+  storage_path: string | null
+  position: number | null
+  name: string | null
+  file_type: string | null
+  start_bar?: number | null
+  midi_start_bar?: number | null
+}
+
+/** Filesystem-safe, collision-free member name for a track inside the zip. */
+function memberName(track: ExportTrack, index: number, used: Set<string>, ext: string) {
+  const position = track.position ?? index + 1
+  const base = (track.name ?? `track-${position}`)
+    // Windows/macOS both choke on these inside a zip entry.
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .trim() || `track-${position}`
+
+  let candidate = `${String(position).padStart(2, '0')}-${base}.${ext}`
+  let n = 2
+  while (used.has(candidate)) {
+    candidate = `${String(position).padStart(2, '0')}-${base} (${n}).${ext}`
+    n += 1
+  }
+  used.add(candidate)
+  return candidate
+}
+
 // GET /api/versions/[id]/export
-// Returns a zip archive of all tracks converted back to WAV.
+// Returns a zip archive of all tracks: audio converted back to WAV, MIDI as .mid.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const tmpDir = path.join(tmpdir(), randomUUID())
+  const dropTmpDir = () => { rm(tmpDir, { recursive: true, force: true }).catch(() => {}) }
+  // Once the producer below owns the temp dir, this handler must not delete it
+  // out from under it — cleanup moves onto the producer's own lifecycle.
+  let streaming = false
+  let stage = 'init'
 
   try {
     const { id: versionId } = await params
 
+    stage = 'auth'
     const access = await requireBandMemberForVersion(req, versionId)
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
-    // Fetch tracks
+    stage = 'fetch-tracks'
     const { data: tracks, error } = await supabase
       .from('tracks')
-      .select('*')
+      .select('storage_path, position, name, file_type, start_bar, midi_start_bar')
       .eq('version_id', versionId)
       .order('position', { ascending: true })
     if (error) throw error
@@ -36,8 +74,16 @@ export async function GET(
       return NextResponse.json({ error: 'No tracks found' }, { status: 404 })
     }
 
-    // Fetch version → project name/tempo (tempo needed to convert each track's
-    // start_bar offset into a silence-pad/trim duration for the exported WAV).
+    // A row with no object behind it (failed upload) must not abort the whole
+    // export — it just has nothing to contribute.
+    const exportable = (tracks as ExportTrack[]).filter((t) => !!t.storage_path)
+    if (exportable.length === 0) {
+      return NextResponse.json({ error: 'No downloadable tracks in this version' }, { status: 404 })
+    }
+
+    stage = 'fetch-version'
+    // Tempo is needed to convert each track's start_bar offset into a
+    // silence-pad/trim duration for the exported WAV.
     const { data: version } = await supabase
       .from('versions')
       .select('name, projects(name, bpm, time_signature)')
@@ -54,57 +100,101 @@ export async function GET(
       .toLowerCase()
       .replace(/\s+/g, '-')
 
+    stage = 'stage-dir'
     await mkdir(tmpDir, { recursive: true })
 
-    // Convert each FLAC back to WAV and write to tmpDir
-    await Promise.all(
-      tracks.map(async (track: {
-        storage_path: string
-        position: number
-        name: string
-        start_bar?: number | null
-        midi_start_bar?: number | null
-      }) => {
-        const flacBuffer = await downloadFromR2(track.storage_path)
-        const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
-        const wavBuffer = await flacToWav(flacBuffer, delayMs)
-        const filename = `${String(track.position).padStart(2, '0')}-${track.name.replace(/\//g, '_')}.wav`
-        await writeFile(path.join(tmpDir, filename), wavBuffer)
-      })
-    )
+    // ── Streaming producer ────────────────────────────────────────────────
+    // One stem exists on disk at a time. Each is fetched from R2 to a file,
+    // transcoded file→file, appended to the archive, and deleted before the
+    // next one starts — so peak disk is a single stem regardless of how big
+    // the version is, and nothing about the audio touches the heap. This is
+    // what removed the old size ceiling: earlier revisions staged every stem
+    // (and then a full zip alongside them) inside the function's 512 MB /tmp.
+    stage = 'zip'
+    // Level 9 on PCM buys little and costs a lot of the function's CPU budget.
+    const archive = archiver('zip', { zlib: { level: 1 } })
 
-    // Build the zip in-process (no `zip` CLI — not available in the serverless runtime).
-    const zipPath = path.join(tmpdir(), `${randomUUID()}.zip`)
-    await new Promise<void>((resolve, reject) => {
-      const output = createWriteStream(zipPath)
-      const archive = archiver('zip', { zlib: { level: 9 } })
-      output.on('close', () => resolve())
-      output.on('error', reject)
-      archive.on('error', reject)
-      archive.pipe(output)
-      archive.glob('*.wav', { cwd: tmpDir })
-      archive.finalize()
+    /**
+     * Append one file and resolve when the archive has finished reading it.
+     * `entry` is the signal that the staged file is safe to delete, and
+     * awaiting it is also the backpressure: the archive only drains as fast as
+     * the client downloads, so a slow connection throttles transcoding instead
+     * of letting stems pile up on disk.
+     */
+    const appendAndWait = (file: string, name: string) =>
+      new Promise<void>((resolve, reject) => {
+        const onEntry = () => { archive.off('error', onError); resolve() }
+        const onError = (err: Error) => { archive.off('entry', onEntry); reject(err) }
+        archive.once('entry', onEntry)
+        archive.once('error', onError)
+        archive.file(file, { name })
+      })
+
+    let aborted = false
+    // A cancelled download would otherwise leave the producer transcoding
+    // stems nobody is waiting for until the function times out.
+    req.signal.addEventListener('abort', () => {
+      aborted = true
+      archive.destroy()
+      dropTmpDir()
     })
 
-    // Stream zip back
-    const stat = await import('fs').then((m) =>
-      m.promises.stat(zipPath)
-    )
-    const stream = createReadStream(zipPath)
-    const nodeStream = stream as unknown as ReadableStream
+    const used = new Set<string>()
+    const produce = async () => {
+      for (const [index, track] of exportable.entries()) {
+        if (aborted) return
 
-    return new NextResponse(nodeStream, {
+        const isMidi = track.file_type === 'midi'
+        // ffmpeg cannot decode MIDI without a soundfont, so a file_type='midi'
+        // row goes out as the raw .mid rather than through the transcode.
+        const name = memberName(track, index, used, isMidi ? 'mid' : 'wav')
+        const staged = path.join(tmpDir, name)
+
+        if (isMidi) {
+          await writeFile(staged, await downloadFromR2(track.storage_path as string))
+        } else {
+          const flacPath = path.join(tmpDir, `${randomUUID()}.flac`)
+          try {
+            await streamR2ObjectToFile(track.storage_path as string, flacPath)
+            const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
+            await flacFileToWavFile(flacPath, staged, delayMs)
+          } finally {
+            await rm(flacPath, { force: true }).catch(() => {})
+          }
+        }
+
+        await appendAndWait(staged, name)
+        await rm(staged, { force: true }).catch(() => {})
+      }
+
+      await archive.finalize()
+    }
+
+    streaming = true
+    void produce()
+      .catch((err) => {
+        // Headers are long gone by now, so the only honest signal to the
+        // client is a truncated archive. The log is the real record.
+        console.error('[versions/export] producer failed mid-stream', err)
+        archive.destroy(err instanceof Error ? err : new Error(String(err)))
+      })
+      .finally(dropTmpDir)
+
+    // No Content-Length: the zip is generated as it is sent, so its size is
+    // not knowable up front. Chunked response, no browser progress bar.
+    return new NextResponse(Readable.toWeb(archive as unknown as Readable) as ReadableStream, {
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="${archiveName}"`,
-        'Content-Length': String(stat.size),
+        'Content-Disposition': attachmentDisposition(archiveName),
       },
     })
   } catch (err) {
-    console.error(err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    console.error(`[versions/export] failed at stage=${stage}`, err)
+    return NextResponse.json(
+      { error: 'Export failed', stage, detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    )
   } finally {
-    // Best-effort cleanup
-    import('fs').then((m) => m.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {}))
+    if (!streaming) dropTmpDir()
   }
 }

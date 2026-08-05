@@ -4,6 +4,7 @@ import { downloadFromR2 } from '@/lib/r2'
 import { flacToWav } from '@/lib/ffmpeg'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { trackStartBar, startBarToMs } from '@/lib/trackMerge'
+import { attachmentDisposition } from '@/lib/contentDisposition'
 
 // GET /api/tracks/[id]/download
 // Audio: fetches FLAC from R2, converts to WAV. MIDI: returns raw .mid from R2.
@@ -34,7 +35,7 @@ export async function GET(
         headers: {
           'Content-Type': 'audio/midi',
           'Content-Length': String(midiBuffer.byteLength),
-          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Content-Disposition': attachmentDisposition(filename),
         },
       })
     }
@@ -69,7 +70,7 @@ export async function GET(
       headers: {
         'Content-Type': 'audio/wav',
         'Content-Length': String(wavBuffer.byteLength),
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': attachmentDisposition(filename),
       },
     })
   } catch (err) {
