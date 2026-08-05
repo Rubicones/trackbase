@@ -389,15 +389,36 @@ quota** (`lib/bandStorage.ts`).
 `GET /api/versions/[id]/export` (`maxDuration = 300`) — audio stems converted
 FLAC→WAV (`flacToWavFile`), each padded/trimmed by its `start_bar` offset
 converted to ms, staged in a tmp dir and streamed back as a ZIP via archiver.
-Three constraints the route must keep:
-**MIDI tracks are copied out as raw `.mid`** — ffmpeg cannot decode MIDI
-without a soundfont, so routing a `file_type='midi'` row through the WAV
-transcode throws and fails the whole export.
-**Stems are processed sequentially, straight to disk** — a `Promise.all` here
-holds every FLAC *and* its decoded 24-bit WAV (~17 MB per stereo minute) in
-memory at once and exhausts the function's heap / the 512 MB `/tmp` budget.
-Use `flacToWavFile`, not the buffer-returning `flacToWav`.
-**Rows with a null `storage_path` are skipped**, not fatal.
+
+**The whole route is shaped by the serverless function's 512 MB `/tmp` and its
+heap**, and every constraint below is a bug that was hit in production:
+
+- **MIDI tracks are copied out as raw `.mid`** — ffmpeg cannot decode MIDI
+  without a soundfont, so routing a `file_type='midi'` row through the WAV
+  transcode throws and fails the whole export.
+- **Stems are processed sequentially, straight to disk.** A `Promise.all` here
+  holds every FLAC *and* its decoded 24-bit WAV in memory at once and exhausts
+  the heap. Use `flacToWavFile`, never the buffer-returning `flacToWav`.
+- **The ZIP is streamed to the client, never written to `/tmp` first.** Doing
+  that made peak disk the stems *plus* a zipped copy of them and failed with a
+  bare `ENOSPC: no space left on device`. The archive is handed to the response
+  via `Readable.toWeb()`, and an `archive.on('entry')` handler deletes each
+  staged stem as soon as the archive has read it, so `/tmp` drains while the
+  download runs. **Consequence: there is no `Content-Length`** (chunked
+  response, no browser progress bar) — that is the accepted trade, don't
+  "fix" it by buffering.
+- **`/tmp` is per-instance, not per-invocation** — it is shared with any other
+  request on the same warm Vercel instance and survives between them, so
+  cleanup must run on the stream's `end`/`close`/`error` and on `req.signal`
+  abort, not in the handler's `finally` (which fires while the archive is still
+  reading). The `streaming` flag guards exactly that.
+- **Oversized exports are refused up front with 413**, estimated from
+  `duration_ms` × 24-bit/48 kHz/stereo against `TMP_STAGING_BUDGET_BYTES`
+  (380 MB). Without the pre-flight check the failure mode is ENOSPC halfway
+  through a multi-minute request.
+- **Rows with a null `storage_path` are skipped**, not fatal.
+
+
 Errors respond `{ error, stage, detail }` and log `[versions/export] failed at
 stage=…` — keep the `stage` markers, they are the only way to localise a
 failure in Vercel's runtime logs.
