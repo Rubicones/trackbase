@@ -2405,6 +2405,57 @@ html:has(.landing-page) body {
   }
 }
 
+/* ── Fluid stage — components/landing/HeroVersionGraphFluid.tsx (/simple only)
+   That component redraws the graph at the stage's real pixel size instead of
+   stretching a fixed viewBox, so the box may be wider than 1080/560 without
+   distorting anything. Two overrides make "wider" mean longer, not bigger:
+
+   1. The box is cropped to a 360-unit band instead of the design's 560. The
+      artwork only occupies y 210–350, and the two label rows sit at 145.6 and
+      414.4, so the outer ~200 units of the canvas are empty — that emptiness is
+      the dead space inside the card. 360 leaves ~28px of margin above the top
+      label and below the bottom one at native scale. The graph component
+      anchors everything to the master line at the box's vertical centre, so it
+      follows this crop with no code change; retune the ratio here alone.
+   2. `max-height` freezes that band at its native pixel height. With the
+      aspect-ratio above it gives exactly height = min(360px, width / 3) —
+      proportional below the native canvas width, flat past it — in CSS only,
+      so there is no layout shift while the width measurement resolves.
+   3. `--vg-u` is pinned to 1px past the native width, so the HTML labels stop
+      growing with the container at the same point the artwork does. 1px is the
+      value the unmodified rule already resolves to at 1080px
+      (0.0926cqw = 1.0px there), so nothing changes at that width.
+
+   Below 640px the crop is released: the labels lose their side-by-side layout
+   (status text drops at a 600px container, they stack outright at 360px) and
+   need the full canvas height to fit. Those steps are defined earlier in this
+   file and must keep applying untouched — hence media queries rather than
+   container queries here, since an element cannot query the container it
+   itself establishes. */
+.tb-vg-stage-fluid {
+  aspect-ratio: 1080 / 360;
+  max-height: 360px;
+}
+
+@media (max-width: 640px) {
+  .tb-vg-stage-fluid {
+    aspect-ratio: 1080 / 560;
+    max-height: none;
+  }
+}
+
+@media (max-width: 400px) {
+  .tb-vg-stage-fluid {
+    aspect-ratio: 1080 / 720;
+  }
+}
+
+@container (min-width: 1081px) {
+  .tb-vg-stage-fluid > * {
+    --vg-u: 1px;
+  }
+}
+
 @keyframes vg-master { 0% { stroke-dashoffset: 100; } 3%, 100% { stroke-dashoffset: 0; } }
 @keyframes vg-b1 { 0%, 4% { stroke-dashoffset: 100; opacity: 0; } 5% { opacity: 1; } 32%, 100% { stroke-dashoffset: 0; opacity: 1; } }
 @keyframes vg-b2 { 0%, 15% { stroke-dashoffset: 100; opacity: 0; } 16% { opacity: 1; } 43%, 100% { stroke-dashoffset: 0; opacity: 1; } }

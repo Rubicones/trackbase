@@ -249,6 +249,46 @@ export const homeMetadata: Metadata = {
 }
 
 /**
+ * Metadata for `/simple` — the simplified landing page served as the `simple`
+ * arm of the landing A/B test (see `lib/landingVariant.ts`).
+ *
+ * Same title, description and social card as the homepage: it is the same
+ * product page with a shorter presentation, and the two arms should be
+ * indistinguishable when shared. Self-canonical rather than pointing at `/`,
+ * because the variant is indexable in its own right — if that decision is
+ * revisited while the test is running, this is the one place to change it.
+ */
+export const simpleLandingMetadata: Metadata = {
+  title: SEO_DEFAULT_TITLE,
+  description: SEO_DEFAULT_DESCRIPTION,
+  alternates: {
+    canonical: getCanonicalUrl('/simple'),
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
+  openGraph: {
+    ...sharedOpenGraph,
+    title: SEO_DEFAULT_TITLE,
+    description: SEO_DEFAULT_DESCRIPTION,
+    url: getCanonicalUrl('/simple'),
+    images: [OPEN_GRAPH_IMAGE],
+  },
+  twitter: {
+    ...sharedTwitter,
+    images: [OPEN_GRAPH_IMAGE.url],
+  },
+}
+
+/**
  * Metadata for the marketing "slice" pages (/features/*, /audience/*).
  * Inherits the root title template (`%s · sonicdesk.`) and robots defaults.
  */

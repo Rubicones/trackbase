@@ -65,7 +65,8 @@ this repo; mobile is the responsive web experience.
 
 ```
 app/                        Pages + API routes (App Router)
-  page.tsx                  Landing page (public)
+  page.tsx                  Landing page (public) — A/B `control`
+  simple/                   Simplified landing page — A/B `simple` (see §4)
   dashboard/                Bands list (authed home)
   band/[bandId]/            Band page: projects, members, activity, chat
   band/[bandId]/project/[projectId]/
@@ -564,8 +565,79 @@ plans UI have known inconsistencies to resolve before real billing — and they
 are a **separate mechanism** from the beta-wide `profiles.band_limit` cap
 described under Bands. No plan logic reads or writes `band_limit` today.
 
+### Landing page A/B test (control vs. simple)
+Two landing pages exist and are split 50/50. `lib/landingVariant.ts` is the
+registry (cookie name, max-age, `/simple` path, `rollLandingVariant()`) and is
+**edge-safe** — it is imported by `middleware.ts`, so no `next/*`, no Node
+built-ins, no React may enter it.
+
+`middleware.ts` assigns a visitor once, writes `landing_variant=control|simple`
+(1 year, non-HttpOnly) and **rewrites** `/` to `/simple` for the simple half.
+Rewrite, not redirect: the address bar keeps saying `/`, so the experiment does
+not split inbound links or GA4's landing-page dimension across two URLs. A
+direct hit on `/simple` (shared link) is honoured and pins the visitor to
+`simple` rather than re-rolling them. The block sits **after** the auth/refresh
+section and is wrapped in `finalize()` — `/` has always had its session
+refreshed there and moving the interception earlier would silently change that.
+
+Both pages fire `trackEvent('landing_variant_viewed', { variant })` once on
+mount via `components/landing/LandingVariantEvent.tsx`. This is an **additional**
+event, not a `page_view` override — `PageViewTracker` and the vendor scripts are
+untouched. The variant is passed in as a prop, not read back from the cookie, so
+the event cannot race the `Set-Cookie` on its own response.
+
+**Code sharing between the two pages.** `components/LandingPage.tsx` exports its
+primitives (`SectionHeader`, `GhostButton`, `FeaturePanel`, the feature demos,
+the phone mocks, `HeroVersionGraph`, `TopBar`, `CTA`, `Footer`, `useMounted`, …)
+so both pages compose the same building blocks rather than duplicating them.
+Five sections differ from control by exactly one omission each and take an
+**optional prop whose default is the control behaviour** —
+`BranchShowcase({ showStats })` (also threaded to `BranchBoard`, which
+`/features/versions` mounts too), `MobileSection({ showComparisonTable })`,
+`Philosophy({ showIntro })`, `ThemingSection({ showSyncNote })`,
+`FAQ({ capitalizeQuestions })` — so `/` cannot be changed by variant work.
+`TopBar` / `Footer` take `navItems` (the simple variant's list omits ROADMAP, so
+neither can link to a section that page doesn't render).
+`components/landing/SimpleLandingPage.tsx` owns the two structurally different
+sections (`SimpleHero`, `SimpleFeatures`) locally.
+
+**06 · System is redesigned on `/simple` only.**
+`components/landing/SystemAccordion.tsx` is a port of the `SystemGrid` component
+from the separate design repo (`sonicdesk_landing_design`,
+`src/routes/index.tsx`): eight click-to-expand rooms over one shared detail
+panel, collapsed by default. Markup, transitions and spring constants come from
+there; the **content** is production's `FeatureIndex` list (plus two items added
+so no room shows an odd three in the two-column grid), the **colors** are
+`--wave-*` / `--lime` tokens rather than the design repo's hardcoded hexes, and
+room titles keep production's upper-case (the design repo's `lowercase` class is
+deliberately not carried over). No new dependency — same `motion/react` APIs the
+landing page already used. **`/` keeps its original `FeatureIndex` grid.**
+
+`FAQ({ capitalizeQuestions })` sentence-cases the first letter at render time and
+never rewrites `SEO_FAQS`, which is the single source of truth for the FAQPage
+JSON-LD on `/`.
+
+**Two 02 · Features demos are shared verbatim by both variants** (no prop, no
+fork), and both were changed for `/` as well as `/simple`:
+`CommentsDemo` is one comment plus a presentational "Reply…" row — the animated
+three-message thread and the "@mention · attach · link version / ↵ reply"
+toolbar were removed. `SocialDemo`'s roadmap card is
+`components/landing/RoadmapShowcase.tsx`: **the app's real `SongRoadmap`**, not a
+mock, with placeholder steps. It is non-interactive by construction, not by an
+overlay — `readOnly` disables the step buttons and hides the advance controls,
+*and* `onRoadmapChange` is omitted so every write path returns before reaching
+`/api/projects/[id]/roadmap` or firing `roadmap_step_changed`. Keep both:
+`readOnly` alone still leaves the write paths live. `stageSince` is null on
+purpose (a real timestamp renders a drifting "since …" and starts
+`SongRoadmap`'s 60-second re-render interval on a static page).
+
+`/simple` is indexable with its own self-canonical metadata
+(`simpleLandingMetadata` in `lib/seo.ts`) and is listed in `app/sitemap.ts`; flip
+both together if the test should stop being crawled.
+
 ### Landing page & installed-PWA detection
-`app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The hero
+`app/page.tsx` (force-static) renders `components/LandingPage.tsx`;
+`app/simple/page.tsx` (also force-static) renders the A/B variant above. The hero
 artwork is `HeroVersionGraph` — an animated branch/merge graph **ported from the
 promo design file** ("Promo - Stop Losing Track Versions", feature card 4a);
 geometry and keyframe percentages must stay in sync with that file, the `vg-*`

@@ -15,6 +15,14 @@ import {
   CAMPAIGN_COOKIE,
   CAMPAIGN_COOKIE_MAX_AGE,
 } from '@/lib/campaigns'
+import {
+  isLandingVariant,
+  LANDING_VARIANT_COOKIE,
+  LANDING_VARIANT_MAX_AGE,
+  rollLandingVariant,
+  SIMPLE_LANDING_PATH,
+  type LandingVariant,
+} from '@/lib/landingVariant'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -27,7 +35,7 @@ const PUBLIC_PREFIXES = [
   '/tools',
   '/api/tools',
 ]
-const PUBLIC_EXACT = ['/']
+const PUBLIC_EXACT = ['/', SIMPLE_LANDING_PATH]
 
 const PROFILE_EXEMPT = ['/onboarding', '/auth', '/api/']
 
@@ -133,6 +141,56 @@ export async function middleware(request: NextRequest) {
       return finalize(NextResponse.redirect(new URL('/dashboard', request.url)))
     }
     return finalize(NextResponse.redirect(new URL('/onboarding', request.url)))
+  }
+
+  // ── Landing A/B split ───────────────────────────────────────────────────────
+  // Assign a visitor to `control` or `simple` once, remember it for a year, and
+  // serve the assigned variant on every later visit. Registry and roll live in
+  // `lib/landingVariant.ts`.
+  //
+  // Placed *after* the auth/refresh block above and wrapped in `finalize()` on
+  // purpose: `/` has always passed through token verification and had a
+  // refreshed session written back, and intercepting it earlier would silently
+  // change that for signed-in visitors. This block only chooses which document
+  // to serve.
+  //
+  // Rewrite, not redirect: the address bar keeps saying `/`, so the experiment
+  // doesn't split inbound links or the analytics landing-page dimension across
+  // two URLs, and there is no extra round-trip. Both documents are force-static,
+  // so the rewrite just picks a different prerendered HTML file.
+  if (pathname === '/' || pathname === SIMPLE_LANDING_PATH) {
+    const assigned = request.cookies.get(LANDING_VARIANT_COOKIE)?.value
+
+    // A direct hit on /simple (shared link) is honoured rather than re-rolled,
+    // and pins the visitor so navigating away and back stays consistent.
+    const variant: LandingVariant =
+      pathname === SIMPLE_LANDING_PATH
+        ? 'simple'
+        : isLandingVariant(assigned)
+          ? assigned
+          : rollLandingVariant()
+
+    const res =
+      pathname === '/' && variant === 'simple'
+        ? NextResponse.rewrite(new URL(SIMPLE_LANDING_PATH, request.url))
+        : NextResponse.next()
+
+    if (assigned !== variant) {
+      res.cookies.set(LANDING_VARIANT_COOKIE, variant, {
+        // Readable by client code: it is a bucket name, not a secret, and being
+        // able to read it in the browser/devtools is what makes the split
+        // debuggable. The rendered page passes its own variant to the
+        // `landing_variant_viewed` event rather than reading this back, so
+        // nothing depends on the cookie having landed.
+        httpOnly: false,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: LANDING_VARIANT_MAX_AGE,
+      })
+    }
+
+    return finalize(res)
   }
 
   if (isPublic(pathname)) return finalize(NextResponse.next())

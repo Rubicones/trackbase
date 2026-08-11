@@ -13,6 +13,10 @@ const LAST_CONTENT_UPDATE = new Date('2026-07-06T00:00:00.000Z')
 
 const ENTRIES: { path: string; priority: number; changeFrequency: 'weekly' | 'monthly' }[] = [
   { path: '/', priority: 1, changeFrequency: 'weekly' },
+  // Simplified landing variant (landing A/B test — see lib/landingVariant.ts).
+  // Self-canonical and indexable by decision; drop this entry and switch
+  // `simpleLandingMetadata` to noindex if the test should stop being crawled.
+  { path: '/simple', priority: 0.5, changeFrequency: 'weekly' },
   { path: '/features/versions', priority: 0.8, changeFrequency: 'monthly' },
   { path: '/features/structure', priority: 0.7, changeFrequency: 'monthly' },
   { path: '/features/mobile', priority: 0.7, changeFrequency: 'monthly' },
