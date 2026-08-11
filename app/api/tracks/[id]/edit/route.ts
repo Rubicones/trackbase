@@ -9,7 +9,7 @@ import { renderEditedFlac, type RenderEditSegment } from '@/lib/ffmpeg'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, trackActivityLabel } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
-import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { assertBandFeature, limitRefusalResponse, storageRefusal } from '@/lib/planGuards'
 import { barDurationSecFor, contentBarsFor } from '@/lib/trackEdit'
 
 const MAX_SEGMENTS = 256
@@ -84,6 +84,17 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid segments payload' }, { status: 400 })
   }
 
+  // Gated feature. Hiding the button is not enforcement — this endpoint does
+  // the work, so it is where the entitlement is verified. Resolved from the
+  // BAND's plan, so every member of a paid band can use it, not just the owner.
+  try {
+    await assertBandFeature(project.band_id, 'track_edit')
+  } catch (err) {
+    const refusal = limitRefusalResponse(err)
+    if (refusal) return refusal
+    throw err
+  }
+
   const { data: track, error: trackErr } = await supabase
     .from('tracks')
     .select('id, version_id, name, display_name, original_filename, storage_path, file_type, duration_ms')
@@ -143,19 +154,16 @@ export async function POST(
     } catch (err) {
       console.error('[track-edit] render failed:', err)
       return NextResponse.json(
-        { error: 'Audio rendering failed', detail: String(err) },
+        { error: 'Could not render the edited audio' },
         { status: 500 },
       )
     }
 
     // ── Quota + upload ─────────────────────────────────────────────────────────
-    const quota = await checkBandStorageQuota(supabase, project.band_id, flac.byteLength)
-    if (!quota.ok) {
-      return NextResponse.json(
-        { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-        { status: 413 },
-      )
-    }
+    // Per-band storage ceiling, resolved from the band owner's plan plus
+    // this band's extra_storage addons. Never pooled across bands.
+    const overQuota = await storageRefusal(project.band_id, flac.byteLength)
+    if (overQuota) return overQuota
 
     const fileHash = createHash('sha256').update(flac).digest('hex')
     const storagePath = r2Key(project.id, fileHash)

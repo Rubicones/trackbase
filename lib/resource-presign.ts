@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getPresignedUploadUrl } from '@/lib/r2'
 import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { resolveBandStorageLimitBytes } from '@/lib/planGuards'
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024
 
@@ -78,7 +79,14 @@ export async function presignResourceUpload(
     }
   }
 
-  const quota = await checkBandStorageQuota(supabase, bandId, fileSize)
+  // Per-band ceiling from the band owner's plan (+ this band's extra_storage
+  // addons). Storage is never pooled across a user's bands.
+  const quota = await checkBandStorageQuota(
+    supabase,
+    bandId,
+    fileSize,
+    await resolveBandStorageLimitBytes(bandId),
+  )
   if (!quota.ok) {
     return {
       ok: false,

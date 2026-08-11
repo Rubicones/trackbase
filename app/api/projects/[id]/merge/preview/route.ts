@@ -45,7 +45,7 @@ export async function POST(
   try {
     const { id: projectId } = await params
 
-    const access = await requireBandMember(req, projectId)
+    const access = await requireBandMember(req, projectId, { readOnlyRequest: true })
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const { branch_id, target_version_id } = await req.json()

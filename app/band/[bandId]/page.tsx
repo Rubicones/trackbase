@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
+import { FrozenBandBanner } from '@/components/plan/FrozenBandBanner'
 import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -612,6 +613,8 @@ export default function BandPage() {
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [totalActivity, setTotalActivity] = useState(0)
   const [storageLimitBytes, setStorageLimitBytes] = useState(BAND_STORAGE_LIMIT_BYTES)
+  const [frozen, setFrozen] = useState(false)
+  const [frozenReason, setFrozenReason] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   // Bumped when a 401 suggests our fetch beat the client cookie sync; drives a
@@ -749,6 +752,10 @@ export default function BandPage() {
     setRecentActivity((data.recentActivity ?? []) as ActivityItem[])
     setTotalActivity((data.totalActivity ?? 0) as number)
     setStorageLimitBytes((data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES) as number)
+    // Freeze state is evaluated server-side when the band is read — opening it
+    // is the "touch" that applies an expired grace period. See lib/bandFreeze.ts.
+    setFrozen(Boolean(data.frozen))
+    setFrozenReason((data.frozenReason ?? null) as string | null)
     setInviteCode((data.inviteCode ?? null) as string | null)
     setPendingJoinRequests((data.pendingJoinRequests ?? []) as JoinRequest[])
     setLoading(false)
@@ -1244,6 +1251,15 @@ export default function BandPage() {
           </TbButton>
         }
       />
+
+      {/* Frozen state — above the hero, because a read-only band must be
+          obvious before anyone tries to change something. Presentation only:
+          every write endpoint refuses independently (lib/bandFreeze.ts). */}
+      {frozen && (
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-4 w-full">
+          <FrozenBandBanner reason={frozenReason} isOwner={myRole === 'owner'} />
+        </div>
+      )}
 
       {/* Band hero */}
       <section className="border-b border-border bg-surface/40">

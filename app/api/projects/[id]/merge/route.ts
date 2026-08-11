@@ -11,6 +11,7 @@ import {
   BarState,
 } from '@/lib/sectionMerge'
 import { trackStartBar } from '@/lib/trackMerge'
+import { assertBandFeature, limitRefusalResponse } from '@/lib/planGuards'
 
 // POST /api/projects/[id]/merge
 //
@@ -94,6 +95,22 @@ export async function POST(
 
     if (!branchVersionId) {
       return NextResponse.json({ error: 'branchVersionId is required' }, { status: 400 })
+    }
+
+    // ── Gated feature: cherry-picking ────────────────────────────────────────
+    // Applying a whole version is core versioning and stays free. Choosing
+    // *which parts* to apply — skipping tracks, protecting bars, picking
+    // individual comments — is the gated feature, so the gate keys off the
+    // presence of any selective field rather than off the endpoint. A hostile
+    // client that sends the selections anyway is refused here, not in the UI.
+    const isCherryPick =
+      skippedTrackSet.size > 0 ||
+      removedTrackSet.size > 0 ||
+      skippedSections.length > 0 ||
+      skippedAddedCommentSet.size > 0 ||
+      appliedDeletedCommentSet.size > 0
+    if (isCherryPick) {
+      await assertBandFeature(_project.band_id, 'cherry_pick')
     }
 
     // ── Fetch branch (the version being applied) ──────────────────────────────
@@ -400,6 +417,8 @@ export async function POST(
       tracks: updatedTracks ?? [],
     })
   } catch (err) {
+    const refusal = limitRefusalResponse(err)
+    if (refusal) return refusal
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

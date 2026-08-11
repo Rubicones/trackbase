@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 
 import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { getBandLimitStatus, type BandLimitStatus } from '@/lib/bandLimit'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // GET /api/dashboard — all data needed for the bands list page
 export async function GET(req: NextRequest) {
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     .eq('user_id', userId)
 
   if (mErr) {
-    return NextResponse.json({ error: mErr.message }, { status: 500 })
+    return serverErrorResponse('dashboard', mErr, 'Could not load your dashboard')
   }
 
   const memberRows = memberships ?? []

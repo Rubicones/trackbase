@@ -4,7 +4,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { AtSign, CreditCard, LogOut, Mail, Trash2, X, type IconNode } from 'lucide'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePaywall, PAYWALL_TEST_MODE_AVAILABLE } from '@/contexts/PaywallContext'
+import { usePaywall, DEV_PLAN_TOOLS_AVAILABLE } from '@/contexts/PaywallContext'
+import { PlanUsage } from '@/components/plan/PlanUsage'
+import { DevPlanSwitcher } from '@/components/plan/DevPlanSwitcher'
+import { GraceBanner } from '@/components/plan/GraceBanner'
 import { getSupabaseClient } from '@/lib/supabase/client'
 import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 import { UserAvatar } from '@/components/ui/avatar'
@@ -21,7 +24,8 @@ type DeleteStep = 'idle' | 'warn' | 'confirm'
 export function PreferencesModal({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const { user, profile, signOut, refreshProfile } = useAuth()
-  const { enabled: paywallEnabled, setEnabled: setPaywallEnabled } = usePaywall()
+  const { snapshot: plan, openPaywall } = usePaywall()
+  const planState = plan.state
 
   const [newUsername, setNewUsername] = useState(profile?.username ?? '')
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle')
@@ -73,17 +77,40 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
     }
   }, [newUsername, profile?.username])
 
+  /**
+   * Rename goes through `PATCH /api/profile/username`, the same route
+   * onboarding uses — never a direct `profiles` write from the browser.
+   *
+   * It used to be `supabase.from('profiles').update({ username })` under the
+   * anon key. That worked because `profiles` carries a self-update RLS policy,
+   * and RLS is row-level: the policy authorised the row, and the default column
+   * grants authorised every column in it. The same request shape with
+   * `{ plan: 'band_plus', band_limit: 999 }` was therefore also authorised —
+   * finding C2. The column grants are now narrowed in the database
+   * (`20260806_lock_entitlement_columns.sql`), but the client-side write is
+   * gone too: the server route owns the field allowlist, the uniqueness check
+   * and the auth-metadata update, so there is one place to reason about.
+   *
+   * `refreshSession` stays — it is an auth call, not a table write, and it is
+   * how the new `user_metadata.username` reaches the session cookie.
+   */
   async function handleSaveUsername() {
     const clean = newUsername.trim().toLowerCase()
     if (!clean || clean === profile?.username || usernameStatus !== 'available') return
     setUsernameStatus('saving')
     try {
-      const supabase = getSupabaseClient()
-      const { error: profileErr } = await supabase.from('profiles').update({ username: clean }).eq('id', user!.id)
-      if (profileErr) throw profileErr
-      const { error: metaErr } = await supabase.auth.updateUser({ data: { username: clean } })
-      if (metaErr) throw metaErr
-      const { data: { session } } = await supabase.auth.refreshSession()
+      const res = await fetch('/api/profile/username', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: clean }),
+      })
+      if (!res.ok) {
+        // 409 is the uniqueness check losing a race with another signup — the
+        // debounced availability check said yes a moment ago.
+        setUsernameStatus(res.status === 409 ? 'taken' : 'idle')
+        return
+      }
+      const { data: { session } } = await getSupabaseClient().auth.refreshSession()
       if (session) void setAuthCookies(session)
       await refreshProfile()
       setUsernameStatus('saved')
@@ -295,40 +322,41 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
           </div>
         </section>
 
-        {/* Testing — local dev only; the whole section goes away on any
-            deployed build so there is no empty bordered block left behind. */}
-        {PAYWALL_TEST_MODE_AVAILABLE && (
+        {/* Plan — current plan, its limits, and usage against each of them.
+            The old "Show paywall" toggle lived here; it is gone. Locking is now
+            driven by the real plan, so a preference that pretended to gate
+            things would only disagree with the server. */}
         <section className="px-5 py-5 border-b border-border">
-          <SectionEyebrow>Testing</SectionEyebrow>
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-sm text-foreground m-0 mb-1 flex items-center gap-2">
-                <LucideIcon icon={CreditCard} size={14} className="text-muted-foreground shrink-0" />
-                Show paywall
-              </p>
-              <p className="font-mono text-[10px] text-muted-foreground m-0 leading-relaxed">
-                Preview subscription gating (testing only)
-              </p>
+          <SectionEyebrow>Plan</SectionEyebrow>
+          <p className="text-sm text-foreground m-0 mb-3 flex items-center gap-2">
+            <LucideIcon icon={CreditCard} size={14} className="text-muted-foreground shrink-0" />
+            Your plan and usage
+          </p>
+
+          {planState !== 'active' && (
+            <div className="mb-4">
+              <GraceBanner />
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={paywallEnabled}
-              aria-label="Show paywall"
-              onClick={() => setPaywallEnabled(!paywallEnabled)}
-              className={`relative h-5 w-9 shrink-0 border transition-colors ${
-                paywallEnabled ? 'border-lime bg-lime/20' : 'border-border bg-surface'
-              }`}
-            >
-              <span
-                className={`absolute top-1/2 -translate-y-1/2 size-3 transition-[left,background-color] duration-150 ${
-                  paywallEnabled ? 'left-[calc(100%-1rem)] bg-lime' : 'left-1 bg-muted-foreground'
-                }`}
-                aria-hidden
-              />
-            </button>
+          )}
+
+          <PlanUsage />
+
+          <div className="mt-4">
+            <TbButton variant="primary" onClick={() => openPaywall('preferences')}>
+              See plans
+            </TbButton>
           </div>
         </section>
+
+        {/* Development plan switcher — `next dev` only. The whole section goes
+            away on any deployed build (NODE_ENV is production for every
+            `next build`, previews included), and the API behind it 404s there
+            too, so this is not the only thing standing in the way. */}
+        {DEV_PLAN_TOOLS_AVAILABLE && (
+          <section className="px-5 py-5 border-b border-border">
+            <SectionEyebrow>Development · plan switcher</SectionEyebrow>
+            <DevPlanSwitcher />
+          </section>
         )}
 
         {/* Danger zone */}

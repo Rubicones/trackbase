@@ -1,13 +1,35 @@
+/**
+ * Per-band storage accounting.
+ *
+ * **The ceiling is not a constant any more.** It comes from the band OWNER's
+ * plan plus that band's `extra_storage` addons, resolved by
+ * `getBandEntitlements()` — see `lib/storageQuota.ts`, which is the server-side
+ * entry point every upload path should use. The functions here take the limit
+ * as an argument so this module stays free of server-only imports: it is also
+ * pulled into client components for the "STORAGE · 10 GB" labels, and importing
+ * the service-role client would break those builds.
+ *
+ * Storage is strictly per band and is never pooled. A Band+ owner with five
+ * bands has the full allowance in each of them, independently. There is no
+ * account-wide storage total anywhere in this codebase, and there must not be.
+ */
+
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-/** Hard per-band storage ceiling (tracks + resource files). */
+/**
+ * Legacy flat ceiling, retained only as a display fallback for client code
+ * that renders before the real per-band limit has been fetched, and as the
+ * limit used while the plan migration has not been applied.
+ * Do not use it as an enforcement value.
+ */
 export const BAND_STORAGE_LIMIT_BYTES = 1 * 1024 * 1024 * 1024 // 1 GB
 
 export function bandStorageLimitBytes(): number {
   return BAND_STORAGE_LIMIT_BYTES
 }
 
-export function formatStorageLimit(bytes = BAND_STORAGE_LIMIT_BYTES): string {
+export function formatStorageLimit(bytes: number | null = BAND_STORAGE_LIMIT_BYTES): string {
+  if (bytes === null) return 'Unlimited'
   if (bytes >= 1024 * 1024 * 1024) {
     const gb = bytes / (1024 * 1024 * 1024)
     return Number.isInteger(gb) ? `${gb} GB` : `${gb.toFixed(1)} GB`
@@ -18,9 +40,9 @@ export function formatStorageLimit(bytes = BAND_STORAGE_LIMIT_BYTES): string {
 
 export function storageQuotaError(
   used: number,
-  limit = BAND_STORAGE_LIMIT_BYTES,
+  limit: number | null = BAND_STORAGE_LIMIT_BYTES,
 ): string {
-  return `Band storage limit reached (${formatStorageLimit(limit)}). Delete tracks or files to free space.`
+  return `Band storage limit reached (${formatStorageLimit(limit)}). Delete tracks or files to free space, or upgrade the band owner's plan.`
 }
 
 type StorageDb = Pick<SupabaseClient, 'from'>
@@ -72,12 +94,18 @@ export async function getBandStorageUsed(db: StorageDb, bandId: string): Promise
   return usedBytes
 }
 
+/**
+ * @param limitBytes the band's resolved ceiling, or `null` for unlimited.
+ *   Callers on the server should pass the value from `lib/storageQuota.ts`
+ *   rather than computing one.
+ */
 export async function checkBandStorageQuota(
   db: StorageDb,
   bandId: string,
   additionalBytes: number,
-): Promise<{ ok: boolean; used: number; limit: number }> {
+  limitBytes: number | null = BAND_STORAGE_LIMIT_BYTES,
+): Promise<{ ok: boolean; used: number; limit: number | null }> {
   const used = await getBandStorageUsed(db, bandId)
-  const limit = BAND_STORAGE_LIMIT_BYTES
-  return { ok: used + additionalBytes <= limit, used, limit }
+  if (limitBytes === null) return { ok: true, used, limit: null }
+  return { ok: used + additionalBytes <= limitBytes, used, limit: limitBytes }
 }

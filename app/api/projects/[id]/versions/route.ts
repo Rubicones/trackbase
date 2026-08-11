@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMember } from '@/lib/supabase/server'
 import { logActivity } from '@/lib/activity'
+import { assertCanCreateVersion, limitRefusalResponse } from '@/lib/planGuards'
 
 // POST /api/projects/[id]/versions
 // Creates a new branch from an existing version.
 // Body: { name: string, parent_id: string }
 // Copies all tracks, sections, track_comments, and comment_replies
 // from parent_id into the new version (pointer copy — no file duplication).
+//
+// Subject to the plan's active-versions-per-project limit, resolved from the
+// BAND OWNER's plan (`assertCanCreateVersion`). "Active" means an unapplied
+// branch; Master never counts. The check is server-side and reads the count
+// from the database — the client's idea of how many versions exist is never
+// consulted.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -50,6 +57,11 @@ export async function POST(
     if (parentErr || parent.project_id !== projectId) {
       return NextResponse.json({ error: 'parent_id not found' }, { status: 404 })
     }
+
+    // Plan limit. Checked immediately before the insert so the window in which
+    // a concurrent create could slip past is as small as it can be without a
+    // transaction; the count is re-read from the database here, never cached.
+    await assertCanCreateVersion(projectId, project.band_id)
 
     // Create branch version
     const { data: version, error: verErr } = await supabase
@@ -171,6 +183,8 @@ export async function POST(
 
     return NextResponse.json({ version }, { status: 201 })
   } catch (err) {
+    const refusal = limitRefusalResponse(err)
+    if (refusal) return refusal
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

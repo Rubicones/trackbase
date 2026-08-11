@@ -26,10 +26,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { LucideIcon } from '@/components/design/LucideIcon'
-import type { PaywallSource } from '@/contexts/PaywallContext'
+import { usePlan, type PaywallSource } from '@/contexts/PaywallContext'
+import { PLANS as PLAN_TABLE, planLimitLines } from '@/lib/plans'
 
-type PaidPlanId = 'solo' | 'band' | 'band_plus'
-type PlanId = 'free' | PaidPlanId
+import type { PaidPlanId, PlanId } from '@/lib/plans'
 
 const HOVER_DWELL_THRESHOLD_MS = 500
 
@@ -42,6 +42,17 @@ function emptySubscribe() {
   return () => {}
 }
 
+/**
+ * Card copy.
+ *
+ * The LIMIT lines are NOT written here — they are generated from
+ * `lib/plans.ts` by `planLimitLines()`, the same constant the server enforces.
+ * That is deliberate: this modal previously listed limits by hand and they had
+ * drifted from what the app actually did (a "3 bands as a member" line for a
+ * cap that does not exist, and two different band counts for the same plan).
+ * Marketing copy — the blurb, the colours, the feature bullets — stays local,
+ * because none of it is a number anyone can be held to.
+ */
 interface PlanDef {
   id: PlanId
   name: string
@@ -55,19 +66,14 @@ interface PlanDef {
   notIncluded?: string[]
 }
 
-const PLANS: PlanDef[] = [
+const PLAN_CARDS: PlanDef[] = [
   {
     id: 'free',
-    name: 'Free',
-    price: '$0',
+    name: PLAN_TABLE.free.name,
+    price: PLAN_TABLE.free.price,
     blurb: null,
     color: 'var(--wave-mint)',
-    limits: [
-      '1 band',
-      'Up to 3 members per band',
-      '500 MB storage per band',
-      'Up to 3 active versions per project',
-    ],
+    limits: planLimitLines('free'),
     featuresLabel: 'Included:',
     features: [
       'Versioning (create versions, apply to Master)',
@@ -90,16 +96,11 @@ const PLANS: PlanDef[] = [
   },
   {
     id: 'solo',
-    name: 'Solo',
-    price: '$6',
+    name: PLAN_TABLE.solo.name,
+    price: PLAN_TABLE.solo.price,
     blurb: 'For independent musicians working alone or with one collaborator.',
     color: 'var(--wave-violet)',
-    limits: [
-      '1 band',
-      'Up to 2 members per band',
-      '10 GB storage per band',
-      'Unlimited active versions',
-    ],
+    limits: planLimitLines('solo'),
     featuresLabel: 'Everything in Free, plus:',
     features: [
       'A/B Compare',
@@ -110,36 +111,24 @@ const PLANS: PlanDef[] = [
   },
   {
     id: 'band',
-    name: 'Band',
-    price: '$9',
+    name: PLAN_TABLE.band.name,
+    price: PLAN_TABLE.band.price,
     blurb: 'For small bands actively working together.',
     color: 'var(--lime)',
     featured: true,
-    limits: [
-      '1 owned band',
-      'Up to 3 bands as a member',
-      'Unlimited members per band',
-      '10 GB storage per band',
-      'Unlimited active versions',
-    ],
+    limits: planLimitLines('band'),
     featuresLabel: 'Everything in Solo, plus:',
-    features: ['Unlimited band members'],
+    features: ['Unlimited band members', 'Up to 3 owned bands'],
   },
   {
     id: 'band_plus',
-    name: 'Band+',
-    price: '$15',
+    name: PLAN_TABLE.band_plus.name,
+    price: PLAN_TABLE.band_plus.price,
     blurb: 'For active bands running multiple projects or several bands.',
     color: 'var(--wave-amber)',
-    limits: [
-      '5 owned bands',
-      '5 bands as a member',
-      'Unlimited members per band',
-      '50 GB storage per band',
-      'Unlimited active versions',
-    ],
+    limits: planLimitLines('band_plus'),
     featuresLabel: 'Everything in Band, plus:',
-    features: ['50 GB storage per band'],
+    features: ['50 GB storage per band', 'Up to 5 owned bands'],
   },
 ]
 
@@ -159,6 +148,9 @@ export function PlansModal({
   onClose: () => void
 }) {
   const { user } = useAuth()
+  // The card marked "Current plan" comes from the resolved entitlements, not
+  // from a hardcoded 'free' — a paying user must not be told they are on free.
+  const currentPlan = usePlan().plan
   const [confirmedPlan, setConfirmedPlan] = useState<PaidPlanId | null>(null)
 
   const openTimeRef = useRef(0)
@@ -357,7 +349,7 @@ export function PlansModal({
             {/* ── Cards ───────────────────────────────────────────────────── */}
             <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
               <div className="grid auto-rows-auto gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2 xl:grid-cols-4">
-                {PLANS.map(p => (
+                {PLAN_CARDS.map(p => (
                   <div
                     key={p.id}
                     onPointerEnter={e => handleCardPointerEnter(p.id, e)}
@@ -477,7 +469,7 @@ export function PlansModal({
 
                     {/* Row 5 — CTA, pinned to the shared bottom row */}
                     <div className="flex items-end px-6 pb-6 pt-4">
-                      {p.id === 'free' ? (
+                      {p.id === currentPlan ? (
                         <div className="font-mono-tb flex w-full select-none items-center justify-center border border-dashed border-border px-4 py-3 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
                           Current plan
                         </div>

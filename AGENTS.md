@@ -31,9 +31,15 @@ per-comment cherry-picking. Terminology is a display-layer mapping of git
 concepts: branch→version, main→Master, merge→apply, conflict→overlapping
 changes. **The DB keeps git terms** (`versions.type = 'main'`).
 
-There is currently **no billing** (a measurement-only test paywall exists,
-see §4) and **no native mobile app** — no Capacitor/Android code exists in
-this repo; mobile is the responsive web experience.
+There is currently **no billing** — no Stripe, no checkout, no webhooks — but
+there IS a full **subscription plan and entitlement system** (§4): plans,
+limits, addons, upgrades, downgrades, grace periods and frozen bands are all
+implemented and enforced server-side. Plan assignment happens through a
+dev-only switcher until Stripe arrives, at which point Stripe will do exactly
+one thing: set `profiles.plan` and insert `plan_addons` rows.
+
+There is **no native mobile app** — no Capacitor/Android code exists in this
+repo; mobile is the responsive web experience.
 
 ## 2. Tech stack
 
@@ -92,6 +98,8 @@ components/                 Reusable UI (flat) + subfolders:
   merge/                    Apply/cherry-pick UI (CherryPickDiff, targets)
   onboarding/               Welcome modals + ProjectTour + tour step defs
   paywall/                  PaywallLock, PlansModal
+  plan/                     PlanUsage, DevPlanSwitcher, PlanConflictResolver,
+                            GraceBanner, FrozenBandBanner
   push/                     Push permission UI + provider
   landing/, seo/, tools/, feedback/, analytics/, auth/
 contexts/                   AuthContext, PaletteContext, PaywallContext
@@ -117,8 +125,17 @@ lib/                        Shared logic (flat). Highlights:
   midi.ts, midiRender.ts, midiSoundfont.ts     MIDI engine
   serverEssentia.ts, serverChordDetection.ts, chordDetection.ts, chords.ts
   activity.ts               logActivity (band activity feed)
-  bandLimit.ts              per-user owned-band cap (server); bandLimitClient.ts (UI copy)
-  bandStorage.ts            1 GB per-band storage quota
+  plans.ts                  ★ THE plan table — limits, features, prices. Isomorphic.
+  entitlements.ts           getEffectiveEntitlements / getBandEntitlements, plan state
+  planConflicts.ts          checkPlanConflicts (upgrade + downgrade + state)
+  planChange.ts             changePlan (upgrade blocks, downgrade + grace)
+  bandFreeze.ts             lazy freeze/unfreeze + the frozen-band write block
+  freezeOrder.ts            pure keep/freeze split (shared preview + enforcement)
+  planGuards.ts             server-side assertCanAddMember / storage / versions / feature
+  planCopy.ts               all limit wording (isomorphic); apiErrorMessage
+  planAnalytics.ts          plan_changed, limit_reached, band_frozen, … (client)
+  bandLimit.ts              owned-band creation path (server); bandLimitClient.ts (UI copy)
+  bandStorage.ts            per-band storage accounting (ceiling comes from the plan)
   googleSheets.ts, push/, rate-limit.ts, seo.ts, site-url.ts
 public/
   sw.js                     Push service worker
@@ -259,19 +276,25 @@ notification to the owner. Legacy token invite links (`band_invites` table,
 `lib/activity.ts` `logActivity()` → `band_activity`, read via
 `/api/bands/[id]/activity`.
 
-**Band ownership limit.** A user may own at most `profiles.band_limit` bands
-(default 3; users who already owned more at migration time carry a higher
-personal limit — **never replace the column read with a literal 3**). Only
-bands the user *owns* count; `band_members.role = 'owner'` is the definition of
-ownership, so bands they joined are free. `lib/bandLimit.ts` is the single
-server-side implementation: `createBandForUser()` (limit check + both inserts,
-atomic) and `getBandLimitStatus()`. **Both band-creation paths go through it** —
-`POST /api/bands` and `POST /api/projects` when no `band_id` is supplied (that
-one spins up an implicit band). Refusal is `403 { error: 'band_limit_reached',
-limit, current }`. Defence in depth is in the DB: `create_band_with_owner()`
-(atomic RPC) and the `trg_enforce_band_owner_limit` BEFORE INSERT/UPDATE trigger
-**on `band_members`** — ownership is a membership row, not a column on `bands`,
-so that is the only table where the constraint can fire at the right moment.
+**Band ownership limit.** A user may own at most their *effective* owned-bands
+limit, resolved by `getEffectiveEntitlements()` from their plan + `extra_band`
+addons, **unless `profiles.band_limit` is non-null, in which case that value
+replaces the whole computation** (see Subscription plans below). Only bands the
+user *owns* count; `band_members.role = 'owner'` is the definition of
+ownership, so bands they joined are free and unlimited. `lib/bandLimit.ts` is
+the single server-side implementation: `createBandForUser()` (limit check +
+both inserts, atomic) and `getBandLimitStatus()`. **Both band-creation paths go
+through it** — `POST /api/bands` and `POST /api/projects` when no `band_id` is
+supplied (that one spins up an implicit band). Refusal is
+`403 { error: 'limit_reached', limit_type: 'bands', limit, current }` (the
+client parser also still accepts the legacy `band_limit_reached` shape).
+Defence in depth is in the DB: `create_band_with_owner()` (atomic RPC) and the
+`trg_enforce_band_owner_limit` BEFORE INSERT/UPDATE trigger **on
+`band_members`** — ownership is a membership row, not a column on `bands`, so
+that is the only table where the constraint can fire at the right moment. Both
+now compute the limit via `effective_band_limit()` (plan base + addons, or the
+override) and both take `SELECT … FOR UPDATE` on the profiles row, which is
+what makes two simultaneous creates at limit − 1 produce exactly one band.
 Both raise SQLSTATE `BL001` / message `band_limit_reached`, which the route
 translates instead of leaking a 500. The UI reads `bandLimit` from
 `/api/dashboard` (dashboard) or `GET /api/me/band-limit` (onboarding) and locks
@@ -543,26 +566,108 @@ Google Sheet (`lib/googleSheets.ts`; columns Timestamp|Email|Type|Message|
 Page URL; tab from `GOOGLE_SHEETS_TAB`, default `Sheet1`). Sheet failure
 never fails the request.
 
-### Paywall test mode (measurement only, LOCAL DEV ONLY)
-`contexts/PaywallContext.tsx` — a per-user localStorage toggle
-(`sd-paywall-test:{userId}`, surfaced in Preferences → Testing). **Purely
-presentational; nothing is gated server-side.**
+### Subscription plans & entitlements
 
-**`PAYWALL_TEST_MODE_AVAILABLE` (`process.env.NODE_ENV === 'development'`)
-gates both the toggle UI and `enabled` itself**, so the paywall cannot appear
-on any deployed build — preview deploys included, since `next build` always
-sets NODE_ENV=production. Gating the value and not just the switch is
-deliberate: hiding only the switch would strand users who had the flag ON
-behind locks they could no longer remove. The localStorage key is left in
-place, so running `next dev` restores the previous setting. Gated features:
-`chord_detect`, `cherry_pick`, `track_edit`, `ab_compare`
-(`components/paywall/PaywallLock.tsx`, `PlansModal.tsx`). "Subscribe" posts
-`POST /api/paywall/intent` → upserts `subscription_intents`
-(plan `solo|band|band_plus`, unique per user+plan, email resolved
-server-side). Not an entitlement table. NOTE: plan band-limits shown in the
-plans UI have known inconsistencies to resolve before real billing — and they
-are a **separate mechanism** from the beta-wide `profiles.band_limit` cap
-described under Bands. No plan logic reads or writes `band_limit` today.
+**No Stripe, no checkout, no webhooks, no invoices, no proration.** What
+exists is the entitlement engine Stripe will one day drive. When it arrives it
+will do exactly one thing: set `profiles.plan` and insert `plan_addons` rows.
+Nothing in this system may read a Stripe id, a subscription status or a price
+— design to that seam.
+
+**`lib/plans.ts` is THE source of truth** for every limit, feature and price.
+Four plans (`free` | `solo` | `band` | `band_plus`). **Never write a plan
+number anywhere else** — a literal `3` or `500` in a route handler is a bug,
+and with no test suite it is a silent one. `null` means unlimited (not
+`Infinity`, so the wire format and the in-memory format are identical); use
+`withinLimit()` / `remaining()` / `addToLimit()` rather than comparing by
+hand. Gated features: `ab_compare`, `track_edit`, `chord_detect`,
+`cherry_pick` — locked on free, included on every paid plan.
+
+**Two rules that are easy to violate by accident:**
+- **Owned bands only.** There is NO limit on how many bands a user may be a
+  MEMBER of, on any plan, free included. Nothing counts non-owner
+  memberships and nothing should. (The plans modal used to advertise a "3
+  bands as a member" cap that never existed; the limit lines are now
+  generated from `lib/plans.ts` so that cannot recur.)
+- **Storage is strictly per band, never pooled.** A Band+ owner with five
+  bands has 50 GB in *each*. There is no account-wide storage total anywhere
+  in this codebase; do not add one.
+
+**Resolution — `lib/entitlements.ts`.** `getEffectiveEntitlements(userId)` is
+the only place limits are computed; everything else calls it (or the
+band-scoped `getBandEntitlements(bandId)`). Order: plan base → `plan_addons`
+(`extra_band` +N account-wide; `extra_storage` +10 GB × N on one band;
+`extra_member` +N on one band) → `profiles.band_limit`, which when non-null
+**REPLACES** the computed owned-bands limit outright (it is an override, not
+an addition — see §5 and §7). **Band capabilities always come from the band
+OWNER's plan**; members inherit them, and a member's own plan governs only
+bands they own. Ownership is `band_members.role = 'owner'` everywhere.
+
+**Plan state is derived, never stored.** `active` / `grace` / `enforced`,
+computed on read from `profiles.plan`, `grace_until` and the actual data.
+**There is no cron job.** A band nobody opens does not get frozen in the
+background — it freezes the moment someone touches it, the same lazy pattern
+the preview-mix cache uses. `ensureBandFreezeState()` runs from the auth
+guards (writes) and from `GET /api/bands/[id]` (opening a band).
+
+**Enforcement is server-side, everywhere** (`lib/planGuards.ts`). Band
+creation (`lib/bandLimit.ts`), adding a member (join-request approval),
+uploads (`storageRefusal()` on every presign/process/upload/resource path),
+version creation, and the gated-feature endpoints (`POST /api/tracks/[id]/edit`
+→ `track_edit`; `POST /api/projects/[id]/merge` → `cherry_pick`, but only when
+selective fields are present — applying a whole version stays free). Every
+refusal is `403 { error: 'limit_reached', limit_type, limit, current, message }`
+so the UI can name the ceiling instead of showing a generic error.
+⚠ **In-app chord detection runs entirely in a browser worker
+(`public/workers/chordsWorker.js`) and has no server endpoint**, so
+`chord_detect` is gated in the UI only; the public `/tools/chord-detector`
+route is deliberately ungated (no login, marketing funnel, rate-limited).
+
+**Frozen bands** (`lib/bandFreeze.ts`) are READ-ONLY; **nothing is ever
+deleted**. Viewing, playback, downloads and chat history keep working. Writes
+are blocked in `requireBandMember` **by HTTP method**, so every existing
+mutation route and every future one is covered without remembering — pass
+`{ readOnlyRequest: true }` for the handful of POSTs that are actually reads
+(merge preview, preview-mix recompute). Band-level routes call
+`frozenBandRefusal(bandId)` explicitly. **Deleting a band is deliberately NOT
+blocked** — it is how an over-limit user gets back under their limit.
+Unfreezing is immediate and automatic.
+
+**Upgrade vs downgrade are asymmetric on purpose.** Upgrades are BLOCKED until
+conflicts are resolved (only `too_many_members` blocks — everything else only
+rises); the resolution screen removes members inline and says plainly that
+their content stays. Downgrades are IMMEDIATE and unobstructed: features lock
+at once, uploads and new versions pause where over limit, and `grace_until` =
+now + 14 days if any structural conflict exists. **Members are NEVER removed
+automatically — not on downgrade, not after grace, not ever.** Being over the
+member limit blocks ADDING, nothing else.
+
+**Dev switcher** — Preferences → Development. Selecting a plan posts to
+`POST /api/me/plan`, the real flow. `/api/dev/plan` adds only what has no user
+equivalent yet (force grace expiry, grant/revoke addons, set the `band_limit`
+override). The component, `/api/dev/plan` **and `POST /api/me/plan`** all gate
+on the single constant `DEV_PLAN_TOOLS_AVAILABLE` (`lib/devPlanTools.ts`,
+`NODE_ENV === 'development'`); the routes 404 elsewhere rather than 403 so their
+existence is not advertised.
+
+⚠ **`POST /api/me/plan` must never be reachable in a deployed build.** With no
+billing there is no legitimate self-serve plan assignment, so an open POST here
+is a one-request grant of `band_plus` to anybody with a session — the entire
+entitlement system defeated. When Stripe arrives, the dev gate is replaced by
+webhook signature verification, **not removed**: the plan value must never
+originate from a browser. `GET /api/me/plan` is read-only and stays open.
+
+Routes: `GET|POST /api/me/plan`, `GET /api/me/plan/conflicts?target=`,
+`POST /api/me/plan/keep-bands`, `GET|POST /api/dev/plan`.
+"Subscribe" still posts `POST /api/paywall/intent` → upserts
+`subscription_intents` (demand measurement, unrelated to entitlements).
+
+The old measurement-only paywall — a `sd-paywall-test:{userId}` localStorage
+toggle in `contexts/PaywallContext.tsx` that gated nothing — **is gone**.
+`usePaywallGate(feature)` survives with the same signature; `locked` now comes
+from the resolved plan. It resolves against the *user's* plan (all the client
+knows), which can under-promise inside someone else's paid band and never
+over-promises; pass `bandFeatures` where the band is known.
 
 ### Landing page & installed-PWA detection
 `app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The hero
@@ -619,7 +724,10 @@ name competitors in any sonicdesk metadata or content.**
 `push_subscriptions`, `project_checklist_items`, `feedback`) predate it and
 have no CREATE files here. Columns below are inferred from actual queries.
 
-- **bands** — id, name, invite_code (unique, nullable), created_at.
+- **bands** — id, name, invite_code (unique, nullable), created_at,
+  **frozen_at** (timestamptz, null = not frozen) and **frozen_reason**
+  (`'plan_downgrade'`). A frozen band is read-only; nothing is ever deleted.
+  Set and cleared lazily by `lib/bandFreeze.ts`, never by a background job.
 - **band_members** — band_id, user_id, role (`owner`/member), role_label,
   role_color. RLS referenced by most other policies. **This table is where
   ownership lives**, so the band-limit trigger
@@ -628,9 +736,16 @@ have no CREATE files here. Columns below are inferred from actual queries.
 - **band_join_requests** — status `pending|approved|rejected`, resolved_by;
   unique pending per (band,user). RLS.
 - **profiles** — id (= auth.users.id), username (unique), display_name,
-  avatar_color, **band_limit** (integer not null default 3 — the user's
-  personal owned-band cap; grandfathered users hold a higher value, so always
-  read the column), **onboarding jsonb** (tour flags, e.g.
+  avatar_color, **plan** (text, `free|solo|band|band_plus`, default `free`),
+  **band_limit** (integer, **NULLABLE — this is now a MANUAL OVERRIDE, not
+  "the limit"**: non-null replaces the plan's owned-bands allowance entirely,
+  addons included; null means "use the plan". Grandfathered beta accounts and
+  B2B only. **Never read it directly — go through
+  `getEffectiveEntitlements()`**), **grace_until** (timestamptz, null = no
+  grace period; account state is DERIVED from this and the data, never
+  stored), **grace_keep_band_ids** (uuid[], the user's choice of which bands
+  survive when grace ends; stale entries are tolerated and trimmed on use),
+  **onboarding jsonb** (tour flags, e.g.
   `project_tour_completed`), **acquisition_source** (text, null = direct) and
   **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
   account creation only, see Campaign attribution in §4. RLS (public read,
@@ -670,9 +785,20 @@ have no CREATE files here. Columns below are inferred from actual queries.
 - **band_activity** — band_id, user_id, action (enum in `lib/activity.ts`),
   subject, detail, project_id. RLS.
 - **push_subscriptions** — user_id, endpoint, p256dh, auth.
+- **plan_addons** — user_id, band_id (nullable), addon_type
+  (`extra_band|extra_storage|extra_member`), quantity, created_at. A CHECK
+  enforces the scope: `extra_band` must have a NULL band_id (it is
+  account-wide), the other two must name a band (storage and members are
+  per-band and are never pooled). RLS: owner can SELECT; **writes are
+  service-role only** — a client that could insert here could grant itself
+  capacity. Stripe will insert these rows later.
+- **plan_limits** — plan, bands_owned. ⚠ **A MIRROR of `lib/plans.ts`**,
+  read only by the DB trigger so it can enforce the owned-bands limit without
+  a round trip. The application never reads it. **Change both together** — a
+  drift here does not break the app, it silently makes the DB backstop wrong.
 - **subscription_intents** — user_id, plan `solo|band|band_plus`, email;
   unique (user_id, plan). RLS with **no client policies** — service-role
-  writes only. Not an entitlement table.
+  writes only. Not an entitlement table (demand measurement only).
 - **feedback** — inserted under the user's JWT (RLS applies).
 
 ## 6. External services & environment variables
@@ -770,13 +896,81 @@ and preview traffic out of the counter.
   set or update them (see §4). The trusted input is the `sd-campaign` cookie
   set by `middleware.ts`, resolved through the registry server-side — never
   store a client-supplied source without bounding it.
-- **The band limit is per-user, never a constant.** Read
-  `profiles.band_limit`; a hardcoded 3 silently demotes grandfathered users.
-  Any new code path that inserts into `bands` (or writes an owner row into
-  `band_members`) must go through `createBandForUser()` in `lib/bandLimit.ts`.
-  The beta-wide cap is **not** the subscription plan system — reconcile the two
-  deliberately when plans ship; `band_limit` is where a plan would write its
-  allowance.
+- **RLS is row-level, not column-level.** `profiles` carries a self-update
+  policy (`using (auth.uid() = id)`), so the browser can write that table
+  directly — `PreferencesModal` does, for `username`. A policy chooses *rows*;
+  only a GRANT chooses *columns*. Every entitlement column therefore lives
+  behind a column grant, applied by
+  `supabase/migrations/20260806_lock_entitlement_columns.sql`: `authenticated`
+  may update `username`, `display_name`, `avatar_color`, `onboarding` and
+  nothing else. **Adding a user-editable column to `profiles` means adding it to
+  that grant; adding any other column means leaving it out.** Never add a
+  privileged field to a table a client can update without checking the grant.
+  **No client component writes `profiles` any more** — `PreferencesModal`'s
+  rename goes through `PATCH /api/profile/username` like onboarding does.
+  `AuthContext` still SELECTs it, which is unaffected. Keep it that way: a
+  server route with a field allowlist is the only shape of profile write.
+- **`file_size_bytes` is enforcement state, not metadata.**
+  `getBandStorageUsed()` sums it, so a client-writable byte count is a storage
+  ceiling that can be pushed to infinity with one negative number. It is written
+  only by the paths that produced the bytes (`tracks/process`, `tracks/upload`,
+  `tracks/edit`, `resources/process`), always from the buffer they just hashed —
+  never from a request body, not even as a fallback. It is deliberately absent
+  from the `PATCH /api/tracks/[id]` field allowlist.
+- **A declared size is not a size.** Presign routes take the client's
+  `fileSize` for an early 413/quota refusal, but the authoritative number is
+  read from the stored object after upload. Checking a quota against a declared
+  size and then recording that declared size lets a 500 MB file count as 1 byte.
+- **Never return a database error to the client.** `serverErrorResponse()`
+  (`lib/apiErrors.ts`) logs the real error under a `[scope]` prefix and returns
+  a written sentence. Postgres `message`/`details`/`hint` name tables, columns
+  and constraints, and the band-limit routines attach `DETAIL: limit=<n>
+  current=<n>` — handing a caller the shape of the rule refusing them.
+  `String(err)` from an ffmpeg/R2 path leaks filesystem paths and bucket keys.
+  ⚠ **Structured refusals are not errors** — `{ error: 'limit_reached', … }` and
+  `{ error: 'band_frozen', … }` come from `limitRefusalResponse()` and must
+  never go through this helper; `lib/planCopy.ts` parses them by shape.
+- **Object keys are derived, never accepted.** `storage_path` from a request
+  body is a write primitive over the whole R2 bucket — band membership
+  authorises the request, not the key. `PUT /api/tracks/[id]/midi-upload`
+  computes the key from the track's project plus a hash of the received bytes
+  and returns it; `PATCH /api/tracks/[id]` validates `storage_path` and
+  `file_hash` with `isValidProjectObjectKey()` / `isValidFileHash()`
+  (`lib/r2.ts`) against the canonical `projects/{thisProject}/{sha256}` shape.
+- **Routes that authenticate by hand do not get the frozen-band block.** It
+  lives in `requireBandMember` and keys off the HTTP method. Any route that
+  checks `band_members` itself must call `frozenBandRefusal()` /
+  `isBandFrozenForWrite()` explicitly — the resources routes and the
+  member-role route did not, and were writable in a frozen band.
+- **Never hardcode a plan limit.** `lib/plans.ts` is the only place a limit,
+  feature or price is written. Every check reads it through
+  `getEffectiveEntitlements()` / `getBandEntitlements()`. The one deliberate
+  duplicate is the `plan_limits` table (§5), which exists solely for the DB
+  trigger — change both together.
+- **`profiles.band_limit` is an OVERRIDE, not the limit.** It used to be
+  `not null default 3` and *was* the cap; it is now nullable, and non-null
+  means "ignore the plan for this account". Reading it directly is a bug in
+  both directions: it ignores the plan for normal users, and a hardcoded 3
+  demotes grandfathered ones. Any new code path that inserts into `bands` (or
+  writes an owner row into `band_members`) must go through
+  `createBandForUser()` in `lib/bandLimit.ts`.
+- **Membership is never capped.** Joining someone else's band is unlimited on
+  every plan, free included. Do not add a `bandsJoined` limit, and do not
+  count non-owner memberships in any entitlement code.
+- **Storage is per band and is never pooled.** Do not sum a user's bands, do
+  not add an account-wide storage total, and do not let an `extra_storage`
+  addon apply account-wide (the DB CHECK rejects it).
+- **Members are never removed automatically.** Not on downgrade, not when
+  grace expires, not ever. Over-limit blocks ADDING and nothing else.
+- **A frozen band must not be writable by any path.** The block lives in
+  `requireBandMember` and keys off the HTTP method, so new mutation routes are
+  covered automatically — but a route that authenticates some other way must
+  call `frozenBandRefusal()` / `assertBandWritable()` itself. If you add a
+  POST that is actually a read, pass `{ readOnlyRequest: true }` rather than
+  removing the guard. Band DELETE stays allowed on purpose.
+- **Plan state is derived and evaluated lazily.** No cron job, no `state`
+  column. If you need "is this frozen / in grace", call the resolver; do not
+  cache the answer across requests.
 - **Never name competitors** in any metadata, landing copy, or content
   (legal requirement; /vs pages were removed for this reason).
 - **No test suite exists** — verify with `npm run build` and `npm run lint`.
@@ -800,9 +994,13 @@ and preview traffic out of the counter.
    features do.
 4. **Analytics:** add snake_case `trackEvent('thing_happened', {...})`
    calls at user-intent points, consistent with the existing taxonomy.
-5. **Paywall (if gated):** add the feature key to `PaywallFeature` in
-   `contexts/PaywallContext.tsx` and wrap the entry point with
-   `PaywallLock`; remember it's presentation-only.
+5. **Gated by plan?** Add the key to `GatedFeature` in `lib/plans.ts` (and to
+   the plans that include it), wrap the entry point with `usePaywallGate` +
+   `PaywallLockWrap`, **and gate the server endpoint** with
+   `assertBandFeature(bandId, feature)`. The UI lock is presentation; the
+   server check is the gate. If the feature has a new limit, add it to
+   `lib/plans.ts`, resolve it in `lib/entitlements.ts`, enforce it in
+   `lib/planGuards.ts`, and word it in `lib/planCopy.ts` — never inline.
 6. **ffmpeg?** Add the route to `ffmpegRoutes` in `next.config.ts`.
 7. **Docs:** update this file (see the rule at the top), then verify with
    `npm run build`.

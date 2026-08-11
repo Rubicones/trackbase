@@ -1,4 +1,21 @@
 import { supabase } from '@/lib/supabase'
+import { ensureBandFreezeState } from '@/lib/bandFreeze'
+
+/**
+ * Band-level write guard.
+ *
+ * Project-scoped routes get the frozen-band block for free from
+ * `requireBandMember` (it keys off the HTTP method). Band-level routes —
+ * chat, members, join requests, invite codes, renaming the band — go through
+ * `assertBandMember` / `assertBandOwner` instead, which have no request to
+ * inspect, so they must call this explicitly before mutating.
+ *
+ * Returns true when the band is frozen, i.e. "refuse this write".
+ */
+export async function isBandFrozenForWrite(bandId: string): Promise<boolean> {
+  const state = await ensureBandFreezeState(bandId)
+  return state.frozen
+}
 
 export async function getBandMembership(bandId: string, userId: string) {
   const { data } = await supabase

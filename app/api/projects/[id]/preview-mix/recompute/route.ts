@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireBandMember } from '@/lib/supabase/server'
 import { recomputePreviewMix } from '@/lib/previewMix'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // Give ffmpeg enough time to download tracks, mix, and upload the result.
 // Vercel Fluid compute / Pro plans support up to 800s; 300s is a safe cap for
@@ -30,7 +31,7 @@ export async function POST(
 ) {
   const { id: projectId } = await params
 
-  const access = await requireBandMember(req, projectId)
+  const access = await requireBandMember(req, projectId, { readOnlyRequest: true })
   if ('error' in access) {
     return NextResponse.json({ error: access.error }, { status: access.status })
   }
@@ -39,10 +40,6 @@ export async function POST(
     await recomputePreviewMix(projectId)
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error('[preview-mix/recompute] failed:', err)
-    return NextResponse.json(
-      { error: 'Recompute failed', detail: String(err) },
-      { status: 500 }
-    )
+    return serverErrorResponse('preview-mix/recompute', err, 'Could not rebuild the preview mix')
   }
 }

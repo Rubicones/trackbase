@@ -9,6 +9,7 @@ import { formatActivityLine } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
+import { GraceBanner } from '@/components/plan/GraceBanner'
 import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
@@ -792,6 +793,12 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
+
+      {/* Grace / enforced banner. Persistent, non-alarming, and self-hiding
+          while the account is active — see components/plan/GraceBanner.tsx. */}
+      <div className="mx-auto max-w-7xl px-6 w-full">
+        <GraceBanner />
+      </div>
 
       {/* Band grid */}
       <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">

@@ -21,6 +21,7 @@ import {
   refreshAccessToken,
 } from '@/lib/auth/session'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
+import { BAND_FROZEN_STATUS, ensureBandFreezeState } from '@/lib/bandFreeze'
 
 export type { VerifiedUser as JwtPayload }
 
@@ -128,13 +129,45 @@ export interface MembershipResult {
 }
 
 /**
+ * Options for the membership guards.
+ *
+ * `readOnlyRequest` opts a POST out of the frozen-band write block. A handful
+ * of endpoints in this codebase use POST for a read — a merge *preview*, a
+ * preview-mix recompute — because they need a body or because they write only
+ * a derived cache. Those must keep working inside a frozen band: a frozen band
+ * is read-only, not offline, and playback depends on them.
+ */
+export interface BandAccessOptions {
+  readOnlyRequest?: boolean
+}
+
+/** Methods that mutate. Everything else is a read and is always permitted. */
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function isWriteRequest(req: NextRequest, options?: BandAccessOptions): boolean {
+  if (options?.readOnlyRequest) return false
+  return WRITE_METHODS.has(req.method.toUpperCase())
+}
+
+/**
  * Verify that the requesting user is an active member of the band that owns
  * the given project.  Returns the userId, project row, and membership role on
  * success, or an error descriptor that the route should forward as a response.
+ *
+ * **This is also where a frozen band's writes are refused.** Enforcement is
+ * keyed off the HTTP method rather than a per-route flag, so every existing
+ * mutation endpoint — and every one added later — is covered without having to
+ * remember. Reads are untouched: viewing, playback and downloads keep working
+ * in a frozen band, which is the whole design.
+ *
+ * The freeze state is *evaluated* here, not merely read, so a band whose grace
+ * period expired while nobody was looking is frozen the moment it is written
+ * to. That evaluation runs on writes only; reads pay nothing for it.
  */
 export async function requireBandMember(
   req: NextRequest,
   projectId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult | { error: string; status: number }> {
   const userId = await getRequestUserId(req)
   if (!userId) return { error: 'Unauthorized', status: 401 }
@@ -154,6 +187,11 @@ export async function requireBandMember(
     .maybeSingle()
   if (!membership) return { error: 'Not found', status: 404 }
 
+  if (isWriteRequest(req, options)) {
+    const freeze = await ensureBandFreezeState(project.band_id)
+    if (freeze.frozen) return { error: 'band_frozen', status: BAND_FROZEN_STATUS }
+  }
+
   return { userId, project, role: membership.role }
 }
 
@@ -161,6 +199,7 @@ export async function requireBandMember(
 export async function requireBandMemberForTrack(
   req: NextRequest,
   trackId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { track: { id: string; version_id: string } } | { error: string; status: number }> {
   const { data: track } = await supabase
     .from('tracks')
@@ -176,7 +215,7 @@ export async function requireBandMemberForTrack(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, track }
 }
@@ -185,6 +224,7 @@ export async function requireBandMemberForTrack(
 export async function requireBandMemberForVersion(
   req: NextRequest,
   versionId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { version: { id: string; project_id: string } } | { error: string; status: number }> {
   const { data: version } = await supabase
     .from('versions')
@@ -193,7 +233,7 @@ export async function requireBandMemberForVersion(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, version }
 }
@@ -202,6 +242,7 @@ export async function requireBandMemberForVersion(
 export async function requireBandMemberForSection(
   req: NextRequest,
   sectionId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { section: { id: string; version_id: string } } | { error: string; status: number }> {
   const { data: section } = await supabase
     .from('sections')
@@ -210,7 +251,7 @@ export async function requireBandMemberForSection(
     .single()
   if (!section) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, section.project_id)
+  const access = await requireBandMember(req, section.project_id, options)
   if ('error' in access) return access
   return { ...access, section }
 }
@@ -219,6 +260,7 @@ export async function requireBandMemberForSection(
 export async function requireBandMemberForComment(
   req: NextRequest,
   commentId: string,
+  options?: BandAccessOptions,
 ): Promise<
   MembershipResult & { comment: { id: string; created_by: string } } | { error: string; status: number }
 > {
@@ -236,7 +278,7 @@ export async function requireBandMemberForComment(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, comment }
 }
@@ -245,6 +287,7 @@ export async function requireBandMemberForComment(
 export async function requireBandMemberForReply(
   req: NextRequest,
   replyId: string,
+  options?: BandAccessOptions,
 ): Promise<
   MembershipResult & { reply: { id: string; created_by: string; comment_id: string } } | { error: string; status: number }
 > {
@@ -255,7 +298,7 @@ export async function requireBandMemberForReply(
     .single()
   if (!reply) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMemberForComment(req, reply.comment_id)
+  const access = await requireBandMemberForComment(req, reply.comment_id, options)
   if ('error' in access) return access
   return { ...access, reply }
 }

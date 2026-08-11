@@ -957,35 +957,39 @@ export default function PianoRollEditor({
       // 1. Serialize to MIDI
       const midiBuffer = serializeMidi(midiData)
 
-      // 2. Hash
+      // 2. Hash — for the filename only; the server recomputes it from the
+      //    bytes it receives and that value is the one that counts.
       const hash = await sha256Hex(midiBuffer)
-      const storagePath = `projects/${projectId}/${hash}.mid`
 
-      // 3. Upload raw .mid to R2 via API
+      // 3. Upload raw .mid to R2 via API.
+      //    The storage key is NOT sent: the route derives it from the track's
+      //    project and a hash of the uploaded bytes, and returns what it wrote.
+      //    (It used to accept a client-supplied `storage_path`, which was a
+      //    write primitive over the whole bucket.)
       const blob = new Blob([midiBuffer], { type: 'audio/midi' })
       const fd = new FormData()
       fd.append('file', blob, `${hash}.mid`)
-      fd.append('storage_path', storagePath)
 
       const uploadRes = await fetch(`/api/tracks/${track.id}/midi-upload`, {
         method: 'PUT',
         body: fd,
       })
       if (!uploadRes.ok) throw new Error('MIDI upload failed')
+      const { storage_path: storagePath, file_hash: storedHash } = await uploadRes.json()
 
       // 4. Update track record
       const patchRes = await fetch(`/api/tracks/${track.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          file_hash: hash,
+          file_hash: storedHash,
           storage_path: storagePath,
           midi_data: midiData,
         }),
       })
       if (!patchRes.ok) throw new Error((await patchRes.json()).error ?? 'Save failed')
 
-      await onSaved({ file_hash: hash, storage_path: storagePath, midi_data: midiData })
+      await onSaved({ file_hash: storedHash, storage_path: storagePath, midi_data: midiData })
       trackEvent('midi_saved', { note_count: notes.length })
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')

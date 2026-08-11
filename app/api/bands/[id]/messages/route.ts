@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
+import { frozenBandRefusal } from '@/lib/planGuards'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { extractMentions, type BandMessage } from '@/lib/chat'
 import { sendPushNotification } from '@/lib/push/server'
@@ -211,16 +213,13 @@ export async function GET(
 
     const { data: rows, error } = await query
     if (error) {
-      console.error('[bands/messages] list error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return serverErrorResponse('bands/messages', error, 'Could not load messages')
     }
 
     const messages = await enrichMessages((rows ?? []) as RawMessage[])
     return NextResponse.json({ messages, hasMore: (rows?.length ?? 0) === PAGE_SIZE })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[bands/messages] GET error:', err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return serverErrorResponse('bands/messages', err, 'Could not load messages')
   }
 }
 
@@ -239,6 +238,11 @@ export async function POST(
 
     const body = await req.json()
     const content = typeof body.content === 'string' ? body.content.trim() : ''
+    // Frozen bands are read-only: chat history stays readable, new messages do
+    // not. Enforced here because band-level routes do not pass through
+    // requireBandMember's method-based block.
+    const frozen = await frozenBandRefusal(bandId)
+    if (frozen) return frozen
     if (!content) return NextResponse.json({ error: 'content is required' }, { status: 400 })
 
     const channelId: string | null = body.channel_id ?? null
@@ -271,8 +275,7 @@ export async function POST(
       .single()
 
     if (error) {
-      console.error('[bands/messages] insert error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      return serverErrorResponse('bands/messages', error, 'Could not send that message')
     }
 
     const [message] = await enrichMessages([row as RawMessage])
@@ -286,9 +289,7 @@ export async function POST(
 
     return NextResponse.json({ message }, { status: 201 })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[bands/messages] POST error:', err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return serverErrorResponse('bands/messages', err, 'Could not send that message')
   }
 }
 

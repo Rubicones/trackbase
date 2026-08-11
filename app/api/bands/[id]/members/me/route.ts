@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // DELETE /api/bands/[id]/members/me — leave a band
 export async function DELETE(
@@ -43,6 +44,6 @@ export async function DELETE(
     .eq('band_id', bandId)
     .eq('user_id', userId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/members/me', error, 'Could not leave the space')
   return NextResponse.json({ ok: true })
 }

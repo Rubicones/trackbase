@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 import { logActivity } from '@/lib/activity'
 import { bandStorageLimitBytes, getBandStorageUsed } from '@/lib/bandStorage'
+import { frozenBandRefusal } from '@/lib/planGuards'
+import { ensureBandFreezeState } from '@/lib/bandFreeze'
+import { getBandEntitlements } from '@/lib/entitlements'
+import { mbToBytes } from '@/lib/plans'
 
 
 type TrackRow = TimelineTrack & {
@@ -318,6 +323,18 @@ export async function GET(
     }))
   }
 
+  // ── Plan surface ──────────────────────────────────────────────────────────
+  // Opening a band is "touching" it, so this is where the lazy freeze check
+  // runs: a band whose owner's grace period expired while nobody was looking
+  // is frozen right here, on the first read. There is no cron job.
+  //
+  // The limits returned are DISPLAY values. The client renders them; it never
+  // asserts them, and never sends them back.
+  const [freeze, entitlements] = await Promise.all([
+    ensureBandFreezeState(bandId),
+    getBandEntitlements(bandId),
+  ])
+
   return NextResponse.json({
     band: bandRes.data,
     projects: enhancedProjects,
@@ -326,7 +343,13 @@ export async function GET(
     stats: { branches, merges, comments: totalComments, storage_bytes: storageBytes, tracks: totalTracks },
     recentActivity,
     totalActivity,
-    storageLimitBytes: bandStorageLimitBytes(),
+    storageLimitBytes: mbToBytes(entitlements.storagePerBandMB) ?? bandStorageLimitBytes(),
+    memberLimit: entitlements.membersPerBand,
+    activeVersionLimit: entitlements.activeVersionsPerProject,
+    features: entitlements.features,
+    frozen: freeze.frozen,
+    frozenAt: freeze.frozenAt,
+    frozenReason: freeze.frozenReason,
     inviteCode,
     pendingJoinRequests,
   })
@@ -353,6 +376,11 @@ export async function PATCH(
   if (membership.role !== 'owner') {
     return NextResponse.json({ error: 'Only owners can rename a band' }, { status: 403 })
   }
+
+  // Frozen bands are read-only. Deleting one is still allowed (see DELETE
+  // below) — that is precisely how an over-limit user gets back under it.
+  const frozen = await frozenBandRefusal(bandId)
+  if (frozen) return frozen
 
   let body: { name?: string }
   try {
@@ -388,7 +416,7 @@ export async function PATCH(
     .select('id, name, created_at, invite_code')
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/update', error, 'Could not rename the space')
 
   void logActivity({
     bandId,
@@ -422,7 +450,7 @@ export async function DELETE(
   if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a band' }, { status: 403 })
 
   const { error } = await supabase.from('bands').delete().eq('id', bandId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/delete', error, 'Could not delete the space')
 
   return NextResponse.json({ ok: true })
 }

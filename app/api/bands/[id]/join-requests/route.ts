@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { assertBandOwner } from '@/lib/bandAccess'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 
 const adminSupabase = createClient(
@@ -31,7 +32,7 @@ export async function GET(
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/join-requests', error, 'Could not load join requests')
 
   const userIds = (requests ?? []).map(r => r.user_id)
   let profiles: Record<string, { username: string; display_name: string | null; avatar_color: string | null }> = {}

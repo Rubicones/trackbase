@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { frozenBandRefusal } from '@/lib/planGuards'
 
 async function assertMember(bandId: string, userId: string) {
   const { data } = await supabase
@@ -29,6 +31,11 @@ export async function PATCH(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
+  // Band-level route: no `requireBandMember`, so the frozen block is explicit.
+  // Editing a role label is a write like any other.
+  const frozen = await frozenBandRefusal(bandId)
+  if (frozen) return frozen
+
   const { role_label, role_color } = await req.json()
   const { error } = await supabase
     .from('band_members')
@@ -36,7 +43,7 @@ export async function PATCH(
     .eq('band_id', bandId)
     .eq('user_id', targetUserId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/members', error, 'Could not update that role')
   return NextResponse.json({ ok: true })
 }
 
@@ -62,6 +69,6 @@ export async function DELETE(
     .eq('band_id', bandId)
     .eq('user_id', targetUserId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/members', error, 'Could not remove that member')
   return NextResponse.json({ ok: true })
 }

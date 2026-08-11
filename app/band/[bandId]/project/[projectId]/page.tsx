@@ -7,7 +7,7 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project, Section } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePaywallGate } from '@/contexts/PaywallContext'
+import { usePaywallGate, useApiErrorMessage } from '@/contexts/PaywallContext'
 import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 import { trackEvent } from '@/lib/analytics'
 import {
@@ -230,8 +230,14 @@ export default function ProjectPage() {
   const [trackEditShortcutsOpen, setTrackEditShortcutsOpen] = useState(false)
   const [showMobileTour, setShowMobileTour] = useState(false)
 
+  // Structured API refusals (limit_reached / band_frozen) become real copy
+  // here rather than surfacing their machine code as a toast, and record the
+  // limit_reached event on the way through.
+  const describeApiError = useApiErrorMessage()
+
   // ── Compare mode ──────────────────────────────────────────────────────────
-  // Test-mode paywall — gates the A/B Compare entry button only
+  // Gates the A/B Compare entry button. Locking is driven by the real plan
+  // (contexts/PaywallContext.tsx); the server refuses independently.
   const { locked: abCompareLocked, onLockedClick: onAbCompareLockedClick } = usePaywallGate('ab_compare')
   const [compareActive, setCompareActive] = useState(false)
   const [compareVersionBId, setCompareVersionBId] = useState<string>('')
@@ -1152,7 +1158,7 @@ export default function ProjectPage() {
         body: JSON.stringify(editStateToPayload(session.state)),
       })
       if (!res.ok) {
-        const msg = (await res.json().catch(() => ({}))).error ?? 'Processing failed'
+        const msg = describeApiError(await res.json().catch(() => ({})), 'Processing failed')
         throw new Error(msg)
       }
       // The track row now points at the rendered file — drop every stale cache
@@ -1797,7 +1803,7 @@ export default function ProjectPage() {
         }),
       })
       if (!presignRes.ok) {
-        const msg = (await presignRes.json().catch(() => ({}))).error ?? 'Failed to prepare upload'
+        const msg = describeApiError(await presignRes.json().catch(() => ({})), 'Failed to prepare upload')
         throw new Error(msg)
       }
       const { presignedUrl, tempKey } = await presignRes.json()
@@ -1825,7 +1831,7 @@ export default function ProjectPage() {
         }),
       })
       if (!processRes.ok) {
-        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        const msg = describeApiError(await processRes.json().catch(() => ({})), 'Processing failed')
         throw new Error(msg)
       }
 
@@ -1883,7 +1889,7 @@ export default function ProjectPage() {
         }),
       })
       if (!processRes.ok) {
-        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        const msg = describeApiError(await processRes.json().catch(() => ({})), 'Processing failed')
         throw new Error(msg)
       }
       const { track: newTrack } = await processRes.json()
@@ -2044,7 +2050,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         }),
       })
       if (!presignRes.ok) {
-        const msg = (await presignRes.json().catch(() => ({}))).error ?? 'Failed to prepare upload'
+        const msg = describeApiError(await presignRes.json().catch(() => ({})), 'Failed to prepare upload')
         throw new Error(msg)
       }
       const { presignedUrl, tempKey } = await presignRes.json()
@@ -2069,13 +2075,13 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         }),
       })
       if (!processRes.ok) {
-        const msg = (await processRes.json().catch(() => ({}))).error ?? 'Processing failed'
+        const msg = describeApiError(await processRes.json().catch(() => ({})), 'Processing failed')
         throw new Error(msg)
       }
 
       const delRes = await fetch(`/api/tracks/${track.id}`, { method: 'DELETE' })
       if (!delRes.ok) {
-        throw new Error((await delRes.json().catch(() => ({}))).error ?? 'Failed to remove old track')
+        throw new Error(describeApiError(await delRes.json().catch(() => ({})), 'Failed to remove old track'))
       }
 
       waveformBarsCache.delete(track.id)
@@ -2210,7 +2216,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     try {
       const res = await fetch(`/api/versions/${id}`, { method: 'DELETE' })
       if (!res.ok) {
-        const msg = (await res.json().catch(() => ({}))).error ?? 'Failed to delete version'
+        const msg = describeApiError(await res.json().catch(() => ({})), 'Failed to delete version')
         throw new Error(msg)
       }
       cache.invalidate(id)

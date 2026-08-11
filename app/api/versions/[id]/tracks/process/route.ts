@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { unlink, readFile } from 'fs/promises'
 import { createReadStream } from 'fs'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { streamR2ObjectToFile, uploadToR2, deleteFromR2, r2Key } from '@/lib/r2'
 import { audioToFlacFromFile } from '@/lib/ffmpeg'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
@@ -13,7 +14,7 @@ import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { pickTrackIconColor } from '@/lib/trackIcon'
 import { markPreviewMixStale } from '@/lib/previewMix'
-import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { storageRefusal } from '@/lib/planGuards'
 import { isValidTempKey } from '@/lib/r2TempKey'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
@@ -73,6 +74,13 @@ export async function POST(
   let body: {
     tempKey?: string
     originalFilename?: string
+    /**
+     * Declared by the client and deliberately UNUSED. The object is already in
+     * R2 by the time this route runs, so the only number that means anything is
+     * the byte length we read back. Kept in the type as documentation of what
+     * the browser still sends — do not wire it up to `file_size_bytes` or to a
+     * quota check.
+     */
     fileSize?: number
     mimetype?: string
     midiStartBar?: number
@@ -94,7 +102,6 @@ export async function POST(
   const {
     tempKey,
     originalFilename,
-    fileSize,
     mimetype = '',
     midiStartBar = 0,
     startBar = 0,
@@ -182,10 +189,7 @@ export async function POST(
         console.log('[process] MIDI parsed:', midiData.notes.length, 'notes')
       } catch (err) {
         console.error('[process] MIDI parse failed:', err)
-        return NextResponse.json(
-          { error: 'Failed to parse MIDI file', detail: String(err) },
-          { status: 400 },
-        )
+        return serverErrorResponse('versions/tracks/process', err, 'Could not read that MIDI file', 400)
       }
 
       const durationMs = Math.round(midiDurationMs(midiData))
@@ -194,13 +198,10 @@ export async function POST(
       if (existing) {
         storagePath = existing.storage_path
       } else {
-        const quota = await checkBandStorageQuota(supabase, access.project.band_id, midiBuffer.byteLength)
-        if (!quota.ok) {
-          return NextResponse.json(
-            { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-            { status: 413 },
-          )
-        }
+        // Per-band storage ceiling, resolved from the band owner's plan plus
+        // this band's extra_storage addons. Never pooled across bands.
+        const overQuota = await storageRefusal(access.project.band_id, midiBuffer.byteLength)
+        if (overQuota) return overQuota
         storagePath = `projects/${version.project_id}/${fileHash}.mid`
         try {
           await uploadToR2(storagePath, midiBuffer, 'audio/midi')
@@ -224,7 +225,11 @@ export async function POST(
           original_filename: filename,
           file_hash: fileHash,
           storage_path: storagePath,
-          file_size_bytes: fileSize ?? midiBuffer.byteLength,
+          // Always the real byte count of the object we stored, never the
+          // client's `fileSize`. The quota check above uses the same number, so
+          // a declared size could otherwise be checked against one value and
+          // recorded as another — understating the band's usage permanently.
+          file_size_bytes: midiBuffer.byteLength,
           duration_ms: durationMs,
           position,
           file_type: 'midi',
@@ -237,7 +242,7 @@ export async function POST(
         .single()
       if (trkErr) {
         console.error('[process] MIDI track insert failed:', trkErr)
-        return NextResponse.json({ error: 'DB insert failed', detail: trkErr.message }, { status: 500 })
+        return serverErrorResponse('versions/tracks/process', trkErr, 'Could not save the track')
       }
 
       supabase
@@ -263,7 +268,10 @@ export async function POST(
 
       if (existing) {
         storagePath = existing.storage_path
-        fileSizeBytes = existing.file_size_bytes ?? fileSize ?? 0
+        // Dedup hit: inherit the stored count. Falling back to the client's
+        // `fileSize` here would let a caller claim an arbitrary size for a row
+        // that shares an existing hash, so an unknown size counts as 0 instead.
+        fileSizeBytes = existing.file_size_bytes ?? 0
         // Fill in duration from client if the stored value is missing
         if (!audioDurationMs && clientDurationMs) audioDurationMs = clientDurationMs
         console.log('[process] dedup hit — reusing', storagePath)
@@ -279,26 +287,20 @@ export async function POST(
           console.log('[process] FLAC done, size:', flacBuffer.byteLength, 'duration:', audioDurationMs, 'ms')
         } catch (err) {
           console.error('[process] ffmpeg conversion failed:', err)
-          return NextResponse.json(
-            { error: 'Audio conversion failed', detail: String(err) },
-            { status: 500 },
-          )
+          return serverErrorResponse('versions/tracks/process', err, 'Could not convert that audio file')
         }
 
-        const quota = await checkBandStorageQuota(supabase, access.project.band_id, flacBuffer.byteLength)
-        if (!quota.ok) {
-          return NextResponse.json(
-            { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-            { status: 413 },
-          )
-        }
+        // Per-band storage ceiling, resolved from the band owner's plan plus
+        // this band's extra_storage addons. Never pooled across bands.
+        const overQuota = await storageRefusal(access.project.band_id, flacBuffer.byteLength)
+        if (overQuota) return overQuota
 
         storagePath = r2Key(version.project_id, fileHash)
         try {
           await uploadToR2(storagePath, flacBuffer)
         } catch (err) {
           console.error('[process] R2 upload failed:', err)
-          return NextResponse.json({ error: 'Storage upload failed', detail: String(err) }, { status: 500 })
+          return serverErrorResponse('versions/tracks/process', err, 'Could not store that file')
         }
         fileSizeBytes = flacBuffer.byteLength
       }
@@ -329,7 +331,7 @@ export async function POST(
         .single()
       if (trkErr) {
         console.error('[process] track insert failed:', trkErr)
-        return NextResponse.json({ error: 'DB insert failed', detail: trkErr.message }, { status: 500 })
+        return serverErrorResponse('versions/tracks/process', trkErr, 'Could not save the track')
       }
 
       supabase

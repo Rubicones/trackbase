@@ -26,7 +26,7 @@ function ThemeSwatches({ colors, size = 10 }: { colors: string[]; size?: number 
 
 export function AvatarDropdown() {
   const { profile } = useAuth()
-  const { enabled: paywallEnabled, openPaywall } = usePaywall()
+  const { snapshot: plan, openPaywall } = usePaywall()
   const { theme } = useDesignTheme()
   const [open, setOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
@@ -114,8 +114,8 @@ export function AvatarDropdown() {
               </div>
             )}
 
-            {/* Test-mode paywall entry — only rendered while "Show paywall" is ON */}
-            {paywallEnabled && (
+            {/* Upgrade entry — shown to anyone not already on the top plan. */}
+            {plan.plan !== 'band_plus' && (
               <div className="border-t border-border">
                 <TbMenuButton
                   className="gap-2.5"

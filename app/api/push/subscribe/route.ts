@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // POST /api/push/subscribe — save or update a push subscription
 export async function POST(req: NextRequest) {
@@ -33,8 +34,7 @@ export async function POST(req: NextRequest) {
     )
 
   if (error) {
-    console.error('[push/subscribe] upsert error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return serverErrorResponse('push/subscribe', error, 'Could not save your notification subscription')
   }
 
   return NextResponse.json({ ok: true })
@@ -63,8 +63,7 @@ export async function DELETE(req: NextRequest) {
     .eq('endpoint', body.endpoint)
 
   if (error) {
-    console.error('[push/subscribe] delete error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return serverErrorResponse('push/subscribe', error, 'Could not remove your notification subscription')
   }
 
   return NextResponse.json({ ok: true })

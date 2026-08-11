@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
-import { assertBandOwner } from '@/lib/bandAccess'
+import { assertBandOwner, isBandFrozenForWrite } from '@/lib/bandAccess'
+import { assertCanAddMember, limitRefusalResponse } from '@/lib/planGuards'
+import { BandFrozenError, FROZEN_REASON_PLAN_DOWNGRADE } from '@/lib/bandFreeze'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 
 // POST /api/bands/[id]/join-requests/[requestId] — owner approves or rejects
+//
+// Approving inserts into `band_members`, so it is subject to the band's member
+// limit — resolved from the BAND OWNER's plan plus this band's `extra_member`
+// addons. Rejecting is not: refusing someone never adds a row.
+//
+// Note the asymmetry with downgrades. Being over the member limit blocks
+// ADDING a member; it never removes one. Existing members stay indefinitely.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; requestId: string }> }
@@ -54,7 +64,7 @@ export async function POST(
       .eq('id', requestId)
       .eq('status', 'pending')
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return serverErrorResponse('bands/join-requests', error, 'Could not reject that request')
     return NextResponse.json({ status: 'rejected' })
   }
 
@@ -66,11 +76,26 @@ export async function POST(
     .maybeSingle()
 
   if (!existingMember) {
+    try {
+      // A frozen band accepts no new members — same rule as every other write.
+      if (await isBandFrozenForWrite(bandId)) {
+        throw new BandFrozenError(bandId, FROZEN_REASON_PLAN_DOWNGRADE)
+      }
+      await assertCanAddMember(bandId)
+    } catch (err) {
+      const refusal = limitRefusalResponse(err)
+      if (refusal) return refusal
+      throw err
+    }
+
     const { error: memberErr } = await supabase
       .from('band_members')
       .insert({ band_id: bandId, user_id: request.user_id, role: 'member' })
 
-    if (memberErr) return NextResponse.json({ error: memberErr.message }, { status: 500 })
+    // The `trg_enforce_band_owner_limit` trigger can fire on this insert, and it
+    // attaches `DETAIL: limit=<n> current=<n>`. Returning the raw message handed
+    // the caller the exact shape of the rule refusing them — log it, don't ship it.
+    if (memberErr) return serverErrorResponse('bands/join-requests', memberErr, 'Could not add that member')
   }
 
   const { error: updateErr } = await supabase
@@ -83,7 +108,7 @@ export async function POST(
     .eq('id', requestId)
     .eq('status', 'pending')
 
-  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
+  if (updateErr) return serverErrorResponse('bands/join-requests', updateErr, 'Could not approve that request')
 
   return NextResponse.json({ status: 'approved', band_id: bandId, user_id: request.user_id })
 }

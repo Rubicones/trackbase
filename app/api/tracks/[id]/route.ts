@@ -4,6 +4,7 @@ import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, trackActivityLabel } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { sanitizeTrackStartBarForServer } from '@/lib/trackMerge'
+import { isValidProjectObjectKey, isValidFileHash } from '@/lib/r2'
 
 /** Returns true if the given version_id belongs to the main version of its project. */
 async function isMainVersion(versionId: string): Promise<boolean> {
@@ -71,11 +72,31 @@ export async function PATCH(
 
     const body = await req.json()
 
-    const allowed = ['file_hash', 'storage_path', 'midi_data', 'duration_ms', 'file_size_bytes', 'midi_start_bar', 'start_bar']
+    // ⚠ `file_size_bytes` is deliberately NOT here. It is the storage
+    // accounting value: `getBandStorageUsed()` sums it, so a writable one lets
+    // a member set a negative size and drive their band's measured usage below
+    // zero, which lifts the storage ceiling entirely. Byte counts are only ever
+    // written by the paths that actually produced the bytes (tracks/process,
+    // tracks/upload, tracks/edit), from the buffer they just hashed.
+    const allowed = ['file_hash', 'storage_path', 'midi_data', 'duration_ms', 'midi_start_bar', 'start_bar']
     const updates: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in body) updates[key] = body[key]
     }
+    // ── The two fields that point at storage ────────────────────────────────
+    // `storage_path` is an R2 object key and `file_hash` is what dedup matches
+    // on, so neither may be free text. An arbitrary key lets a member of one
+    // band point a row at another band's object and read it back through
+    // `/api/tracks/[id]/stream`, which authorises the *track*, not the key.
+    // Both are constrained to the canonical `projects/{thisProject}/{sha256}`
+    // shape — the only shape the upload paths ever produce.
+    if ('storage_path' in updates && !isValidProjectObjectKey(updates.storage_path, project.id)) {
+      return NextResponse.json({ error: 'Invalid storage path' }, { status: 400 })
+    }
+    if ('file_hash' in updates && !isValidFileHash(updates.file_hash)) {
+      return NextResponse.json({ error: 'Invalid file hash' }, { status: 400 })
+    }
+
     if ('start_bar' in updates) {
       updates.start_bar = sanitizeTrackStartBarForServer(Number(updates.start_bar) || 0)
       updates.midi_start_bar = updates.start_bar

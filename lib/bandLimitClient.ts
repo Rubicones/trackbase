@@ -37,12 +37,28 @@ export function reportBandLimitReached(limit: number): void {
 
 /**
  * Recognise the structured refusal from a band-create endpoint.
- * Returns the limit info when the server said `band_limit_reached`, else null.
+ *
+ * Accepts both shapes: the plan system's uniform
+ * `{ error: 'limit_reached', limit_type: 'bands', … }`, and the older
+ * `{ error: 'band_limit_reached', … }` that predates it. The legacy branch is
+ * kept because a browser tab open across the deploy will still be talking to
+ * whichever version answers — dropping it would show that user a raw error
+ * instead of the limit message, for no gain.
  */
 export function parseBandLimitError(data: unknown): BandLimitInfo | null {
   if (!data || typeof data !== 'object') return null
-  const body = data as { error?: unknown; limit?: unknown; current?: unknown }
-  if (body.error !== 'band_limit_reached') return null
+  const body = data as {
+    error?: unknown
+    limit_type?: unknown
+    limit?: unknown
+    current?: unknown
+  }
+
+  const isBandsLimit =
+    (body.error === 'limit_reached' && body.limit_type === 'bands') ||
+    body.error === 'band_limit_reached'
+  if (!isBandsLimit) return null
+
   const limit = typeof body.limit === 'number' ? body.limit : 0
   const current = typeof body.current === 'number' ? body.current : limit
   return { limit, current, atLimit: true }

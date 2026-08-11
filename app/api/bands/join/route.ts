@@ -4,6 +4,7 @@ import { getRequestUserId } from '@/lib/supabase/server'
 import { normalizeInviteCode } from '@/lib/inviteCode'
 import { sendPushNotification } from '@/lib/push/server'
 import { clientRateLimitKey, rateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // POST /api/bands/join — submit a join request (owner must approve)
 export async function POST(req: NextRequest) {
@@ -80,7 +81,7 @@ export async function POST(req: NextRequest) {
     if (error.code === '23505') {
       return NextResponse.json({ error: 'You already have a pending request for this band' }, { status: 409 })
     }
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return serverErrorResponse('bands/join', error, 'Could not submit your join request')
   }
 
   void notifyOwnersOfJoinRequest(band.id, band.name, userId)
