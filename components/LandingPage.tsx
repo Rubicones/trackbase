@@ -672,19 +672,19 @@ export function TopBar({
  */
 
 /** Design-canvas pixels → the responsive stage unit. */
-export function vgu(px: number) {
+function vgu(px: number) {
   return `calc(${px} * var(--vg-u))`;
 }
 
 /** Design file runs the loop at 8s; the hero plays it at double speed. */
-export const VG_DURATION = "4s";
+const VG_DURATION = "4s";
 
 /** Branch colors — design hex on the left, landing token actually used. */
-export const VG_B1 = "var(--wave-coral)";   /* #f56161 — dead-end take */
-export const VG_B2 = "var(--wave-violet)";  /* #c084fc — merged back */
-export const VG_B3 = "var(--wave-sky)";     /* #22d3ee — merged back */
+const VG_B1 = "var(--wave-coral)";   /* #f56161 — dead-end take */
+const VG_B2 = "var(--wave-violet)";  /* #c084fc — merged back */
+const VG_B3 = "var(--wave-sky)";     /* #22d3ee — merged back */
 
-export function VersionGraphLabel({
+function VersionGraphLabel({
   index,
   color,
   tag,
@@ -752,7 +752,7 @@ export function VersionGraphLabel({
   );
 }
 
-export function HeroVersionGraph() {
+function HeroVersionGraph() {
   return (
     <div className="relative overflow-hidden border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
       {/* meta strip */}
@@ -882,7 +882,18 @@ export function HeroVersionGraph() {
   );
 }
 
-function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
+/**
+ * The hero. Both landing variants render this same component — `/simple` only
+ * passes `showFeaturePills={false}`, which drops the four "Versions & diff /
+ * Comments on bars / …" tag pills between the intro copy and the buttons.
+ * Everything else (beta badge, wordmark, intro paragraph, the version-graph
+ * column, parallax and the scanning line) is shared, so the two heroes cannot
+ * drift apart.
+ */
+export function Hero({
+  signInHref = "/auth",
+  showFeaturePills = true,
+}: { signInHref?: string; showFeaturePills?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const mounted = useMounted();
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
@@ -930,40 +941,52 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="sr-only"> — the band workspace with version control, comments on bars, chord detection, and rehearsal mode for music bands</span>
         </h1>
 
+        {/* Sub-headline sits directly under the wordmark, outside the two-column
+            grid below. Inside it, the grid's `lg:items-center` would centre the
+            text column against the much taller version-graph column and drop the
+            line far below the H1 it belongs to. */}
+        <motion.p
+          initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          className="relative mt-5 font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground md:mt-6"
+        >
+          An ultimate workspace <span className="text-lime">for your music.</span>
+        </motion.p>
+
         <div className="relative mt-8 grid gap-10 lg:grid-cols-2 lg:items-center md:mt-12">
           <div className="min-w-0">
-            <motion.p
-              initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-              className="font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground"
-            >
-              An ultimate workspace <span className="text-lime">for your music.</span>
-            </motion.p>
             <motion.p
               initial={mounted && !reduce ? { opacity: 0 } : false}
               animate={{ opacity: 1 }}
               transition={{ duration: 1, delay: 0.2 }}
-              className="mt-5 max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]"
+              /* Three steps rather than one: 15px on phones (the copy is already
+                 the tallest block there), 1.1rem through tablet and laptop
+                 widths, and the full 1.3rem only on wide desktops from 1536px,
+                 where the hero has the room for it. */
+              className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:max-w-2xl md:text-[1.1rem] 2xl:text-[1.3rem]"
             >
-              Branch a mix like code. Comment on bar 34. Map the structure, write the chords,
-              rehearse from your phone. Everything your band needs — in one place, versioned
-              end-to-end.
+              From the first demo to the last rehearsal. Store your songs, try new versions
+              without losing the old ones, comment on the second that matters, and pull the
+              whole thing up on your phone when you&rsquo;re in the room together. Any DAW.
+              Nobody has to switch.
             </motion.p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              {pills.map(({ icon, label, iconScale }, i) => (
-                <motion.span
-                  key={label}
-                  initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 + i * 0.08 }}
-                  className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
-                >
-                  <span className={`inline-flex items-center text-lime ${iconScale ?? ""}`}>{icon}</span>
-                  {label}
-                </motion.span>
-              ))}
-            </div>
+            {showFeaturePills && (
+              <div className="mt-6 flex flex-wrap gap-2">
+                {pills.map(({ icon, label, iconScale }, i) => (
+                  <motion.span
+                    key={label}
+                    initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 + i * 0.08 }}
+                    className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+                  >
+                    <span className={`inline-flex items-center text-lime ${iconScale ?? ""}`}>{icon}</span>
+                    {label}
+                  </motion.span>
+                ))}
+              </div>
+            )}
             <div className="relative mt-8 flex flex-wrap items-center gap-3">
               <GhostButton variant="lime" href={signInHref}>+ Start a band</GhostButton>
               <GhostButton variant="outline" href="#versioning">See how it works</GhostButton>
@@ -988,7 +1011,7 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
  * Marquee
  * ============================================================ */
 
-export function Marquee() {
+function Marquee() {
   const items = [
     "BRANCHES", "MERGES", "STRUCTURE", "CHORDS", "ROADMAP", "CHECKLIST",
     "QUICK PEEK", "REHEARSAL VIEW", "MIDI", "COMMENTS", "CHAT", "VERSIONS",
