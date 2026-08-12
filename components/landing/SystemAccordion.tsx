@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import {
   Users, Tag, Activity, BarChart3,
@@ -159,10 +159,48 @@ const SYSTEM_GROUPS: SysGroup[] = [
  * individual feature items above, so nothing becomes unreachable or uncrawlable
  * on this page.
  */
+/**
+ * Column count of the card grid, mirroring `sm:grid-cols-2 lg:grid-cols-4`.
+ *
+ * Needed in JS because the detail panel is placed by grid `order`, and the row a
+ * card belongs to depends on how many columns there are. Kept in sync with the
+ * class list on the grid below by hand — Tailwind's `sm` is 640px and `lg` is
+ * 1024px.
+ */
+function useGridColumns() {
+  const [cols, setCols] = useState(1);
+
+  useEffect(() => {
+    const sm = window.matchMedia("(min-width: 640px)");
+    const lg = window.matchMedia("(min-width: 1024px)");
+    const update = () => setCols(lg.matches ? 4 : sm.matches ? 2 : 1);
+    update();
+    sm.addEventListener("change", update);
+    lg.addEventListener("change", update);
+    return () => {
+      sm.removeEventListener("change", update);
+      lg.removeEventListener("change", update);
+    };
+  }, []);
+
+  return cols;
+}
+
 export function SystemAccordion() {
   const [open, setOpen] = useState<string | null>(null);
   const reduce = useReducedMotion();
-  const active = SYSTEM_GROUPS.find((g) => g.n === open) ?? null;
+  const cols = useGridColumns();
+  const activeIndex = SYSTEM_GROUPS.findIndex((g) => g.n === open);
+  const active = activeIndex >= 0 ? SYSTEM_GROUPS[activeIndex] : null;
+
+  // The panel is a full-width grid item rather than a sibling after the grid, so
+  // it opens directly beneath the row holding the card that was tapped instead
+  // of at the bottom of all eight. Cards in row R take order R*2 and the panel
+  // takes R*2+1; equal `order` values keep source order, so the cards within a
+  // row are unaffected. On a phone the grid is one column, which makes every
+  // card its own row and puts the features immediately under the one selected.
+  const rowOf = (i: number) => Math.floor(i / cols);
+  const panelOrder = activeIndex >= 0 ? rowOf(activeIndex) * 2 + 1 : 0;
 
   return (
     <section id="system" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
@@ -190,7 +228,7 @@ export function SystemAccordion() {
               transition={{ delay: reduce ? 0 : (i % 4) * 0.05, duration: 0.5 }}
               whileHover={reduce ? undefined : { y: -3 }}
               className="group relative min-w-0 overflow-hidden border p-5 text-left transition-colors duration-300"
-              style={{ borderColor: isOpen ? g.c : "var(--border)" }}
+              style={{ borderColor: isOpen ? g.c : "var(--border)", order: rowOf(i) * 2 }}
             >
               <span
                 aria-hidden
@@ -235,21 +273,21 @@ export function SystemAccordion() {
             </motion.button>
           );
         })}
-      </div>
 
-      <AnimatePresence initial={false} mode="wait">
-        {active && (
-          <motion.div
-            key={active.n}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: reduce ? 0 : 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden"
-          >
+        <AnimatePresence initial={false} mode="wait">
+          {active && (
+            <motion.div
+              key={active.n}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: reduce ? 0 : 0.45, ease: [0.16, 1, 0.3, 1] }}
+              className="col-span-full overflow-hidden"
+              style={{ order: panelOrder }}
+            >
             <div
               id="system-room-panel"
-              className="relative mt-3 border p-6 sm:p-8"
+              className="relative border p-6 sm:p-8"
               style={{ borderColor: active.c }}
             >
               <span
@@ -308,9 +346,10 @@ export function SystemAccordion() {
                 ))}
               </ul>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </section>
   );
 }
