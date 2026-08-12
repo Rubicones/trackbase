@@ -966,10 +966,9 @@ export function Hero({
                  where the hero has the room for it. */
               className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:max-w-2xl md:text-[1.1rem] 2xl:text-[1.3rem]"
             >
-              From the first demo to the last rehearsal. Store your songs, try new versions
+              For bands and collabs — no matter what DAW your partner uses. From the first demo to the last rehearsal. Store your songs, try new versions
               without losing the old ones, comment on the second that matters, and pull the
-              whole thing up on your phone when you&rsquo;re in the room together. Any DAW.
-              Nobody has to switch.
+              whole thing up on your phone when you&rsquo;re in the room together.
             </motion.p>
             {showFeaturePills && (
               <div className="mt-6 flex flex-wrap gap-2">
