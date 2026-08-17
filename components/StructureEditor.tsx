@@ -981,7 +981,9 @@ export default function StructureOverlay({
   onSeek: (t: number) => void
   /** Mobile landscape — shorter rows, sparse tact labels, no chords/edit UI */
   compact?: boolean
-  /** False while tracks are still loading — disables ruler/structure scrub. */
+  /** False until the transport can play anything — disables ruler/structure scrub.
+   *  Pass `player.playbackReady`, not "all stems decoded": on Master the preview
+   *  mix is playable (and seekable) while the stems are still fetching. */
   seekEnabled?: boolean
   /** Feature tour: open the first section popover once a section exists. */
   tourOpenFirstSection?: boolean

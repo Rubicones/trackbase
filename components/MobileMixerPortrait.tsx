@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
 import { resolveTransportStatus, transportStatusClass } from '@/lib/transportStatus'
 import { formatTrackStartBar } from '@/lib/trackMerge'
@@ -138,6 +138,13 @@ const WAVEFORM_BAR_COUNT = 96
 // Flat placeholder shown before the real waveform is decoded — then bars animate in.
 const WAVEFORM_PLACEHOLDER_BARS = Array.from({ length: WAVEFORM_BAR_COUNT }, () => 0.12)
 
+// Tap-to-seek gesture thresholds. The lanes live inside a horizontally scrollable
+// container and the whole track list scrolls vertically, so a pointer press only
+// counts as a tap if it barely moved and was released quickly — otherwise it was
+// a scroll and must not move the playhead.
+const TAP_MOVE_TOLERANCE_PX = 8
+const TAP_MAX_DURATION_MS = 500
+
 const TrackMiniWaveformBars = memo(function TrackMiniWaveformBars({
   track, color, totalBars, barDurationMs, projectBpm,
 }: {
@@ -229,6 +236,7 @@ function TrackWaveformLane({
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
   waveformsInteractive = true,
+  onSeekRatio,
 }: {
   track: Track
   color: string
@@ -249,17 +257,45 @@ function TrackWaveformLane({
   isOwner: boolean
   currentUser: { username: string } | null
   waveformsInteractive?: boolean
+  /** Tap anywhere on the lane moves the playhead. Ratio is 0–1 of the timeline width. */
+  onSeekRatio?: (ratio: number) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   useRegisterTimelineScroll(scrollRef)
   const timelineWidthPct = Math.max(TIMELINE_WIDTH_PCT, totalBars * TIMELINE_PCT_PER_BAR)
 
+  // Tap-to-seek. Resolved on pointerup so a scroll drag can be told from a tap.
+  const tapStartRef = useRef<{ x: number; y: number; t: number } | null>(null)
+
+  function handleTapStart(e: ReactPointerEvent<HTMLDivElement>) {
+    tapStartRef.current = { x: e.clientX, y: e.clientY, t: Date.now() }
+  }
+
+  function handleTapEnd(e: ReactPointerEvent<HTMLDivElement>) {
+    const start = tapStartRef.current
+    tapStartRef.current = null
+    if (!start || !onSeekRatio) return
+    // Comment mode owns the gesture (tap & drag places a comment range).
+    if (commentMode) return
+    // Tapping an existing comment opens it; the playhead stays put.
+    if (e.target instanceof Element && e.target.closest('[data-comment-ui]')) return
+    if (Math.abs(e.clientX - start.x) > TAP_MOVE_TOLERANCE_PX) return
+    if (Math.abs(e.clientY - start.y) > TAP_MOVE_TOLERANCE_PX) return
+    if (Date.now() - start.t > TAP_MAX_DURATION_MS) return
+    const rect = timelineRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0) return
+    onSeekRatio(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
+  }
+
   return (
     <div ref={scrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1">
       <div
         ref={timelineRef}
-        className="relative h-14 bg-surface/40 border border-border"
+        className={`relative h-14 bg-surface/40 border border-border${commentMode ? '' : ' cursor-pointer'}`}
+        onPointerDown={handleTapStart}
+        onPointerUp={handleTapEnd}
+        onPointerCancel={() => { tapStartRef.current = null }}
         style={{
           width: `${timelineWidthPct}%`,
           opacity: waveformDimmed ? 0.5 : 1,
@@ -308,6 +344,7 @@ function TrackMiniWaveform({
   onCommentPlace, onCommentDelete, onCommentCreate, onCloseCommentInput,
   onReplyCreate, currentUserId, isOwner, currentUser,
   waveformsInteractive = true,
+  onSeekRatio,
 }: {
   track: Track
   color: string
@@ -328,6 +365,7 @@ function TrackMiniWaveform({
   isOwner: boolean
   currentUser: { username: string } | null
   waveformsInteractive?: boolean
+  onSeekRatio?: (ratio: number) => void
 }) {
   return (
     <TrackWaveformLane
@@ -350,6 +388,7 @@ function TrackMiniWaveform({
       isOwner={isOwner}
       currentUser={currentUser}
       waveformsInteractive={waveformsInteractive}
+      onSeekRatio={onSeekRatio}
     />
   )
 }
@@ -378,6 +417,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   isOwner,
   currentUser,
   waveformsInteractive = true,
+  onSeekRatio,
   openMenu,
   colorPickerOpen,
   onToggleMenu,
@@ -411,6 +451,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
   isOwner: boolean
   currentUser: { username: string } | null
   waveformsInteractive?: boolean
+  onSeekRatio?: (ratio: number) => void
   openMenu: boolean
   colorPickerOpen: boolean
   onToggleMenu: (id: string) => void
@@ -549,6 +590,7 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
             isOwner={isOwner}
             currentUser={currentUser}
             waveformsInteractive={waveformsInteractive}
+            onSeekRatio={onSeekRatio}
           />
         </div>
       </div>
@@ -920,6 +962,21 @@ function MobileMixerPortraitInner({
     player.seek(ratio * player.duration)
   }
 
+  // Waveform lanes span `timelineDurationSec`, not `player.duration`, so a tap
+  // maps through the timeline length. Read through refs so the handler identity
+  // stays stable and the memoized track rows don't re-render during playback.
+  const seekRef = useRef(player.seek)
+  const timelineDurationSecRef = useRef(timelineDurationSec)
+  useEffect(() => {
+    seekRef.current = player.seek
+    timelineDurationSecRef.current = timelineDurationSec
+  })
+  const handleWaveformSeek = useCallback((ratio: number) => {
+    const dur = timelineDurationSecRef.current
+    if (dur <= 0) return
+    seekRef.current(Math.max(0, Math.min(dur, ratio * dur)))
+  }, [])
+
   const waveformCommentProps = {
     timelineDurationMs,
     commentMode,
@@ -1063,6 +1120,7 @@ function MobileMixerPortraitInner({
               onDelete={onDeleteTrack}
               isReplacing={replacingTrackId === t.id}
               waveformsInteractive={waveformsInteractive}
+              onSeekRatio={handleWaveformSeek}
             />
           )
         })}

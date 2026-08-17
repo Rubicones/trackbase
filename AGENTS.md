@@ -458,6 +458,17 @@ desktop `MasterPlayerBar` shows a "tracks loading · preview mix" badge over
 the bottom progress bar) and switches to the full mix once all buffers are
 decoded and playback pauses/ends.
 
+**Transport gates read `player.playbackReady`, never "all stems decoded".**
+`playbackReady` is true as soon as *something* is playable, which during the
+preview-mix window is well before `loaded >= total`. Anything that only needs a
+transport — the spacebar handler in the mixer page, the bar ruler / structure
+scrub (`StructureOverlay seekEnabled`), waveform click-to-seek (`TrackRow
+seekEnabled`, mobile lane tap) — must gate on it. `waveformsInteractive`
+(`allTracksLoaded()`) is a *stricter* flag and stays reserved for things that
+genuinely need decoded buffers: comment drag and `start_bar` offset drag. In
+`TrackRow` the two are separate (`canSeek` vs `canDragOffset`): while the preview
+plays, a press seeks on release and can never become an offset drag.
+
 ### Chat
 `components/chat/ChatDock.tsx` + `useBandChat.ts`; API
 `/api/bands/[id]/messages`; table `band_messages` — **`channel_id` null =
@@ -506,6 +517,20 @@ optional context chips pointing at a version/track):
 `ReadingMode.tsx` (the rehearsal view — chord timeline, sections, lyrics,
 preview-mix player) and `MobileMixerPortrait.tsx` (mobile mixer), plus the
 mobile tour. Events: `rehearsal_mode_entered`, `mixer_opened_from_rehearsal`.
+
+**Mobile mixer waveform tap = seek.** Tapping a track lane moves the playhead to
+that point. The lane spans `timelineDurationSec` (`mobileTimelineBars`), **not**
+`player.duration`, so the tap ratio must be scaled by the former — the bottom
+scrub bar's `handleSeekRatio` uses `player.duration` and is a different mapping.
+Three exclusions, all deliberate: **comment mode** owns the gesture (tap & drag
+places a range), a tap landing on `[data-comment-ui]` opens that comment's
+tooltip instead, and a press that moved more than `TAP_MOVE_TOLERANCE_PX` or
+lasted longer than `TAP_MAX_DURATION_MS` is a scroll (the lanes scroll
+horizontally inside a vertically scrolling list), not a tap. Resolution happens
+on `pointerup` for exactly that reason. The handler is passed down as
+`onSeekRatio` and reads `player.seek` / the duration through refs so its
+identity stays stable — a changing identity would re-render every memoized
+track row on each playback frame.
 
 ### Analytics (GA4 + Meta Pixel + Yandex Metrica)
 Always use `trackEvent(name, params)` from `lib/analytics.ts` — it sends to

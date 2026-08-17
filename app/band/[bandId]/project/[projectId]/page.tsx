@@ -1456,7 +1456,10 @@ export default function ProjectPage() {
       }
 
       const p = playerRef.current
-      if (p.total > 0 && p.loaded < p.total) return
+      // `playbackReady`, not "all stems decoded" — on Master the preview mix is
+      // playable long before the stems finish fetching, and the transport's own
+      // play button already allows it.
+      if (!p.playbackReady) return
 
       const canPlay = p.duration > 0 || p.total > 0
       if (!canPlay) return
@@ -3039,7 +3042,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               playing={player.playing}
               onSeek={player.seek}
               compact={isMobileLandscape}
-              seekEnabled={waveformsInteractive}
+              seekEnabled={player.playbackReady}
               tourOpenFirstSection={
                 featureTour === 'structure'
                 && !structureTourHadSections
@@ -3143,6 +3146,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     || (player.soloedTracks.size > 0 && !player.soloedTracks.has(t.id))
                   }
                   waveformsInteractive={waveformsInteractive}
+                  seekEnabled={player.playbackReady}
                   onSeek={isDesktopMixer ? player.seek : undefined}
                   currentUserId={user?.id}
                   isOwner={isOwner}

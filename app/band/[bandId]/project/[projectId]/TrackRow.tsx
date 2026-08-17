@@ -127,6 +127,7 @@ export const TrackRow = React.memo(function TrackRow({
   onDeleteTrack, onRenameTrack, onColorUpdate, onMidiDataUpdate, onStartBarUpdate,
   onDragStartOffset, onDragEndOffset, otherTrackDragging, waveformDimmed,
   waveformsInteractive = true,
+  seekEnabled = false,
   onSeek,
   currentUserId, isOwner, onReplyCreate, currentUser,
   projectId, versionId, project, totalBars, runtimeDurationMs,
@@ -169,6 +170,10 @@ export const TrackRow = React.memo(function TrackRow({
   waveformDimmed: boolean
   /** False while audio/MIDI tracks are still loading — blocks offset & comment drag. */
   waveformsInteractive: boolean
+  /** True once the transport can play (`playbackReady`) — the preview mix makes this
+   *  true long before the stems decode, so click-to-seek is allowed while
+   *  `waveformsInteractive` is still false. Dragging the offset is not. */
+  seekEnabled?: boolean
   /** Desktop mixer — click waveform to seek; dim unplayed region via --played-pct. */
   onSeek?: (timelineSec: number) => void
   currentUserId: string | undefined
@@ -326,15 +331,21 @@ export const TrackRow = React.memo(function TrackRow({
     barDurSec: barDurationMsRow / 1000,
   }
 
+  // Seeking only needs a transport, not decoded stems — allowed while the preview
+  // mix is playing and `waveformsInteractive` is still false.
+  const canSeek = waveformsInteractive || seekEnabled
+  const canDragOffset = waveformsInteractive
+  const canPointer = canSeek || canDragOffset
+
   const seekFromClientX = useCallback((clientX: number) => {
-    if (!onSeek || commentMode || !waveformsInteractive) return
+    if (!onSeek || commentMode || !canSeek) return
     const col = waveformColRef.current
     if (!col || !timelineDurationMs) return
     const rect = col.getBoundingClientRect()
     if (rect.width <= 0) return
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
     onSeek(ratio * (timelineDurationMs / 1000))
-  }, [onSeek, commentMode, waveformsInteractive, timelineDurationMs])
+  }, [onSeek, commentMode, canSeek, timelineDurationMs])
 
   // CSS playhead highlight — bright left of playhead, dim right (no playhead line on waveform).
   useEffect(() => {
@@ -404,7 +415,7 @@ export const TrackRow = React.memo(function TrackRow({
 
   // Pointer down on waveform — offset drag UI only after movement past threshold.
   function beginOffsetPointer(clientX: number) {
-    if (!waveformsInteractive || commentMode || commentUiActiveRef.current) return
+    if (!canPointer || commentMode || commentUiActiveRef.current) return
     dragStartXRef.current = clientX
     dragMovedRef.current = false
     origStartBarRef.current = track.start_bar ?? 0
@@ -450,6 +461,9 @@ export const TrackRow = React.memo(function TrackRow({
     const barsPerPixel = totalBars / containerWidth
 
     function applyDragPosition(clientX: number) {
+      // Seek-only mode (stems still loading): never turn the press into an
+      // offset drag — release falls through to seekFromClientX.
+      if (!canDragOffset) return
       const deltaX = clientX - dragStartXRef.current
       if (!offsetDragActivatedRef.current) {
         if (Math.abs(deltaX) <= DRAG_THRESHOLD_PX) return
@@ -959,8 +973,16 @@ export const TrackRow = React.memo(function TrackRow({
           height: '100%',
           minHeight: rowH,
           opacity: waveformOpacity,
-          cursor: !waveformsInteractive ? 'default' : isOffsetDragging ? 'grabbing' : commentMode ? 'inherit' : onSeek ? 'pointer' : 'grab',
-          pointerEvents: waveformsInteractive ? 'auto' : 'none',
+          cursor: !canPointer
+            ? 'default'
+            : isOffsetDragging
+              ? 'grabbing'
+              : commentMode
+                ? 'inherit'
+                : onSeek && canSeek
+                  ? 'pointer'
+                  : canDragOffset ? 'grab' : 'default',
+          pointerEvents: canPointer ? 'auto' : 'none',
           borderLeft: effectiveStartBar !== 0 ? '1px solid var(--border)' : 'none',
           zIndex: 1,
           transition: isOffsetDragging ? 'none' : 'width 0.25s ease-out, opacity 0.15s',
