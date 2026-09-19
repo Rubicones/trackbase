@@ -4,10 +4,14 @@
  * THE RULE: a user may own at most their *effective* owned-bands limit, which
  * is resolved by `getEffectiveEntitlements()` (`lib/entitlements.ts`) from
  * their plan, their `extra_band` addons, and — when it is non-null — the
- * `profiles.band_limit` manual override. **Never read `profiles.band_limit`
- * directly and never substitute a literal.** The column is no longer "the
- * limit"; it is an override that grandfathered beta accounts (and later B2B
- * deals) carry, and it means "ignore the plan for this account".
+ * `profiles.band_limit_override` manual override. **Never read that column
+ * directly and never substitute a literal.** It is an override that
+ * grandfathered beta accounts (and later B2B deals) carry, and it means
+ * "ignore the plan for this account".
+ *
+ * `profiles.band_limit` is a DIFFERENT column and belongs to the pre-plans code
+ * path (`main`). It stays NOT NULL DEFAULT 3 so a rollback needs no data
+ * migration. Nothing in the plan system reads it.
  *
  * If the limit cannot be resolved this module fails closed rather than
  * guessing — silently demoting a grandfathered user would be worse than a

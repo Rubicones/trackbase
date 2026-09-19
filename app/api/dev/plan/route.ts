@@ -11,7 +11,7 @@
  *   · forcing `grace_until` into the past, so grace expiry and freezing can be
  *     tested without waiting 14 days
  *   · granting and revoking addons by hand, so addon resolution is testable
- *   · setting the `band_limit` override, so the grandfathered-account path is
+ *   · setting `band_limit_override`, so the grandfathered-account path is
  *     testable
  *
  * ── Gating ──────────────────────────────────────────────────────────────────
@@ -32,12 +32,41 @@ import { readAddons, resolvePlanState } from '@/lib/entitlements'
 import { reconcileOwnerBands } from '@/lib/bandFreeze'
 import { DEV_PLAN_TOOLS_AVAILABLE } from '@/lib/devPlanTools'
 
-const NOT_FOUND = NextResponse.json({ error: 'Not found' }, { status: 404 })
+/**
+ * A FUNCTION, not a constant.
+ *
+ * `const NOT_FOUND = NextResponse.json(...)` at module scope looks like a
+ * harmless bit of tidiness and is a hang. A `Response` body is a single-use
+ * stream: the first request consumes it, and every request after that on the
+ * same warm instance gets a locked stream — no body, no completion, a pending
+ * request in the browser until it times out. Build a fresh one per call.
+ *
+ * (`app/api/bands/[id]/invites/route.ts` and
+ * `app/api/invites/[token]/accept/route.ts` had the same shape; both are fixed.)
+ */
+function notFound() {
+  return NextResponse.json({ error: 'Not found' }, { status: 404 })
+}
 
 const ADDON_TYPES = new Set(['extra_band', 'extra_storage', 'extra_member'])
 
+/** Postgres: null value violates a NOT NULL constraint. */
+const PG_NOT_NULL_VIOLATION = '23502'
+
+/**
+ * Stage marker for the runtime log.
+ *
+ * This route awaits several multi-query helpers in sequence, and when one of
+ * them stalls the request simply never completes — with nothing in the log to
+ * say which. Same reasoning as the `stage=` markers in the WAV export route
+ * (AGENTS.md §4): they are the only way to localise a failure after the fact.
+ */
+function stage(name: string) {
+  console.log(`[dev/plan] stage=${name}`)
+}
+
 export async function GET(req: NextRequest) {
-  if (!DEV_PLAN_TOOLS_AVAILABLE) return NOT_FOUND
+  if (!DEV_PLAN_TOOLS_AVAILABLE) return notFound()
 
   const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -45,7 +74,7 @@ export async function GET(req: NextRequest) {
   const [addons, state] = await Promise.all([readAddons(userId), resolvePlanState(userId)])
   const { data: profile } = await supabase
     .from('profiles')
-    .select('band_limit')
+    .select('band_limit_override')
     .eq('id', userId)
     .maybeSingle()
 
@@ -53,12 +82,12 @@ export async function GET(req: NextRequest) {
     addons,
     graceUntil: state.graceUntil,
     state: state.state,
-    bandLimitOverride: profile?.band_limit ?? null,
+    bandLimitOverride: profile?.band_limit_override ?? null,
   })
 }
 
 export async function POST(req: NextRequest) {
-  if (!DEV_PLAN_TOOLS_AVAILABLE) return NOT_FOUND
+  if (!DEV_PLAN_TOOLS_AVAILABLE) return notFound()
 
   const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -95,7 +124,9 @@ export async function POST(req: NextRequest) {
           .update({ grace_until: null, grace_keep_band_ids: null })
           .eq('id', userId)
         if (error) throw error
+        stage('clear_grace:reconcile')
         await reconcileOwnerBands(userId, false)
+        stage('clear_grace:done')
         return NextResponse.json({ graceUntil: null })
       }
 
@@ -155,12 +186,31 @@ export async function POST(req: NextRequest) {
         if (next === undefined) {
           return NextResponse.json({ error: 'value must be a non-negative number or null' }, { status: 400 })
         }
+        stage('set_band_limit_override:update')
         const { error } = await supabase
           .from('profiles')
-          .update({ band_limit: next })
+          .update({ band_limit_override: next })
           .eq('id', userId)
+
+        // `band_limit_override` is nullable by construction, so clearing it is
+        // an ordinary update. This route must never write `profiles.band_limit`
+        // — that column belongs to the pre-plans code path and is what a
+        // rollback to `main` depends on.
+        if (error?.code === PG_NOT_NULL_VIOLATION) {
+          return NextResponse.json(
+            {
+              error:
+                'profiles.band_limit_override is NOT NULL in this database, which it must not be. ' +
+                'Re-run 20260806_subscription_plans.sql.',
+            },
+            { status: 409 },
+          )
+        }
         if (error) throw error
+
+        stage('set_band_limit_override:reconcile')
         await reconcileOwnerBands(userId, false)
+        stage('set_band_limit_override:done')
         return NextResponse.json({ bandLimitOverride: next })
       }
 

@@ -128,7 +128,13 @@ export function PlanUsage() {
         <p className="font-mono text-[10px] text-muted-foreground m-0 mt-1 leading-relaxed">
           Bands you <em className="not-italic text-foreground">join</em> are unlimited on every
           plan and never count here.
-          {plan.bandsOwnedOverridden && ' Your account has a custom allowance.'}
+          {plan.bandsOwnedOverridden && (
+            <>
+              {' '}Your account has a custom allowance of{' '}
+              <span className="text-foreground">{plan.limits.bandsOwned}</span>, which replaces
+              what {PLANS[plan.plan].name} would give you.
+            </>
+          )}
         </p>
         {bandsNearing && (
           <p className="font-mono text-[10px] text-[var(--wave-amber)] m-0 mt-2 leading-relaxed">

@@ -296,6 +296,24 @@ export function DevPlanSwitcher() {
         <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground m-0 mb-2">
           Grandfathered override
         </p>
+
+        {/* An active override makes most of this panel untestable, and does so
+            silently — the plan switches, no conflict is found, no grace starts,
+            nothing freezes, and everything *looks* like it worked. Worth
+            shouting about rather than mentioning. */}
+        {plan.bandsOwnedOverridden && (
+          <div className="border border-[var(--wave-amber)]/40 bg-[var(--wave-amber)]/5 px-2.5 py-2 mb-2">
+            <p className="font-mono text-[10px] text-[var(--wave-amber)] m-0 leading-relaxed">
+              Override active ({plan.limits.bandsOwned} bands) — your plan&rsquo;s own band limit
+              is being ignored.
+            </p>
+            <p className="font-mono text-[10px] text-muted-foreground m-0 mt-1.5 leading-relaxed">
+              While this is set you cannot produce a band conflict, so downgrades start no grace
+              period and no band will ever freeze. Clear it before testing any of that.
+            </p>
+          </div>
+        )}
+
         <p className="font-mono text-[10px] text-muted-foreground m-0 mb-2 leading-relaxed">
           `profiles.band_limit` replaces the plan&rsquo;s owned-band limit entirely when set.
           Currently: {plan.bandsOwnedOverridden ? `${plan.limits.bandsOwned} (override)` : 'none'}.

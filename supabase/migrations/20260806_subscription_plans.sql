@@ -1,69 +1,104 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- Subscription plans — schema, plan-aware limit enforcement, frozen bands.
+-- Subscription plans — PHASE 1: additive only. Safe to run while `main` is
+-- live in production.
 --
--- ⚠ RUN THIS MANUALLY in the Supabase SQL editor (AGENTS.md §5). Nothing here
---   is applied automatically, and the application code ships before it: until
---   this runs, `lib/entitlements.ts` detects the missing columns and keeps the
---   app in its pre-plans behaviour (legacy band_limit cap, 1 GB storage, no
---   feature gating, no freezing). Running this file is the switch that turns
---   the plan system on.
+-- ⚠ RUN THIS MANUALLY in the Supabase SQL editor (AGENTS.md §5).
 --
--- ⚠ READ SECTION 1 BEFORE RUNNING. It changes the meaning of
---   `profiles.band_limit` from "the limit" to "an override", and the choice of
---   how to migrate existing rows is a product decision, not a mechanical one.
+-- ── Read this if you are wondering why the file is shaped like this ─────────
+-- An earlier version of this migration changed `profiles.band_limit` from
+-- `not null default 3` into a nullable override, and replaced the two
+-- band-limit routines with plan-aware ones. Applied to the production database
+-- while `main` was still deployed, it took down signup: `handle_new_user`
+-- inserts only `(id)`, so with the default gone every new profile got
+-- band_limit = NULL, and `main`'s `getBandLimitStatus()` fails closed on a
+-- non-number. Band creation died separately on a 42703 from the new routines.
+-- See `20260817_hotfix_revert_plan_schema_contract.sql`.
+--
+-- This version cannot do that, because it obeys one rule:
+--
+--   ★ NOTHING HERE MAY CHANGE ANYTHING `main` READS. ★
+--
+-- `profiles.band_limit` keeps its type, its NOT NULL, and its DEFAULT 3.
+-- `enforce_band_owner_limit()` and `create_band_with_owner()` are not touched.
+-- Everything else is a new column or a new table, which `main` never selects
+-- and therefore cannot notice.
+--
+-- The override that the plan system needs moved to its own column,
+-- `profiles.band_limit_override`. That separation is the whole fix: the two
+-- apps stop fighting over the meaning of one column, and "3" stops silently
+-- meaning "ignore this account's plan".
+--
+-- ── Phase 2 ────────────────────────────────────────────────────────────────
+-- The database-level enforcement (the plan-aware trigger and RPC) CANNOT be
+-- installed while `main` runs — it would resolve every user to the free plan's
+-- 1 band and lock established users out of band creation. It lives in
+-- `20260807_plans_db_enforcement.sql` and is run AFTER the branch is deployed.
+--
+-- Until then the app layer on the branch enforces plans on its own, and the
+-- old trigger stays as the race-condition backstop it always was. The one gap
+-- is Band+ (5 owned bands) against the old trigger's 3 — see phase 2's header.
 --
 -- Idempotent: safe to run more than once.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
--- ═══ 1. profiles — plan, grace, and band_limit's new meaning ════════════════
+-- ═══ 0. Repair, if the breaking version was ever applied here ═══════════════
 --
--- `band_limit` used to be `integer not null default 3` and WAS the limit. It
--- becomes a nullable MANUAL OVERRIDE: non-null replaces the plan's owned-bands
--- allowance entirely; null means "use the plan".
---
--- ── The decision you have to make ──────────────────────────────────────────
--- Every existing account currently holds a number in this column (3 for most,
--- higher for the users who were grandfathered earlier). Two options:
---
---   A) KEEP THEM AS OVERRIDES (what this file does). Every existing beta
---      account keeps the allowance it has today, regardless of plan. Nobody
---      wakes up over their limit because plans shipped. New accounts get null
---      and follow their plan. This is the conservative choice and it is what
---      "grandfathered beta accounts" in the spec describes.
---
---   B) CLEAR THE DEFAULTS. Uncomment the statement at the end of this section
---      to null out every row that still holds the old default of 3, so those
---      users fall to their plan's allowance — 1 band on free. That will put
---      every beta user who owns 2 or 3 bands straight into a grace period and,
---      14 days later, freeze their excess bands. Do this only deliberately,
---      and probably only after telling them.
---
--- You can move from A to B later with the same statement. You cannot easily
--- move back, because once cleared there is no record of what the value was.
+-- No-op on a database that never saw it. On one that did — and where the
+-- hotfix has not been run — this restores what `main` needs before anything
+-- else happens. `set not null` fails while any row is NULL, so backfill first.
+
+insert into public.profiles (id)
+select u.id
+  from auth.users u
+  left join public.profiles p on p.id = u.id
+ where p.id is null
+    on conflict (id) do nothing;
+
+update public.profiles p
+   set band_limit = 3 + (
+         select count(*)
+           from public.band_members bm
+          where bm.user_id = p.id
+            and bm.role = 'owner'
+       )
+ where p.band_limit is null;
+
+alter table public.profiles alter column band_limit set default 3;
+alter table public.profiles alter column band_limit set not null;
+
+comment on column public.profiles.band_limit is
+  'Per-user owned-band allowance used by the pre-plans code path (`main`). '
+  'NOT NULL, default 3. The plan system does NOT read this column — it reads '
+  'band_limit_override. Do not repurpose it again.';
+
+
+-- ═══ 1. profiles — plan, grace, and the override in its own column ══════════
 
 alter table public.profiles
   add column if not exists plan text not null default 'free';
 
-alter table public.profiles
-  drop constraint if exists profiles_plan_check;
+alter table public.profiles drop constraint if exists profiles_plan_check;
 alter table public.profiles
   add constraint profiles_plan_check
   check (plan in ('free', 'solo', 'band', 'band_plus'));
 
--- band_limit: was the limit, is now the override.
-alter table public.profiles alter column band_limit drop not null;
-alter table public.profiles alter column band_limit drop default;
-
-comment on column public.profiles.band_limit is
-  'MANUAL OVERRIDE for the owned-bands limit. Non-null REPLACES the plan''s '
-  'allowance (plan base + extra_band addons) entirely; it does not add to it. '
-  'Null means "use the plan". Grandfathered beta accounts and B2B deals only.';
-
 comment on column public.profiles.plan is
   'Subscription plan id. Mirrors lib/plans.ts. Stripe will one day write this '
   'column and insert plan_addons rows, and nothing else about the entitlement '
-  'system needs to know that happened.';
+  'system needs to know that happened. Ignored entirely by `main`.';
+
+-- The manual override, in its own nullable column so `main`'s NOT NULL
+-- `band_limit` can coexist with it. Non-null REPLACES the plan's owned-bands
+-- allowance (plan base + extra_band addons) outright; it does not add to it.
+-- NULL — the default for every account — means "use the plan".
+alter table public.profiles
+  add column if not exists band_limit_override integer;
+
+comment on column public.profiles.band_limit_override is
+  'MANUAL OVERRIDE for the plan''s owned-bands limit. Non-null REPLACES the '
+  'plan allowance entirely. NULL means "use the plan". Grandfathered beta '
+  'accounts and B2B deals only.';
 
 -- Grace period after a downgrade that left structural conflicts. Null = none.
 -- The account state (active / grace / enforced) is DERIVED from this column
@@ -71,9 +106,8 @@ comment on column public.profiles.plan is
 alter table public.profiles
   add column if not exists grace_until timestamptz;
 
--- The user's choice, made during grace, of which bands to keep when it ends.
--- Priority order. Stale or over-long values are tolerated and trimmed at the
--- moment they are applied (lib/freezeOrder.ts).
+-- The user's choice, made during grace, of which bands survive when it ends.
+-- Priority order. Stale entries are tolerated and trimmed on use.
 alter table public.profiles
   add column if not exists grace_keep_band_ids uuid[];
 
@@ -81,15 +115,29 @@ create index if not exists idx_profiles_grace_until
   on public.profiles (grace_until)
   where grace_until is not null;
 
--- ── Option B (see above). Leave commented unless you mean it. ──────────────
--- update public.profiles set band_limit = null where band_limit = 3;
 
-
--- ═══ 2. plan_addons ═════════════════════════════════════════════════════════
+-- ═══ 2. bands — frozen state ════════════════════════════════════════════════
 --
--- Capacity granted on top of a plan. Stripe will insert these rows later; the
--- dev tooling inserts them now. Nothing outside lib/entitlements.ts reads this
--- table.
+-- A frozen band is READ-ONLY. Nothing is ever deleted. Viewing, playback,
+-- downloads and chat history keep working; every write is refused. Set lazily,
+-- when someone touches the band — there is no background job. `main` does not
+-- select these columns, so they are inert until the branch ships.
+
+alter table public.bands
+  add column if not exists frozen_at timestamptz,
+  add column if not exists frozen_reason text;
+
+alter table public.bands drop constraint if exists bands_frozen_reason_check;
+alter table public.bands
+  add constraint bands_frozen_reason_check
+  check (frozen_reason is null or frozen_reason in ('plan_downgrade'));
+
+create index if not exists idx_bands_frozen
+  on public.bands (frozen_at)
+  where frozen_at is not null;
+
+
+-- ═══ 3. plan_addons ═════════════════════════════════════════════════════════
 --
 --   extra_band    → +quantity owned bands, ACCOUNT-WIDE (band_id must be null)
 --   extra_storage → +10 GB × quantity on ONE band (band_id required)
@@ -98,6 +146,29 @@ create index if not exists idx_profiles_grace_until
 -- The band_id CHECK is the point: storage is never pooled across bands, so an
 -- account-wide storage addon has nowhere to land, and "more bands" is not a
 -- property of any single band. Both are rejected rather than silently ignored.
+
+-- A `plan_addons` from an earlier draft may exist with the wrong column set —
+-- that is where the production `42703 column a.addon_type does not exist` came
+-- from, because `create table if not exists` silently skipped it. Repair it
+-- while it is empty rather than leaving a half-right table in place.
+do $$
+begin
+  if exists (select 1 from information_schema.tables
+              where table_schema = 'public' and table_name = 'plan_addons')
+     and not exists (select 1 from information_schema.columns
+                      where table_schema = 'public'
+                        and table_name   = 'plan_addons'
+                        and column_name  = 'addon_type')
+  then
+    if (select count(*) from public.plan_addons) > 0 then
+      raise exception
+        'plan_addons exists without addon_type and is NOT empty. Inspect it by '
+        'hand; refusing to drop rows.';
+    end if;
+    raise notice 'Dropping empty legacy plan_addons so it can be recreated correctly.';
+    drop table public.plan_addons;
+  end if;
+end $$;
 
 create table if not exists public.plan_addons (
   id          uuid primary key default gen_random_uuid(),
@@ -126,39 +197,13 @@ create policy "plan_addons_select_own" on public.plan_addons
   for select using (auth.uid() = user_id);
 
 
--- ═══ 3. bands — frozen state ════════════════════════════════════════════════
---
--- A frozen band is READ-ONLY. Nothing is ever deleted. Viewing, playback,
--- downloads and chat history keep working; every write is refused server-side.
--- Set lazily, when someone touches the band — there is no background job.
-
-alter table public.bands
-  add column if not exists frozen_at timestamptz,
-  add column if not exists frozen_reason text;
-
-alter table public.bands drop constraint if exists bands_frozen_reason_check;
-alter table public.bands
-  add constraint bands_frozen_reason_check
-  check (frozen_reason is null or frozen_reason in ('plan_downgrade'));
-
-create index if not exists idx_bands_frozen
-  on public.bands (frozen_at)
-  where frozen_at is not null;
-
-
 -- ═══ 4. plan_limits — the trigger's copy of the plan table ══════════════════
 --
 -- ⚠ MIRROR OF `lib/plans.ts`. TypeScript is the source of truth for the
---   application; this table exists so the database trigger can enforce the
---   owned-bands limit without a round trip, which is the defence-in-depth that
---   makes the concurrency guarantee possible. **Change both together.** A
---   drift here does not break the app (the app never reads this table) — it
---   makes the DB backstop wrong, which is worse, because it fails silently in
---   whichever direction it drifted.
---
--- Only `bands_owned` is stored: it is the only limit the database enforces.
--- Members, storage and versions are enforced in application code, where the
--- band-scoped addon resolution lives.
+--   application; this table exists so phase 2's trigger can enforce the
+--   owned-bands limit without a round trip. **Change both together.** A drift
+--   here does not break the app (the app never reads this table) — it makes
+--   the DB backstop wrong, which is worse, because it fails silently.
 
 create table if not exists public.plan_limits (
   plan        text primary key check (plan in ('free', 'solo', 'band', 'band_plus')),
@@ -173,223 +218,70 @@ insert into public.plan_limits (plan, bands_owned) values
 on conflict (plan) do update set bands_owned = excluded.bands_owned;
 
 alter table public.plan_limits enable row level security;
--- Readable by anyone signed in (it is public pricing information); writable by
--- nobody but the service role.
 drop policy if exists "plan_limits_read" on public.plan_limits;
 create policy "plan_limits_read" on public.plan_limits for select using (true);
 
 
--- ═══ 5. effective_band_limit() ══════════════════════════════════════════════
+-- ═══ 5. Seed the override for accounts that would otherwise be disrupted ════
 --
--- The database's copy of the owned-bands resolution rule, matching
--- `resolveEntitlements()` in lib/entitlements.ts:
+-- Everyone is on 'free' at this point, which allows 1 owned band. An existing
+-- beta user who owns 3 would drop into a grace period the instant the branch
+-- deploys, and lose two bands two weeks later — because plans shipped, not
+-- because they did anything.
 --
---   1. plan base, from plan_limits
---   2. + sum(quantity) of the user's extra_band addons
---   3. …unless profiles.band_limit is non-null, in which case that REPLACES
---      the whole computation.
+-- So: give an override to exactly the people who own more than their plan
+-- allows, and to nobody else. New accounts, and anyone already inside their
+-- plan's allowance, keep NULL and follow their plan normally. This is the
+-- narrowest rule that preserves the status quo, and it is why the override is
+-- seeded here rather than left as a judgement call at deploy time.
 --
--- Takes `for update` on the profiles row. That row lock is the concurrency
--- mechanism: every attempt by the same user serialises behind it, so the
--- second of two simultaneous creates blocks until the first commits and then
--- (READ COMMITTED gives each statement a fresh snapshot) counts the row the
--- first one just inserted. Two requests at limit − 1 produce exactly one band.
+-- `band_limit_override is null` guards it: re-running never re-inflates a
+-- value, and never overwrites one set by hand afterwards.
+
+update public.profiles p
+   set band_limit_override = greatest(owned.n, p.band_limit)
+  from (
+    select user_id, count(*)::integer as n
+      from public.band_members
+     where role = 'owner'
+     group by user_id
+  ) owned
+ where owned.user_id = p.id
+   and p.band_limit_override is null
+   and owned.n > (
+     select l.bands_owned from public.plan_limits l
+      where l.plan = coalesce(p.plan, 'free')
+   );
+
+
+-- ═══ 6. Deliberately NOT done here ══════════════════════════════════════════
 --
--- There is deliberately no literal fallback. A user with no profiles row fails
--- closed with BL002 rather than being assumed onto some default.
-
-create or replace function public.effective_band_limit(p_user_id uuid)
-returns integer
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_plan     text;
-  v_override integer;
-  v_base     integer;
-  v_addons   integer;
-begin
-  select p.plan, p.band_limit
-    into v_plan, v_override
-    from public.profiles p
-   where p.id = p_user_id
-     for update;
-
-  if not found then
-    raise exception using
-      errcode = 'BL002',
-      message = 'band_limit_unknown',
-      detail  = format('no profiles row for user %s', p_user_id);
-  end if;
-
-  -- The override wins outright — plan base and addons included.
-  if v_override is not null then
-    return v_override;
-  end if;
-
-  select l.bands_owned into v_base
-    from public.plan_limits l
-   where l.plan = coalesce(v_plan, 'free');
-
-  -- An unknown plan string falls back to the most restrictive answer rather
-  -- than to "unlimited". Fail closed.
-  if v_base is null then
-    select l.bands_owned into v_base from public.plan_limits l where l.plan = 'free';
-  end if;
-
-  select coalesce(sum(a.quantity), 0)
-    into v_addons
-    from public.plan_addons a
-   where a.user_id = p_user_id
-     and a.addon_type = 'extra_band';
-
-  return v_base + v_addons;
-end;
-$$;
-
-revoke all on function public.effective_band_limit(uuid) from public, anon, authenticated;
-grant execute on function public.effective_band_limit(uuid) to service_role;
-
-
--- ═══ 6. Replace the flat-cap trigger ════════════════════════════════════════
+-- `enforce_band_owner_limit()` and `create_band_with_owner()` are left exactly
+-- as `main` needs them, reading `profiles.band_limit`. Replacing them with the
+-- plan-aware versions while `main` is deployed would resolve every user to
+-- free's single band and break band creation for every established account.
 --
--- The previous version of this trigger read `profiles.band_limit` directly.
--- That column is now a nullable override, so the old trigger is wrong twice
--- over: it ignores the plan, and it would treat a null override as "no limit
--- readable" and fail closed on every create by a normal account.
+-- That swap is `20260807_plans_db_enforcement.sql`, run after the branch is
+-- deployed. Do not run it early "to save a step".
+
+
+-- ═══ 7. Verify ══════════════════════════════════════════════════════════════
 --
--- Ownership in this schema is `band_members (band_id, user_id, role='owner')`
--- — a `bands` row on its own has no owner, so a trigger on `bands` could not
--- know whose allowance to charge. It therefore lives here, on the table that
--- actually records ownership, and fires at the exact moment the invariant can
--- be violated.
+-- `main` still works — no nulls, default intact:
+--   select count(*) filter (where band_limit is null) as broken_rows,
+--          count(*) as profiles
+--     from public.profiles;
 --
--- Raises SQLSTATE 'BL001' / message 'band_limit_reached' / detail
--- 'limit=<n> current=<n>' so the API layer can translate it into the
--- structured `{ error: 'limit_reached', limit_type: 'bands', … }` response
--- instead of leaking a 500. See lib/bandLimit.ts.
-
-create or replace function public.enforce_band_owner_limit()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_limit   integer;
-  v_current integer;
-begin
-  -- Only owner rows consume allowance. Joining a band as a member is free, on
-  -- every plan, without limit — there is no membership cap anywhere.
-  if new.role is distinct from 'owner' then
-    return new;
-  end if;
-
-  -- An UPDATE that leaves an already-owned row owned by the same user is not a
-  -- new claim of ownership (e.g. a role_label edit) — nothing to charge.
-  if tg_op = 'UPDATE'
-     and old.role = 'owner'
-     and old.user_id = new.user_id then
-    return new;
-  end if;
-
-  v_limit := public.effective_band_limit(new.user_id);
-
-  select count(*)
-    into v_current
-    from public.band_members bm
-   where bm.user_id = new.user_id
-     and bm.role = 'owner'
-     and bm.band_id is distinct from new.band_id;
-
-  if v_current >= v_limit then
-    raise exception using
-      errcode = 'BL001',
-      message = 'band_limit_reached',
-      detail  = format('limit=%s current=%s', v_limit, v_current);
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_enforce_band_owner_limit on public.band_members;
-
-create trigger trg_enforce_band_owner_limit
-  before insert or update of role, user_id on public.band_members
-  for each row
-  execute function public.enforce_band_owner_limit();
-
-
--- ═══ 7. Atomic band creation, plan-aware ════════════════════════════════════
+-- Who got an override, and why:
+--   select p.username, p.plan, p.band_limit, p.band_limit_override,
+--          count(bm.band_id) filter (where bm.role = 'owner') as owned
+--     from public.profiles p
+--     left join public.band_members bm on bm.user_id = p.id
+--    group by p.id, p.username, p.plan, p.band_limit, p.band_limit_override
+--   having p.band_limit_override is not null;
 --
--- A PostgREST function call runs inside a single implicit transaction, so the
--- limit check and both inserts either all happen or none do. This is the real
--- transaction the API route prefers over check-then-insert round trips.
---
--- The acting user is a parameter because the route resolves it from the
--- session; the function is not reachable by `anon` or `authenticated` (see the
--- grants), so a browser cannot call it with someone else's id.
-
-create or replace function public.create_band_with_owner(
-  p_user_id uuid,
-  p_name    text
-)
-returns public.bands
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_limit   integer;
-  v_current integer;
-  v_name    text := btrim(coalesce(p_name, ''));
-  v_band    public.bands;
-begin
-  if p_user_id is null then
-    raise exception using errcode = '22023', message = 'p_user_id is required';
-  end if;
-
-  if v_name = '' then
-    raise exception using errcode = '22023', message = 'p_name is required';
-  end if;
-
-  -- Takes the profiles row lock; see effective_band_limit().
-  v_limit := public.effective_band_limit(p_user_id);
-
-  select count(*)
-    into v_current
-    from public.band_members bm
-   where bm.user_id = p_user_id
-     and bm.role = 'owner';
-
-  if v_current >= v_limit then
-    raise exception using
-      errcode = 'BL001',
-      message = 'band_limit_reached',
-      detail  = format('limit=%s current=%s', v_limit, v_current);
-  end if;
-
-  insert into public.bands (name)
-       values (v_name)
-    returning * into v_band;
-
-  -- Charges the allowance. The trigger above re-checks here as a backstop.
-  insert into public.band_members (band_id, user_id, role)
-       values (v_band.id, p_user_id, 'owner');
-
-  return v_band;
-end;
-$$;
-
-revoke all on function public.create_band_with_owner(uuid, text) from public, anon, authenticated;
-grant execute on function public.create_band_with_owner(uuid, text) to service_role;
-
-
--- ═══ 8. Sanity checks (run these after applying) ════════════════════════════
---
--- select id, plan, band_limit, grace_until from public.profiles limit 20;
--- select * from public.plan_limits order by bands_owned;
--- select public.effective_band_limit('<a-user-uuid>');
--- select id, name, frozen_at, frozen_reason from public.bands where frozen_at is not null;
+-- New objects are present:
+--   select column_name from information_schema.columns
+--    where table_schema='public' and table_name='profiles'
+--      and column_name in ('plan','grace_until','grace_keep_band_ids','band_limit_override');
+--   select * from public.plan_limits order by bands_owned;

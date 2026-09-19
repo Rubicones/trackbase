@@ -15,11 +15,19 @@
  *        extra_member   → +quantity members on the row's band_id ONLY
  *      A row with a band_id applies to that band alone; a row without one
  *      applies account-wide.
- *   3. `profiles.band_limit` is a MANUAL OVERRIDE, not an addition. When it is
+ *   3. `profiles.band_limit_override` is a MANUAL OVERRIDE, not an addition. When it is
  *      non-null it REPLACES the computed owned-bands limit outright — plan
  *      base and extra_band addons included. Null means "use the plan". This is
  *      how grandfathered beta accounts (and later B2B deals) keep an allowance
  *      their plan would not give them.
+ *
+ *      NOTE the column name. The pre-plans code path (`main`) owns
+ *      `profiles.band_limit`, which is NOT NULL DEFAULT 3 and must stay that
+ *      way for as long as a rollback to `main` is possible. Repurposing it was
+ *      tried and took production down twice: dropping its default gave every
+ *      new profile a NULL that `main` fails closed on, and the value 3 then
+ *      read here as "override" silently disabled every plan limit in the
+ *      system. The two code paths now own separate columns and cannot collide.
  *
  * ── Ownership ───────────────────────────────────────────────────────────────
  * A band's capabilities always come from its OWNER's plan; members inherit
@@ -37,7 +45,7 @@
  * SQL is applied manually by the project owner (AGENTS.md §5), so this code
  * ships before its columns exist. Every read here degrades to
  * `UNPROVISIONED`: the app behaves exactly as it did before the plan system —
- * legacy `band_limit` cap, legacy 1 GB storage, no feature gating, no
+ * legacy `band_limit` cap (the pre-plans column), legacy 1 GB storage, no gating, no
  * freezing. The migration is the switch that turns plans on. Failing *closed*
  * here would lock every user out of features they have today over a migration
  * that has not run yet, which is the worse failure.
@@ -75,7 +83,7 @@ export interface Entitlements {
    * that gate features should treat `false` as "do not gate" — see the header.
    */
   provisioned: boolean
-  /** True when `profiles.band_limit` replaced the plan's owned-bands limit. */
+  /** True when `profiles.band_limit_override` replaced the plan's owned-bands limit. */
   bandsOwnedOverridden: boolean
 }
 
@@ -168,7 +176,7 @@ export interface PlanProfileRow {
 export async function readPlanProfile(userId: string): Promise<PlanProfileRow | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('plan, band_limit, grace_until, grace_keep_band_ids')
+    .select('plan, band_limit_override, grace_until, grace_keep_band_ids')
     .eq('id', userId)
     .maybeSingle()
 
@@ -188,14 +196,14 @@ export async function readPlanProfile(userId: string): Promise<PlanProfileRow | 
 
   const row = data as {
     plan: unknown
-    band_limit: unknown
+    band_limit_override: unknown
     grace_until: unknown
     grace_keep_band_ids: unknown
   }
 
   return {
     plan: isPlanId(row.plan) ? row.plan : DEFAULT_PLAN,
-    bandLimit: typeof row.band_limit === 'number' ? row.band_limit : null,
+    bandLimit: typeof row.band_limit_override === 'number' ? row.band_limit_override : null,
     graceUntil: typeof row.grace_until === 'string' ? row.grace_until : null,
     keepBandIds: Array.isArray(row.grace_keep_band_ids)
       ? (row.grace_keep_band_ids as unknown[]).filter((v): v is string => typeof v === 'string')
@@ -328,7 +336,7 @@ function resolveEntitlements(
 
 /**
  * Entitlements the user WOULD have on `plan`, keeping their addons and their
- * `band_limit` override. This is what the conflict checker compares the real
+ * `band_limit_override`. This is what the conflict checker compares the real
  * data against; it never writes anything and never changes the current plan.
  */
 export async function getEntitlementsForPlan(

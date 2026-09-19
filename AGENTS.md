@@ -737,11 +737,15 @@ have no CREATE files here. Columns below are inferred from actual queries.
   unique pending per (band,user). RLS.
 - **profiles** — id (= auth.users.id), username (unique), display_name,
   avatar_color, **plan** (text, `free|solo|band|band_plus`, default `free`),
-  **band_limit** (integer, **NULLABLE — this is now a MANUAL OVERRIDE, not
-  "the limit"**: non-null replaces the plan's owned-bands allowance entirely,
-  addons included; null means "use the plan". Grandfathered beta accounts and
-  B2B only. **Never read it directly — go through
-  `getEffectiveEntitlements()`**), **grace_until** (timestamptz, null = no
+  **band_limit** (integer **NOT NULL default 3** — the *pre-plans* allowance,
+  read only by the `main` code path. The plan system never reads it; it is kept
+  populated so a rollback needs no data migration. Do not repurpose it —
+  that was tried and broke production twice), **band_limit_override**
+  (integer, **nullable — the plan system's MANUAL OVERRIDE**: non-null
+  replaces the plan's owned-bands allowance entirely, addons included; null
+  means "use the plan". Grandfathered beta accounts and B2B only. **Never read
+  it directly — go through `getEffectiveEntitlements()`**),
+  **grace_until** (timestamptz, null = no
   grace period; account state is DERIVED from this and the data, never
   stored), **grace_keep_band_ids** (uuid[], the user's choice of which bands
   survive when grace ends; stale entries are tolerated and trimmed on use),
@@ -947,13 +951,21 @@ and preview traffic out of the counter.
   `getEffectiveEntitlements()` / `getBandEntitlements()`. The one deliberate
   duplicate is the `plan_limits` table (§5), which exists solely for the DB
   trigger — change both together.
-- **`profiles.band_limit` is an OVERRIDE, not the limit.** It used to be
-  `not null default 3` and *was* the cap; it is now nullable, and non-null
-  means "ignore the plan for this account". Reading it directly is a bug in
-  both directions: it ignores the plan for normal users, and a hardcoded 3
-  demotes grandfathered ones. Any new code path that inserts into `bands` (or
-  writes an owner row into `band_members`) must go through
-  `createBandForUser()` in `lib/bandLimit.ts`.
+- **Two band-limit columns, on purpose.** `profiles.band_limit` (NOT NULL
+  default 3) belongs to the pre-plans path; `profiles.band_limit_override`
+  (nullable) is the plan system's override, where non-null means "ignore the
+  plan for this account". They are separate because sharing one column broke
+  production twice: dropping the default gave new profiles a NULL that the old
+  code fails closed on, and the leftover value `3` then read as an override
+  that silently disabled every plan limit in the system. Read neither
+  directly — go through `getEffectiveEntitlements()`. Any new code path that
+  inserts into `bands` (or writes an owner row into `band_members`) must go
+  through `createBandForUser()` in `lib/bandLimit.ts`.
+- **The plans schema rolls out in two phases.**
+  `20260806_subscription_plans.sql` is additive only and safe to apply while
+  the old code is live; `20260807_plans_db_enforcement.sql` swaps the DB
+  routines and must come *after* the deploy. Keep it that way — anything that
+  changes a column or routine the deployed code reads belongs in phase 2.
 - **Membership is never capped.** Joining someone else's band is unlimited on
   every plan, free included. Do not add a `bandsJoined` limit, and do not
   count non-owner memberships in any entitlement code.

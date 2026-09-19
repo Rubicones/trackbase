@@ -175,6 +175,16 @@ function IconPlus({ size = 14 }: { size?: number }) {
   )
 }
 
+/** Frozen-state marker. Local inline SVG to match the other icons in this file. */
+function IconLock({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
+      <rect x="3" y="6" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5 6V4.5a2 2 0 0 1 4 0V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function IconSpinner({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="none" style={{ animation: 'spin 0.7s linear infinite' }}>
@@ -1294,13 +1304,13 @@ export default function BandPage() {
                 />
               ) : (
                 <span
-                  className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' ? 'cursor-text' : ''}`}
-                  onDoubleClick={myRole === 'owner' ? startBandRename : undefined}
+                  className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' && !frozen ? 'cursor-text' : ''}`}
+                  onDoubleClick={myRole === 'owner' && !frozen ? startBandRename : undefined}
                 >
                   <span className={`truncate transition-colors ${bandNameFlash ? 'text-lime' : ''}`}>
                     {band?.name}
                   </span>
-                  {myRole === 'owner' && (
+                  {myRole === 'owner' && !frozen && (
                     <button
                       type="button"
                       onClick={startBandRename}
@@ -1451,22 +1461,45 @@ export default function BandPage() {
                     />
                   ))
                 )}
+                {/* Creating a project is a write, so a frozen band cannot do
+                    it — the server refuses (`frozenBandRefusal` in
+                    /api/bands/[id]/projects). Offering the action anyway and
+                    failing afterwards is the worst of both: the tile stays,
+                    but it states the situation instead of inviting a click
+                    that cannot succeed. */}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={openNewProjectModal}
-                    className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
-                  >
-                    <div className="size-8 border border-border grid place-items-center text-muted-foreground">
-                      <IconPlus size={14} />
+                  frozen ? (
+                    <div
+                      className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 text-center w-full select-none"
+                      aria-disabled="true"
+                    >
+                      <div className="size-8 border border-border grid place-items-center text-muted-foreground/60">
+                        <IconLock size={14} />
+                      </div>
+                      <span className="text-sm text-muted-foreground font-medium">
+                        New projects are paused
+                      </span>
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                        This band is frozen
+                      </span>
                     </div>
-                    <span className="text-sm text-muted-foreground hover:text-lime transition-colors font-medium">
-                      Start a new project
-                    </span>
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
-                      Upload stems or start blank
-                    </span>
-                  </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openNewProjectModal}
+                      className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
+                    >
+                      <div className="size-8 border border-border grid place-items-center text-muted-foreground">
+                        <IconPlus size={14} />
+                      </div>
+                      <span className="text-sm text-muted-foreground hover:text-lime transition-colors font-medium">
+                        Start a new project
+                      </span>
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                        Upload stems or start blank
+                      </span>
+                    </button>
+                  )
                 )}
               </div>
             </div>
@@ -1695,14 +1728,20 @@ export default function BandPage() {
                 <p className="text-[10px] text-muted-foreground m-0 leading-relaxed">
                   Share this code so others can request to join. You approve each request.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowRegenerateCodeModal(true)}
-                  disabled={regeneratingCode}
-                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
-                >
-                  {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
-                </button>
+                {frozen ? (
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground/70 m-0">
+                    Regenerating paused — band frozen
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowRegenerateCodeModal(true)}
+                    disabled={regeneratingCode}
+                    className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
+                  >
+                    {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
+                  </button>
+                )}
               </div>
             )}
           </div>

@@ -63,12 +63,18 @@ grant update (
 
 -- Deliberately NOT granted, and why:
 --   plan                  the subscription itself
---   band_limit            the manual override; replaces the plan allowance
+--   band_limit_override   the manual override; replaces the plan allowance
+--   band_limit            the pre-plans allowance, still read by `main`
 --   grace_until           decides when freezing starts
 --   grace_keep_band_ids   decides which bands survive freezing
 --   acquisition_source    write-once attribution (PATCH /api/profile/username)
 --   cohort                       "
 --   id                    identity
+--
+-- Note that BOTH band-limit columns are withheld. They belong to different
+-- code paths — `band_limit` to the pre-plans one, `band_limit_override` to the
+-- plan system — and either one, if writable from a browser, hands the user an
+-- arbitrary band allowance.
 
 -- `anon` has no business updating a profile at all; the revoke above is the
 -- whole story for that role.
