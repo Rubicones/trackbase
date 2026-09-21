@@ -2495,3 +2495,106 @@ html:has(.landing-page) body {
 @media (orientation: landscape) and (max-width: 1023px) {
   .skeleton-desktop { display: none; }
 }
+
+/* ── Plans modal · header EQ ─────────────────────────────────────────────────
+   One keyframe for all 28 bars: each carries its own duration and delay as
+   inline custom properties, so the strip stays a single CSS rule instead of
+   28 generated ones, and the render stays pure (no Math.random per paint). */
+@keyframes tb-eq-bar {
+  0%,
+  100% { transform: scaleY(0.35); }
+  50%  { transform: scaleY(1); }
+}
+
+.tb-eq-bar {
+  transform-origin: bottom;
+  animation: tb-eq-bar var(--tb-eq-dur, 1.4s) ease-in-out infinite;
+  animation-delay: var(--tb-eq-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-eq-bar {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}
+
+/* ─── Subscription design kit (ported surfaces) ──────────────────────────────
+   The plans modal is a 1:1 port of `sonicdesk_designs` → /uikit/subscriptions.
+   The kit paints on its own faces and accents: Inter for body copy, Archivo
+   600 for display, and four plan accents that the app only ever defined under
+   `.landing-page`. A portal renders on <body>, outside that class, which is
+   why the squares and check markers came out invisible — these are the kit's
+   literal values, scoped to the ported surface only.
+──────────────────────────────────────────────────────────────────────────── */
+
+.font-body-tb {
+  font-family: var(--tb-font-body), 'Inter', ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: normal;
+  font-feature-settings: normal;
+}
+
+.tb-plans-kit {
+  --plan-mint: #61e6bd;
+  --plan-violet: #a78bfa;
+  --plan-lime: var(--lime, #dfff00);
+  --plan-amber: #f4b942;
+}
+
+/* Kit entry motion: framer's `{opacity, y: 24, scale: .985}` spring, as CSS. */
+@keyframes tb-plans-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes tb-plans-sheet-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.tb-plans-backdrop {
+  animation: tb-plans-backdrop-in 220ms ease-out both;
+}
+.tb-plans-sheet {
+  animation: tb-plans-sheet-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-plans-backdrop,
+  .tb-plans-sheet {
+    animation: none;
+  }
+}
+
+/* `html[data-theme] h1..h6` applies -0.02em globally and outranks a utility
+   class; the kit's headings sit at `tracking-normal`, so restore it here. */
+.tb-plans-kit h2,
+.tb-plans-kit h3 {
+  letter-spacing: normal;
+}
+
+/* Plan card hover.
+   The kit lifts the card with a framer spring — `{ type: "spring",
+   stiffness: 320, damping: 24 }`, i.e. zeta ~ 0.67: it overshoots ~6% and
+   settles in about half a second. An `ease-out` tween cannot do that, which
+   is why the ported version felt stiff. The easing below is that spring
+   sampled at 25 points over 600ms. Keep it on ONE line: a `linear()` broken
+   across lines makes Lightning CSS drop everything after this rule. */
+.tb-plans-card {
+  transition: transform 600ms cubic-bezier(0.34, 1.32, 0.42, 1), background-color 220ms ease-out, border-color 220ms ease-out;
+  transition-timing-function: linear(0, 0.0814, 0.2619, 0.4702, 0.6628, 0.8184, 0.9307, 1.0026, 1.0416, 1.0569, 1.0569, 1.0484, 1.0366, 1.0248, 1.0146, 1.0068, 1.0016, 0.9984, 0.997, 0.9966, 0.9969, 0.9975, 0.9982, 0.9989, 1), ease-out, ease-out;
+  will-change: transform;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tb-plans-card:hover {
+    transform: translateY(-5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-plans-card {
+    transition: background-color 220ms ease-out;
+  }
+  .tb-plans-card:hover {
+    transform: none;
+  }
+}

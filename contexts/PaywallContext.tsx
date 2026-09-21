@@ -38,6 +38,7 @@ import { PlansModal } from '@/components/paywall/PlansModal'
 import {
   DEFAULT_PLAN,
   PLANS,
+  type AddonType,
   type GatedFeature,
   type Limit,
   type PlanId,
@@ -80,6 +81,14 @@ export interface PlanUsageBand {
   frozenReason: string | null
 }
 
+export interface PlanAddon {
+  id: string
+  type: AddonType
+  /** Null for account-wide addons (`extra_band`). */
+  bandId: string | null
+  quantity: number
+}
+
 export interface PlanSnapshot {
   plan: PlanId
   state: PlanState
@@ -91,6 +100,14 @@ export interface PlanSnapshot {
   features: GatedFeature[]
   bandsOwnedOverridden: boolean
   usage: { bandsOwned: number; bands: PlanUsageBand[] }
+  /**
+   * Whether this deployment can take a payment. Resolved server-side from the
+   * Stripe configuration (`lib/billing/config.ts`) — the browser has no way to
+   * know, and guessing `true` would send a user to a checkout that 404s.
+   */
+  billingLive: boolean
+  /** Explains a raised ceiling; never used to compute one. */
+  addons: PlanAddon[]
 }
 
 const EMPTY_SNAPSHOT: PlanSnapshot = {
@@ -113,6 +130,10 @@ const EMPTY_SNAPSHOT: PlanSnapshot = {
   features: [],
   bandsOwnedOverridden: false,
   usage: { bandsOwned: 0, bands: [] },
+  // Assume no billing until the server says otherwise: the wrong guess here
+  // costs a redirect to a checkout that does not exist.
+  billingLive: false,
+  addons: [],
 }
 
 interface PaywallContextValue {

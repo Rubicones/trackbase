@@ -7,6 +7,7 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project, Section } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
+import type { GatedFeature } from '@/lib/plans'
 import { usePaywallGate, useApiErrorMessage } from '@/contexts/PaywallContext'
 import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 import { trackEvent } from '@/lib/analytics'
@@ -235,10 +236,27 @@ export default function ProjectPage() {
   // limit_reached event on the way through.
   const describeApiError = useApiErrorMessage()
 
+  // ── What this BAND can do ─────────────────────────────────────────────────
+  // Served by `GET /api/projects/[id]`, resolved from the band OWNER's plan.
+  // Every paywall gate on this screen is keyed off it rather than off the
+  // viewer's own plan, which is all `GET /api/me/plan` knows: a free member of
+  // a Band+ band is entitled to that band's features, and for `ab_compare` and
+  // `chord_detect` the client gate is the only one there is (both run in the
+  // browser — see `lib/plans.ts`), so falling back to the viewer's plan did not
+  // under-promise, it denied them outright.
+  //
+  // `null` until the first load lands: `usePaywallGate` reads that as "not
+  // known yet" and locks nothing, rather than flashing a paywall over a feature
+  // the user has.
+  const [bandFeatures, setBandFeatures] = useState<GatedFeature[] | null>(null)
+
   // ── Compare mode ──────────────────────────────────────────────────────────
-  // Gates the A/B Compare entry button. Locking is driven by the real plan
-  // (contexts/PaywallContext.tsx); the server refuses independently.
-  const { locked: abCompareLocked, onLockedClick: onAbCompareLockedClick } = usePaywallGate('ab_compare')
+  // Gates the A/B Compare entry button. Locking is driven by the band's plan
+  // (contexts/PaywallContext.tsx). Note there is no server check behind this
+  // one — A/B Compare is client-side playback of versions the user may already
+  // read, so this gate is the whole enforcement.
+  const { locked: abCompareLocked, onLockedClick: onAbCompareLockedClick } =
+    usePaywallGate('ab_compare', bandFeatures)
   const [compareActive, setCompareActive] = useState(false)
   const [compareVersionBId, setCompareVersionBId] = useState<string>('')
   // Portal slot for compare transport bar (same DOM position as MasterPlayerBar)
@@ -404,9 +422,14 @@ export default function ProjectPage() {
       let data: {
         project: Project
         versions: Version[]
+        bandFeatures?: GatedFeature[]
       }
       try {
-        data = await fetchProjectJson<{ project: Project; versions: Version[] }>(projectId)
+        data = await fetchProjectJson<{
+          project: Project
+          versions: Version[]
+          bandFeatures?: GatedFeature[]
+        }>(projectId)
       } catch (err) {
         const status = (err as { status?: number }).status
         const body = ((err as { body?: { code?: string } }).body ?? {}) as { code?: string }
@@ -428,6 +451,9 @@ export default function ProjectPage() {
       }
       setProject(data.project)
       setVersions(data.versions)
+      // Absent only on a server that predates the field; leaving it null keeps
+      // the gates open rather than locking on a guess.
+      setBandFeatures(data.bandFeatures ?? null)
 
       // Populate cache for all fetched versions
       for (const v of data.versions) {
@@ -2411,6 +2437,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           commentCount={totalComments}
           onToggleCommentMode={toggleCommentMode}
           mixer={{
+            bandFeatures,
             project,
             versionId: activeVersionId,
             versions,
@@ -3031,6 +3058,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           {/* Structure + transport — bar ruler, sections, play/time/volume */}
           {!compareActive && project && (
             <StructureOverlay
+              bandFeatures={bandFeatures}
               project={project}
               versionId={activeVersionId}
               totalDurationMs={totalProjectDurationMs}
@@ -3114,6 +3142,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
               ) : activeTracks.map((t, i) => (
                 <TrackRow
                   key={t.id} track={t} index={i}
+                  bandFeatures={bandFeatures}
                   muted={player.mutedTracks.has(t.id) || player.midiRenderingTracks.has(t.id)}
                   soloed={player.soloedTracks.has(t.id)} changed={isChanged(t)}
                   isReplacing={replacingTrackId === t.id}
@@ -3566,6 +3595,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           onClose={() => setMergeModal(null)}
           onMerged={handleMergeComplete}
           onOpenDiff={targetVersionId => handleOpenCherryPickDiff(mergeModal.branchId, targetVersionId)}
+          bandFeatures={bandFeatures}
         />
       )}
 

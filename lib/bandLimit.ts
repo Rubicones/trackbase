@@ -4,10 +4,22 @@
  * THE RULE: a user may own at most their *effective* owned-bands limit, which
  * is resolved by `getEffectiveEntitlements()` (`lib/entitlements.ts`) from
  * their plan, their `extra_band` addons, and — when it is non-null — the
- * `profiles.band_limit_override` manual override. **Never read that column
- * directly and never substitute a literal.** It is an override that
- * grandfathered beta accounts (and later B2B deals) carry, and it means
- * "ignore the plan for this account".
+ * `profiles.band_limit_override` manual value. **Never read that column
+ * directly and never substitute a literal.**
+ *
+ * The override is a FLOOR, not a replacement: the limit is
+ * `greatest(override, plan base + extra_band addons)`. It guarantees a
+ * grandfathered beta account (and later a B2B deal) an allowance their plan
+ * would not give them, and it gets out of the way the moment the plan gives
+ * more. It does NOT mean "ignore the plan for this account" — that was the old
+ * reading, and it was wrong in the direction that costs money: an account on
+ * override 3 that bought Band+ (5) resolved to 3, and any `extra_band` addon
+ * on top granted nothing at all, silently, at any quantity.
+ *
+ * The same rule is implemented in `effective_band_limit()` in the database
+ * (`supabase/migrations/20260921_band_limit_override_floor.sql`) and in
+ * `resolveEntitlements()`. All three must agree exactly — while one says 5 and
+ * another says 3, the app offers a band the trigger refuses with BL001.
  *
  * `profiles.band_limit` is a DIFFERENT column and belongs to the pre-plans code
  * path (`main`). It stays NOT NULL DEFAULT 3 so a rollback needs no data

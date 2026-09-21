@@ -3,6 +3,10 @@
 /**
  * The upgrade resolution screen.
  *
+ * Rebuilt on the subscription design kit ("Conflict resolver"): blocking
+ * conflicts on one side, the outcomes that resolve themselves on the other, so
+ * a user can see at a glance which half needs them.
+ *
  * Shown when a plan change would leave the account in violation of its own
  * limits. Only member conflicts actually block — an upgrade raises every other
  * ceiling, so bands, storage and versions resolve themselves and are shown
@@ -25,12 +29,15 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { CircleCheck } from 'lucide'
 import { PLANS, formatMB, type PlanId } from '@/lib/plans'
 import { formatStorageLimit } from '@/lib/bandStorage'
 import type { Conflict, TooManyMembersConflict } from '@/lib/planConflicts'
 import { trackPlanConflictResolved, trackPlanConflictShown } from '@/lib/planAnalytics'
+import { LucideIcon } from '@/components/design/LucideIcon'
 import { TbButton } from '@/components/design/TbButton'
 import { Spinner } from '@/components/ui/Spinner'
+import { Eyebrow, InlineNotice, StatusBadge } from '@/components/plan/ui'
 
 interface Props {
   targetPlan: PlanId
@@ -87,94 +94,114 @@ export function PlanConflictResolver({
   const canConfirm = blocking.length === 0 && !busy
 
   return (
-    <div>
-      <p className="font-display text-sm uppercase tracking-tight text-foreground m-0 mb-2">
-        Before you switch to {PLANS[targetPlan].name}
-      </p>
-
-      {blocking.length > 0 ? (
-        <p className="font-mono text-[11px] text-muted-foreground m-0 mb-4 leading-relaxed">
-          {PLANS[targetPlan].name} allows fewer members per band than you have right now. Remove
-          the extras below and the switch unlocks.
+    <section className="border border-border bg-surface/40">
+      <header className="border-b border-border px-4 py-4">
+        <Eyebrow>Plan conflict resolver</Eyebrow>
+        <h3 className="font-display-tb m-0 mt-2 text-xl font-bold uppercase tracking-tight text-foreground">
+          Before you switch to {PLANS[targetPlan].name}
+        </h3>
+        <p className="m-0 mt-2 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
+          {blocking.length > 0
+            ? `${PLANS[targetPlan].name} allows fewer members per band than you have right now. Remove the extras below and the switch unlocks.`
+            : 'Nothing is blocking this switch.'}
         </p>
-      ) : (
-        <p className="font-mono text-[11px] text-muted-foreground m-0 mb-4 leading-relaxed">
-          Nothing is blocking this switch.
-        </p>
-      )}
+      </header>
 
-      {/* ── Blocking: too many members ──────────────────────────────────── */}
-      {memberConflicts.map(conflict => (
-        <div key={conflict.bandId} className="border border-destructive/35 bg-destructive/5 p-3 mb-3">
-          <p className="font-mono text-[11px] text-foreground m-0 mb-1">
-            {conflict.bandName} — {conflict.current} members, limit {conflict.limit}
-          </p>
-          <p className="font-mono text-[10px] text-muted-foreground m-0 mb-3 leading-relaxed">
-            Remove {conflict.current - conflict.limit}{' '}
-            {conflict.current - conflict.limit === 1 ? 'member' : 'members'}. Anything they made
-            stays: their comments, tracks and activity history are untouched — they just lose
-            access to this band.
-          </p>
+      <div className="grid lg:grid-cols-2">
+        {/* ── Blocking: too many members ──────────────────────────────────── */}
+        <div className="border-b border-border p-4 lg:border-b-0 lg:border-r">
+          <StatusBadge tone={blocking.length > 0 ? 'destructive' : 'lime'}>
+            {blocking.length > 0 ? 'Blocking · too many members' : 'Ready'}
+          </StatusBadge>
 
-          <ul className="m-0 p-0 list-none space-y-1.5">
-            {conflict.members.map(member => {
-              const isOwner = member.role === 'owner'
-              const key = `${conflict.bandId}:${member.userId}`
-              return (
-                <li
-                  key={member.userId}
-                  className="flex items-center justify-between gap-3 border border-border bg-background px-2.5 py-2"
-                >
-                  <span className="font-mono text-[11px] text-foreground truncate">
-                    {member.displayName || (member.username ? `@${member.username}` : 'Member')}
-                    {isOwner && (
-                      <span className="text-muted-foreground"> · owner</span>
-                    )}
-                  </span>
-                  {isOwner ? (
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground shrink-0">
-                      Stays
-                    </span>
-                  ) : (
-                    <TbButton
-                      variant="menuDanger"
-                      className="shrink-0"
-                      disabled={removing !== null}
-                      onClick={() => removeMember(conflict.bandId, member.userId)}
+          {memberConflicts.length === 0 && (
+            <p className="m-0 mt-4 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
+              No band is over the member limit of the plan you are moving to.
+            </p>
+          )}
+
+          {memberConflicts.map(conflict => (
+            <div key={conflict.bandId} className="mt-4">
+              <h4 className="font-display-tb m-0 text-[14px] font-bold uppercase tracking-tight text-foreground">
+                {conflict.bandName}{' '}
+                <span className="font-mono-tb text-[10px] font-normal text-muted-foreground">
+                  {conflict.current} / {conflict.limit}
+                </span>
+              </h4>
+              <p className="m-0 mt-1.5 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
+                Remove {conflict.current - conflict.limit}{' '}
+                {conflict.current - conflict.limit === 1 ? 'member' : 'members'}. Anything they
+                made stays: their comments, tracks and activity history are untouched — they just
+                lose access to this band.
+              </p>
+
+              <ul className="m-0 mt-3 list-none space-y-1.5 p-0">
+                {conflict.members.map(member => {
+                  const isOwner = member.role === 'owner'
+                  const key = `${conflict.bandId}:${member.userId}`
+                  return (
+                    <li
+                      key={member.userId}
+                      className="flex items-center justify-between gap-3 border border-border bg-background px-2.5 py-2"
                     >
-                      {removing === key ? 'Removing…' : 'Remove'}
-                    </TbButton>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
+                      <span className="truncate font-mono-tb text-[11px] text-foreground">
+                        {member.displayName || (member.username ? `@${member.username}` : 'Member')}
+                        {isOwner && <span className="text-muted-foreground"> · owner</span>}
+                      </span>
+                      {isOwner ? (
+                        <span className="shrink-0 font-mono-tb text-[9px] uppercase tracking-widest text-muted-foreground">
+                          Stays
+                        </span>
+                      ) : (
+                        <TbButton
+                          variant="menuDanger"
+                          className="shrink-0"
+                          disabled={removing !== null}
+                          onClick={() => removeMember(conflict.bandId, member.userId)}
+                        >
+                          {removing === key ? 'Removing…' : 'Remove'}
+                        </TbButton>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ))}
         </div>
-      ))}
 
-      {/* ── Non-blocking: shown so the change holds no surprises ────────── */}
-      {autoResolving.length > 0 && (
-        <div className="border border-border p-3 mb-3">
-          <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground m-0 mb-2">
-            Resolves on its own
-          </p>
-          <ul className="m-0 p-0 list-none space-y-1.5">
-            {autoResolving.map((c, i) => (
-              <li
-                key={i}
-                className="font-mono text-[10px] text-muted-foreground leading-relaxed flex items-start gap-2"
-              >
-                <span className="mt-[6px] size-1 bg-lime shrink-0" aria-hidden />
-                <span>{describeAutoResolving(c)}</span>
-              </li>
-            ))}
-          </ul>
+        {/* ── Non-blocking: shown so the change holds no surprises ────────── */}
+        <div className="p-4">
+          <Eyebrow tone="amber">Resolves on its own</Eyebrow>
+          {autoResolving.length === 0 ? (
+            <p className="m-0 mt-4 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
+              Nothing else changes shape on this switch.
+            </p>
+          ) : (
+            <ul className="m-0 mt-4 list-none space-y-3 p-0">
+              {autoResolving.map((c, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 font-mono-tb text-[10px] leading-relaxed text-muted-foreground"
+                >
+                  <span className="mt-px shrink-0 text-[var(--wave-amber)]">
+                    <LucideIcon icon={CircleCheck} size={13} />
+                  </span>
+                  <span>{describeAutoResolving(c)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="px-4 pb-1">
+          <InlineNotice title={error} />
         </div>
       )}
 
-      {error && <p className="font-mono text-[11px] text-destructive m-0 mb-3">{error}</p>}
-
-      <div className="flex gap-2 justify-end pt-1">
+      <footer className="flex justify-end gap-2 border-t border-border p-3">
         <TbButton onClick={onCancel} disabled={busy}>
           Cancel
         </TbButton>
@@ -187,8 +214,8 @@ export function PlanConflictResolver({
             `Switch to ${PLANS[targetPlan].name}`
           )}
         </TbButton>
-      </div>
-    </div>
+      </footer>
+    </section>
   )
 }
 

@@ -297,26 +297,32 @@ export function DevPlanSwitcher() {
           Grandfathered override
         </p>
 
-        {/* An active override makes most of this panel untestable, and does so
-            silently — the plan switches, no conflict is found, no grace starts,
-            nothing freezes, and everything *looks* like it worked. Worth
-            shouting about rather than mentioning. */}
+        {/* An override set ABOVE what the plan grants makes most of this panel
+            untestable, and does so silently — the plan switches, no conflict is
+            found, no grace starts, nothing freezes, and everything *looks* like
+            it worked. Worth shouting about rather than mentioning. Since the
+            override became a floor it no longer masks a plan that grants more,
+            so the warning is tied to the number in force, not to the column
+            merely being set. */}
         {plan.bandsOwnedOverridden && (
           <div className="border border-[var(--wave-amber)]/40 bg-[var(--wave-amber)]/5 px-2.5 py-2 mb-2">
             <p className="font-mono text-[10px] text-[var(--wave-amber)] m-0 leading-relaxed">
-              Override active ({plan.limits.bandsOwned} bands) — your plan&rsquo;s own band limit
-              is being ignored.
+              Override active — your owned-band limit is {plan.limits.bandsOwned}, the higher of
+              the override and what your plan plus add-ons grant.
             </p>
             <p className="font-mono text-[10px] text-muted-foreground m-0 mt-1.5 leading-relaxed">
-              While this is set you cannot produce a band conflict, so downgrades start no grace
-              period and no band will ever freeze. Clear it before testing any of that.
+              While the override is the higher of the two you cannot produce a band conflict, so
+              downgrades start no grace period and no band will ever freeze. Clear it before
+              testing any of that.
             </p>
           </div>
         )}
 
         <p className="font-mono text-[10px] text-muted-foreground m-0 mb-2 leading-relaxed">
-          `profiles.band_limit` replaces the plan&rsquo;s owned-band limit entirely when set.
-          Currently: {plan.bandsOwnedOverridden ? `${plan.limits.bandsOwned} (override)` : 'none'}.
+          `profiles.band_limit_override` is a FLOOR under the plan&rsquo;s owned-band limit:
+          max(override, plan base + extra_band add-ons). It raises a plan that gives less and
+          never caps one that gives more.
+          Currently: {plan.bandsOwnedOverridden ? `${plan.limits.bandsOwned} (override set)` : 'none'}.
         </p>
         <div className="flex gap-2">
           {[3, 10].map(n => (

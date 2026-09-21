@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { AtSign, CreditCard, LogOut, Mail, Trash2, X, type IconNode } from 'lucide'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePaywall, DEV_PLAN_TOOLS_AVAILABLE } from '@/contexts/PaywallContext'
+import Link from 'next/link'
 import { PlanUsage } from '@/components/plan/PlanUsage'
 import { DevPlanSwitcher } from '@/components/plan/DevPlanSwitcher'
 import { GraceBanner } from '@/components/plan/GraceBanner'
@@ -13,7 +14,7 @@ import { setAuthCookies, clearAuthCookies } from '@/lib/auth/cookies'
 import { UserAvatar } from '@/components/ui/avatar'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { TbModal } from '@/components/design/TbModal'
-import { TbButton } from '@/components/design/TbButton'
+import { TbButton, tbButtonClassName } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
 import { Spinner } from '@/components/ui/Spinner'
 
@@ -339,12 +340,23 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          <PlanUsage />
+          {/* Compact on purpose: the per-band breakdown, the add-ons and
+              anything transactional live on /billing, which has the room for
+              them. Two full copies of the same panel is two places to keep in
+              step, and the modal is the one that would fall behind. */}
+          <PlanUsage compact />
 
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap gap-2">
             <TbButton variant="primary" onClick={() => openPaywall('preferences')}>
               See plans
             </TbButton>
+            <Link
+              href="/billing"
+              onClick={onClose}
+              className={tbButtonClassName({ className: 'no-underline' })}
+            >
+              Plan &amp; billing
+            </Link>
           </div>
         </section>
 

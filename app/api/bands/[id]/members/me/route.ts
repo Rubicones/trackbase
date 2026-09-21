@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { serverErrorResponse } from '@/lib/apiErrors'
+import { countBandOwners, LAST_OWNER_REFUSAL } from '@/lib/bandAccess'
 
 // DELETE /api/bands/[id]/members/me — leave a band
 export async function DELETE(
@@ -22,20 +23,10 @@ export async function DELETE(
 
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 404 })
 
-  // If the user is an owner, check there's at least one other owner
-  if (membership.role === 'owner') {
-    const { count } = await supabase
-      .from('band_members')
-      .select('user_id', { count: 'exact', head: true })
-      .eq('band_id', bandId)
-      .eq('role', 'owner')
-
-    if ((count ?? 0) <= 1) {
-      return NextResponse.json(
-        { error: 'Transfer ownership before leaving — you are the only owner' },
-        { status: 400 }
-      )
-    }
+  // If the user is an owner, check there's at least one other owner. The same
+  // guard runs in `DELETE .../members/[userId]`, against the same shared copy.
+  if (membership.role === 'owner' && (await countBandOwners(bandId)) <= 1) {
+    return NextResponse.json({ error: LAST_OWNER_REFUSAL }, { status: 400 })
   }
 
   const { error } = await supabase

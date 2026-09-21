@@ -31,21 +31,45 @@ import {
   countOwnedBands,
   getEffectiveEntitlements,
   listOwnedBands,
+  readAddons,
   resolvePlanState,
 } from '@/lib/entitlements'
 import { checkPlanConflicts } from '@/lib/planConflicts'
+import { settleAccount } from '@/lib/bandFreeze'
 import { changePlan } from '@/lib/planChange'
+import { BILLING_LIVE } from '@/lib/billing/config'
 
 export async function GET(req: NextRequest) {
   const userId = await getRequestUserId(req)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    const [entitlements, state, owned, ownedCount] = await Promise.all([
+    // ── Settle the account before describing it ───────────────────────────
+    //
+    // Freezing is lazy by design: a band nobody opens is frozen the moment
+    // someone touches it (`lib/bandFreeze.ts`), and grace is cleared by the
+    // same pass once the data fits the plan again. Both of those ran from the
+    // band routes and from the dev switcher — but never from here, which is
+    // the endpoint every plan surface reads.
+    //
+    // That produced two wrong answers at once. The dashboard announced "bands
+    // over your limit are frozen" while nothing had been frozen yet, because
+    // no band had been opened since grace expired. And granting capacity —
+    // an extra_band addon, an upgrade applied elsewhere — left `grace_until`
+    // sitting in the past, so `resolvePlanState` kept deriving `enforced` from
+    // a stale timestamp and the banner would not go away no matter how much
+    // room the account had.
+    //
+    // Reconciling first fixes both: whatever this endpoint then reports is
+    // true at the moment it is read. See `settleAccount` for the full note.
+    await settleAccount(userId)
+
+    const [entitlements, state, owned, ownedCount, addons] = await Promise.all([
       getEffectiveEntitlements(userId),
       resolvePlanState(userId),
       listOwnedBands(userId),
       countOwnedBands(userId),
+      readAddons(userId),
     ])
 
     // Conflicts against the CURRENT plan — i.e. "what is still wrong right
@@ -83,6 +107,20 @@ export async function GET(req: NextRequest) {
         })),
       },
       conflicts,
+      // Whether this deployment can actually charge a card. The browser cannot
+      // work this out for itself — the Stripe keys are server-only — and the
+      // answer decides whether "Subscribe" opens a checkout or records demand
+      // in `subscription_intents` the way it does today.
+      billingLive: BILLING_LIVE,
+      // Addons, so a usage panel can say WHY a band's ceiling is higher than
+      // the plan's. The resolved limits above already include them; this list
+      // exists to explain them, never to be re-added by the client.
+      addons: addons.map(a => ({
+        id: a.id,
+        type: a.type,
+        bandId: a.bandId,
+        quantity: a.quantity,
+      })),
       // Prices and plan shapes come from the same constant the server enforces,
       // so the modal can never advertise a limit the server does not honour.
       catalog: PLANS,

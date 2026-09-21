@@ -17,6 +17,7 @@ import {
 } from '@/lib/mergedAudioBuffer'
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { usePaywallGate } from '@/contexts/PaywallContext'
+import type { GatedFeature } from '@/lib/plans'
 import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 import { TbButton } from '@/components/design/TbButton'
 
@@ -336,6 +337,7 @@ export function SectionEditPopover({
   onTypeChange, onChordsLocalChange, onChordsAutoSave, onDetectChords, onBarRangeChange, onNoteChange, onDelete, onClose,
   layout = 'popover',
   animateIn = true,
+  bandFeatures,
 }: {
   section: Section
   cellPos: CellPos
@@ -358,6 +360,15 @@ export function SectionEditPopover({
    * reads as the same window closing and re-opening (see `handleConfirmNew`).
    */
   animateIn?: boolean
+  /**
+   * Gated features of the BAND, from `GET /api/projects/[id]`. Resolved from
+   * the band OWNER's plan, which is the real rule — without it the gate falls
+   * back to the viewer's own plan and a free member of a paid band is locked
+   * out. For `chord_detect` that lock is the ONLY gate (detection runs in a
+   * browser worker, there is no endpoint to refuse it), so passing this is the
+   * difference between the feature working and not. `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const customInputRef = useRef<HTMLInputElement>(null)
@@ -381,8 +392,11 @@ export function SectionEditPopover({
   const wasDetectingRef = useRef(detectingChords)
   const [trackPickerOpen, setTrackPickerOpen] = useState(false)
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set())
-  // Test-mode paywall — gates only this in-app Detect button, never /tools/chord-detector
-  const { locked: chordDetectLocked, onLockedClick: onChordDetectLockedClick } = usePaywallGate('chord_detect')
+  // Gates only this in-app Detect button, never /tools/chord-detector (public,
+  // no login, deliberately ungated). Resolved against the BAND's features so a
+  // free member of a paid band is not locked out of what the owner paid for.
+  const { locked: chordDetectLocked, onLockedClick: onChordDetectLockedClick } =
+    usePaywallGate('chord_detect', bandFeatures)
 
   useEffect(() => {
     setSelectedTrackIds(new Set())
@@ -965,6 +979,7 @@ export default function StructureOverlay({
   tourOpenFirstSection = false,
   onNamingChange,
   onActiveEditChange,
+  bandFeatures,
 }: {
   project: Project
   versionId: string
@@ -989,6 +1004,15 @@ export default function StructureOverlay({
   onNamingChange?: (naming: boolean) => void
   /** Feature tour: true while a section edit popover is open. */
   onActiveEditChange?: (open: boolean) => void
+  /**
+   * Gated features of the BAND, from `GET /api/projects/[id]`. Resolved from
+   * the band OWNER's plan, which is the real rule — without it the gate falls
+   * back to the viewer's own plan and a free member of a paid band is locked
+   * out. For `chord_detect` that lock is the ONLY gate (detection runs in a
+   * browser worker, there is no endpoint to refuse it), so passing this is the
+   * difference between the feature working and not. `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }) {
   const [selMode, setSelMode] = useState<SelMode>('idle')
   const [selStart, setSelStart] = useState<number | null>(null)
@@ -1843,6 +1867,7 @@ export default function StructureOverlay({
           onDelete={handleDelete}
           onClose={closeActiveEdit}
           animateIn={activeEdit.animateIn}
+          bandFeatures={bandFeatures}
         />
       )}
 

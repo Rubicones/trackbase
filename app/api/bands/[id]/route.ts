@@ -6,11 +6,12 @@ import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 import { logActivity } from '@/lib/activity'
-import { bandStorageLimitBytes, getBandStorageUsed } from '@/lib/bandStorage'
+import { getBandStorageUsed } from '@/lib/bandStorage'
 import { frozenBandRefusal } from '@/lib/planGuards'
-import { ensureBandFreezeState } from '@/lib/bandFreeze'
+import { ensureBandFreezeState, settleAccount } from '@/lib/bandFreeze'
 import { getBandEntitlements } from '@/lib/entitlements'
 import { mbToBytes } from '@/lib/plans'
+import { rememberLastBand } from '@/lib/lastBand'
 
 
 type TrackRow = TimelineTrack & {
@@ -335,7 +336,7 @@ export async function GET(
     getBandEntitlements(bandId),
   ])
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     band: bandRes.data,
     projects: enhancedProjects,
     members,
@@ -343,7 +344,11 @@ export async function GET(
     stats: { branches, merges, comments: totalComments, storage_bytes: storageBytes, tracks: totalTracks },
     recentActivity,
     totalActivity,
-    storageLimitBytes: mbToBytes(entitlements.storagePerBandMB) ?? bandStorageLimitBytes(),
+    // `null` means UNLIMITED, and the client renders it as such. It must not
+    // fall back to `bandStorageLimitBytes()` — that is the legacy pre-plans
+    // 1 GB constant, whose own docblock says not to use it as a value, and
+    // substituting it here would report 1 GB to a plan that has no ceiling.
+    storageLimitBytes: mbToBytes(entitlements.storagePerBandMB) ?? null,
     memberLimit: entitlements.membersPerBand,
     activeVersionLimit: entitlements.activeVersionsPerProject,
     features: entitlements.features,
@@ -353,6 +358,12 @@ export async function GET(
     inviteCode,
     pendingJoinRequests,
   })
+
+  // Opening a band is what makes it "the last band you opened". Membership was
+  // proven at the top of this handler, so the cookie can only ever name a band
+  // this user could in fact open — see lib/lastBand.ts.
+  rememberLastBand(res, bandId)
+  return res
 }
 
 // PATCH /api/bands/[id] — owner updates band name
@@ -451,6 +462,25 @@ export async function DELETE(
 
   const { error } = await supabase.from('bands').delete().eq('id', bandId)
   if (error) return serverErrorResponse('bands/delete', error, 'Could not delete the space')
+
+  // ── Settle before answering ───────────────────────────────────────────────
+  //
+  // Deleting a band is the documented way out of `too_many_bands` — it is why
+  // this route is deliberately NOT blocked in a frozen band. But the plan state
+  // is lazy, so nothing noticed: the account stayed in `grace`/`enforced` and
+  // any other frozen band stayed frozen until some later request happened to
+  // settle it. The user lands on the dashboard, which does settle, so this was
+  // invisible by luck rather than by design — and invisible only until somebody
+  // deleted a band from anywhere else.
+  //
+  // The acting user is the owner (checked above), so theirs is the account
+  // whose limits just changed. Best-effort: the band is already gone, and a
+  // failure here must not report the delete as failed.
+  try {
+    await settleAccount(userId)
+  } catch (err) {
+    console.warn('[bands/delete] settle failed after deleting', bandId, err)
+  }
 
   return NextResponse.json({ ok: true })
 }

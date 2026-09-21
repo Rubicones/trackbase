@@ -115,11 +115,6 @@ export function isBlockingConflict(conflict: Conflict): boolean {
   return BLOCKING_CONFLICT_TYPES.includes(conflict.type)
 }
 
-/** Structural conflicts are the ones a grace period exists for. */
-export function hasStructuralConflicts(conflicts: Conflict[]): boolean {
-  return conflicts.length > 0
-}
-
 // ── The checker ──────────────────────────────────────────────────────────────
 
 function toInfo(b: OwnedBandSummary): BandConflictInfo {

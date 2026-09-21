@@ -29,11 +29,14 @@
 
 import { supabase } from '@/lib/supabase'
 import {
+  countOwnedBands,
   getBandOwnerId,
   getEffectiveEntitlements,
+  graceDeadlineFromNow,
   listOwnedBands,
   resolvePlanState,
 } from '@/lib/entitlements'
+import { withinLimit } from '@/lib/plans'
 import { splitBandsForFreeze } from '@/lib/freezeOrder'
 import { checkPlanConflicts } from '@/lib/planConflicts'
 
@@ -199,6 +202,85 @@ export async function reconcileOwnerBands(
   }
 
   return out
+}
+
+/**
+ * Settle an account before a read describes it.
+ *
+ * Freezing and grace-clearing are lazy: they happen when a band is touched,
+ * not on a schedule. That is the right design — a band nobody opens does not
+ * need a cron job — but it means a *read* can describe a state that has not
+ * been applied yet, and the reads in question are the ones that render the
+ * banner claiming it has.
+ *
+ * Two wrong answers came out of that gap. The dashboard announced "bands over
+ * your limit are frozen" while none were, because nothing had opened a band
+ * since grace expired. And capacity granted elsewhere — an addon, an upgrade —
+ * left `grace_until` in the past, so the state kept deriving as `enforced`
+ * from a stale timestamp and the banner would not go away however much room
+ * the account had.
+ *
+ * Call this at the top of any endpoint whose answer a plan banner is rendered
+ * from. It costs one profile read when there is no deadline, which is the
+ * ordinary case.
+ */
+export async function settleAccount(userId: string): Promise<void> {
+  const state = await resolvePlanState(userId)
+
+  // A deadline is running, or has run out. The full reconciliation decides
+  // whether it still means anything: it freezes the excess when grace is over,
+  // releases bands that fit again, and clears the deadline outright once there
+  // is nothing left to fix.
+  if (state.graceUntil) {
+    await reconcileOwnerBands(userId, state.state === 'enforced')
+    return
+  }
+
+  // No deadline — which used to be the end of it, and that was the second half
+  // of the same bug.
+  //
+  // `grace_until` is written by exactly one thing: `changePlan()`, on a
+  // downgrade. So an account that became over-limit any OTHER way sat in
+  // `active` forever: no banner, no countdown, nothing frozen, while owning
+  // more bands than its plan allows. Revoking an addon does it. Lowering
+  // `band_limit_override` does it. Both leave the data outside the plan with
+  // nothing to notice.
+  //
+  // The state was always documented as derived from the plan and the data
+  // ("active — no conflicts between the plan and the data"); it was in fact
+  // derived from a timestamp. This is the missing half: when the data does not
+  // fit and no clock is running, start one. The user gets the same 14 days
+  // they would get from a downgrade, because it is the same situation.
+  //
+  // Only the owned-band count is checked here, deliberately. It is two cheap
+  // indexed reads on a path that runs on every dashboard load, and it is the
+  // only conflict that can appear without going through `changePlan` — members,
+  // storage and versions are all refused at the point of creation, so they can
+  // only go over when a plan shrinks, and a shrinking plan arms the clock on
+  // its own.
+  const entitlements = await getEffectiveEntitlements(userId)
+  if (!entitlements.provisioned || entitlements.bandsOwned === null) return
+
+  const owned = await countOwnedBands(userId)
+  if (withinLimit(entitlements.bandsOwned, owned)) return
+
+  await startGrace(userId)
+  // Nothing freezes yet: the point of grace is the 14 days.
+  await reconcileOwnerBands(userId, false)
+}
+
+/**
+ * Start a fresh grace period.
+ *
+ * The keep-choice belongs to one period, so a new one starts blank — mirroring
+ * `changePlan()`, which does the same for a downgrade.
+ */
+export async function startGrace(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ grace_until: graceDeadlineFromNow(), grace_keep_band_ids: null })
+    .eq('id', userId)
+  if (error && !isMissingSchema(error)) throw error
 }
 
 /** Clear the grace deadline and the user's keep-choice. */

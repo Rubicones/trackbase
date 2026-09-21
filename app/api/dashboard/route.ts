@@ -4,9 +4,11 @@ import { getRequestUserId } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 
 
-import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { getBandLimitStatus, type BandLimitStatus } from '@/lib/bandLimit'
+import { settleAccount } from '@/lib/bandFreeze'
 import { serverErrorResponse } from '@/lib/apiErrors'
+import { getBandEntitlements, getEffectiveEntitlements } from '@/lib/entitlements'
+import { mbToBytes } from '@/lib/plans'
 
 // GET /api/dashboard — all data needed for the bands list page
 export async function GET(req: NextRequest) {
@@ -70,7 +72,12 @@ export async function GET(req: NextRequest) {
         lastUpdated: r.created_at,
         latestActivity: null,
         storageBytes: 0,
-        storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+        // A band the user has only REQUESTED to join. Its ceiling comes from
+        // its owner's plan, which is not a non-member's business, and the
+        // pending card never renders storage anyway — so no number is claimed
+        // here. It must not be the flat `BAND_STORAGE_LIMIT_BYTES` constant,
+        // whose own docblock says not to use it as a value.
+        storageLimitBytes: null,
         isPending: true,
         joinRequestId: r.id,
         joinRequestedAt: r.created_at,
@@ -84,10 +91,36 @@ export async function GET(req: NextRequest) {
       totalBands: 0,
       totalProjects: 0,
       totalCollaborators: 0,
-      storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+      storageLimitBytes: await accountStorageLimitBytes(userId),
       bandLimit,
     })
   }
+
+  // The dashboard renders the grace banner and the band cards side by side,
+  // so it has to settle the account for the same reason /api/me/plan does —
+  // and before reading the freeze flags, or the two halves of one screen
+  // disagree for a load.
+  await settleAccount(userId)
+
+  // Which of these bands are frozen.
+  //
+  // Read on its own rather than joined onto the membership select, because the
+  // freeze columns arrive with a migration that is applied by hand (AGENTS.md
+  // §5) and a 42703 inside that join would take the whole dashboard down over
+  // a feature that is simply not switched on yet. Absent columns mean nothing
+  // is frozen, which is the truth in that state.
+  const frozenBandIds = await readFrozenBandIds(bandIds)
+
+  // Per-band storage ceilings, resolved the way `GET /api/bands/[id]` resolves
+  // them: the BAND OWNER's plan plus that band's `extra_storage` addons. This
+  // route used the flat pre-plans constant, so a free user was shown 1 GB
+  // against a real ceiling of 500 MB (twice what they have) and a Band+ user
+  // was shown 1 GB against 50 GB (2% of what they bought).
+  //
+  // Resolved in parallel, one entitlement read per band — the same cost the
+  // band page already pays for one band, and the loop over bands already
+  // exists below.
+  const storageLimitByBand = await resolveStorageLimits(bandIds)
 
   // ── Phase 2: parallel fetches ─────────────────────────────────────────────
   const [projectsRes, allMembersRes] = await Promise.all([
@@ -226,7 +259,10 @@ export async function GET(req: NextRequest) {
         project_name: (latestAct.projects as { name: string } | null)?.name ?? null,
       } : null,
       storageBytes,
-      storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+      storageLimitBytes: storageLimitByBand.get(m.band_id) ?? null,
+      // Display only. The write block is enforced server-side on every
+      // endpoint whether this flag was sent or not (`lib/bandFreeze.ts`).
+      frozen: frozenBandIds.has(band.id),
       isPending: false,
     }
   })
@@ -244,7 +280,63 @@ export async function GET(req: NextRequest) {
     totalBands: bands.length,
     totalProjects,
     totalCollaborators: allCollaboratorIds.size,
-    storageLimitBytes: BAND_STORAGE_LIMIT_BYTES,
+    storageLimitBytes: await accountStorageLimitBytes(userId),
     bandLimit,
   })
+}
+
+/**
+ * Per-band ceiling for each of these bands, in bytes. Null means unlimited —
+ * or that the band's entitlements could not be read, in which case the card
+ * shows no ceiling rather than a wrong one. The server refuses an over-quota
+ * upload either way (`lib/planGuards.ts`); nothing here is enforcement.
+ */
+async function resolveStorageLimits(bandIds: string[]): Promise<Map<string, number | null>> {
+  const entries = await Promise.all(
+    bandIds.map(async bandId => {
+      try {
+        const entitlements = await getBandEntitlements(bandId)
+        return [bandId, mbToBytes(entitlements.storagePerBandMB)] as const
+      } catch (err) {
+        console.error('[dashboard] storage limit unavailable for band', bandId, err)
+        return [bandId, null] as const
+      }
+    }),
+  )
+  return new Map(entries)
+}
+
+/**
+ * The top-level `storageLimitBytes` on this response.
+ *
+ * There is no account-wide storage total in this app and there must not be
+ * one (AGENTS.md §4) — storage is per band and is never pooled. This field
+ * predates plans and no current client reads it; it is kept, and resolved
+ * from the user's OWN plan, as the per-band figure a band they create would
+ * start with. It is a display fallback, not a total and not a ceiling.
+ */
+async function accountStorageLimitBytes(userId: string): Promise<number | null> {
+  try {
+    const entitlements = await getEffectiveEntitlements(userId)
+    return mbToBytes(entitlements.storagePerBandMB)
+  } catch (err) {
+    console.error('[dashboard] account storage limit unavailable', err)
+    return null
+  }
+}
+
+
+/**
+ * Band ids that are currently frozen, degrading to "none" when the freeze
+ * columns are not in the database yet.
+ */
+async function readFrozenBandIds(bandIds: string[]): Promise<Set<string>> {
+  if (!bandIds.length) return new Set()
+  const { data, error } = await supabase
+    .from('bands')
+    .select('id, frozen_at')
+    .in('id', bandIds)
+    .not('frozen_at', 'is', null)
+  if (error) return new Set()
+  return new Set((data ?? []).map((b: { id: string }) => b.id))
 }

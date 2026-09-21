@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { readAddons, resolvePlanState } from '@/lib/entitlements'
-import { reconcileOwnerBands } from '@/lib/bandFreeze'
+import { reconcileOwnerBands, settleAccount } from '@/lib/bandFreeze'
 import { DEV_PLAN_TOOLS_AVAILABLE } from '@/lib/devPlanTools'
 
 /**
@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ graceUntil: past })
       }
 
+      // NB: this clears the deadline, it does not make the account fit. If the
+      // data is still outside the plan, the next read settles it and a fresh
+      // 14 days begin — the state is derived from the data, not from whether
+      // a dev pressed a button. Use `expire_grace` to test enforcement.
       case 'clear_grace': {
         const { error } = await supabase
           .from('profiles')
@@ -151,6 +155,13 @@ export async function POST(req: NextRequest) {
           .select()
           .single()
         if (error) throw error
+        // Capacity just changed, so the account may no longer be over its
+        // limit. Reconciling here releases frozen bands and clears a stale
+        // grace deadline immediately, rather than leaving the banner up until
+        // something else happens to touch a band. The enforce flag is derived
+        // rather than assumed: granting one addon does not necessarily put an
+        // account back inside every ceiling it was outside of.
+        await settleAccount(userId)
         return NextResponse.json({ addon: data }, { status: 201 })
       }
 
@@ -167,12 +178,16 @@ export async function POST(req: NextRequest) {
           .eq('id', id)
           .eq('user_id', userId)
         if (error) throw error
+        await settleAccount(userId)
         return NextResponse.json({ ok: true })
       }
 
       case 'clear_addons': {
         const { error } = await supabase.from('plan_addons').delete().eq('user_id', userId)
         if (error) throw error
+        // Capacity dropped — anything now over the limit freezes here rather
+        // than on the next touch.
+        await settleAccount(userId)
         return NextResponse.json({ ok: true })
       }
 
@@ -208,8 +223,12 @@ export async function POST(req: NextRequest) {
         }
         if (error) throw error
 
-        stage('set_band_limit_override:reconcile')
-        await reconcileOwnerBands(userId, false)
+        // The override REPLACES the plan's allowance, so setting it is the one
+        // dev action that can shrink an account's capacity in a single step.
+        // Settling derives the state from the data afterwards — including
+        // starting a grace period when the account no longer fits.
+        stage('set_band_limit_override:settle')
+        await settleAccount(userId)
         stage('set_band_limit_override:done')
         return NextResponse.json({ bandLimitOverride: next })
       }

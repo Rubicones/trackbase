@@ -14,6 +14,7 @@ import { mergeTargetVersions } from '@/lib/versionSort'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { usePaywallGate } from '@/contexts/PaywallContext'
+import type { GatedFeature } from '@/lib/plans'
 import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
 
 export type {
@@ -519,9 +520,20 @@ function CommentChangesSection({
 
 // ─── Cherry-pick entry button ─────────────────────────────────────────────────
 
-function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
-  // Test-mode paywall — locked button stays clickable and opens the plans modal
-  const { locked, onLockedClick } = usePaywallGate('cherry_pick')
+function CherryPickDiffButton({
+  disabled,
+  onClick,
+  bandFeatures,
+}: {
+  disabled?: boolean
+  onClick: () => void
+  bandFeatures?: GatedFeature[] | null
+}) {
+  // A locked button stays clickable and opens the plans modal. Resolved against
+  // the BAND's features — `cherry_pick` comes from the band owner's plan, so a
+  // free member of a paid band must not see this locked. The server re-checks
+  // it on `POST /api/projects/[id]/merge` whenever selective fields are sent.
+  const { locked, onLockedClick } = usePaywallGate('cherry_pick', bandFeatures)
 
   const icon = (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
@@ -569,6 +581,7 @@ export function MergeModal({
   onClose,
   onMerged,
   onOpenDiff,
+  bandFeatures,
 }: {
   projectId: string
   branchId: string
@@ -577,6 +590,11 @@ export function MergeModal({
   onMerged: (result: { tracksUpdated: number; branchName: string; targetName: string }) => void
   /** Opens the full cherry-pick diff view for the current branch → target pair. */
   onOpenDiff?: (targetVersionId: string) => void
+  /**
+   * Gated features of the BAND, from `GET /api/projects/[id]`. Resolved from
+   * the band owner's plan; `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }) {
   const defaultTargetId = useMemo(
     () => versions.find(v => v.type === 'main')?.id ?? mergeTargetVersions(versions, branchId)[0]?.id ?? '',
@@ -743,6 +761,7 @@ export function MergeModal({
     <CherryPickDiffButton
       disabled={previewLoading || merging || !hasAnyChanges}
       onClick={() => onOpenDiff(targetVersionId)}
+      bandFeatures={bandFeatures}
     />
   )
 

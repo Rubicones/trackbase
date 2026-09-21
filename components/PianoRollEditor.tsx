@@ -977,15 +977,18 @@ export default function PianoRollEditor({
       if (!uploadRes.ok) throw new Error('MIDI upload failed')
       const { storage_path: storagePath, file_hash: storedHash } = await uploadRes.json()
 
-      // 4. Update track record
+      // 4. Save the notes.
+      //    ONLY `midi_data`. The upload route has already repointed the row at
+      //    the object it stored — `file_hash`, `storage_path` and
+      //    `file_size_bytes` are written there, server-side, and `file_hash` is
+      //    no longer in the PATCH allow-list at all: it is the key the storage
+      //    accounting deduplicates on, so a browser that could set it could
+      //    collide two tracks onto one hash and erase a band's measured usage.
+      //    The two values above are read back for local state, not written.
       const patchRes = await fetch(`/api/tracks/${track.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file_hash: storedHash,
-          storage_path: storagePath,
-          midi_data: midiData,
-        }),
+        body: JSON.stringify({ midi_data: midiData }),
       })
       if (!patchRes.ok) throw new Error((await patchRes.json()).error ?? 'Save failed')
 

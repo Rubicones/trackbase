@@ -31,12 +31,22 @@ per-comment cherry-picking. Terminology is a display-layer mapping of git
 concepts: branch→version, main→Master, merge→apply, conflict→overlapping
 changes. **The DB keeps git terms** (`versions.type = 'main'`).
 
-There is currently **no billing** — no Stripe, no checkout, no webhooks — but
-there IS a full **subscription plan and entitlement system** (§4): plans,
-limits, addons, upgrades, downgrades, grace periods and frozen bands are all
-implemented and enforced server-side. Plan assignment happens through a
-dev-only switcher until Stripe arrives, at which point Stripe will do exactly
-one thing: set `profiles.plan` and insert `plan_addons` rows.
+There is a full **subscription plan and entitlement system** (§4): plans,
+limits, addons, upgrades, downgrades, grace periods and frozen bands, all
+enforced server-side. **Stripe is wired in** — checkout, the customer portal,
+add-ons as subscription items, and a signature-verified webhook — and it does
+exactly one thing to entitlements: set `profiles.plan` and reconcile
+`plan_addons` rows.
+
+What gates it is **`BILLING_LIVE`** (`lib/billing/config.ts`), which requires
+BOTH `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. While it is false — which
+is the state of any deployment without those two env vars — the checkout and
+add-on routes answer 503, the webhook 404s, "Subscribe" records demand in
+`subscription_intents`, and plans are assigned only through the dev-only
+switcher. So "no billing" is a *configuration*, not a missing feature: do not
+read an unconfigured deployment as an excuse to build a second payment path.
+Two of the billing migrations are applied by hand and are not optional — see
+§4 *Billing (Stripe)*.
 
 There is **no native mobile app** — no Capacitor/Android code exists in this
 repo; mobile is the responsive web experience.
@@ -583,6 +593,17 @@ and with no test suite it is a silent one. `null` means unlimited (not
 hand. Gated features: `ab_compare`, `track_edit`, `chord_detect`,
 `cherry_pick` — locked on free, included on every paid plan.
 
+⚠ **The four are not enforced the same way, and the difference is structural.**
+`track_edit` and `cherry_pick` have server endpoints that call
+`assertBandFeature()`, so hiding the button is not the gate. `ab_compare` and
+`chord_detect` have **no server endpoint to gate** — A/B Compare is client-side
+playback of versions the user may already read, and chord detection runs
+entirely in a browser worker (`public/workers/chordsWorker.js`). For those two
+the client check IS the enforcement, and anybody who can set a JavaScript
+variable has them. Do not assume otherwise, and do not "add the missing server
+check" without first moving the work to a server. Making them paid in any
+stronger sense is a product decision, not a patch.
+
 **Two rules that are easy to violate by accident:**
 - **Owned bands only.** There is NO limit on how many bands a user may be a
   MEMBER of, on any plan, free included. Nothing counts non-owner
@@ -597,15 +618,38 @@ hand. Gated features: `ab_compare`, `track_edit`, `chord_detect`,
 the only place limits are computed; everything else calls it (or the
 band-scoped `getBandEntitlements(bandId)`). Order: plan base → `plan_addons`
 (`extra_band` +N account-wide; `extra_storage` +10 GB × N on one band;
-`extra_member` +N on one band) → `profiles.band_limit`, which when non-null
-**REPLACES** the computed owned-bands limit outright (it is an override, not
-an addition — see §5 and §7). **Band capabilities always come from the band
+`extra_member` +N on one band) → **`profiles.band_limit_override`**, which when
+non-null is a **FLOOR** under the result: the limit becomes
+`greatest(override, plan base + extra_band addons)`. It raises an allowance the
+plan would not give and never caps one that is already higher.
+
+Note both halves of that, because both were wrong before 2026-09-21. The column
+is `band_limit_override`, NOT `profiles.band_limit` — that second one belongs to
+the pre-plans code path, stays `NOT NULL DEFAULT 3` so a rollback needs no data
+migration, and the plan system never reads it (§5, §7). And the rule is a floor,
+not a replacement: as a replacement it was also a cap, so a grandfathered
+account on override 3 who bought Band+ (5) resolved to 3, and an `extra_band`
+addon on such an account granted nothing at any quantity. The money moved; the
+capacity did not.
+
+The same rule lives in `effective_band_limit()` in the database
+(`supabase/migrations/20260921_band_limit_override_floor.sql`, applied by hand)
+and in `resolveEntitlements()` (`lib/entitlements.ts`). **All three must agree.**
+While they do not, the app offers a band the trigger then refuses with `BL001`. **Band capabilities always come from the band
 OWNER's plan**; members inherit them, and a member's own plan governs only
 bands they own. Ownership is `band_members.role = 'owner'` everywhere.
 
 **Plan state is derived, never stored.** `active` / `grace` / `enforced`,
 computed on read from `profiles.plan`, `grace_until` and the actual data.
-**There is no cron job.** A band nobody opens does not get frozen in the
+**There is no cron job.** `settleAccount()` (`lib/bandFreeze.ts`) is what makes
+"and the actual data" true, and every endpoint a plan banner renders from calls
+it first — `GET /api/me/plan` and `GET /api/dashboard`. It clears a deadline
+that no longer means anything, freezes the excess once grace has run out, and
+**starts** a period when the account is over its owned-band limit with no clock
+running. That last case is not hypothetical: `grace_until` is otherwise written
+only by `changePlan()` on a downgrade, so an account that went over the limit
+any other way (an addon revoked, `band_limit_override` lowered) sat in `active`
+indefinitely — over its limit, with no banner and nothing frozen. A band nobody opens does not get frozen in the
 background — it freezes the moment someone touches it, the same lazy pattern
 the preview-mix cache uses. `ensureBandFreezeState()` runs from the auth
 guards (writes) and from `GET /api/bands/[id]` (opening a band).
@@ -629,8 +673,32 @@ are blocked in `requireBandMember` **by HTTP method**, so every existing
 mutation route and every future one is covered without remembering — pass
 `{ readOnlyRequest: true }` for the handful of POSTs that are actually reads
 (merge preview, preview-mix recompute). Band-level routes call
-`frozenBandRefusal(bandId)` explicitly. **Deleting a band is deliberately NOT
-blocked** — it is how an over-limit user gets back under their limit.
+`frozenBandRefusal(bandId)` explicitly.
+
+**Four writes are deliberately allowed in a frozen band**, and they share one
+reason: each REMOVES something, so it reduces what the owner's plan has to
+cover, and it destroys nothing the user wanted kept — the user is the one
+asking. Without them a frozen band could not shrink, and the only way out of
+the state freezing exists to avoid would be deleting the whole space.
+
+| Allowed | How |
+|---|---|
+| `DELETE /api/bands/[id]` | no frozen check on the route (its PATCH sibling has one) |
+| `DELETE /api/bands/[id]/members/[userId]` | no frozen check (its PATCH sibling has one); also the only way to clear a `too_many_members` conflict |
+| `DELETE /api/tracks/[id]` | `requireBandMemberForTrack(req, id, { allowFrozenDelete: true })` |
+| `DELETE /api/versions/[id]` | `requireBandMemberForVersion(req, id, { allowFrozenDelete: true })` |
+
+`allowFrozenDelete` is ignored for anything that is not a DELETE, so a route
+cannot unblock a POST by passing it. It is NOT `readOnlyRequest`, which means
+something else entirely ("this POST is actually a read") — do not reuse that
+flag here. Everything else stays refused: uploading, recording, editing a
+track, creating a version, renaming, chat.
+
+The two track/version deletes then call `settleAfterFreeingSpace(bandId)`
+(`lib/planSettle.ts`), and `DELETE /api/bands/[id]` calls `settleAccount()`
+directly, so a conflict the user just resolved clears the banner on the
+response to their own action rather than on some later page load.
+
 Unfreezing is immediate and automatic.
 
 **Upgrade vs downgrade are asymmetric on purpose.** Upgrades are BLOCKED until
@@ -668,6 +736,127 @@ toggle in `contexts/PaywallContext.tsx` that gated nothing — **is gone**.
 from the resolved plan. It resolves against the *user's* plan (all the client
 knows), which can under-promise inside someone else's paid band and never
 over-promises; pass `bandFeatures` where the band is known.
+
+### Billing (Stripe)
+
+**Stripe is bolted onto the seam, not through it.** `lib/entitlements.ts` and
+`lib/planGuards.ts` contain the string "stripe" zero times and must keep doing
+so. The only writer of `profiles.plan` is still `changePlan()`
+(`lib/planChange.ts`), and the only caller of it outside the dev switcher is
+the webhook. If a limit check ever joins `billing_subscriptions`, that is the
+bug.
+
+**`POST /api/stripe/webhook` is the seam.** Signature verified before the body
+is parsed; event claimed in `billing_events` for idempotency and *released*
+again if the handler throws, so Stripe's retry is not silently skipped. Every
+handled event funnels into one `applySubscription()` that re-states the whole
+truth rather than diffing — upsert the subscription row, `changePlan(userId,
+plan, { force: true })`, then `syncAddonsFromSubscription()`. The plan is
+resolved from the **Price id**, never from metadata (editable in the
+dashboard). The user is resolved from `billing_customers` first, metadata only
+as a fallback.
+
+⚠ **`force` exists for one caller.** By the time an event arrives the money has
+moved, so refusing to grant what was paid for is the worse failure. The
+pre-purchase refusal still happens in `POST /api/billing/checkout`, which runs
+the same `checkPlanConflicts` before a card is touched. `POST /api/me/plan`
+stays dev-gated — it was never the Stripe entry point and must not become one.
+
+**Everything that can be outsourced to Stripe is.** Checkout Session for the
+first payment (`allow_promotion_codes`, `tax_id_collection` — promo codes and
+VAT are Stripe's forms, not ours); Customer Portal for the card, invoices,
+billing address, plan switching, cancellation and reactivation. There is no
+card form, no invoice table and no VAT form in this codebase on purpose: a
+second copy of an invoice list is the one a user is looking at when it
+disagrees with the real one.
+
+**`past_due` still entitles the plan** (`statusEntitles`, `lib/billing/store.ts`).
+Stripe is retrying and the user cancelled nothing; freezing bands on the first
+failed retry would turn an expired card into something shaped like data loss.
+When Stripe gives up the status becomes `unpaid`/`canceled`, the plan drops to
+free through the ordinary path, and the 14-day grace period applies on top.
+
+**Add-ons are subscription items**, reconciled into the existing `plan_addons`
+table by `syncAddonsFromSubscription()`. Rows with a
+`stripe_subscription_item_id` are owned by Stripe and deleted when the item
+disappears; rows without one (support credits, grandfathered capacity) are
+never touched by a webhook. Band scope lives in the item's metadata and is
+verified against real ownership before it is honoured.
+
+**`BILLING_LIVE`** (`lib/billing/config.ts`) requires both the API key and the
+webhook secret — a deployment that can take money but cannot hear about it is
+the one failure that costs a user something real. While it is false the app
+keeps its current behaviour: "Subscribe" writes `subscription_intents` and
+shows the waitlist confirmation. The browser learns the flag from
+`GET /api/me/plan` (`billingLive`); it cannot read server env and must not guess.
+
+⚠ **Never build a job that replays current Stripe state through
+`changePlan()`.** Reconciliation looks like the obvious safety net and it is a
+trap: `grace_until`, `grace_keep_band_ids` and `bands.frozen_at` are HISTORY,
+written by the transition that created them, and nothing records which
+transition that was. Replay a subscription that has been on `band` for six
+months against a profile that has drifted to `free` and `changePlan` sees a
+plain upgrade — it arms a fresh 14-day grace period the user already served, and
+unfreezes bands that were correctly frozen. Replay it against a profile that
+matches and it lands on `direction === 'none'`, which is the branch that makes a
+duplicate webhook a no-op; that part is fine, and it is also why the wrong case
+is easy to miss in testing.
+
+Effective LIMITS do reconstruct cleanly from `profiles.plan` + `plan_addons` —
+`resolveEntitlements()` is a pure function of those. Account STATE does not. So
+a future reconciliation must be a **separate entry point** that re-states the
+plan and the addons and never arms grace, leaving `settleAccount()` — which
+derives state from the data as it is now — as the only thing that starts a
+clock.
+
+Migration: `supabase/migrations/20260920_billing_stripe.sql` (manual, §5),
+then `20260921_plan_addons_unique_stripe_item.sql` (manual, §5 — replaces
+the PARTIAL unique index on `plan_addons.stripe_subscription_item_id` with a
+plain UNIQUE constraint; until it runs, **every addon purchase raises 42P10**
+in `syncAddonsFromSubscription()` and the paid-for row is never written) and
+`20260921_band_limit_override_floor.sql` (manual, §5 — makes
+`band_limit_override` a floor in `effective_band_limit()`; pairs with
+`lib/entitlements.ts`, apply together).
+Routes: `POST /api/billing/checkout`, `POST /api/billing/portal`,
+`POST /api/billing/addons`, `GET /api/me/billing`, `POST /api/stripe/webhook`.
+Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_{SOLO,BAND,BAND_PLUS}`,
+`STRIPE_PRICE_EXTRA_{BAND,STORAGE,MEMBER}`.
+
+### Subscription UI
+
+Ported from the design kit in `sonicdesk_designs` (`/uikit/subscriptions`).
+The kit paints on its own palette (`--sub-bg`, `--sub-line`, `--color-primary`);
+the mapping onto this app's tokens is fixed once in `components/plan/ui.tsx`
+(`TONE`) and nowhere else. Shared primitives: `Eyebrow`, `StatusBadge`,
+`InlineNotice`, `UsageBar`, `PlanPanel`.
+
+**No component may state a limit or a price.** Cards render `planLimitRows()`,
+"plus:" bullets render `planUpgradeHighlights()` (a diff against the plan below
+it in `PLAN_ORDER`), refusal copy comes from `lib/planCopy.ts`. The one
+hand-written list is Free's *features*, because Free's value is everything that
+is not gated and no constant enumerates the product.
+
+`planTradeoffs(from, to)` exists because Free allows 3 members per band and Solo
+allows 2 — one of our upgrades lowers a ceiling. Each plan card checks it
+against the viewer's current plan and says so before the button, rather than
+letting `too_many_members` refuse them after they have paid.
+
+`/billing` is the one transactional screen (`app/billing/`). Preferences keeps
+a `<PlanUsage compact />` summary and a link; two full copies would be two
+places to keep in step.
+
+### Default entry point — `/open`
+
+`app/open/route.ts` resolves where a signed-in user belongs: the band this
+**device** last opened (cookie `sd-last-band`, written by `GET /api/bands/[id]`
+where membership has just been proven), or `/dashboard`. Membership is
+re-checked there on every hit and a stale hint is cleared, so a deleted band or
+a removed member costs one redirect, not a 403.
+
+`ENTRY_PATH` is what post-login (`sanitizeRedirectPath` fallback), the
+middleware's already-authed `/auth` branch, the landing page's installed-PWA
+redirect and `manifest.start_url` all point at. `/dashboard` keeps meaning
+"show me every band" and is never rewritten — an explicit `?next=` always wins.
 
 ### Landing page & installed-PWA detection
 `app/page.tsx` (force-static) renders `components/LandingPage.tsx`. The hero
@@ -741,10 +930,13 @@ have no CREATE files here. Columns below are inferred from actual queries.
   read only by the `main` code path. The plan system never reads it; it is kept
   populated so a rollback needs no data migration. Do not repurpose it —
   that was tried and broke production twice), **band_limit_override**
-  (integer, **nullable — the plan system's MANUAL OVERRIDE**: non-null
-  replaces the plan's owned-bands allowance entirely, addons included; null
-  means "use the plan". Grandfathered beta accounts and B2B only. **Never read
-  it directly — go through `getEffectiveEntitlements()`**),
+  (integer, **nullable — the plan system's MANUAL FLOOR**: non-null makes the
+  owned-bands allowance `max(override, plan base + extra_band addons)` — it
+  raises a plan that gives less and never caps a plan that gives more; null
+  means "use the plan". It *replaced* the computation until 2026-09-21, which
+  meant a grandfathered account on override 3 who bought Band+ (5) resolved to
+  3 and any `extra_band` addon granted nothing. Grandfathered beta accounts and
+  B2B only. **Never read it directly — go through `getEffectiveEntitlements()`**),
   **grace_until** (timestamptz, null = no
   grace period; account state is DERIVED from this and the data, never
   stored), **grace_keep_band_ids** (uuid[], the user's choice of which bands
@@ -953,8 +1145,14 @@ and preview traffic out of the counter.
   trigger — change both together.
 - **Two band-limit columns, on purpose.** `profiles.band_limit` (NOT NULL
   default 3) belongs to the pre-plans path; `profiles.band_limit_override`
-  (nullable) is the plan system's override, where non-null means "ignore the
-  plan for this account". They are separate because sharing one column broke
+  (nullable) is the plan system's override, where non-null means "this account
+  never drops below this number" — a floor, resolved as
+  `max(override, plan base + extra_band addons)`, not a replacement and not a
+  cap. The same rule lives twice more, in `resolveEntitlements()`
+  (`lib/entitlements.ts`) and in `effective_band_limit()` (the DB trigger's
+  backstop, `20260921_band_limit_override_floor.sql`) — **change all three
+  together**, or the DB refuses a band the app just allowed. They are separate
+  columns because sharing one column broke
   production twice: dropping the default gave new profiles a NULL that the old
   code fails closed on, and the leftover value `3` then read as an override
   that silently disabled every plan limit in the system. Read neither

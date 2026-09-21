@@ -16,6 +16,7 @@ import { pickTrackIconColor } from '@/lib/trackIcon'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { storageRefusal } from '@/lib/planGuards'
 import { isValidTempKey } from '@/lib/r2TempKey'
+import { findBandTrackByHash } from '@/lib/trackDedup'
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -170,13 +171,15 @@ export async function POST(
     const fileHash = await hashFile(tempFilePath)
     console.log('[process] fileHash:', fileHash)
 
-    // ── Step 3: Dedup check ────────────────────────────────────────────────────
-    const { data: existing } = await supabase
-      .from('tracks')
-      .select('storage_path, duration_ms, file_size_bytes')
-      .eq('file_hash', fileHash)
-      .limit(1)
-      .maybeSingle()
+    // ── Step 3: Dedup check, scoped to THIS band ───────────────────────────────
+    //
+    // Band-scoped, not global. A global match skipped `storageRefusal()` for
+    // any file that existed anywhere in the database, so a band at its ceiling
+    // could keep adding rows that were then counted against it — and it left
+    // this band's `storage_path` pointing at another band's object. See
+    // `lib/trackDedup.ts`. The cost is one stored copy per band, which is
+    // right: storage is never pooled here.
+    const existing = await findBandTrackByHash(access.project.band_id, fileHash)
 
     // ── Step 4: Convert / parse ────────────────────────────────────────────────
 

@@ -1,35 +1,86 @@
 'use client'
 
 /**
- * Plans modal — the landing page's (hidden) pricing section lifted into the
- * app: same card structure, typography scale, spacing rhythm, and featured
- * treatment, adapted to a bespoke full-frame modal shell (not the default
- * TbModal card).
+ * The plans modal.
  *
- * This is a measurement instrument. Subscribe writes an intent row and shows
- * a waitlist confirmation — no billing, no entitlements.
+ * The design is a port of the subscription design kit's "Plans modal"
+ * (`sonicdesk_designs`, `/uikit/subscriptions` → "Inspect full modal"), one
+ * deliberate omission aside: the kit's monthly/yearly cadence toggle is not
+ * here, because this app bills one cadence.
  *
- * GA4 gets behavior only: no email, user id, band or project names in params.
+ * Second deviation: the kit's backdrop is a flat `bg-black/85`, which under a
+ * light theme frames a near-white sheet in a black surround. Here the scrim is
+ * the blur itself — `backdrop-blur-xl` over a thin `--background` tint — so it
+ * reads the same way in every theme.
+ *
+ * Shape of the kit, which this file keeps: a full-height sheet inside a
+ * scrolling backdrop (the page scrolls, not a pane inside the modal), an
+ * animated 28-bar EQ strip sitting on the header baseline, a 1 / 2 / 4 card
+ * grid drawn as hairlines (`gap-px` over a border-coloured backdrop), cards
+ * on a five-row grid so price and CTA line up, and a confirmation state that
+ * takes over the whole sheet.
+ *
+ * The kit paints on its own palette; the mapping is the same one fixed in
+ * `components/plan/ui.tsx` — `--sub-bg` → `--background`, `--sub-panel` →
+ * `--surface`, `--sub-card` → `--card`, `--sub-line` → `--border`,
+ * `--sub-fg` → `--foreground`, `--sub-muted` → `--muted-foreground`,
+ * `--color-primary` → `--lime`.
+ *
+ * ── Where the numbers come from ─────────────────────────────────────────────
+ * Nowhere in this file. Limits are `planLimitRows()`, the "plus:" bullets are
+ * `planUpgradeHighlights()`, prices are `PLANS[id].price` — all generated from
+ * `lib/plans.ts`, the same constant the server enforces. Only the blurb and
+ * the accent colour are written here, because neither is a promise anyone can
+ * hold us to. The previous version listed capacity by hand and drifted: it
+ * advertised a "3 bands as a member" cap that has never existed.
+ *
+ * ── No tradeoff caveat on the cards ─────────────────────────────────────────
+ * Free allows 3 members per band; Solo allows 2, so that one upgrade lowers a
+ * ceiling and `planChange` refuses it as a blocking conflict. The cards used
+ * to warn about it via `planTradeoffs()`; the warning was removed on request,
+ * to keep the cards identical to the kit. The conflict itself still exists —
+ * `PlanConflictResolver` is now the only place the user meets it, after they
+ * have clicked.
+ *
+ * ── Two modes ───────────────────────────────────────────────────────────────
+ * With billing live, Subscribe opens a Stripe Checkout session and the browser
+ * leaves. Without it — no keys configured — the button keeps the behaviour the
+ * app has today: record demand in `subscription_intents` and show the waitlist
+ * confirmation. The server decides which, via `billingLive` on the plan
+ * snapshot; the browser cannot see the Stripe configuration and must not guess.
+ *
+ * GA4 gets behaviour only: no email, user id, band or project names in params.
  */
 
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type PointerEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, X } from 'lucide'
+import { ArrowRight, Check, CircleAlert, X } from 'lucide'
 import { useAuth } from '@/contexts/AuthContext'
 import { trackEvent } from '@/lib/analytics'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { LucideIcon } from '@/components/design/LucideIcon'
+import { Spinner } from '@/components/ui/Spinner'
+import { Eyebrow, StatusBadge } from '@/components/plan/ui'
 import { usePlan, type PaywallSource } from '@/contexts/PaywallContext'
-import { PLANS as PLAN_TABLE, planLimitLines } from '@/lib/plans'
-
-import type { PaidPlanId, PlanId } from '@/lib/plans'
+import { apiErrorMessage } from '@/lib/planCopy'
+import {
+  FEATURE_LABELS,
+  GATED_FEATURES,
+  PLANS,
+  PLAN_ORDER,
+  planLimitRows,
+  planUpgradeHighlights,
+  type PaidPlanId,
+  type PlanId,
+} from '@/lib/plans'
 
 const HOVER_DWELL_THRESHOLD_MS = 500
 
@@ -42,103 +93,66 @@ function emptySubscribe() {
   return () => {}
 }
 
-/**
- * Card copy.
- *
- * The LIMIT lines are NOT written here — they are generated from
- * `lib/plans.ts` by `planLimitLines()`, the same constant the server enforces.
- * That is deliberate: this modal previously listed limits by hand and they had
- * drifted from what the app actually did (a "3 bands as a member" line for a
- * cap that does not exist, and two different band counts for the same plan).
- * Marketing copy — the blurb, the colours, the feature bullets — stays local,
- * because none of it is a number anyone can be held to.
- */
-interface PlanDef {
-  id: PlanId
-  name: string
-  price: string
+// ── Local copy ───────────────────────────────────────────────────────────────
+
+interface PlanCopy {
   blurb: string | null
+  /** Accent colour for the plan's square and list markers. */
   color: string
   featured?: boolean
-  limits: string[]
-  featuresLabel: string
-  features: string[]
-  notIncluded?: string[]
 }
 
-const PLAN_CARDS: PlanDef[] = [
-  {
-    id: 'free',
-    name: PLAN_TABLE.free.name,
-    price: PLAN_TABLE.free.price,
-    blurb: null,
-    color: 'var(--wave-mint)',
-    limits: planLimitLines('free'),
-    featuresLabel: 'Included:',
-    features: [
-      'Versioning (create versions, apply to Master)',
-      'MIDI editor (piano roll)',
-      'Song structure editor (manual chords, no auto-detect)',
-      'Waveform comments with threads',
-      'Band chat (per-project channels + band-wide)',
-      'Resources (files, links, lyrics)',
-      'Roadmap and checklist',
-      'Recording',
-      'Rehearsal Mode',
-      'Individual stem download',
-    ],
-    notIncluded: [
-      'A/B Compare',
-      'Track editor',
-      'Chord auto-detect',
-      'Cherry-pick and visual version diff',
-    ],
+const PLAN_COPY: Record<PlanId, PlanCopy> = {
+  free: {
+    blurb: 'A real workspace for a first record, not a disposable trial.',
+    color: 'var(--plan-mint)',
   },
-  {
-    id: 'solo',
-    name: PLAN_TABLE.solo.name,
-    price: PLAN_TABLE.solo.price,
+  solo: {
     blurb: 'For independent musicians working alone or with one collaborator.',
-    color: 'var(--wave-violet)',
-    limits: planLimitLines('solo'),
-    featuresLabel: 'Everything in Free, plus:',
-    features: [
-      'A/B Compare',
-      'Track editor',
-      'Chord auto-detect',
-      'Cherry-pick and visual version diff',
-    ],
+    color: 'var(--plan-violet)',
   },
-  {
-    id: 'band',
-    name: PLAN_TABLE.band.name,
-    price: PLAN_TABLE.band.price,
+  band: {
     blurb: 'For small bands actively working together.',
-    color: 'var(--lime)',
+    color: 'var(--plan-lime)',
     featured: true,
-    limits: planLimitLines('band'),
-    featuresLabel: 'Everything in Solo, plus:',
-    features: ['Unlimited band members', 'Up to 3 owned bands'],
   },
-  {
-    id: 'band_plus',
-    name: PLAN_TABLE.band_plus.name,
-    price: PLAN_TABLE.band_plus.price,
+  band_plus: {
     blurb: 'For active bands running multiple projects or several bands.',
-    color: 'var(--wave-amber)',
-    limits: planLimitLines('band_plus'),
-    featuresLabel: 'Everything in Band, plus:',
-    features: ['50 GB storage per band', 'Up to 5 owned bands'],
+    color: 'var(--plan-amber)',
   },
+}
+
+/**
+ * What Free includes.
+ *
+ * The only hand-written feature list in the file, and unavoidably so: Free's
+ * value is everything the app does that is *not* gated, and no constant
+ * enumerates the whole product. Keep it describing features, never limits —
+ * limits are rendered from `planLimitRows()` directly above it.
+ */
+const FREE_INCLUDED = [
+  'Versioning — create versions, apply to Master',
+  'MIDI editor (piano roll)',
+  'Song structure editor with manual chords',
+  'Waveform comments with threads',
+  'Band chat, per project and band-wide',
+  'Resources — files, links, lyrics',
+  'Roadmap and checklist',
+  'Recording and Rehearsal Mode',
+  'Individual stem download',
 ]
 
-// Decorative EQ strip for the header — precomputed so render stays pure.
-const EQ_COLORS = ['var(--wave-mint)', 'var(--wave-violet)', 'var(--lime)', 'var(--wave-amber)']
+/**
+ * Decorative EQ strip — the kit's 28 bars, one accent colour, uneven idle
+ * heights animated on their own clocks. Precomputed so render stays pure.
+ */
 const EQ_BARS = Array.from({ length: 28 }, (_, i) => ({
-  height: 5 + Math.round(20 * Math.abs(Math.sin(i * 0.9) * Math.sin(i * 0.37))),
-  color: EQ_COLORS[i % 4],
-  opacity: i % 4 === 2 ? 0.9 : 0.4,
+  heightPct: 35 + ((i * 31) % 60),
+  durationMs: 1300 + (i % 5) * 120,
+  delayMs: (i * 63) % 900,
 }))
+
+// ── Modal ────────────────────────────────────────────────────────────────────
 
 export function PlansModal({
   source,
@@ -148,10 +162,15 @@ export function PlansModal({
   onClose: () => void
 }) {
   const { user } = useAuth()
+  const plan = usePlan()
   // The card marked "Current plan" comes from the resolved entitlements, not
   // from a hardcoded 'free' — a paying user must not be told they are on free.
-  const currentPlan = usePlan().plan
+  const currentPlan = plan.plan
+  const billingLive = plan.billingLive
+
   const [confirmedPlan, setConfirmedPlan] = useState<PaidPlanId | null>(null)
+  const [pendingPlan, setPendingPlan] = useState<PaidPlanId | null>(null)
+  const [error, setError] = useState('')
 
   const openTimeRef = useRef(0)
   const closedRef = useRef(true)
@@ -201,316 +220,148 @@ export function PlansModal({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') handleClose()
+      // Leaving mid-redirect would strand a checkout the user already started.
+      if (e.key === 'Escape' && !pendingPlan) handleClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [handleClose])
+  }, [handleClose, pendingPlan])
 
-  function handleCardPointerEnter(plan: PlanId, e: PointerEvent) {
+  function handleCardPointerEnter(id: PlanId, e: PointerEvent) {
     if (e.pointerType !== 'mouse') return
-    lastEngagedPlanRef.current = plan
-    hoverStartRef.current = { plan, t: nowMs() }
+    lastEngagedPlanRef.current = id
+    hoverStartRef.current = { plan: id, t: nowMs() }
   }
 
-  function handleCardPointerLeave(plan: PlanId, e: PointerEvent) {
+  function handleCardPointerLeave(id: PlanId, e: PointerEvent) {
     if (e.pointerType !== 'mouse') return
     const start = hoverStartRef.current
     hoverStartRef.current = null
-    if (!start || start.plan !== plan) return
+    if (!start || start.plan !== id) return
     const dwell = Math.round(nowMs() - start.t)
     // Below the threshold it's mouse travel, not interest — don't pollute the data.
     if (dwell > HOVER_DWELL_THRESHOLD_MS) {
-      trackEvent('paywall_plan_viewed', { plan, dwell_ms: dwell })
+      trackEvent('paywall_plan_viewed', { plan: id, dwell_ms: dwell })
     }
   }
 
-  function handleCardPointerDown(plan: PlanId, e: PointerEvent) {
-    lastEngagedPlanRef.current = plan
+  function handleCardPointerDown(id: PlanId, e: PointerEvent) {
+    lastEngagedPlanRef.current = id
     // Hover doesn't exist on touch — a tap is the engagement signal there.
     if (e.pointerType === 'touch') {
-      trackEvent('paywall_plan_viewed', { plan, dwell_ms: 0 })
+      trackEvent('paywall_plan_viewed', { plan: id, dwell_ms: 0 })
     }
   }
 
-  function handleSubscribe(plan: PaidPlanId) {
-    trackEvent('paywall_subscribe_clicked', {
-      plan,
-      source,
-      time_to_click_ms: Math.round(nowMs() - openTimeRef.current),
-    })
-    reachedRef.current = true
-    // The confirmation is the UX contract; the row is our bookkeeping.
-    // A failed write must never block or punish the user — log and move on.
-    setConfirmedPlan(plan)
-    void fetch('/api/paywall/intent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan }),
-    })
-      .then(res => {
-        if (!res.ok) console.error(`[paywall] intent write failed (${res.status})`)
+  const handleSubscribe = useCallback(
+    async (target: PaidPlanId) => {
+      trackEvent('paywall_subscribe_clicked', {
+        plan: target,
+        source,
+        time_to_click_ms: Math.round(nowMs() - openTimeRef.current),
+        billing_live: billingLive,
       })
-      .catch(err => console.error('[paywall] intent write failed', err))
-  }
+      reachedRef.current = true
+      setError('')
+
+      if (!billingLive) {
+        // No checkout exists yet. The confirmation is the UX contract; the row
+        // is our bookkeeping, and a failed write must never block or punish
+        // the user — log and move on.
+        setConfirmedPlan(target)
+        void fetch('/api/paywall/intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan: target }),
+        })
+          .then(res => {
+            if (!res.ok) console.error(`[paywall] intent write failed (${res.status})`)
+          })
+          .catch(err => console.error('[paywall] intent write failed', err))
+        return
+      }
+
+      setPendingPlan(target)
+      try {
+        const res = await fetch('/api/billing/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan: target }),
+        })
+        const data = (await res.json().catch(() => ({}))) as { url?: unknown }
+
+        if (res.ok && typeof data.url === 'string') {
+          // Stripe owns the next screen. Deliberately not router.push: this is
+          // a different origin, and the session must survive the round trip.
+          window.location.assign(data.url)
+          return
+        }
+        setError(apiErrorMessage(data, 'Could not open checkout. Nothing was charged.'))
+      } catch {
+        setError('Could not reach checkout. Nothing was charged — try again in a moment.')
+      } finally {
+        setPendingPlan(null)
+      }
+    },
+    [billingLive, source],
+  )
 
   if (!domReady) return null
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[8000] flex items-center justify-center overflow-y-auto overscroll-none bg-background/80 p-4 backdrop-blur-sm sm:p-6"
-      onClick={handleClose}
+      className="tb-plans-backdrop fixed inset-0 z-[8000] overflow-y-auto overscroll-none bg-background/80 p-2 backdrop-blur-xl supports-[backdrop-filter]:bg-background/30 sm:p-5"
+      onMouseDown={e => {
+        // Only a press that starts *and* stays on the backdrop closes it —
+        // a drag that began inside the sheet must not dismiss it.
+        if (e.target === e.currentTarget && !pendingPlan) handleClose()
+      }}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Sonicdesk plans"
-        onClick={e => e.stopPropagation()}
-        className="relative my-auto flex max-h-[92vh] w-full max-w-[1200px] flex-col border border-border bg-background shadow-2xl"
+        className="tb-plans-kit tb-plans-sheet font-body-tb mx-auto min-h-[calc(100vh-1rem)] w-full max-w-[1500px] border border-border bg-background text-foreground sm:min-h-[calc(100vh-2.5rem)]"
       >
-        {/* Accent hairline across the very top of the frame */}
-        <div className="h-[3px] w-full shrink-0 bg-lime" aria-hidden />
-
         {confirmedPlan ? (
-          /* ── Confirmation state ──────────────────────────────────────────── */
-          <div className="flex flex-col items-center px-6 py-16 text-center sm:px-10 sm:py-20">
-            <p className="font-mono-tb m-0 text-[9px] uppercase tracking-[0.26em] text-lime">
-              Waitlist confirmed
-            </p>
-            <div className="relative mt-7 mb-8">
-              <div className="grid size-14 place-items-center bg-lime text-primary-foreground">
-                <LucideIcon icon={Check} size={26} />
-              </div>
-              <span className="absolute -right-1.5 -top-1.5 size-3 bg-lime/40" aria-hidden />
-              <span className="absolute -bottom-1.5 -left-1.5 size-3 bg-lime/40" aria-hidden />
-            </div>
-            <h2 className="font-display-tb m-0 text-3xl font-bold uppercase tracking-tight text-foreground">
-              You&rsquo;re on the list
-            </h2>
-            <p className="font-mono-tb m-0 mt-5 max-w-md text-[12px] leading-relaxed text-muted-foreground">
-              Thanks for wanting more out of Sonicdesk. We&rsquo;ll reach out to{' '}
-              <span className="border border-border bg-surface px-1.5 py-0.5 text-foreground">
-                {user?.email ?? 'your email'}
-              </span>{' '}
-              as soon as this plan is available to buy — early supporters get first access.
-            </p>
-            <button
-              type="button"
-              onClick={handleClose}
-              className="tb-btn-accent group/btn mt-10 inline-flex items-center gap-3 border border-lime bg-lime px-6 py-3 text-[11px] uppercase text-primary-foreground"
-            >
-              <span>Back to Sonicdesk</span>
-              <span className="transition-transform duration-200 group-hover/btn:translate-x-1" aria-hidden>
-                →
-              </span>
-            </button>
-          </div>
+          <WaitlistConfirmation
+            email={user?.email ?? null}
+            planName={PLANS[confirmedPlan].name}
+            onClose={handleClose}
+          />
         ) : (
           <>
-            {/* ── Header ──────────────────────────────────────────────────── */}
-            <div className="relative flex shrink-0 items-start justify-between gap-4 overflow-hidden border-b border-border px-6 pb-5 pt-5 sm:px-8">
-              <div className="min-w-0">
-                <p className="font-mono-tb m-0 flex items-center gap-2 text-[9px] uppercase tracking-[0.26em] text-lime">
-                  <span className="size-1.5 bg-lime" aria-hidden />
-                  Pricing
-                </p>
-                <h2 className="font-display-tb m-0 mt-2 text-2xl font-bold uppercase tracking-tight text-foreground sm:text-3xl">
-                  Get more out of Sonicdesk
-                </h2>
-                <p className="font-mono-tb m-0 mt-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  One surface for the whole band — pick the room that fits
+            <ModalHeader onClose={handleClose} closeDisabled={pendingPlan !== null} />
+
+            {error && (
+              <div className="border-b border-destructive/40 bg-destructive/[0.06] p-5 sm:px-8">
+                <p className="m-0 flex items-start gap-2 text-sm leading-6 text-foreground">
+                  <span className="mt-1 shrink-0 text-destructive">
+                    <LucideIcon icon={CircleAlert} size={16} />
+                  </span>
+                  {error}
                 </p>
               </div>
+            )}
 
-              {/* EQ motif rising from the header's bottom border */}
-              <div
-                className="pointer-events-none absolute bottom-0 right-24 hidden items-end gap-[3px] md:flex"
-                aria-hidden
-              >
-                {EQ_BARS.map((bar, i) => (
-                  <span
-                    key={i}
-                    className="w-[3px]"
-                    style={{ height: bar.height, background: bar.color, opacity: bar.opacity }}
-                  />
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleClose}
-                aria-label="Close plans"
-                className="grid size-9 shrink-0 place-items-center border border-border text-muted-foreground transition-colors hover:border-lime hover:text-lime"
-              >
-                <LucideIcon icon={X} size={16} />
-              </button>
+            <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
+              {PLAN_ORDER.map(id => (
+                <PlanCard
+                  key={id}
+                  id={id}
+                  currentPlan={currentPlan}
+                  pending={pendingPlan === id}
+                  anyPending={pendingPlan !== null}
+                  billingLive={billingLive}
+                  onSubscribe={handleSubscribe}
+                  onPointerEnter={e => handleCardPointerEnter(id, e)}
+                  onPointerLeave={e => handleCardPointerLeave(id, e)}
+                  onPointerDown={e => handleCardPointerDown(id, e)}
+                />
+              ))}
             </div>
 
-            {/* ── Cards ───────────────────────────────────────────────────── */}
-            <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
-              <div className="grid auto-rows-auto gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] sm:grid-cols-2 xl:grid-cols-4">
-                {PLAN_CARDS.map(p => (
-                  <div
-                    key={p.id}
-                    onPointerEnter={e => handleCardPointerEnter(p.id, e)}
-                    onPointerLeave={e => handleCardPointerLeave(p.id, e)}
-                    onPointerDown={e => handleCardPointerDown(p.id, e)}
-                    onFocusCapture={() => {
-                      lastEngagedPlanRef.current = p.id
-                    }}
-                    className={`relative row-span-5 grid grid-rows-subgrid transition-colors ${
-                      p.featured ? 'bg-card' : 'bg-background hover:bg-card'
-                    }`}
-                  >
-                    {p.featured && (
-                      <>
-                        <div
-                          className="pointer-events-none absolute inset-0 z-10 border border-lime"
-                          aria-hidden
-                        />
-                        <div
-                          className="pointer-events-none absolute -top-px left-0 right-0 z-10 h-[3px] bg-lime"
-                          aria-hidden
-                        />
-                      </>
-                    )}
-
-                    {/* Row 1 — plan name */}
-                    <div className="flex items-start justify-between gap-2 px-6 pt-6">
-                      <div className="flex items-center gap-2.5">
-                        <span className="size-3 shrink-0" style={{ background: p.color }} />
-                        <h3 className="font-display-tb m-0 text-[22px] font-bold uppercase tracking-tight text-foreground">
-                          {p.name}
-                        </h3>
-                      </div>
-                      {p.featured && (
-                        <span className="font-mono-tb mt-1 shrink-0 bg-lime px-1.5 py-1 text-[8px] uppercase leading-none tracking-[0.2em] text-primary-foreground">
-                          Recommended
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Row 2 — blurb (empty row still aligns prices across cards) */}
-                    <div className="px-6 pt-2">
-                      {p.blurb && (
-                        <p className="font-mono-tb m-0 text-[11px] leading-relaxed text-muted-foreground">
-                          {p.blurb}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Row 3 — price, on a shared row across all cards */}
-                    <div className="px-6 pt-5">
-                      <div className="flex items-baseline gap-2 border-y border-[color-mix(in_oklab,var(--border)_60%,transparent)] py-4">
-                        <span className="font-display-tb text-5xl font-bold tracking-tight text-foreground">
-                          {p.price}
-                        </span>
-                        <span className="font-mono-tb text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                          / month
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Row 4 — limits + features */}
-                    <div className="px-6 pb-2 pt-4">
-                      <ul className="m-0 list-none space-y-1.5 p-0">
-                        {p.limits.map(l => (
-                          <li
-                            key={l}
-                            className="font-mono-tb flex items-start gap-2.5 text-[11px] leading-relaxed text-muted-foreground"
-                          >
-                            <span className="mt-[7px] size-1 shrink-0" style={{ background: p.color }} />
-                            <span>{l}</span>
-                          </li>
-                        ))}
-                      </ul>
-
-                      <p className="font-mono-tb m-0 mt-5 text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                        {p.featuresLabel}
-                      </p>
-                      <ul className="m-0 mt-2.5 list-none space-y-2 p-0">
-                        {p.features.map(f => (
-                          <li
-                            key={f}
-                            className="font-mono-tb flex items-start gap-2.5 text-[11px] leading-relaxed text-foreground"
-                          >
-                            <span
-                              className="mt-[2px] grid size-4 shrink-0 place-items-center text-primary-foreground"
-                              style={{ background: p.color }}
-                            >
-                              <CheckGlyph />
-                            </span>
-                            <span>{f}</span>
-                          </li>
-                        ))}
-                      </ul>
-
-                      {p.notIncluded && (
-                        <>
-                          <p className="font-mono-tb m-0 mt-5 text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                            Not included:
-                          </p>
-                          <ul className="m-0 mt-2.5 list-none space-y-2 p-0">
-                            {p.notIncluded.map(f => (
-                              <li
-                                key={f}
-                                className="font-mono-tb flex items-start gap-2.5 text-[11px] leading-relaxed text-muted-foreground"
-                              >
-                                <span className="mt-[2px] grid size-4 shrink-0 place-items-center border border-border">
-                                  <XGlyph />
-                                </span>
-                                <span>{f}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Row 5 — CTA, pinned to the shared bottom row */}
-                    <div className="flex items-end px-6 pb-6 pt-4">
-                      {p.id === currentPlan ? (
-                        <div className="font-mono-tb flex w-full select-none items-center justify-center border border-dashed border-border px-4 py-3 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                          Current plan
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSubscribe(p.id as PaidPlanId)}
-                          className={`group/btn relative z-20 flex w-full items-center justify-between border px-4 py-3 text-[11px] uppercase ${
-                            p.featured
-                              ? 'tb-btn-accent border-lime bg-lime text-primary-foreground'
-                              : 'font-mono-tb tracking-[0.22em] border-[color-mix(in_oklab,var(--foreground)_40%,transparent)] text-foreground transition-colors hover:border-lime hover:text-lime'
-                          }`}
-                        >
-                          <span>Subscribe</span>
-                          <span
-                            className="transition-transform duration-200 group-hover/btn:translate-x-1"
-                            aria-hidden
-                          >
-                            →
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ── Footer strip: B2B line + microcopy ──────────────────────── */}
-            <div className="flex shrink-0 flex-col items-center justify-between gap-2 border-t border-border px-6 py-3.5 sm:flex-row sm:px-8">
-              <a
-                href="mailto:hi@sonicdesk.studio?subject=Studio%20plan"
-                onClick={() => trackEvent('paywall_b2b_clicked', { source })}
-                className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground underline-offset-4 transition-colors hover:text-lime hover:underline"
-              >
-                Working with multiple artists? Let&rsquo;s talk about a Studio plan →
-              </a>
-              <p className="font-mono-tb m-0 text-[9px] uppercase tracking-[0.2em] text-muted-foreground/70">
-                Prices in USD · Cancel anytime · Early supporters get first access
-              </p>
-            </div>
+            <ModalFooter source={source} billingLive={billingLive} />
           </>
         )}
       </div>
@@ -519,24 +370,264 @@ export function PlansModal({
   )
 }
 
-function CheckGlyph() {
+// ── Header ───────────────────────────────────────────────────────────────────
+
+function ModalHeader({ onClose, closeDisabled }: { onClose: () => void; closeDisabled: boolean }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden>
-      <path
-        d="M2 6.5L4.8 9.2 10 3.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <header className="relative border-b border-border p-5 sm:p-8">
+      <button
+        type="button"
+        onClick={onClose}
+        disabled={closeDisabled}
+        aria-label="Close plans"
+        className="absolute right-4 top-4 grid size-9 place-items-center text-foreground transition-colors hover:text-lime disabled:opacity-40"
+      >
+        <LucideIcon icon={X} size={18} />
+      </button>
+
+      <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div className="min-w-0">
+          <Eyebrow>Pricing</Eyebrow>
+          <h2 className="font-display-tb m-0 mt-3 max-w-4xl text-4xl font-semibold uppercase leading-[0.9] tracking-normal text-foreground sm:text-7xl">
+            Pick the room your music needs
+          </h2>
+          <p className="m-0 mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+            One person pays and everyone they invite gets the same tools. Nothing is ever deleted
+            when a plan changes.
+          </p>
+        </div>
+
+        <div className="flex h-9 items-end gap-1" aria-hidden>
+          {EQ_BARS.map((bar, i) => (
+            <span
+              key={i}
+              className="tb-eq-bar w-1 bg-lime opacity-70"
+              style={{
+                height: `${bar.heightPct}%`,
+                ['--tb-eq-dur' as string]: `${bar.durationMs}ms`,
+                ['--tb-eq-delay' as string]: `${bar.delayMs}ms`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </header>
   )
 }
 
-function XGlyph() {
+// ── Footer ───────────────────────────────────────────────────────────────────
+
+function ModalFooter({ source, billingLive }: { source: PaywallSource; billingLive: boolean }) {
   return (
-    <svg width="8" height="8" viewBox="0 0 8 8" fill="none" aria-hidden>
-      <path d="M1 1l6 6M7 1L1 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
+    <footer className="flex flex-col justify-between gap-4 border-t border-border p-5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:px-8">
+      <a
+        href="mailto:hi@sonicdesk.studio?subject=Studio%20plan"
+        onClick={() => trackEvent('paywall_b2b_clicked', { source })}
+        className="font-display-tb font-semibold uppercase text-foreground transition-colors hover:text-lime"
+      >
+        Working with multiple artists? Let&rsquo;s talk about a Studio plan
+        <span className="ml-2 inline-block align-middle" aria-hidden>
+          <LucideIcon icon={ArrowRight} size={16} />
+        </span>
+      </a>
+      <span className="font-mono-tb text-[9px] uppercase tracking-widest">
+        {billingLive
+          ? 'Prices in USD · Cancel anytime · Taxes shown at checkout'
+          : 'Prices in USD · Cancel anytime · Early supporters get first access'}
+      </span>
+    </footer>
+  )
+}
+
+// ── Card ─────────────────────────────────────────────────────────────────────
+
+function PlanCard({
+  id,
+  currentPlan,
+  pending,
+  anyPending,
+  billingLive,
+  onSubscribe,
+  onPointerEnter,
+  onPointerLeave,
+  onPointerDown,
+}: {
+  id: PlanId
+  currentPlan: PlanId
+  pending: boolean
+  anyPending: boolean
+  billingLive: boolean
+  onSubscribe: (plan: PaidPlanId) => void
+  onPointerEnter: (e: PointerEvent) => void
+  onPointerLeave: (e: PointerEvent) => void
+  onPointerDown: (e: PointerEvent) => void
+}) {
+  const def = PLANS[id]
+  const copy = PLAN_COPY[id]
+  const isCurrent = id === currentPlan
+
+  const rows = useMemo(() => planLimitRows(id), [id])
+  const highlights = useMemo(() => planUpgradeHighlights(id), [id])
+  const previousName = useMemo(() => {
+    const index = PLAN_ORDER.indexOf(id)
+    return index > 0 ? PLANS[PLAN_ORDER[index - 1]].name : null
+  }, [id])
+
+  return (
+    <article
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onPointerDown={onPointerDown}
+      className={`tb-plans-card relative grid grid-rows-[auto_auto_auto_1fr_auto] border bg-surface p-5 hover:bg-card ${
+        copy.featured ? 'border-lime' : 'border-border'
+      }`}
+    >
+      {copy.featured && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-lime" aria-hidden />
+          <StatusBadge tone="lime" className="justify-self-start">Recommended</StatusBadge>
+        </>
+      )}
+
+      {/* Row 1 — plan square */}
+      <div className="mb-4 mt-3 size-3" style={{ background: copy.color }} aria-hidden />
+
+      {/* Row 2 — name and blurb */}
+      <div>
+        <h3 className="font-display-tb m-0 text-3xl font-semibold uppercase tracking-normal text-foreground">
+          {def.name}
+        </h3>
+        {copy.blurb && (
+          <p className="m-0 mt-2 min-h-14 text-sm leading-6 text-muted-foreground">{copy.blurb}</p>
+        )}
+      </div>
+
+      {/* Row 3 — price, on a shared row across all cards */}
+      <div className="my-5 border-y border-border py-5">
+        <span className="font-display-tb text-4xl font-semibold text-foreground">{def.price}</span>
+        <span className="text-xs text-muted-foreground"> / month</span>
+      </div>
+
+      {/* Row 4 — limits, features, caveats */}
+      <div className="space-y-5">
+        <div className="space-y-2">
+          {rows.map(row => (
+            <div key={row.label} className="flex justify-between gap-2 text-[11px]">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <span className="size-1.5 shrink-0" style={{ background: copy.color }} aria-hidden />
+                {row.label}
+              </span>
+              <strong className="font-bold text-foreground">{row.value}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <div className="mb-2 font-mono-tb text-[9px] uppercase tracking-widest text-muted-foreground">
+            {previousName ? `Everything in ${previousName}, plus:` : 'Included:'}
+          </div>
+          <ul className="m-0 list-none space-y-2 p-0">
+            {(id === 'free' ? FREE_INCLUDED : highlights).map(line => (
+              <li key={line} className="flex gap-2 text-xs leading-5 text-foreground">
+                <span
+                  className="grid size-4 shrink-0 place-items-center text-primary-foreground"
+                  style={{ background: copy.color }}
+                >
+                  <LucideIcon icon={Check} size={11} strokeWidth={2.5} />
+                </span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {id === 'free' && (
+          <div>
+            <div className="mb-2 font-mono-tb text-[9px] uppercase tracking-widest text-muted-foreground">
+              Not included
+            </div>
+            <ul className="m-0 list-none space-y-2 p-0">
+              {GATED_FEATURES.map(feature => (
+                <li key={feature} className="flex gap-2 text-xs leading-5 text-muted-foreground">
+                  <span className="grid size-4 shrink-0 place-items-center border border-border">
+                    <LucideIcon icon={X} size={10} strokeWidth={2} />
+                  </span>
+                  <span>{FEATURE_LABELS[feature]}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* Row 5 — CTA, pinned to the shared bottom row */}
+      {isCurrent ? (
+        <div className="mt-6 flex w-full select-none items-center justify-center border border-dashed border-border px-4 py-2.5 font-display-tb text-sm font-semibold uppercase text-muted-foreground">
+          Current plan
+        </div>
+      ) : id === 'free' ? (
+        <div className="mt-6 flex w-full select-none items-center justify-center border border-dashed border-border px-4 py-2.5 text-center font-display-tb text-sm font-semibold uppercase text-muted-foreground">
+          Included with every account
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={anyPending}
+          onClick={() => onSubscribe(id as PaidPlanId)}
+          className={`mt-6 flex w-full items-center justify-center gap-2 px-4 py-2.5 font-display-tb text-sm font-semibold uppercase transition-colors disabled:opacity-60 ${
+            copy.featured
+              ? 'border border-lime bg-lime text-primary-foreground'
+              : 'border border-border bg-foreground text-background'
+          }`}
+        >
+          {pending && <Spinner size={13} tone="muted" />}
+          {pending ? 'Opening checkout…' : billingLive ? 'Subscribe' : 'Join the waitlist'}
+        </button>
+      )}
+    </article>
+  )
+}
+
+// ── Waitlist confirmation ────────────────────────────────────────────────────
+
+function WaitlistConfirmation({
+  email,
+  planName,
+  onClose,
+}: {
+  email: string | null
+  planName: string
+  onClose: () => void
+}) {
+  return (
+    <div className="grid min-h-[calc(100vh-2.5rem)] place-items-center p-6 text-center">
+      <div className="max-w-xl">
+        <Eyebrow>Waitlist confirmed</Eyebrow>
+        <div className="relative mx-auto my-8 grid size-24 place-items-center border border-lime text-lime">
+          <span className="absolute -left-3 -top-3 size-5 bg-lime" aria-hidden />
+          <span className="absolute -bottom-3 -right-3 size-5 border border-lime" aria-hidden />
+          <LucideIcon icon={Check} size={48} strokeWidth={2} />
+        </div>
+        <h2 className="font-display-tb m-0 text-5xl font-semibold uppercase leading-[0.9] tracking-normal text-foreground sm:text-7xl">
+          You&rsquo;re on the list
+        </h2>
+        <p className="m-0 mt-5 text-sm leading-6 text-muted-foreground">
+          Thanks for wanting {planName} out of Sonicdesk. We&rsquo;ll reach out as soon as this
+          plan is available to buy — early supporters get first access.
+        </p>
+        <div className="mx-auto my-6 inline-block border border-border px-5 py-3 font-mono-tb text-sm text-foreground">
+          {email ?? 'your email'}
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="border border-lime bg-lime px-5 py-2.5 font-display-tb text-sm font-semibold uppercase text-primary-foreground"
+          >
+            Back to Sonicdesk
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

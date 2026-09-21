@@ -16,6 +16,7 @@ import { sectionLabel } from "@/components/StructureEditor";
 import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { isRunningAsInstalledPWA } from "@/lib/pwa";
+import { ENTRY_PATH } from "@/lib/lastBand";
 import { SeededWaveform } from "@/components/WaveformBars";
 import { SEO_FAQS } from "@/lib/seo";
 
@@ -3645,12 +3646,13 @@ export default function LandingPage() {
   // page, and redirecting them was the bug this replaced. `useLandingAuth`
   // above is read only to label the nav CTA; it must never reach this effect.
   //
-  // Where they land afterwards stays as-is: /dashboard, which the middleware
-  // forwards to /auth when there's no session.
+  // Where they land afterwards is /open — the band this device had open, or
+  // the bands list — which the middleware forwards to /auth when there's no
+  // session.
   useEffect(() => {
     if (!isRunningAsInstalledPWA()) return
     setStandaloneRedirect(true)
-    router.replace("/dashboard")
+    router.replace(ENTRY_PATH)
   }, [router])
 
   if (standaloneRedirect) {

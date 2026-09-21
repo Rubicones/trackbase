@@ -3,14 +3,30 @@ import { getRequestUserId } from '@/lib/supabase/server'
 import { supabase } from '@/lib/supabase'
 import { clearAuthCookieOptions } from '@/lib/auth/cookie-options'
 import { ACCESS_COOKIE, REFRESH_COOKIE } from '@/lib/auth/session'
+import { cancelSubscriptionsForAccountDeletion } from '@/lib/billing/store'
 
 /**
  * DELETE /api/profile/account
  * Permanently deletes the authenticated user.
  *
+ * - Any live Stripe subscription is cancelled FIRST (see below).
  * - Bands where the user is the sole owner are deleted (cascades projects/tracks).
  * - Membership in other bands is removed.
  * - Auth user + profile are deleted (profile cascades from auth.users).
+ *
+ * ── Billing comes first, and its failure is fatal ───────────────────────────
+ * `billing_customers.user_id` references `auth.users(id) on delete cascade`,
+ * so deleting the auth user destroys the only `stripe_customer_id → user_id`
+ * link in the system. Stripe does not know that happened: the subscription
+ * renews on schedule, the card is charged, and each resulting webhook resolves
+ * to no user and is logged and dropped. The result is a customer charged
+ * indefinitely with no record connecting the charge to them.
+ *
+ * So the cancellation runs before anything is destroyed, and a failure stops
+ * the deletion outright rather than being logged and stepped over. The two
+ * failure modes are not comparable: a user who cannot delete their account
+ * today can be helped tomorrow; a deleted account that keeps being charged
+ * cannot be traced from this side at all.
  */
 export async function DELETE(req: NextRequest) {
   const userId = await getRequestUserId(req)
@@ -38,6 +54,25 @@ export async function DELETE(req: NextRequest) {
 
   if (!profile || profile.username.toLowerCase() !== confirmUsername) {
     return NextResponse.json({ error: 'Username does not match' }, { status: 400 })
+  }
+
+  // ── Stop the billing before destroying anything ───────────────────────────
+  // Deliberately ahead of the band deletions, not just ahead of the auth
+  // delete: if this fails the account must be exactly as it was, and a band
+  // already deleted is not something the user can undo by retrying.
+  try {
+    await cancelSubscriptionsForAccountDeletion(userId)
+  } catch (err) {
+    console.error('[profile/account] subscription cancellation failed:', err)
+    return NextResponse.json(
+      {
+        error:
+          'Could not cancel your subscription, so the account was not deleted — ' +
+          'nothing has been removed. Try again in a moment, or cancel from the ' +
+          'billing portal first.',
+      },
+      { status: 502 },
+    )
   }
 
   const { data: memberships } = await supabase

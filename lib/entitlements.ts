@@ -15,11 +15,21 @@
  *        extra_member   → +quantity members on the row's band_id ONLY
  *      A row with a band_id applies to that band alone; a row without one
  *      applies account-wide.
- *   3. `profiles.band_limit_override` is a MANUAL OVERRIDE, not an addition. When it is
- *      non-null it REPLACES the computed owned-bands limit outright — plan
- *      base and extra_band addons included. Null means "use the plan". This is
- *      how grandfathered beta accounts (and later B2B deals) keep an allowance
- *      their plan would not give them.
+ *   3. `profiles.band_limit_override` is a MANUAL FLOOR, not an addition and
+ *      not a cap. When it is non-null the owned-bands limit becomes
+ *      `max(override, plan base + extra_band addons)`. Null means "use the
+ *      plan". This is how grandfathered beta accounts (and later B2B deals)
+ *      keep an allowance their plan would not give them — while guaranteeing
+ *      that buying a bigger plan, or an `extra_band` addon, always moves the
+ *      number up. It REPLACED the computation until 2026-09-21; that was
+ *      wrong in both directions — a grandfathered account on override 3 who
+ *      paid for Band+ (5) got 3, and any `extra_band` addon they bought on
+ *      top granted nothing at all.
+ *
+ *      ⚠ The same rule lives in `effective_band_limit()` in the database
+ *      (`supabase/migrations/20260921_band_limit_override_floor.sql`), which
+ *      is the trigger's backstop. The two must agree exactly: if only one
+ *      side says 5, the other refuses the band the first one allowed.
  *
  *      NOTE the column name. The pre-plans code path (`main`) owns
  *      `profiles.band_limit`, which is NOT NULL DEFAULT 3 and must stay that
@@ -83,7 +93,14 @@ export interface Entitlements {
    * that gate features should treat `false` as "do not gate" — see the header.
    */
   provisioned: boolean
-  /** True when `profiles.band_limit_override` replaced the plan's owned-bands limit. */
+  /**
+   * True when `profiles.band_limit_override` is set on the account.
+   *
+   * It says the override EXISTS, not that it is the number in `bandsOwned` —
+   * since the override is a floor, a plan that already grants more wins and
+   * this is still true. Display copy must therefore not claim the plan's own
+   * limit is being ignored.
+   */
   bandsOwnedOverridden: boolean
 }
 
@@ -317,10 +334,21 @@ function resolveEntitlements(
     }
   }
 
-  // The manual override REPLACES the computed value — it is not additive, and
-  // it wins over extra_band addons too. Null means "use the plan".
-  const bandsOwnedOverridden = profile.bandLimit !== null
-  if (bandsOwnedOverridden) bandsOwned = profile.bandLimit
+  // The manual override is a FLOOR: it guarantees a minimum and never caps
+  // what the plan plus addons already grant. Null means "use the plan".
+  //
+  // `null` here is "unlimited", which is already above any floor, so it
+  // absorbs the override rather than being replaced by a finite number — the
+  // same way `addToLimit` treats it. No plan in `PLANS` defines an unlimited
+  // `bandsOwned` today, so this is a guard against a future one, not a live
+  // path; `effective_band_limit()` has no way to express unlimited (
+  // `plan_limits.bands_owned` is `integer not null`) and so does not need
+  // the case.
+  const override = profile.bandLimit
+  const bandsOwnedOverridden = override !== null
+  if (override !== null) {
+    bandsOwned = bandsOwned === null ? null : Math.max(override, bandsOwned)
+  }
 
   return {
     plan: profile.plan,
@@ -331,6 +359,40 @@ function resolveEntitlements(
     features: [...base.features],
     provisioned: true,
     bandsOwnedOverridden,
+  }
+}
+
+/**
+ * Can this addon raise anything on this plan?
+ *
+ * Every addon adds to one ceiling, and `addToLimit()` treats `null`
+ * (unlimited) as absorbing — adding to it returns `null`. So an addon whose
+ * dimension is already unlimited resolves to exactly the same entitlements it
+ * would without it: the row is written, the resolver reads it, and nothing
+ * moves. `extra_member` on `band` or `band_plus` is the live case — both grant
+ * unlimited members, and the addon was sold, billed monthly, and silently did
+ * nothing.
+ *
+ * This lives here rather than in the billing layer on purpose. `lib/billing/*`
+ * must never read a plan limit directly (AGENTS.md §4) — it asks this module
+ * what a plan can do and acts on the answer, the same way every enforcement
+ * point does. It is a pure function of the plan table: no database, no addons,
+ * no user. `POST /api/billing/addons` refuses a purchase when it returns false.
+ *
+ * Note what it deliberately does NOT answer: whether the user would exceed
+ * anything, whether they already hold one, or whether they can afford it. Only
+ * "is this dimension capped on this plan at all". A plan whose ceiling is
+ * finite can always be raised, however much headroom is left.
+ */
+export function addonHasEffect(plan: PlanId, addon: AddonType): boolean {
+  const base = PLANS[plan]
+  switch (addon) {
+    case 'extra_band':
+      return base.bandsOwned !== null
+    case 'extra_storage':
+      return base.storagePerBandMB !== null
+    case 'extra_member':
+      return base.membersPerBand !== null
   }
 }
 

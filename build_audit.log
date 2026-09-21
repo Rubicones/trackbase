@@ -1,0 +1,12 @@
+⚠ Attempted to load /sessions/rcw-01mkg6vnqzdvg8xupka2nybr/mnt/trackbase/node_modules/next/next-swc-fallback/@next/swc-linux-arm64-gnu/next-swc.linux-arm64-gnu.node, but it was not installed
+⚠ Attempted to load /sessions/rcw-01mkg6vnqzdvg8xupka2nybr/mnt/trackbase/node_modules/next/next-swc-fallback/@next/swc-linux-arm64-musl/next-swc.linux-arm64-musl.node, but it was not installed
+⚠ Attempted to load @next/swc-linux-arm64-gnu, but it was not installed
+⚠ Attempted to load @next/swc-linux-arm64-musl, but it was not installed
+⚠ Attempted to load @next/swc-wasm-nodejs, but it was not installed
+⚠ Attempted to load @next/swc-wasm-web, but it was not installed
+⨯ Failed to load SWC binary for linux/arm64, see more info here: https://nextjs.org/docs/messages/failed-loading-swc
+⨯ Failed to load next.config.ts, see more info here https://nextjs.org/docs/messages/next-config-error
+
+> Build error occurred
+Error: Failed to load SWC binary for linux/arm64, see more info here: https://nextjs.org/docs/messages/failed-loading-swc
+    at ignore-listed frames

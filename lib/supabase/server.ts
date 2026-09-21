@@ -139,6 +139,36 @@ export interface MembershipResult {
  */
 export interface BandAccessOptions {
   readOnlyRequest?: boolean
+  /**
+   * Permit this DELETE inside a frozen band.
+   *
+   * A frozen band is read-only, and the rule's value is that it has no
+   * exceptions to remember — every mutation is blocked by HTTP method, so a
+   * route added next year is covered without anybody thinking about it. This
+   * is the deliberate hole in that, and it is narrow on purpose.
+   *
+   * A band freezes because its owner is over a plan limit, and freezing is
+   * supposed to be survivable: nothing is deleted, and the user is expected to
+   * get back under the limit. But every action that reduces what the plan has
+   * to cover was itself a write, so a band frozen while also over its storage
+   * ceiling could not shrink. There was no route out except deleting the whole
+   * space — the outcome freezing exists to avoid.
+   *
+   * So deletion joins the exceptions that already exist for exactly this
+   * reason: deleting the band (`DELETE /api/bands/[id]`) and removing a member
+   * (`DELETE .../members/[userId]`). All four share one justification —
+   * removing something reduces what the plan must cover, and destroys nothing
+   * the user wanted kept, because the user is the one asking.
+   *
+   * It is ignored for anything that is not a DELETE, so a route cannot
+   * accidentally unblock a POST by passing it. Uploading, recording, editing
+   * and creating a version stay refused.
+   *
+   * NOT `readOnlyRequest`, which means something different: "this POST is
+   * actually a read". A delete is not a read, and conflating the two would
+   * eventually let a genuine write through the wrong door.
+   */
+  allowFrozenDelete?: boolean
 }
 
 /** Methods that mutate. Everything else is a read and is always permitted. */
@@ -146,7 +176,9 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 function isWriteRequest(req: NextRequest, options?: BandAccessOptions): boolean {
   if (options?.readOnlyRequest) return false
-  return WRITE_METHODS.has(req.method.toUpperCase())
+  const method = req.method.toUpperCase()
+  if (options?.allowFrozenDelete && method === 'DELETE') return false
+  return WRITE_METHODS.has(method)
 }
 
 /**

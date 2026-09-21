@@ -9,6 +9,7 @@ import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { pickTrackIconColor } from '@/lib/trackIcon'
 import { storageRefusal } from '@/lib/planGuards'
+import { findBandTrackByHash } from '@/lib/trackDedup'
 
 const ALLOWED_AUDIO_MIMETYPES: Record<string, 'wav' | 'mp3'> = {
   'audio/wav':   'wav',
@@ -123,13 +124,10 @@ async function handleAudioUpload({
   const fileHash = createHash('sha256').update(audioBuffer).digest('hex')
   console.log('[upload] fileHash:', fileHash, '| size:', audioBuffer.byteLength)
 
-  // Dedup check
-  const { data: existing } = await supabase
-    .from('tracks')
-    .select('storage_path, duration_ms, file_size_bytes')
-    .eq('file_hash', fileHash)
-    .limit(1)
-    .maybeSingle()
+  // Dedup check, scoped to THIS band. A global match skipped the storage
+  // check below for any file already present anywhere in the database, and
+  // pointed this band's row at another band's object. See `lib/trackDedup.ts`.
+  const existing = await findBandTrackByHash(bandId, fileHash)
 
   let storagePath: string
   let fileSizeBytes: number
@@ -137,7 +135,12 @@ async function handleAudioUpload({
 
   if (existing) {
     storagePath = existing.storage_path
-    fileSizeBytes = existing.file_size_bytes ?? audioBuffer.byteLength
+    // Dedup hit: inherit the stored count. Falling back to the uploaded WAV's
+    // length here would record a number for a file that was never stored —
+    // storage holds the FLAC, typically 2–3× smaller — and it is a
+    // client-influenced number besides. An unknown size counts as 0 instead,
+    // matching `tracks/process`.
+    fileSizeBytes = existing.file_size_bytes ?? 0
     console.log('[upload] dedup hit — reusing', storagePath)
   } else {
     let flacBuffer: Buffer
@@ -244,13 +247,8 @@ async function handleMidiUpload({
 
   const durationMs = Math.round(midiDurationMs(midiData))
 
-  // Dedup check
-  const { data: existing } = await supabase
-    .from('tracks')
-    .select('storage_path, duration_ms, file_size_bytes')
-    .eq('file_hash', fileHash)
-    .limit(1)
-    .maybeSingle()
+  // Dedup check, scoped to THIS band — same reasoning as the audio path above.
+  const existing = await findBandTrackByHash(bandId, fileHash)
 
   let storagePath: string
 

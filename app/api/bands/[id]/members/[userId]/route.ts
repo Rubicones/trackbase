@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { frozenBandRefusal } from '@/lib/planGuards'
+import { countBandOwners, LAST_OWNER_REFUSAL } from '@/lib/bandAccess'
 
 async function assertMember(bandId: string, userId: string) {
   const { data } = await supabase
@@ -61,6 +62,26 @@ export async function DELETE(
 
   if (requesterId !== targetUserId && membership.role !== 'owner') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // ── The band must not be left without an owner ────────────────────────────
+  // The self-removal branch above skips the role check, so without this an
+  // owner could DELETE their own membership: the band survives with no owner
+  // row, the slot is freed on their account, and it can never be frozen again
+  // — `ensureBandFreezeState()` returns early on a null owner. The same guard
+  // already lives in `DELETE .../members/me`; it belongs here too, and is
+  // written against the TARGET rather than the requester so it holds for
+  // every path into this branch, not just self-removal.
+  //
+  // Not a transaction: two concurrent last-owner removals could in principle
+  // both read 1 and both delete. That race needs two owners to exist, in which
+  // case neither is the last one — so the window this guard covers is a band
+  // with exactly one owner, where there is only one request that can pass the
+  // authorisation check above. Left as a read-then-write deliberately.
+  const target =
+    requesterId === targetUserId ? membership : await assertMember(bandId, targetUserId)
+  if (target?.role === 'owner' && (await countBandOwners(bandId)) <= 1) {
+    return NextResponse.json({ error: LAST_OWNER_REFUSAL }, { status: 400 })
   }
 
   const { error } = await supabase

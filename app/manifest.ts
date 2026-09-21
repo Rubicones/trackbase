@@ -1,13 +1,15 @@
 import type { MetadataRoute } from 'next'
 import { SEO_DEFAULT_DESCRIPTION, SITE_NAME, SITE_SHORT_NAME } from '@/lib/seo'
+import { ENTRY_PATH } from '@/lib/lastBand'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: SITE_NAME,
     short_name: SITE_SHORT_NAME,
     description: SEO_DEFAULT_DESCRIPTION,
-    // Installed PWAs skip marketing — users already saw the landing before install.
-    start_url: '/dashboard',
+    // Installed PWAs skip marketing — users already saw the landing before
+    // install — and resume in the band this device had open (lib/lastBand.ts).
+    start_url: ENTRY_PATH,
     scope: '/',
     display: 'standalone',
     background_color: '#070707',

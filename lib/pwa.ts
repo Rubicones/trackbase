@@ -30,7 +30,7 @@
  * which is precisely the traffic a landing page must not redirect.
  *
  * Note that none of this is load-bearing for a normal launch: `start_url` is
- * `/dashboard`, so an installed app does not open `/` in the first place. This
+ * `/open`, so an installed app does not open `/` in the first place. This
  * check only covers an installed user navigating to `/` from inside the app.
  *
  * Auth state is intentionally absent. Whether someone is signed in has no

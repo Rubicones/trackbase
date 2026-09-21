@@ -15,6 +15,7 @@ import {
   CAMPAIGN_COOKIE,
   CAMPAIGN_COOKIE_MAX_AGE,
 } from '@/lib/campaigns'
+import { ENTRY_PATH } from '@/lib/lastBand'
 
 // ─── Route matchers ───────────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ export async function middleware(request: NextRequest) {
 
   if (isAuthed && pathname.startsWith('/auth')) {
     if (hasUsername && onboardingComplete) {
-      return finalize(NextResponse.redirect(new URL('/dashboard', request.url)))
+      return finalize(NextResponse.redirect(new URL(ENTRY_PATH, request.url)))
     }
     return finalize(NextResponse.redirect(new URL('/onboarding', request.url)))
   }

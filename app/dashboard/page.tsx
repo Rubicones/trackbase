@@ -10,6 +10,7 @@ import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
 import { GraceBanner } from '@/components/plan/GraceBanner'
+import { FrozenBandChip } from '@/components/plan/FrozenBandBanner'
 import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
@@ -24,6 +25,7 @@ import {
   parseBandLimitError,
   reportBandLimitReached,
 } from '@/lib/bandLimitClient'
+import { formatStorageLimit } from '@/lib/bandStorage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +39,16 @@ interface DashboardBand {
   userRole: string; userRoleLabel: string | null
   projectCount: number; memberCount: number; lastUpdated: string
   latestActivity: ActivityItem | null
-  storageBytes: number; storageLimitBytes: number
+  storageBytes: number
+  /**
+   * The band's own ceiling in bytes, resolved server-side from its OWNER's
+   * plan plus that band's addons. Null means unlimited, or not resolvable —
+   * either way the card shows no ceiling rather than a wrong one. Pending
+   * bands (not joined yet) always send null. Display only; never asserted.
+   */
+  storageLimitBytes: number | null
+  /** Read-only because the owner's plan no longer covers it. Display only. */
+  frozen?: boolean
   isPending?: boolean
   joinRequestId?: string
   joinRequestedAt?: string
@@ -105,8 +116,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function formatLimit(bytes: number): string {
-  return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
+/**
+ * A band's storage ceiling for display.
+ *
+ * Delegates to `formatStorageLimit`, which is what every other storage surface
+ * uses. The local version rounded to whole GB, which was harmless while every
+ * band had the same 1 GB ceiling and wrong the moment plans arrived: free's
+ * real 500 MB rendered as "0 GB".
+ */
+function formatLimit(bytes: number | null): string {
+  // Null is "no ceiling to show" — unresolvable, or a band not joined yet.
+  // Deliberately not "Unlimited": no plan grants unlimited storage, so that
+  // word would only ever appear on a failed read, on a free band.
+  if (bytes === null) return '—'
+  return formatStorageLimit(bytes)
 }
 
 function timeGreeting(): string {
@@ -380,7 +403,12 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
   const isOwner = !isPending && band.userRole === 'owner'
   const color = avatarColor(band.name, palette)
   const initials = avatarInitials(band.name, 'band')
-  const storagePct = band.storageLimitBytes > 0 ? band.storageBytes / band.storageLimitBytes : 0
+  // Null ceiling (unlimited, unresolvable, or a pending band) draws an empty
+  // bar rather than a full one.
+  const storagePct =
+    band.storageLimitBytes && band.storageLimitBytes > 0
+      ? band.storageBytes / band.storageLimitBytes
+      : 0
   const roleLabel = isPending
     ? 'pending'
     : (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
@@ -428,6 +456,11 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
           {initials}
         </div>
         <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+          {/* The grace banner above this grid says bands over the limit are
+              frozen. Without a marker on the cards that sentence names no
+              band, and the user is left comparing a warning against four
+              identical-looking spaces. */}
+          {band.frozen && <FrozenBandChip />}
           <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
             isPending
               ? 'border-lime/50 text-lime'
