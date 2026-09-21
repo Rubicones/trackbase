@@ -23,8 +23,17 @@ import { registerPlaybackStop } from '@/lib/playbackSession'
 import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
-import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { trackEvent } from '@/lib/analytics'
+import { bytesToMB, formatMB, type Limit } from '@/lib/plans'
+import { useBandPlan } from '@/components/plan/BandEntitlements'
+import { usePaywall } from '@/contexts/PaywallContext'
+import { limitMessage } from '@/lib/planCopy'
+import { trackLimitReached } from '@/lib/planAnalytics'
+import {
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { BandFetchError, fetchBandData, invalidateBandData } from '@/lib/bandDataCache'
 
 // Max times we retry the band fetch after a cold-load 401 before surfacing an error.
@@ -125,8 +134,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function formatLimit(bytes: number): string {
-  return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
+/**
+ * The storage ceiling, in the words `lib/plans.ts` uses for it.
+ *
+ * Three inputs, three answers: `undefined` is "no answer yet", `null` is
+ * unlimited, a number is the ceiling. The previous version took a plain number
+ * and rounded to whole gigabytes, which rendered Free's 500 MB ceiling as
+ * "0 GB" and had no way to say "Unlimited" at all — so the caller passed the
+ * legacy 1 GB constant instead and every plan was reported as 1 GB until the
+ * fetch landed.
+ */
+function formatLimit(bytes: number | null | undefined): string {
+  if (bytes === undefined) return '\u2026'
+  return formatMB(bytes === null ? null : bytesToMB(bytes))
 }
 
 function formatFoundedHero(iso: string): string {
@@ -615,6 +635,11 @@ export default function BandPage() {
   const [chatInitialChannel, setChatInitialChannel] = useState<ChannelKey | undefined>(undefined)
 
   // ── Data state ──────────────────────────────────────────────────────────────
+  // Resolved server-side from the band id in the URL — there before the first
+  // byte, so ceilings do not have to be invented while the fetch is in flight.
+  const bandPlan = useBandPlan()
+  const { snapshot: planSnapshot, openPaywall } = usePaywall()
+
   const [band, setBand] = useState<Band | null>(null)
   const [projects, setProjects] = useState<EnhancedProject[]>([])
   const [members, setMembers] = useState<BandMember[]>([])
@@ -622,7 +647,12 @@ export default function BandPage() {
   const [stats, setStats] = useState<BandStats>({ branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 })
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [totalActivity, setTotalActivity] = useState(0)
-  const [storageLimitBytes, setStorageLimitBytes] = useState(BAND_STORAGE_LIMIT_BYTES)
+  // Ceilings from `GET /api/bands/[id]`. `undefined` = not answered yet; `null`
+  // = answered, unlimited. Neither ever falls back to a constant: seeding this
+  // with the legacy 1 GB limit is how a Band+ band reported 1 GB on every load
+  // until the fetch landed, and how a paying owner saw "Storage full".
+  const [fetchedStorageLimit, setFetchedStorageLimit] = useState<number | null | undefined>(undefined)
+  const [fetchedMemberLimit, setFetchedMemberLimit] = useState<Limit | undefined>(undefined)
   const [frozen, setFrozen] = useState(false)
   const [frozenReason, setFrozenReason] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -651,6 +681,29 @@ export default function BandPage() {
   const [regeneratingCode, setRegeneratingCode] = useState(false)
   const [showRegenerateCodeModal, setShowRegenerateCodeModal] = useState(false)
   const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
+
+  // ── Ceilings ──────────────────────────────────────────────────────────────
+  //
+  // Two sources, most authoritative last: the server-rendered layout answer is
+  // there from the first byte, the fetched one wins when it arrives.
+  const storageLimitBytes =
+    fetchedStorageLimit !== undefined ? fetchedStorageLimit : bandPlan?.storagePerBandBytes
+  const memberLimit: Limit | undefined =
+    fetchedMemberLimit !== undefined
+      ? fetchedMemberLimit
+      : bandPlan
+        ? bandPlan.membersPerBand
+        : undefined
+
+  // As with versions, TWO unknowns: the ceiling, and the list counted against
+  // it. `loading` covers the second — against an empty member list any real
+  // ceiling reads as roomy.
+  const memberLimitPending = memberLimit === undefined || loading
+  const atMemberLimit =
+    memberLimit !== undefined && memberLimit !== null && !loading && members.length >= memberLimit
+  const memberLimitCopy = atMemberLimit
+    ? limitMessage({ limit_type: 'members', limit: memberLimit, current: members.length })
+    : undefined
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(null)
   const [editingMember, setEditingMember] = useState<string | null>(null)
   const [editRoleLabel, setEditRoleLabel] = useState('')
@@ -761,7 +814,11 @@ export default function BandPage() {
     setStats((data.stats ?? { branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 }) as BandStats)
     setRecentActivity((data.recentActivity ?? []) as ActivityItem[])
     setTotalActivity((data.totalActivity ?? 0) as number)
-    setStorageLimitBytes((data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES) as number)
+    // `null` from the server means unlimited and must survive as null.
+    setFetchedStorageLimit((data.storageLimitBytes ?? null) as number | null)
+    setFetchedMemberLimit(
+      data.memberLimit === undefined ? undefined : (data.memberLimit as Limit),
+    )
     // Freeze state is evaluated server-side when the band is read — opening it
     // is the "touch" that applies an expired grace period. See lib/bandFreeze.ts.
     setFrozen(Boolean(data.frozen))
@@ -893,6 +950,19 @@ export default function BandPage() {
 
   async function handleResolveJoinRequest(requestId: string, action: 'approve' | 'reject') {
     if (myRole !== 'owner' || resolvingRequestId) return
+
+    // Approving inserts a member, so it meets `assertCanAddMember()` on the
+    // server. Rejecting never does, and is never gated here. Refusing early is
+    // a courtesy — the server still refuses — but it saves the owner pressing
+    // Approve on someone and watching nothing happen.
+    if (action === 'approve') {
+      if (memberLimitPending) return
+      if (atMemberLimit) {
+        trackLimitReached('members', planSnapshot.plan)
+        openPaywall('limit')
+        return
+      }
+    }
     setResolvingRequestId(requestId)
     try {
       const res = await fetch(`/api/bands/${bandId}/join-requests/${requestId}`, {
@@ -1220,8 +1290,14 @@ export default function BandPage() {
   }, [activeTab])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
-  const storageFull = stats.storage_bytes >= storageLimitBytes
+  // Unknown and unlimited both mean "no bar to fill" — a percentage of a
+  // ceiling we cannot name is a made-up number, and the old code made one up on
+  // every load.
+  const storagePct = storageLimitBytes
+    ? Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
+    : 0
+  const storageFull =
+    typeof storageLimitBytes === 'number' && stats.storage_bytes >= storageLimitBytes
   const bandColor = band ? avatarColor(band.name, palette) : 'var(--lime)'
   const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
@@ -1593,14 +1669,29 @@ export default function BandPage() {
                           <div className="text-[9px] text-muted-foreground">Wants to join</div>
                         </div>
                         <div className="flex gap-1 shrink-0">
-                          <button
-                            type="button"
-                            disabled={resolvingRequestId === req.id}
-                            onClick={() => handleResolveJoinRequest(req.id, 'approve')}
-                            className="text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online hover:bg-online/10 bg-transparent cursor-pointer disabled:opacity-50"
-                          >
-                            Approve
-                          </button>
+                          {memberLimitPending ? (
+                            // Ceiling not answered yet. Inert markup with no
+                            // handler — same rule as every other gate here.
+                            <span
+                              className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent ${paywallPendingButtonClass}`}
+                              {...paywallPendingProps}
+                            >
+                              Approve
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={resolvingRequestId === req.id}
+                              aria-disabled={atMemberLimit || undefined}
+                              title={memberLimitCopy}
+                              onClick={() => handleResolveJoinRequest(req.id, 'approve')}
+                              className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent cursor-pointer disabled:opacity-50 ${
+                                atMemberLimit ? paywallLockedButtonClass : 'hover:bg-online/10'
+                              }`}
+                            >
+                              Approve
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={resolvingRequestId === req.id}
@@ -1801,7 +1892,10 @@ export default function BandPage() {
 
           {/* Storage — sidebar only; stats live in the hero grid above */}
           <div className="hidden lg:block">
-            <SectionLabel>STORAGE · 1 GB</SectionLabel>
+            {/* Never a literal. AGENTS.md §7: a plan number written anywhere
+                outside `lib/plans.ts` drifts, and this one already had — it
+                said 1 GB to every plan, including the 50 GB one. */}
+            <SectionLabel>{`STORAGE · ${formatLimit(storageLimitBytes)}`}</SectionLabel>
             <div className="mt-3">
               <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
                 <span>USED</span>

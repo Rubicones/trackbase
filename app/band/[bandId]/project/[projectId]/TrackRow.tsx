@@ -6,7 +6,12 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type 
 import type { Project, Track } from '@/lib/types'
 import { usePaywallGate } from '@/contexts/PaywallContext'
 import type { GatedFeature } from '@/lib/plans'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { TactGrid } from '@/components/design/TactGrid'
 import { Spinner } from '@/components/ui/Spinner'
@@ -219,8 +224,12 @@ export const TrackRow = React.memo(function TrackRow({
   // features when we know them, falling back to the viewer's own plan — see
   // `usePaywallGate`. The server checks `track_edit` again on
   // `POST /api/tracks/[id]/edit` regardless; this is the button, not the gate.
-  const { locked: trackEditLocked, onLockedClick: onTrackEditLockedClick } =
-    usePaywallGate('track_edit', bandFeatures)
+  const {
+    pending: trackEditPending,
+    locked: trackEditLocked,
+    onLockedClick: onTrackEditLockedClick,
+    guard: guardTrackEdit,
+  } = usePaywallGate('track_edit', bandFeatures)
   const [showColorPicker, setShowColorPicker] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showTools, setShowTools] = useState(false)
@@ -754,7 +763,15 @@ export const TrackRow = React.memo(function TrackRow({
             onClick={onToggleSolo}
           />
           {editable && !isMidi && !compact && (
-            trackEditLocked && !editMode ? (
+            trackEditPending && !editMode ? (
+              <span
+                aria-label="Edit track"
+                className={`size-5 border text-[9px] grid place-items-center border-border text-muted-foreground ${paywallPendingButtonClass}`}
+                {...paywallPendingProps}
+              >
+                <PencilIcon />
+              </span>
+            ) : trackEditLocked && !editMode ? (
               <PaywallLockWrap>
                 <button
                   type="button"
@@ -794,7 +811,7 @@ export const TrackRow = React.memo(function TrackRow({
               <HoverTooltip label={audioReady ? 'Edit track' : 'Loading audio…'}>
                 <button
                   type="button"
-                  onClick={onRequestEdit}
+                  onClick={guardTrackEdit(() => onRequestEdit?.())}
                   disabled={!audioReady || isReplacing}
                   aria-label="Edit track"
                   className="size-5 border text-[9px] grid place-items-center transition border-border hover:border-lime hover:text-lime text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground"

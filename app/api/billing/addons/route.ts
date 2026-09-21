@@ -31,8 +31,8 @@ import { supabase } from '@/lib/supabase'
 import { BILLING_LIVE, addonPriceId } from '@/lib/billing/config'
 import { isBillingNotConfigured, stripeClient } from '@/lib/billing/stripe'
 import {
-  readLiveSubscription,
-  statusEntitles,
+  findEntitlingSubscription,
+  readCustomerId,
   syncAddonsFromSubscription,
 } from '@/lib/billing/store'
 import { ADDONS, isAddonType, type AddonType } from '@/lib/plans'
@@ -133,8 +133,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const live = await readLiveSubscription(userId)
-    if (!live || !statusEntitles(live.status)) {
+    // Stripe, not the mirror — same reasoning as the checkout guard. A webhook
+    // that has not landed yet must not read as "you have no subscription" to
+    // somebody who is holding the receipt. It also drops a round trip: the
+    // subscription this used to retrieve by id comes back from the lookup.
+    const stripe = stripeClient()
+    const customerId = await readCustomerId(userId)
+    const subscription = customerId ? await findEntitlingSubscription(customerId) : null
+    if (!subscription) {
       return NextResponse.json(
         {
           error: 'no_subscription',
@@ -143,9 +149,6 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       )
     }
-
-    const stripe = stripeClient()
-    const subscription = await stripe.subscriptions.retrieve(live.id)
 
     // One item per (price, band): the band lives in item metadata, so the same
     // add-on on two different bands is genuinely two items, and the same
@@ -163,7 +166,7 @@ export async function POST(req: NextRequest) {
         })
       } else {
         await stripe.subscriptionItems.create({
-          subscription: live.id,
+          subscription: subscription.id,
           price: priceId,
           quantity: 1,
           ...(bandId ? { metadata: { band_id: bandId } } : {}),
@@ -184,7 +187,7 @@ export async function POST(req: NextRequest) {
     // Re-read rather than patching what we think we changed: the fresh
     // subscription is the only description of the items that is definitely
     // right, and it is what the webhook will reconcile against anyway.
-    const updated = await stripe.subscriptions.retrieve(live.id)
+    const updated = await stripe.subscriptions.retrieve(subscription.id)
     await syncAddonsFromSubscription(userId, updated)
 
     return NextResponse.json({ ok: true })

@@ -37,9 +37,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // See the note on the same marker in `api/billing/checkout`: it means
+    // "re-read the plan on return", not "something changed".
     const session = await stripeClient().billingPortal.sessions.create({
       customer: customerId,
-      return_url: billingUrl(req, '/billing'),
+      return_url: billingUrl(req, '/billing?portal=return'),
     })
 
     return NextResponse.json({ url: session.url })

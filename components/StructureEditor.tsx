@@ -18,7 +18,12 @@ import {
 import { useMobileKeyboardInset } from '@/hooks/useMobileKeyboardInset'
 import { usePaywallGate } from '@/contexts/PaywallContext'
 import type { GatedFeature } from '@/lib/plans'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { TbButton } from '@/components/design/TbButton'
 
 /** Stored on section rows for merge/API; UI uses lime tokens, not this value. */
@@ -395,8 +400,12 @@ export function SectionEditPopover({
   // Gates only this in-app Detect button, never /tools/chord-detector (public,
   // no login, deliberately ungated). Resolved against the BAND's features so a
   // free member of a paid band is not locked out of what the owner paid for.
-  const { locked: chordDetectLocked, onLockedClick: onChordDetectLockedClick } =
-    usePaywallGate('chord_detect', bandFeatures)
+  const {
+    pending: chordDetectPending,
+    locked: chordDetectLocked,
+    onLockedClick: onChordDetectLockedClick,
+    guard: guardChordDetect,
+  } = usePaywallGate('chord_detect', bandFeatures)
 
   useEffect(() => {
     setSelectedTrackIds(new Set())
@@ -682,7 +691,15 @@ export function SectionEditPopover({
                 {!detectingChords && saveStatus === 'saved' && <span className="text-online"> · saved</span>}
               </div>
               {audioTracks.length > 0 && !trackPickerOpen && (
-                chordDetectLocked ? (
+                chordDetectPending ? (
+                  <span
+                    data-tour="structure-detect-chords"
+                    className={`text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 text-muted-foreground ${paywallPendingButtonClass}`}
+                    {...paywallPendingProps}
+                  >
+                    Detect
+                  </span>
+                ) : chordDetectLocked ? (
                   <PaywallLockWrap>
                     <button
                       type="button"
@@ -698,10 +715,10 @@ export function SectionEditPopover({
                     type="button"
                     data-tour="structure-detect-chords"
                     disabled={detectingChords}
-                    onClick={() => {
+                    onClick={guardChordDetect(() => {
                       setSelectedTrackIds(new Set())
                       setTrackPickerOpen(true)
-                    }}
+                    })}
                     className="text-[9px] uppercase tracking-widest border border-border px-2 py-0.5 hover:border-foreground/40 disabled:opacity-50"
                   >
                     Detect

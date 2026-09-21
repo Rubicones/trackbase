@@ -24,6 +24,40 @@ import { LucideIcon } from '@/components/design/LucideIcon'
  */
 export const paywallLockedButtonClass = 'opacity-50 cursor-default'
 
+/**
+ * The PENDING treatment, for a gated control whose plan has not answered yet.
+ *
+ * Deliberately not the locked treatment. A lock is a claim — "you do not have
+ * this" — and at this point we do not know that. Flashing one over a feature a
+ * paying user owns, on every page load, is exactly the failure this state
+ * exists to avoid. So: dimmed, no badge, no hover affordance, progress cursor.
+ *
+ * ⚠ The rule that matters is not in this class. A pending control must be
+ * rendered as its OWN element carrying no `onClick` — never the real control
+ * with `disabled` added. `disabled` is an attribute and an attribute can be
+ * deleted from the markup in a second; a handler React never attached cannot
+ * be restored at all. `pointer-events-none` below is comfort, not enforcement.
+ * See `usePaywallGate` in `contexts/PaywallContext.tsx`.
+ */
+export const paywallPendingButtonClass =
+  'opacity-40 cursor-progress pointer-events-none select-none'
+
+/**
+ * The attributes every pending control repeats, in one place so no call site
+ * forgets one. Spread onto the inert element.
+ *
+ * `tabIndex: -1` matters as much as the styling: without it the control stays
+ * in the tab order and a keyboard user can activate markup that is meant to be
+ * unusable. `guard()` would refuse the action anyway — this stops it looking
+ * like a control that silently does nothing.
+ */
+export const paywallPendingProps = {
+  'aria-disabled': true,
+  'aria-busy': true,
+  tabIndex: -1,
+  title: 'Checking your plan…',
+} as const
+
 /** Accent square with a plus, overlapping the control's top-right corner. */
 export function PlusBadge() {
   return (

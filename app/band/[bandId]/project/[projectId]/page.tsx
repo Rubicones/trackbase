@@ -7,9 +7,17 @@ import { useTheme } from 'next-themes'
 import type { TrackComment, Track, Version, Project, Section } from '@/lib/types'
 import { useVersionCache } from '@/hooks/useVersionCache'
 import { useAuth } from '@/contexts/AuthContext'
-import type { GatedFeature } from '@/lib/plans'
-import { usePaywallGate, useApiErrorMessage } from '@/contexts/PaywallContext'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import type { GatedFeature, Limit } from '@/lib/plans'
+import { usePaywall, usePaywallGate, useApiErrorMessage } from '@/contexts/PaywallContext'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
+import { useBandPlan } from '@/components/plan/BandEntitlements'
+import { trackLimitReached } from '@/lib/planAnalytics'
+import { limitMessage } from '@/lib/planCopy'
 import { trackEvent } from '@/lib/analytics'
 import {
   buildOnboardingDisplayVersions,
@@ -235,6 +243,10 @@ export default function ProjectPage() {
   // here rather than surfacing their machine code as a toast, and record the
   // limit_reached event on the way through.
   const describeApiError = useApiErrorMessage()
+  // The plans modal is how a ceiling is lifted, so the surfaces that meet one
+  // open it with `limit` as the source — the same demand signal every locked
+  // control records.
+  const { snapshot: planSnapshot, openPaywall } = usePaywall()
 
   // ── What this BAND can do ─────────────────────────────────────────────────
   // Served by `GET /api/projects/[id]`, resolved from the band OWNER's plan.
@@ -245,18 +257,44 @@ export default function ProjectPage() {
   // browser — see `lib/plans.ts`), so falling back to the viewer's plan did not
   // under-promise, it denied them outright.
   //
-  // `null` until the first load lands: `usePaywallGate` reads that as "not
-  // known yet" and locks nothing, rather than flashing a paywall over a feature
-  // the user has.
-  const [bandFeatures, setBandFeatures] = useState<GatedFeature[] | null>(null)
+  // Two sources, most authoritative last. The server-rendered one is there from
+  // the first byte (`app/band/[bandId]/layout.tsx`); the fetched one arrives
+  // with the project and wins once it does, since it is read by the same
+  // request that proves this viewer may see this project at all.
+  //
+  // `null` from both means "no answer yet", which `usePaywallGate` now renders
+  // as `pending` — an inert control, not an open one. That is the whole change
+  // from how this behaved before, where an unanswered gate was an unlocked gate
+  // for the entire load.
+  const bandPlan = useBandPlan()
+  const [fetchedBandFeatures, setFetchedBandFeatures] = useState<GatedFeature[] | null>(null)
+  const bandFeatures = fetchedBandFeatures ?? bandPlan?.features ?? null
+
+  // The active-version ceiling, same two sources in the same order.
+  //
+  // `undefined` = nobody has answered. `null` = answered, and the answer is
+  // unlimited. That is the `Limit` vocabulary from `lib/plans.ts`, and keeping
+  // the two apart is the whole point — collapsing them is how "unlimited" and
+  // "we do not know" end up rendering the same control.
+  const [fetchedVersionLimit, setFetchedVersionLimit] = useState<Limit | undefined>(undefined)
+  const activeVersionLimit: Limit | undefined =
+    fetchedVersionLimit !== undefined
+      ? fetchedVersionLimit
+      : bandPlan
+        ? bandPlan.activeVersionsPerProject
+        : undefined
 
   // ── Compare mode ──────────────────────────────────────────────────────────
   // Gates the A/B Compare entry button. Locking is driven by the band's plan
   // (contexts/PaywallContext.tsx). Note there is no server check behind this
   // one — A/B Compare is client-side playback of versions the user may already
   // read, so this gate is the whole enforcement.
-  const { locked: abCompareLocked, onLockedClick: onAbCompareLockedClick } =
-    usePaywallGate('ab_compare', bandFeatures)
+  const {
+    pending: abComparePending,
+    locked: abCompareLocked,
+    onLockedClick: onAbCompareLockedClick,
+    guard: guardAbCompare,
+  } = usePaywallGate('ab_compare', bandFeatures)
   const [compareActive, setCompareActive] = useState(false)
   const [compareVersionBId, setCompareVersionBId] = useState<string>('')
   // Portal slot for compare transport bar (same DOM position as MasterPlayerBar)
@@ -423,12 +461,16 @@ export default function ProjectPage() {
         project: Project
         versions: Version[]
         bandFeatures?: GatedFeature[]
+        // Optional because a tab open across a deploy may still be talking
+        // to a server that predates it. Absent keeps the SSR answer.
+        activeVersionLimit?: Limit
       }
       try {
         data = await fetchProjectJson<{
           project: Project
           versions: Version[]
           bandFeatures?: GatedFeature[]
+          activeVersionLimit?: Limit
         }>(projectId)
       } catch (err) {
         const status = (err as { status?: number }).status
@@ -453,7 +495,12 @@ export default function ProjectPage() {
       setVersions(data.versions)
       // Absent only on a server that predates the field; leaving it null keeps
       // the gates open rather than locking on a guess.
-      setBandFeatures(data.bandFeatures ?? null)
+      setFetchedBandFeatures(data.bandFeatures ?? null)
+      // Absent only on a server that predates the field; `undefined` keeps the
+      // SSR answer rather than overwriting it with a guess.
+      setFetchedVersionLimit(
+        data.activeVersionLimit === undefined ? undefined : (data.activeVersionLimit as Limit),
+      )
 
       // Populate cache for all fetched versions
       for (const v of data.versions) {
@@ -791,6 +838,51 @@ export default function ProjectPage() {
   }, [midiTracksNeedingDataKey])
   const canSaveVersion = activeVersion?.type === 'branch' && !activeVersion.merged_at
   const isOnMainVersion = activeVersion?.type === 'main'
+
+  // ── The active-version ceiling ────────────────────────────────────────────
+  //
+  // Master never counts, and neither does a branch that has already been
+  // applied — the same definition `countActiveVersions()` uses on the server.
+  const activeVersionCount = versions.filter(v => v.type === 'branch' && !v.merged_at).length
+
+  // TWO unknowns, and the count is meaningless until both are resolved: the
+  // ceiling itself, and the list it is counted against. `loading` covers the
+  // second — against an empty list any real ceiling reads as "plenty of room",
+  // which is exactly the wrong answer for the one moment it is shown.
+  const newVersionPending = activeVersionLimit === undefined || loading
+  const atVersionLimit =
+    activeVersionLimit !== undefined &&
+    activeVersionLimit !== null &&
+    !loading &&
+    activeVersionCount >= activeVersionLimit
+
+  /**
+   * The ONE door to creating a version.
+   *
+   * Six places open that modal — desktop toolbar, two mobile layouts, the
+   * tour, a keyboard path — and gating each of them separately is how one ends
+   * up ungated after the next refactor. They all come through here.
+   *
+   * Refusing here is a courtesy, not the gate: `assertCanCreateVersion()` still
+   * refuses on the server, from a fresh count, on every create. What this buys
+   * is refusing BEFORE the user names a version rather than after.
+   */
+  const requestNewVersion = useCallback(() => {
+    if (newVersionPending) return
+    if (atVersionLimit) {
+      trackLimitReached('versions', planSnapshot.plan)
+      openPaywall('limit')
+      return
+    }
+    setShowBranchModal(true)
+  }, [newVersionPending, atVersionLimit, planSnapshot.plan, openPaywall])
+
+  // Worded in `lib/planCopy.ts` like every other refusal, so the tooltip the
+  // user gets before the attempt and the sentence they would have got after it
+  // are the same sentence.
+  const versionLimitCopy = atVersionLimit
+    ? limitMessage({ limit_type: 'versions', limit: activeVersionLimit, current: activeVersionCount })
+    : undefined
 
   const guardMasterEdit = useCallback((
     pending: () => void | Promise<void>,
@@ -2432,7 +2524,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           isCounting={player.isCounting}
           onToggleMetronome={player.toggleMetronome}
           onToggleCountdown={player.toggleCountdown}
-          onNewBranch={() => setShowBranchModal(true)}
+          onNewBranch={() => requestNewVersion()}
           commentMode={commentMode}
           commentCount={totalComments}
           onToggleCommentMode={toggleCommentMode}
@@ -2444,7 +2536,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             activeVersionId,
             onVersionChange: selectVersion,
             versionSwitchDisabled: versionSwitchLocked,
-            onNewBranch: () => setShowBranchModal(true),
+            onNewBranch: () => requestNewVersion(),
             onRenameVersion: handleRenameVersion,
             onDeleteVersion: requestDeleteVersion,
             sections,
@@ -2644,7 +2736,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
           versions={displayVersions}
           activeId={activeVersionId}
           onSelect={selectVersion}
-          onNewBranch={() => setShowBranchModal(true)}
+          onNewBranch={() => requestNewVersion()}
           onRenameVersion={handleRenameVersion}
           onDeleteVersion={requestDeleteVersion}
           commentMode={commentMode}
@@ -2725,7 +2817,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         <Sidebar
           versions={displayVersions} activeId={activeVersionId}
           onSelect={id => { selectVersion(id); if (window.innerWidth < 1024) setSidebarOpen(false) }}
-          onNewBranch={() => setShowBranchModal(true)}
+          onNewBranch={() => requestNewVersion()}
           onMerge={handleMergeClick}
           onRenameVersion={handleRenameVersion}
           storageUsed={storageUsed}
@@ -2854,15 +2946,47 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                     onSelect={selectVersion}
                     versionSwitchDisabled={versionSwitchLocked}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowBranchModal(true)}
-                    data-tour="new-branch-button"
-                    className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border hover:border-lime hover:text-lime text-muted-foreground transition"
-                  >
-                    + New Version
-                  </button>
+                  {newVersionPending ? (
+                    // Ceiling not answered yet (or the version list has not
+                    // loaded, which makes any ceiling read as roomy). Inert
+                    // markup with no handler — same rule as the feature gates.
+                    <span
+                      data-tour="new-branch-button"
+                      className={`shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border text-muted-foreground ${paywallPendingButtonClass}`}
+                      {...paywallPendingProps}
+                    >
+                      + New Version
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => requestNewVersion()}
+                      data-tour="new-branch-button"
+                      aria-disabled={atVersionLimit || undefined}
+                      title={versionLimitCopy}
+                      className={`shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border text-muted-foreground transition ${
+                        atVersionLimit ? paywallLockedButtonClass : 'hover:border-lime hover:text-lime'
+                      }`}
+                    >
+                      + New Version
+                    </button>
+                  )}
                   {(() => {
+                    // No answer yet. A span carrying no handler — `ab_compare`
+                    // has no server check behind it (see `lib/plans.ts`), so a
+                    // control that is merely `disabled` here is the feature.
+                    if (abComparePending) {
+                      return (
+                        <span
+                          data-tour="compare-button"
+                          className={`shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border text-muted-foreground ${paywallPendingButtonClass}`}
+                          {...paywallPendingProps}
+                        >
+                          <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+                          Compare
+                        </span>
+                      )
+                    }
                     if (abCompareLocked) {
                       return (
                         <PaywallLockWrap className="shrink-0">
@@ -2884,7 +3008,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                         type="button"
                         data-tour="compare-button"
                         disabled={!canCompare}
-                        onClick={() => {
+                        onClick={guardAbCompare(() => {
                           const other = versions.find(v => v.id !== activeVersionId)
                           if (!other) return
                           const enterCompare = () => {
@@ -2907,7 +3031,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                             return
                           }
                           enterCompare()
-                        }}
+                        })}
                         className="shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-border hover:border-lime hover:text-lime text-muted-foreground transition disabled:opacity-40 disabled:pointer-events-none disabled:hover:border-border disabled:hover:text-muted-foreground"
                       >
                         <ChevronsLeftRightEllipsis size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
@@ -3396,7 +3520,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             versions={displayVersions}
             activeId={activeVersionId}
             onSelect={selectVersion}
-            onNewBranch={() => setShowBranchModal(true)}
+            onNewBranch={() => requestNewVersion()}
             onMerge={handleMergeClick}
             storageUsed={storageUsed}
             storageLimit={storageLimit}
@@ -3561,7 +3685,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
             if (suppress24h) suppressMasterEditGuard24h()
             masterEditModal.onDismiss?.()
             setMasterEditModal(null)
-            setShowBranchModal(true)
+            requestNewVersion()
           }}
           onCancel={() => {
             masterEditModal.onDismiss?.()

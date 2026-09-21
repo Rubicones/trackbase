@@ -15,7 +15,12 @@ import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBar
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { usePaywallGate } from '@/contexts/PaywallContext'
 import type { GatedFeature } from '@/lib/plans'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 
 export type {
   MergePreview,
@@ -533,7 +538,7 @@ function CherryPickDiffButton({
   // the BAND's features — `cherry_pick` comes from the band owner's plan, so a
   // free member of a paid band must not see this locked. The server re-checks
   // it on `POST /api/projects/[id]/merge` whenever selective fields are sent.
-  const { locked, onLockedClick } = usePaywallGate('cherry_pick', bandFeatures)
+  const { status, locked, onLockedClick, guard } = usePaywallGate('cherry_pick', bandFeatures)
 
   const icon = (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
@@ -541,6 +546,20 @@ function CherryPickDiffButton({
       <path d="M9 2l1.5 1L9 4M11.5 8.25l-1.75 1.75-1-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
+
+  // No answer yet. A span, not a disabled button: there is no handler to
+  // re-enable and no attribute to delete. See `usePaywallGate`.
+  if (status === 'pending') {
+    return (
+      <span
+        className={`hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground ${paywallPendingButtonClass}`}
+        {...paywallPendingProps}
+      >
+        {icon}
+        Show &amp; cherry-pick differences
+      </span>
+    )
+  }
 
   if (locked) {
     return (
@@ -563,7 +582,7 @@ function CherryPickDiffButton({
       type="button"
       data-tour="cherrypick-entry-button"
       disabled={disabled}
-      onClick={onClick}
+      onClick={guard(onClick)}
       className="hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-lime hover:text-lime transition disabled:opacity-50 disabled:pointer-events-none"
     >
       {icon}

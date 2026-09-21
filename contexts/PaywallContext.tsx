@@ -90,6 +90,19 @@ export interface PlanAddon {
 }
 
 export interface PlanSnapshot {
+  /**
+   * True once this snapshot carries a real answer — from a server-rendered
+   * `initialSnapshot`, from `GET /api/me/plan`, or from knowing the visitor is
+   * signed out.
+   *
+   * This exists because `provisioned` used to carry two unrelated meanings at
+   * once: the server's "the plan schema is not in the database" and the
+   * client's "the fetch has not landed yet". Both unlocked everything, so
+   * every gate in the app read as unlocked for the whole of every page load,
+   * and there was no way to tell the two apart from the snapshot. `provisioned`
+   * now means only what the server means by it; "not yet known" is this.
+   */
+  resolved: boolean
   plan: PlanId
   state: PlanState
   graceUntil: string | null
@@ -111,14 +124,17 @@ export interface PlanSnapshot {
 }
 
 const EMPTY_SNAPSHOT: PlanSnapshot = {
+  // Nothing has answered yet. Gates read this as `pending` and render a
+  // control with no click handler attached at all — see `usePaywallGate`.
+  resolved: false,
   plan: DEFAULT_PLAN,
   state: 'active',
   graceUntil: null,
   graceDaysLeft: 0,
   keepBandIds: [],
-  // Until the first fetch lands we assume the plan system is not live. That
-  // means nothing is locked. Guessing "locked" would flash a paywall over
-  // features a paying user has, every single page load.
+  // The server's meaning, and only the server's: false = the plan schema is
+  // not in the database, so nothing is gated (legacy mode). It no longer
+  // doubles as "not loaded yet" — that is `resolved`, above.
   provisioned: false,
   limits: {
     bandsOwned: PLANS[DEFAULT_PLAN].bandsOwned,
@@ -136,18 +152,43 @@ const EMPTY_SNAPSHOT: PlanSnapshot = {
   addons: [],
 }
 
+/**
+ * A visitor we know is not signed in.
+ *
+ * Resolved on purpose: without it every gate would sit in `pending` forever on
+ * a signed-out render, which looks like a hung page. Free carries no gated
+ * features, so everything reads as locked — correct, and unreachable in
+ * practice since `middleware.ts` redirects anonymous traffic away from the
+ * app shell before it renders.
+ */
+const SIGNED_OUT_SNAPSHOT: PlanSnapshot = { ...EMPTY_SNAPSHOT, resolved: true }
+
 interface PaywallContextValue {
   snapshot: PlanSnapshot
   loading: boolean
-  /** Re-fetch after anything that could change entitlements. */
-  refresh: () => Promise<void>
+  /**
+   * Re-fetch after anything that could change entitlements, and hand the
+   * caller what came back.
+   *
+   * This is the ONLY way the snapshot is invalidated. `PaywallProvider` fetches
+   * once per mount, so a plan that changes elsewhere — a webhook landing while
+   * the tab is open, a return from checkout — leaves every `usePaywallGate()`
+   * in the tree reading a stale answer until a full page load. For `ab_compare`
+   * and `chord_detect` that snapshot is the only gate there is.
+   *
+   * Returning the snapshot (rather than `void`) is what lets a caller poll with
+   * this instead of fetching `/api/me/plan` beside it: one request both answers
+   * "has it changed yet" and refreshes what the rest of the UI sees. Null means
+   * the fetch failed and the previous snapshot is still in place.
+   */
+  refresh: () => Promise<PlanSnapshot | null>
   openPaywall: (source: PaywallSource) => void
 }
 
 const PaywallContext = createContext<PaywallContextValue>({
   snapshot: EMPTY_SNAPSHOT,
   loading: true,
-  refresh: async () => {},
+  refresh: async () => null,
   openPaywall: () => {},
 })
 
@@ -161,32 +202,82 @@ export function usePlan(): PlanSnapshot {
 }
 
 /**
- * Gate helper for a locked feature entry point.
+ * What a gated entry point should render.
  *
- * `locked` is true when the band's plan does not include the feature.
- * `onLockedClick` records the demand signal and opens the plans modal.
+ *   `allowed` — the band's plan includes the feature. Render the real control.
+ *   `locked`  — it does not. Render the locked treatment: dimmed, badged and
+ *               still clickable, because the click is what opens the plans
+ *               modal and records the demand signal.
+ *   `pending` — nobody has answered yet. Render a control that CANNOT be used.
  *
- * Note the deliberate simplification: this resolves against the *user's* plan,
- * because that is what the client knows. The server resolves against the
- * BAND's plan, which is the real rule — a free user inside a paid band gets
- * the feature. The consequence is a UI that can under-promise (showing a lock
- * to someone who would in fact be allowed) and never over-promises. Passing a
- * bandId lifts that: pass one wherever the band is known.
+ * ⚠ `pending` must never render the real control, not even DOM-disabled.
+ * `disabled` is an attribute, and an attribute is one devtools edit — or one
+ * `document.querySelector(…).disabled = false` — away from being gone, which
+ * on a quick hand is a free use of a paid feature on every page load. A React
+ * `onClick` that was never attached cannot be restored that way: there is no
+ * handler in the DOM to re-enable, and no amount of editing markup creates
+ * one. So the pending branch renders its own inert markup carrying no handler,
+ * and `guard()` below refuses a second time in case some path still reaches a
+ * real control.
+ *
+ * Note the deliberate simplification of the SOURCE: with no `bandFeatures` this
+ * resolves against the *user's* plan, because that is what the client knows.
+ * The server resolves against the BAND's plan, which is the real rule — a free
+ * user inside a paid band gets the feature. Every mixer call site passes
+ * `bandFeatures`; `lib/plans.ts` explains why that is load-bearing rather than
+ * cosmetic for `ab_compare` and `chord_detect`.
  */
+export type GateStatus = 'pending' | 'locked' | 'allowed'
+
 export function usePaywallGate(feature: PaywallFeature, bandFeatures?: GatedFeature[] | null) {
   const { snapshot, openPaywall } = usePaywall()
 
-  const source = bandFeatures ?? (snapshot.provisioned ? snapshot.features : null)
-  // `null` means "we do not know yet" (or the plan system is not live) — do
-  // not lock on a guess.
-  const locked = source !== null && !source.includes(feature)
+  // `null` = no answer yet, from either source. It does not mean "unlocked".
+  const source: readonly GatedFeature[] | null =
+    bandFeatures ?? (snapshot.resolved ? snapshot.features : null)
+
+  const status: GateStatus =
+    source === null ? 'pending' : source.includes(feature) ? 'allowed' : 'locked'
 
   const onLockedClick = useCallback(() => {
     trackEvent('paywall_lock_clicked', { feature })
     openPaywall(feature)
   }, [feature, openPaywall])
 
-  return { locked, onLockedClick }
+  /**
+   * Second line of defence — wrap the real action so it refuses on its own.
+   *
+   * The render branch is what a user sees; this is what survives a control that
+   * got mounted anyway: a keyboard activation on edited markup, or a call site
+   * that forgets the pending branch.
+   *
+   * Deliberately NOT memoised, and deliberately closing over `status` rather
+   * than reading it from a ref. Every call site wraps its handler inline in the
+   * same component that calls this hook, so the wrapper is rebuilt on the
+   * render where the status changes — a ref would buy nothing and would read
+   * `.current` during render, which this codebase has enough of already.
+   */
+  const guard = (action: () => void) => () => {
+    if (status === 'allowed') {
+      action()
+      return
+    }
+    if (status === 'locked') {
+      trackEvent('paywall_lock_clicked', { feature })
+      openPaywall(feature)
+    }
+    // `pending`: do nothing. It lasts one round trip, the control is visibly
+    // inert, and running the action is the exact leak this replaces.
+  }
+
+  return {
+    status,
+    pending: status === 'pending',
+    /** Kept as the historical name so existing call sites read unchanged. */
+    locked: status === 'locked',
+    onLockedClick,
+    guard,
+  }
 }
 
 /**
@@ -209,34 +300,91 @@ export function useApiErrorMessage() {
   )
 }
 
-export function PaywallProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth()
+/**
+ * Attempts at `GET /api/me/plan` before a gate is allowed to settle.
+ *
+ * Retrying matters more than it used to. A gate that cannot resolve now sits
+ * in `pending`, and `pending` is inert — one dropped request used to mean an
+ * over-permissive UI, and would now mean a dead button instead. Same shape as
+ * the profile retry in `AuthContext`.
+ */
+const PLAN_FETCH_RETRIES = 3
+const PLAN_FETCH_BACKOFF_MS = 400
+
+export function PaywallProvider({
+  children,
+  initialSnapshot,
+}: {
+  children: ReactNode
+  /**
+   * Entitlements already resolved on the server and handed down by a server
+   * component (`components/plan/PlanBoot.tsx`, from the signed plan cookie).
+   *
+   * When it is present there is no unknown window at all on a full page load:
+   * the gates are correct in the first rendered byte, and the fetch below
+   * becomes a background top-up for usage figures rather than the thing every
+   * gate is waiting on.
+   */
+  initialSnapshot?: PlanSnapshot | null
+}) {
+  const { user, loading: authLoading } = useAuth()
   const userId = user?.id ?? null
 
-  // `null` = never fetched. Signed-out is derived in render rather than
+  // `null` = never answered. Signed-out is derived in render rather than
   // written by an effect, which keeps this provider free of a synchronous
   // setState on mount.
-  const [fetched, setFetched] = useState<PlanSnapshot | null>(null)
-  const [fetching, setFetching] = useState(true)
+  const [fetched, setFetched] = useState<PlanSnapshot | null>(initialSnapshot ?? null)
+  const [fetching, setFetching] = useState(!initialSnapshot)
   const [modalSource, setModalSource] = useState<PaywallSource | null>(null)
 
-  const snapshot = userId ? (fetched ?? EMPTY_SNAPSHOT) : EMPTY_SNAPSHOT
-  const loading = userId ? fetching : false
+  // Three cases, deliberately not collapsed into two:
+  //   signed in           → whatever we have, unresolved until it lands
+  //   auth still loading  → unresolved; we do not yet know there is no user,
+  //                         and guessing "signed out" here would flash a lock
+  //                         over every paid control on every reload
+  //   definitely signed out → resolved, so gates settle instead of hanging
+  const snapshot = userId
+    ? (fetched ?? EMPTY_SNAPSHOT)
+    : authLoading
+      ? EMPTY_SNAPSHOT
+      : SIGNED_OUT_SNAPSHOT
+  const loading = userId ? fetching : authLoading
 
-  const refresh = useCallback(async () => {
-    if (!userId) return
-    try {
-      const res = await fetch('/api/me/plan')
-      if (!res.ok) throw new Error(`plan fetch failed (${res.status})`)
-      const data = (await res.json()) as PlanSnapshot
-      setFetched({ ...EMPTY_SNAPSHOT, ...data })
-    } catch (err) {
-      // Leave the previous snapshot in place. A transient failure must not
-      // lock a paying user out of their own features.
-      console.error('[plan] could not load entitlements', err)
-    } finally {
-      setFetching(false)
+  const refresh = useCallback(async (): Promise<PlanSnapshot | null> => {
+    if (!userId) return null
+
+    let lastErr: unknown = null
+    for (let attempt = 0; attempt < PLAN_FETCH_RETRIES; attempt++) {
+      if (attempt > 0) {
+        await new Promise(resolve => setTimeout(resolve, PLAN_FETCH_BACKOFF_MS * attempt))
+      }
+      try {
+        const res = await fetch('/api/me/plan')
+        if (!res.ok) throw new Error(`plan fetch failed (${res.status})`)
+        const data = (await res.json()) as PlanSnapshot
+        const next = { ...EMPTY_SNAPSHOT, ...data, resolved: true }
+        setFetched(next)
+        setFetching(false)
+        return next
+      } catch (err) {
+        lastErr = err
+      }
     }
+
+    // Retries exhausted.
+    //
+    // An existing snapshot is left alone: a transient failure must not lock a
+    // paying user out of what they already had. With nothing to fall back on
+    // the choice is between a control that stays `pending` forever — which
+    // reads as a broken page — and one that settles as locked. It settles:
+    // a locked control still opens the plans modal, and that modal calls
+    // `refresh()` before it offers to sell anything, so a paying user who
+    // lands here gets one dimmed button and a correction on the first click
+    // rather than a dead screen.
+    console.error('[plan] could not load entitlements', lastErr)
+    setFetched(prev => prev ?? { ...EMPTY_SNAPSHOT, resolved: true })
+    setFetching(false)
+    return null
   }, [userId])
 
   useEffect(() => {

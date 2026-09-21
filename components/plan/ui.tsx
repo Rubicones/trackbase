@@ -199,7 +199,8 @@ export function UsageBar({
   note,
   className = '',
 }: {
-  label: string
+  /** Rendered, not measured — a call site may mark an add-on inside it. */
+  label: ReactNode
   current: number
   limit: Limit
   /** Formats both numbers — bytes, megabytes, plain counts. */
@@ -230,7 +231,7 @@ export function UsageBar({
       <div
         className="mt-1.5 h-[3px] w-full bg-surface"
         role="progressbar"
-        aria-label={label}
+        aria-label={typeof label === 'string' ? label : undefined}
         aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
         aria-valuemin={0}
         aria-valuemax={100}

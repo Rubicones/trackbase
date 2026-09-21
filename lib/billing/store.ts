@@ -19,7 +19,7 @@ import type Stripe from 'stripe'
 import { supabase } from '@/lib/supabase'
 import { stripeClient } from '@/lib/billing/stripe'
 import { addonForPriceId, planForPriceId, BILLING_LIVE } from '@/lib/billing/config'
-import { DEFAULT_PLAN, isAddonType, type AddonType, type PlanId } from '@/lib/plans'
+import { ADDONS, DEFAULT_PLAN, isAddonType, type AddonType, type PlanId } from '@/lib/plans'
 
 // ── Statuses ─────────────────────────────────────────────────────────────────
 
@@ -206,6 +206,53 @@ export async function getOrCreateStripeCustomer(userId: string): Promise<string>
   }
 
   return customer.id
+}
+
+/**
+ * The customer's entitling subscription **according to Stripe**, or null.
+ *
+ * ── Why not `readLiveSubscription()` ────────────────────────────────────────
+ * That one reads `billing_subscriptions`, which is a mirror, and a mirror is
+ * exactly as current as the last webhook that landed. For a display screen
+ * that is fine. For the question "may this user start a NEW subscription" it
+ * is not, and the failure is not hypothetical: with the webhook broken, the
+ * mirror stays empty, the guard sees "never subscribed", and a user who pays
+ * twice because the page never updated ends up with two active subscriptions
+ * on one customer — the second one invisible to every screen in this app and
+ * billing forever.
+ *
+ * The guard must not depend on the mechanism whose failure creates the
+ * situation it guards against. So this asks the ledger. Same reasoning, and
+ * the same shape, as `cancelSubscriptionsForAccountDeletion`.
+ *
+ * FAILS CLOSED on more subscriptions than one page holds: a short answer here
+ * means "you have none", which is the answer that creates a duplicate.
+ *
+ * Among entitling subscriptions the newest wins, by **Stripe's** `created`
+ * rather than our `created_at` — Stripe orders its own objects correctly, and
+ * webhook delivery order does not.
+ */
+export async function findEntitlingSubscription(
+  customerId: string,
+): Promise<Stripe.Subscription | null> {
+  const all = await stripeClient().subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 100,
+  })
+
+  if (all.has_more) {
+    throw new Error(
+      `Stripe customer ${customerId} has more than 100 subscriptions; ` +
+        'refusing to answer whether one of them entitles a plan.',
+    )
+  }
+
+  const entitling = all.data
+    .filter(sub => statusEntitles(sub.status))
+    .sort((a, b) => b.created - a.created)
+
+  return entitling[0] ?? null
 }
 
 /** Resolve our user from a Stripe customer, without trusting client input. */
@@ -469,6 +516,98 @@ export async function syncAddonsFromSubscription(
   if (stale.length) {
     await supabase.from('plan_addons').delete().in('id', stale)
   }
+}
+
+/**
+ * Stop billing for the add-ons attached to a band that is about to be deleted.
+ *
+ * `plan_addons.band_id` cascades on band delete, so the ROW disappears the
+ * moment the band does — but the Stripe subscription item it came from is
+ * untouched and keeps charging, every month, forever. Nothing in the app can
+ * show it afterwards either: the next webhook cannot resolve the dead band, so
+ * `syncAddonsFromSubscription` skips the item, and the row it would have
+ * matched is already gone, so the sweep has nothing to remove. The charge
+ * becomes invisible from inside the product and the user has no way to find
+ * it except on a card statement.
+ *
+ * ── Removed, not re-scoped ──────────────────────────────────────────────────
+ * The other option was moving the item to another band the user owns. That
+ * spends money on their behalf, on a band they did not choose, at the moment
+ * they asked for something to be deleted. Removing it is the reading of
+ * "delete this band" that does not surprise anyone, and buying it again is one
+ * click on the billing page.
+ *
+ * Proration is explicit rather than left to the account default: the unused
+ * part of the period is credited against the next invoice, which is what makes
+ * this a cancellation rather than a forfeit.
+ *
+ * ── THROWS ──────────────────────────────────────────────────────────────────
+ * Every failure throws, and the caller must abandon the band deletion. Same
+ * principle as account deletion (`cancelSubscriptionsForAccountDeletion`): a
+ * deletion the user has to retry is an annoyance, a subscription item billing
+ * for a band that no longer exists is not recoverable from this side at all.
+ * An item Stripe reports as already gone is success — the goal is that it is
+ * not billing, not that we were the one to remove it.
+ *
+ * Returns how many items were removed; zero for the ordinary band, which does
+ * not touch Stripe at all.
+ */
+export async function removeBandScopedAddonItems(bandId: string): Promise<number> {
+  // No keys means nothing was ever charged from this deployment, and
+  // `stripeClient()` would throw and block a deletion for no reason.
+  if (!BILLING_LIVE) return 0
+
+  // The addon types are derived from the catalog rather than listed here, so
+  // a band-scoped addon added to `lib/plans.ts` later is covered without
+  // anyone remembering this file. `band_id` alone would in fact be enough —
+  // account-wide addons never carry one — but the two agreeing is the check.
+  const bandScopedTypes = (Object.keys(ADDONS) as AddonType[]).filter(
+    type => ADDONS[type].bandScoped,
+  )
+
+  const { data, error } = await supabase
+    .from('plan_addons')
+    .select('stripe_subscription_item_id')
+    .eq('band_id', bandId)
+    .in('addon_type', bandScopedTypes)
+    .not('stripe_subscription_item_id', 'is', null)
+
+  // A read failure is NOT "no add-ons": treating it that way is how the band
+  // gets deleted with the item still billing.
+  if (error) throw error
+
+  const itemIds = Array.from(
+    new Set(
+      (data ?? [])
+        .map(row => (row as { stripe_subscription_item_id: string }).stripe_subscription_item_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  )
+  if (!itemIds.length) return 0
+
+  const stripe = stripeClient()
+  let removed = 0
+
+  for (const itemId of itemIds) {
+    try {
+      await stripe.subscriptionItems.del(itemId, { proration_behavior: 'create_prorations' })
+      removed += 1
+    } catch (err) {
+      // Already deleted in the dashboard, or on a subscription that has since
+      // been cancelled: the item is not billing, which is the whole objective.
+      if (isStripeResourceMissing(err)) continue
+      throw err
+    }
+  }
+
+  return removed
+}
+
+/** Stripe's "this object no longer exists" — the one failure that is a success here. */
+function isStripeResourceMissing(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const e = err as { code?: unknown; statusCode?: unknown }
+  return e.code === 'resource_missing' || e.statusCode === 404
 }
 
 interface StaleCandidate {

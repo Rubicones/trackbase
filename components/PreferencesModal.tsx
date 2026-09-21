@@ -335,9 +335,7 @@ export function PreferencesModal({ onClose }: { onClose: () => void }) {
           </p>
 
           {planState !== 'active' && (
-            <div className="mb-4">
-              <GraceBanner />
-            </div>
+            <GraceBanner className="mb-4" />
           )}
 
           {/* Compact on purpose: the per-band breakdown, the add-ons and

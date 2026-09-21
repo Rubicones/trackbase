@@ -26,11 +26,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { BILLING_LIVE, planPriceId } from '@/lib/billing/config'
 import { isBillingNotConfigured, stripeClient } from '@/lib/billing/stripe'
-import {
-  getOrCreateStripeCustomer,
-  readLiveSubscription,
-  statusEntitles,
-} from '@/lib/billing/store'
+import { findEntitlingSubscription, getOrCreateStripeCustomer } from '@/lib/billing/store'
 import { billingUrl } from '@/lib/billing/urls'
 import { checkPlanConflicts, isBlockingConflict } from '@/lib/planConflicts'
 import { isPlanId, type PlanId } from '@/lib/plans'
@@ -82,11 +78,22 @@ export async function POST(req: NextRequest) {
     const stripe = stripeClient()
 
     // ── Already subscribed: Stripe owns the change ─────────────────────────
-    const live = await readLiveSubscription(userId)
-    if (live && statusEntitles(live.status)) {
+    //
+    // Asked of STRIPE, not of `billing_subscriptions`. The mirror is only as
+    // current as the last webhook that landed, and the case this guard exists
+    // for — a user pressing Subscribe a second time because the page still
+    // shows the old plan — is precisely the case where the webhook has not
+    // landed. Reading the mirror here produced two active subscriptions on one
+    // customer, the second invisible to every screen and billing forever.
+    const live = await findEntitlingSubscription(customerId)
+    if (live) {
+      // `?portal=return` is a marker, not a result: Stripe's portal tells us
+      // nothing about what the user did in it, and a change made there may be
+      // scheduled for period end rather than applied now. The billing page
+      // reads it as "re-read the plan a few times", and accepts "unchanged".
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
-        return_url: billingUrl(req, '/billing'),
+        return_url: billingUrl(req, '/billing?portal=return'),
       })
       return NextResponse.json({ url: portal.url, mode: 'portal' })
     }
@@ -101,7 +108,20 @@ export async function POST(req: NextRequest) {
       allow_promotion_codes: true,
       tax_id_collection: { enabled: true },
       billing_address_collection: 'auto',
-      success_url: billingUrl(req, '/billing?checkout=success'),
+      // Required, not optional: the session always runs against an EXISTING
+      // customer (`getOrCreateStripeCustomer` above), and Stripe refuses
+      // `tax_id_collection` on one unless it is allowed to write the business
+      // name back — otherwise it would collect a VAT id with nowhere to put it.
+      // `address` is here for the same reason one step later: without it the
+      // billing address the user types is used for the invoice and then
+      // discarded, so the portal shows an empty address field and the next
+      // invoice asks again.
+      customer_update: { name: 'auto', address: 'auto' },
+      // The plan travels in the success URL so the page that catches the
+      // return knows what it is waiting FOR. Without it the only test available
+      // is "not free", which says nothing on an upgrade between two paid plans
+      // and would settle on the old one.
+      success_url: billingUrl(req, `/billing?checkout=success&plan=${plan}`),
       cancel_url: billingUrl(req, '/billing?checkout=cancelled'),
       // Read back by the webhook only as a cross-check; the Price is what
       // actually decides the plan.

@@ -732,10 +732,98 @@ Routes: `GET|POST /api/me/plan`, `GET /api/me/plan/conflicts?target=`,
 
 The old measurement-only paywall — a `sd-paywall-test:{userId}` localStorage
 toggle in `contexts/PaywallContext.tsx` that gated nothing — **is gone**.
-`usePaywallGate(feature)` survives with the same signature; `locked` now comes
-from the resolved plan. It resolves against the *user's* plan (all the client
-knows), which can under-promise inside someone else's paid band and never
-over-promises; pass `bandFeatures` where the band is known.
+`locked` now comes from the resolved plan.
+
+**`usePaywallGate` has three states, not two.** `allowed` / `locked` /
+`pending`, where `pending` means nothing has answered yet. It used to have two,
+with "no answer" folded into "unlocked" — so every gated control in the app was
+open for the whole of every page load, which is a paid feature given away on
+each visit for the two that have no server check. A gate resolves to `pending`
+until a real answer arrives from one of:
+
+| source | reaches the client | covers |
+| --- | --- | --- |
+| `app/band/[bandId]/layout.tsx` | first rendered byte | everything in a band |
+| `GET /api/projects/[id]` → `bandFeatures`, `activeVersionLimit` | with the project | mixer, authoritative |
+| `GET /api/bands/[id]` → `memberLimit`, `storageLimitBytes`, `features` | with the band | band page, authoritative |
+| `GET /api/me/plan` → `PlanSnapshot.resolved` | after auth + fetch | everything outside a band |
+
+The band layout is a server component: the band id is a path segment, so the
+owner's entitlements are knowable before render and there is no reason to make
+the browser ask. It serves `BandPlanSnapshot`
+(`components/plan/BandEntitlements.tsx`) — features AND the three band ceilings
+— through `useBandPlan()`. It resolves entitlements ONLY: no usage counters, no
+`settleAccount`, no conflict checks. Those are what make `GET /api/me/plan`
+expensive and nothing rendered from this context needs them.
+
+⚠ **Two kinds of null in that snapshot.** The SNAPSHOT being null means nobody
+has answered — wait. A LIMIT inside it being null means answered, and the answer
+is unlimited (the `Limit` vocabulary from `lib/plans.ts`). Collapsing them is how
+"unlimited" and "we do not know" end up rendering the same control. A failure in
+the layout resolves the snapshot to `null`, never to a concrete value.
+
+`PlanSnapshot.resolved` exists because `provisioned` used to carry two unrelated
+meanings — the server's "plan schema is not in the database" and the client's
+"the fetch has not landed" — both of which unlocked everything and could not be
+told apart. `provisioned` now means only what the server means by it.
+
+Gates still resolve against the BAND's features wherever they are known, and
+fall back to the *user's* plan otherwise (all the client knows), which can
+under-promise inside someone else's paid band and never over-promises. Pass
+`bandFeatures` where the band is known — every mixer call site does.
+
+**A ceiling is not a feature gate, but it still gets three states.** A gated
+feature is a property of one plan id. A ceiling (`bandsOwned`) is a property of
+what the user has already done: it costs a `count(*)`, cannot be read off a plan
+id, and is enforced twice server-side (`createBandForUser()` plus the database
+trigger). That makes the server refusal the real gate — it does not make the
+affordance safe to leave live while the count is in flight. Opening the create
+modal, naming a band and being refused is worse than waiting a moment, so
+`+ New space` renders inert until `/api/dashboard` answers, beside a grid that
+is already showing skeletons in the same window.
+
+**Which null it is decides the answer.** `bandLimit === null` while
+`loadingData` means "in flight" → pending. The same null after the load means
+the server could not read the limit → live, and the create refuses with the
+structured `limit_reached` body. Guessing "at the limit" in either case would
+show a paying user a cap they do not have, which is the one wrong answer with
+no recovery.
+
+**Every ceiling with a visible affordance has three states now**, and each one
+needs BOTH of its unknowns resolved — the ceiling, and the list it is counted
+against. An empty list makes any real ceiling read as roomy, so the page's own
+`loading` flag is part of every pending condition:
+
+| ceiling | affordance | counted against |
+| --- | --- | --- |
+| `bandsOwned` | `+ New space` (dashboard) | `bandLimit.atLimit` |
+| `activeVersionsPerProject` | `+ New Version` (mixer) | branches with no `merged_at` |
+| `membersPerBand` | `Approve` on a join request | `members.length` |
+
+`storagePerBandMB` gates nothing in the UI: a ceiling that depends on the size
+of a file the user has not chosen yet cannot be checked before the picker, and
+the presign route already refuses on the declared size before any bytes move.
+What it does need is to stop LYING while unknown — see below.
+
+**Creating a version goes through `requestNewVersion()` and nothing else.** Six
+surfaces open that modal (desktop toolbar, two mobile layouts, the tour, a
+keyboard path); gating them one by one is how the next one ships ungated.
+
+**Reject is never gated, only Approve.** Approving inserts a member and meets
+`assertCanAddMember()`; rejecting never does.
+
+**A ceiling must never be displayed as a default.** The band page used to seed
+`storageLimitBytes` with `BAND_STORAGE_LIMIT_BYTES` (the legacy pre-plans 1 GB
+constant, whose own docblock says not to use it as a value), so every band
+reported 1 GB until the fetch landed — and a 50 GB band briefly showed a full
+bar. It is `undefined` until answered and renders as `…`. The sidebar label was
+literally `STORAGE · 1 GB`, a hardcoded plan number in violation of §7, and
+`formatLimit()` rounded to whole gigabytes, rendering Free's 500 MB as `0 GB`
+and having no way to say "Unlimited" at all. Both now go through `formatMB()`.
+
+`PlansModal` calls `refresh()` when it opens. It is the recovery path every
+locked control depends on: the snapshot is fetched once per provider mount, so
+without it the modal can offer to sell a plan the user already bought.
 
 ### Billing (Stripe)
 
@@ -769,6 +857,17 @@ billing address, plan switching, cancellation and reactivation. There is no
 card form, no invoice table and no VAT form in this codebase on purpose: a
 second copy of an invoice list is the one a user is looking at when it
 disagrees with the real one.
+
+**Stripe is the source of truth; `billing_subscriptions` is a mirror for
+display.** Any question whose wrong answer costs money — "does this user
+already have a live subscription?" — is asked of Stripe through
+`findEntitlingSubscription(customerId)`, never of the table. The table is only
+as current as the last webhook that landed, and the moment a guard needs it
+most (a user pressing Subscribe again because the page still shows the old
+plan) is exactly the moment the webhook has not landed. Reading the mirror
+there produced two active subscriptions on one customer, the second invisible
+to every screen in the app. `readLiveSubscription()` remains correct for
+`GET /api/me/billing` and anything else that only renders.
 
 **`past_due` still entitles the plan** (`statusEntitles`, `lib/billing/store.ts`).
 Stripe is retrying and the user cancelled nothing; freezing bands on the first
@@ -808,6 +907,37 @@ a future reconciliation must be a **separate entry point** that re-states the
 plan and the addons and never arms grace, leaving `settleAccount()` — which
 derives state from the data as it is now — as the only thing that starts a
 clock.
+
+⚠ **`/api/stripe` is in `PUBLIC_PREFIXES` in `middleware.ts`, and must stay
+there.** Stripe carries no session, so the auth gate 307s the webhook to
+`/auth` and the handler never runs — and Stripe reads a 307 as a successful
+delivery, so nothing retries and nothing alerts. The route is not unprotected
+by being public: it verifies the signature against `STRIPE_WEBHOOK_SECRET`
+before parsing the body, which is the only gate that means anything for a
+caller that can never hold a cookie.
+
+**Coming back from Stripe is a poll, not a timer.** Checkout's `success_url`
+carries the plan that was bought (`?checkout=success&plan=band`); `/billing`
+shows "Confirming your payment…" from the first render and polls
+`usePaywall().refresh()` with backoff (~1/2/4/8/15 s) until the snapshot says
+that plan, then stops. It never renders the pre-payment plan as current, and on
+timeout it says the payment was received and will land shortly. `refresh()` is
+deliberately the request: it returns the new snapshot *and* invalidates the
+shared `PaywallContext` one, which is what unlocks `ab_compare` and
+`chord_detect` without a reload — for those two the client snapshot is the only
+gate. The portal's `return_url` carries `?portal=return` and gets the same poll,
+shorter and with **no** expected value: a portal change can be scheduled for
+period end, so "nothing changed yet" is a correct outcome.
+
+**Deleting a band stops its add-on billing first, or refuses.**
+`plan_addons.band_id` cascades on band delete, so the row disappears while the
+Stripe subscription item keeps charging with nothing left in the app that can
+see it. `DELETE /api/bands/[id]` calls `removeBandScopedAddonItems(bandId)`
+BEFORE the delete (`lib/billing/store.ts`, proration credited), and a failure
+there **blocks the deletion** with a 502 — the same trade account deletion
+makes, because a refused delete is a retry and billing for a band that no longer
+exists is not recoverable from this side. A band with no Stripe-backed add-ons,
+or a deployment with `BILLING_LIVE` false, touches Stripe not at all.
 
 Migration: `supabase/migrations/20260920_billing_stripe.sql` (manual, §5),
 then `20260921_plan_addons_unique_stripe_item.sql` (manual, §5 — replaces
@@ -1028,6 +1158,38 @@ default `Sheet1`).
 value makes the script and every mirrored goal no-op, which is what keeps dev
 and preview traffic out of the counter.
 
+**Stripe** (all server-only — **never** `NEXT_PUBLIC_`; `lib/billing/config.ts`) —
+eight variables, and they travel together: `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_SOLO`, `STRIPE_PRICE_BAND`,
+`STRIPE_PRICE_BAND_PLUS`, `STRIPE_PRICE_EXTRA_BAND`,
+`STRIPE_PRICE_EXTRA_STORAGE`, `STRIPE_PRICE_EXTRA_MEMBER`. There is one price
+set per Stripe **mode**, so the scope decides the mode: Vercel **Production**
+gets `sk_live_` + live price ids, **Preview** and **Development** get `sk_test_`
++ test price ids, and `.env.local` gets test values. Mixing a key from one mode
+with prices from the other is the only way to get "No such price" at checkout.
+`BILLING_LIVE` is `STRIPE_SECRET_KEY && STRIPE_WEBHOOK_SECRET` — test keys turn
+it on exactly like live ones, and removing either turns it off, which is the
+supported way to get the waitlist behaviour back.
+
+### Testing billing locally
+
+Stripe cannot reach `localhost`, so the webhook — the only writer of
+`profiles.plan` — never fires without a forwarder. Run one:
+
+```
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+```
+
+It prints a signing secret (`whsec_…`) **for that session**. Put it in
+`.env.local` as `STRIPE_WEBHOOK_SECRET` and restart `next dev`. That secret is
+not the one from the Stripe dashboard's endpoint list and is not interchangeable
+with it: the wrong one verifies nothing and every event answers 400.
+
+With the key and that secret in place `BILLING_LIVE` is true locally, checkout
+opens in test mode (card `4242 4242 4242 4242`), and the plan changes only when
+the forwarded event arrives — which is the whole flow under test, including the
+post-checkout confirmation poll on `/billing`.
+
 **Site** — `NEXT_PUBLIC_SITE_URL` (canonical origin; prod
 `https://sonicdesk.studio`). Runtime also reads `NODE_ENV`, `VERCEL_ENV`.
 
@@ -1181,6 +1343,22 @@ and preview traffic out of the counter.
 - **Plan state is derived and evaluated lazily.** No cron job, no `state`
   column. If you need "is this frozen / in grace", call the resolver; do not
   cache the answer across requests.
+- **A pending paywall gate must not render the real control at all** — not
+  even DOM-disabled. `disabled` is an attribute, and an attribute is one
+  devtools edit (or one `….disabled = false`) away from being gone; for
+  `ab_compare` and `chord_detect` there is no server behind it, so that edit IS
+  the feature. The pending branch renders its own inert element carrying no
+  `onClick` — React never attached a handler, so there is nothing in the DOM to
+  re-enable — plus `paywallPendingProps` (`tabIndex: -1`, `aria-disabled`) so a
+  keyboard user cannot reach it either. `guard()` from `usePaywallGate` wraps
+  the real action as a second line of defence. Never use the LOCKED treatment
+  for pending: a lock is a claim we cannot make yet, and flashing one over a
+  feature a paying user owns is the failure this state exists to prevent.
+- **A locked control is dimmed, never DOM-disabled** (`PaywallLock.tsx` rule 1).
+  The click is the whole point — it opens the plans modal and records the
+  demand signal. A dimmed control that does nothing when pressed reads as a bug
+  and measures as silence. This applies to the band-limit affordances on the
+  dashboard too, not only to feature locks.
 - **Never name competitors** in any metadata, landing copy, or content
   (legal requirement; /vs pages were removed for this reason).
 - **No test suite exists** — verify with `npm run build` and `npm run lint`.

@@ -291,6 +291,11 @@ export async function GET(
       project,
       versions: versionsWithTracks,
       bandFeatures: bandEntitlements.features,
+      // The active-version ceiling, from the same resolver answer. Display
+      // only — `assertCanCreateVersion()` re-counts and re-checks on every
+      // create. It is here so "+ New Version" can refuse before the user names
+      // a version, rather than after.
+      activeVersionLimit: bandEntitlements.activeVersionsPerProject,
     })
   } catch (err) {
     console.error(err)

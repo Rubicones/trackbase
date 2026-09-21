@@ -12,6 +12,7 @@ import { ensureBandFreezeState, settleAccount } from '@/lib/bandFreeze'
 import { getBandEntitlements } from '@/lib/entitlements'
 import { mbToBytes } from '@/lib/plans'
 import { rememberLastBand } from '@/lib/lastBand'
+import { removeBandScopedAddonItems } from '@/lib/billing/store'
 
 
 type TrackRow = TimelineTrack & {
@@ -459,6 +460,38 @@ export async function DELETE(
 
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a band' }, { status: 403 })
+
+  // ── Stop billing for this band's add-ons, BEFORE the band is gone ────────
+  //
+  // `plan_addons.band_id` cascades, so the row vanishes with the band while
+  // the Stripe subscription item behind it keeps charging — with no row, no
+  // band and no webhook path left to notice it, the charge is invisible from
+  // inside the app forever. The items have to be read while the band still
+  // exists, so this runs first.
+  //
+  // And it BLOCKS the delete when it fails, which is the same trade the
+  // account-deletion route makes: a space that refuses to delete today is a
+  // retry, a subscription item billing for a space that no longer exists is
+  // not fixable from this side at all. `removeBandScopedAddonItems` is a no-op
+  // when billing is off or the band has no Stripe-backed add-ons, so the
+  // ordinary delete is exactly as it was.
+  try {
+    const removed = await removeBandScopedAddonItems(bandId)
+    if (removed > 0) {
+      console.info(`[bands/delete] removed ${removed} add-on item(s) billing for band ${bandId}`)
+    }
+  } catch (err) {
+    console.error('[bands/delete] add-on billing cleanup failed for', bandId, err)
+    return NextResponse.json(
+      {
+        error:
+          'Could not update the billing for this space, so it was not deleted — ' +
+          'nothing has been removed. Try again in a moment, or remove its add-ons ' +
+          'from the billing page first.',
+      },
+      { status: 502 },
+    )
+  }
 
   const { error } = await supabase.from('bands').delete().eq('id', bandId)
   if (error) return serverErrorResponse('bands/delete', error, 'Could not delete the space')

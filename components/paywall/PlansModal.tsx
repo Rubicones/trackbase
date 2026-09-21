@@ -69,7 +69,7 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { Spinner } from '@/components/ui/Spinner'
 import { Eyebrow, StatusBadge } from '@/components/plan/ui'
-import { usePlan, type PaywallSource } from '@/contexts/PaywallContext'
+import { usePaywall, type PaywallSource } from '@/contexts/PaywallContext'
 import { apiErrorMessage } from '@/lib/planCopy'
 import {
   FEATURE_LABELS,
@@ -162,7 +162,7 @@ export function PlansModal({
   onClose: () => void
 }) {
   const { user } = useAuth()
-  const plan = usePlan()
+  const { snapshot: plan, refresh } = usePaywall()
   // The card marked "Current plan" comes from the resolved entitlements, not
   // from a hardcoded 'free' — a paying user must not be told they are on free.
   const currentPlan = plan.plan
@@ -188,6 +188,19 @@ export function PlansModal({
       plan_at_close: lastEngagedPlanRef.current,
     })
   }, [source])
+
+  // Re-read entitlements the moment this opens.
+  //
+  // The snapshot is fetched once per provider mount, so by the time anyone
+  // reaches this modal it can be minutes old — or, when the fetch failed
+  // outright, the settled-as-locked fallback `PaywallProvider` falls back to.
+  // Both end the same way: offering to sell a plan the user already has. One
+  // request before the cards render is cheap; that mistake is the most
+  // expensive one this modal can make, and it is the recovery path every
+  // locked control quietly depends on.
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   useEffect(() => {
     openTimeRef.current = nowMs()
