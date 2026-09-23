@@ -23,6 +23,7 @@ import { TbButton, TbMenuButton, tbButtonClassName } from '@/components/design/T
 import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
 import { Toast } from '@/components/design/Toast'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { trackEvent } from '@/lib/analytics'
 import {
   type BandLimitInfo,
@@ -862,15 +863,20 @@ export default function DashboardPage() {
                 + New space
               </span>
             ) : (
-              <TbButton
-                variant="primary"
-                onClick={openNewBandModal}
-                aria-disabled={atBandLimit || undefined}
-                title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
-                className={`h-10 px-4 shrink-0 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+              <HoverTooltip
+                label={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                multiline
+                className="shrink-0 inline-flex"
               >
-                + New space
-              </TbButton>
+                <TbButton
+                  variant="primary"
+                  onClick={openNewBandModal}
+                  aria-disabled={atBandLimit || undefined}
+                  className={`h-10 px-4 shrink-0 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+                >
+                  + New space
+                </TbButton>
+              </HoverTooltip>
             )}
             <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
               Join band
@@ -914,15 +920,20 @@ export default function DashboardPage() {
               Create your first band or request to join one with an invite code
             </p>
             <div className="flex flex-wrap gap-3 justify-center mt-2">
-              <TbButton
-                variant="primary"
-                onClick={openNewBandModal}
-                aria-disabled={atBandLimit || undefined}
-                title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
-                className={`px-4 py-2 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+              <HoverTooltip
+                label={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                multiline
+                className="inline-flex"
               >
-                Create a band
-              </TbButton>
+                <TbButton
+                  variant="primary"
+                  onClick={openNewBandModal}
+                  aria-disabled={atBandLimit || undefined}
+                  className={`px-4 py-2 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+                >
+                  Create a band
+                </TbButton>
+              </HoverTooltip>
               <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
                 Join with code
               </TbButton>

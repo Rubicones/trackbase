@@ -39,6 +39,11 @@ const PUBLIC_PREFIXES = [
   // also omit. `/api/stripe` is prefixed rather than the exact path so a
   // second Stripe-called route cannot be added and quietly gated.
   '/api/stripe',
+  // Legal pages must be readable without an account (the cookie banner and
+  // every footer link here). Pages: app/{terms,privacy,refund}.
+  '/privacy',
+  '/refund',
+  '/terms',
 ]
 const PUBLIC_EXACT = ['/']
 

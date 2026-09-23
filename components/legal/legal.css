@@ -1,0 +1,67 @@
+/* Legal pages (/terms, /privacy, /refund) — ported from sonicdesk_designs.
+   Scoped under .legal-page, which also carries .landing-page (lime theme). */
+
+.legal-page {
+  --lg-muted: color-mix(in oklab, var(--foreground) 55%, transparent);
+  --lg-muted-strong: color-mix(in oklab, var(--foreground) 75%, transparent);
+  --lg-border-strong: color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
+.legal-dotgrid {
+  background-image: radial-gradient(color-mix(in oklab, var(--lime) 10%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.legal-page ::selection {
+  background: var(--lime);
+  color: var(--primary-foreground);
+}
+
+.legal-copy strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.legal-copy a {
+  color: var(--lime);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in oklab, var(--lime) 45%, transparent);
+  text-underline-offset: 4px;
+  overflow-wrap: anywhere;
+  transition: text-decoration-color 180ms ease;
+}
+
+.legal-copy a:hover {
+  text-decoration-color: var(--lime);
+}
+
+.legal-copy ul {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  padding: 1.25rem;
+}
+
+.legal-copy li {
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.legal-copy li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.75rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  background-color: var(--lime);
+}
+
+/* The landing's neon halo (globals.css: `.landing-page .border-lime`) matches the
+   active section-index item's `border-l` + `border-lime`. It must be a flat
+   left rule only — no glow around the item. `!important` because the global
+   rule's four :not([class*=…]) selectors out-rank any plain override. */
+.legal-page nav .border-lime {
+  box-shadow: none !important;
+}

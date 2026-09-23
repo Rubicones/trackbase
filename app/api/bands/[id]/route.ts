@@ -10,6 +10,13 @@ import { getBandStorageUsed } from '@/lib/bandStorage'
 import { frozenBandRefusal } from '@/lib/planGuards'
 import { ensureBandFreezeState, settleAccount } from '@/lib/bandFreeze'
 import { getBandEntitlements } from '@/lib/entitlements'
+import {
+  bandNotEmptyBody,
+  countOtherBandMembers,
+  purgeBandStorage,
+  sqlStateOf,
+  SQLSTATE_BAND_NOT_EMPTY,
+} from '@/lib/bandDelete'
 import { mbToBytes } from '@/lib/plans'
 import { rememberLastBand } from '@/lib/lastBand'
 import { removeBandScopedAddonItems } from '@/lib/billing/store'
@@ -459,7 +466,30 @@ export async function DELETE(
     .maybeSingle()
 
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a band' }, { status: 403 })
+  if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a space' }, { status: 403 })
+
+  // ── The space must be empty but for the owner ─────────────────────────────
+  //
+  // This is the invariant, and it is checked before anything else because it is
+  // the only refusal that costs nothing: no Stripe call has been made and no
+  // object deleted, so a refusal here leaves the space exactly as it was.
+  //
+  // Emptying the space first is not a formality. Each removal notifies the
+  // person being removed (`members/[userId]`), which is the whole difference
+  // between "four people lost their work" and "four people were told".
+  //
+  // The database enforces this too, from
+  // `20260923_deletion_invariants.sql` — this check exists to produce a
+  // sentence a person can act on, not to be the guard.
+  let others: number
+  try {
+    others = await countOtherBandMembers(bandId, userId)
+  } catch (err) {
+    return serverErrorResponse('bands/delete', err, 'Could not check who is in this space')
+  }
+  if (others > 0) {
+    return NextResponse.json(bandNotEmptyBody(others), { status: 409 })
+  }
 
   // ── Stop billing for this band's add-ons, BEFORE the band is gone ────────
   //
@@ -493,8 +523,31 @@ export async function DELETE(
     )
   }
 
+  // ── Purge storage while the rows that point at it still exist ────────────
+  //
+  // `tracks.storage_path` and `projects.preview_mix_storage_path` are the only
+  // record that these objects exist. After the next statement they are gone and
+  // the bytes are unreachable forever, so the walk has to happen here.
+  //
+  // It never throws and never blocks: see `purgeBandStorage`. Anything it could
+  // not delete is named in the log and costs storage; refusing the delete over
+  // it would cost the user their afternoon instead.
+  const purge = await purgeBandStorage(bandId)
+  console.info(
+    `[bands/delete] ${bandId} storage: ${purge.deleted} deleted, ` +
+      `${purge.shared} still referenced elsewhere, ${purge.orphaned} ORPHANED`,
+  )
+
   const { error } = await supabase.from('bands').delete().eq('id', bandId)
-  if (error) return serverErrorResponse('bands/delete', error, 'Could not delete the space')
+  if (error) {
+    // The database guard fired where the check above did not — a race, or a
+    // member added between the two. Answer with the same structured refusal.
+    if (sqlStateOf(error) === SQLSTATE_BAND_NOT_EMPTY) {
+      const now = await countOtherBandMembers(bandId, userId).catch(() => 1)
+      return NextResponse.json(bandNotEmptyBody(Math.max(1, now)), { status: 409 })
+    }
+    return serverErrorResponse('bands/delete', error, 'Could not delete the space')
+  }
 
   // ── Settle before answering ───────────────────────────────────────────────
   //

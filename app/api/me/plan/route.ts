@@ -38,6 +38,7 @@ import { checkPlanConflicts } from '@/lib/planConflicts'
 import { settleAccount } from '@/lib/bandFreeze'
 import { changePlan } from '@/lib/planChange'
 import { BILLING_LIVE } from '@/lib/billing/config'
+import { getPriceCatalog } from '@/lib/billing/catalog'
 
 export async function GET(req: NextRequest) {
   const userId = await getRequestUserId(req)
@@ -120,10 +121,18 @@ export async function GET(req: NextRequest) {
         type: a.type,
         bandId: a.bandId,
         quantity: a.quantity,
+        // `ending` rows are removed add-ons still running out the period they
+        // were paid for; the billing screen shows their end date and a
+        // "Keep it". `manual` rows cannot be removed from the billing page.
+        source: a.source,
+        endsAt: a.endsAt,
       })),
       // Prices and plan shapes come from the same constant the server enforces,
       // so the modal can never advertise a limit the server does not honour.
       catalog: PLANS,
+      // Prices from Stripe (`lib/billing/catalog.ts`, cached, never throws).
+      // Absent entries mean "could not ask" — the client shows no price.
+      prices: await getPriceCatalog(),
     })
   } catch (err) {
     console.error('[me/plan] GET', err)

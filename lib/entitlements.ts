@@ -75,6 +75,7 @@ import {
   type GatedFeature,
   type Limit,
   type PlanId,
+  addonHasEffect as planAddonHasEffect,
 } from '@/lib/plans'
 import { BAND_STORAGE_LIMIT_BYTES, getBandStorageUsed } from '@/lib/bandStorage'
 import { limitMessage, type LimitType } from '@/lib/planCopy'
@@ -233,13 +234,35 @@ export interface AddonRow {
   type: AddonType
   bandId: string | null
   quantity: number
+  /**
+   * Where the row comes from — display only, never part of a limit:
+   *   `stripe`  paid for and renewing (owned by a Stripe subscription item)
+   *   `ending`  removed by the user; paid-for capacity kept until `endsAt`
+   *   `manual`  granted by hand (support credit, grandfathered account)
+   */
+  source: 'stripe' | 'ending' | 'manual'
+  /** Set only on an `ending` row: when the paid period — and the row — ends. */
+  endsAt: string | null
 }
 
-/** Read a user's addons. Empty array when the table is absent. */
+/**
+ * Read a user's addons. Empty array when the table is absent.
+ *
+ * ── Ending grants ───────────────────────────────────────────────────────────
+ * A removed add-on leaves Stripe at once (so the renewal can never bill it)
+ * and keeps a row with `ends_at` = end of the period it was paid for. The row
+ * counts until that instant and not one second after — filtered HERE, so
+ * every limit in the app agrees, and in `effective_band_limit()` for the
+ * database trigger (20260924_addon_charge_now.sql). Change both together.
+ *
+ * `select('*')` rather than a column list on purpose: before that migration
+ * `ends_at` does not exist, and naming it would turn every limit check into a
+ * 42703. With `*` an old schema simply has no ending rows.
+ */
 export async function readAddons(userId: string): Promise<AddonRow[]> {
   const { data, error } = await supabase
     .from('plan_addons')
-    .select('id, addon_type, band_id, quantity')
+    .select('*')
     .eq('user_id', userId)
 
   if (error) {
@@ -250,13 +273,30 @@ export async function readAddons(userId: string): Promise<AddonRow[]> {
     throw error
   }
 
-  return (data ?? []).map((r: Record<string, unknown>) => ({
-    id: String(r.id),
-    type: r.addon_type as AddonType,
-    bandId: typeof r.band_id === 'string' ? r.band_id : null,
-    // A malformed quantity must not silently grant capacity.
-    quantity: typeof r.quantity === 'number' && r.quantity > 0 ? Math.floor(r.quantity) : 0,
-  }))
+  const now = Date.now()
+  const rows: AddonRow[] = []
+  for (const r of (data ?? []) as Record<string, unknown>[]) {
+    const endsAt = typeof r.ends_at === 'string' ? r.ends_at : null
+    if (endsAt !== null) {
+      const end = Date.parse(endsAt)
+      // An unparseable end is treated as already ended: fail closed.
+      if (!Number.isFinite(end) || end <= now) continue
+    }
+    rows.push({
+      id: String(r.id),
+      type: r.addon_type as AddonType,
+      bandId: typeof r.band_id === 'string' ? r.band_id : null,
+      // A malformed quantity must not silently grant capacity.
+      quantity: typeof r.quantity === 'number' && r.quantity > 0 ? Math.floor(r.quantity) : 0,
+      source: endsAt !== null
+        ? 'ending'
+        : typeof r.stripe_subscription_item_id === 'string' && r.stripe_subscription_item_id
+          ? 'stripe'
+          : 'manual',
+      endsAt,
+    })
+  }
+  return rows
 }
 
 // ── The core resolver ────────────────────────────────────────────────────────
@@ -385,15 +425,10 @@ function resolveEntitlements(
  * finite can always be raised, however much headroom is left.
  */
 export function addonHasEffect(plan: PlanId, addon: AddonType): boolean {
-  const base = PLANS[plan]
-  switch (addon) {
-    case 'extra_band':
-      return base.bandsOwned !== null
-    case 'extra_storage':
-      return base.storagePerBandMB !== null
-    case 'extra_member':
-      return base.membersPerBand !== null
-  }
+  // The rule itself lives in `lib/plans.ts` so the billing screen can disable
+  // the `+` with the same answer this refuses the purchase with — a UI that
+  // leads somebody into a 409 is the bug that check exists to prevent.
+  return planAddonHasEffect(plan, addon)
 }
 
 /**

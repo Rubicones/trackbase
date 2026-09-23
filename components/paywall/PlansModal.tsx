@@ -28,8 +28,9 @@
  *
  * ── Where the numbers come from ─────────────────────────────────────────────
  * Nowhere in this file. Limits are `planLimitRows()`, the "plus:" bullets are
- * `planUpgradeHighlights()`, prices are `PLANS[id].price` — all generated from
- * `lib/plans.ts`, the same constant the server enforces. Only the blurb and
+ * `planUpgradeHighlights()` — generated from `lib/plans.ts`, the same constant
+ * the server enforces — and prices are the Stripe Prices themselves
+ * (`plan.prices`, read server-side by `lib/billing/catalog.ts`). Only the blurb and
  * the accent colour are written here, because neither is a promise anyone can
  * hold us to. The previous version listed capacity by hand and drifted: it
  * advertised a "3 bands as a member" cap that has never existed.
@@ -69,8 +70,9 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { LucideIcon } from '@/components/design/LucideIcon'
 import { Spinner } from '@/components/ui/Spinner'
 import { Eyebrow, StatusBadge } from '@/components/plan/ui'
-import { usePaywall, type PaywallSource } from '@/contexts/PaywallContext'
-import { apiErrorMessage } from '@/lib/planCopy'
+import { usePaywall, usePlanTracking, type PaywallSource } from '@/contexts/PaywallContext'
+import { apiErrorMessage, PLAN_BLURBS } from '@/lib/planCopy'
+import { formatCatalogPrice, formatInterval, type CatalogPrice } from '@/lib/planPrices'
 import {
   FEATURE_LABELS,
   GATED_FEATURES,
@@ -104,20 +106,20 @@ interface PlanCopy {
 
 const PLAN_COPY: Record<PlanId, PlanCopy> = {
   free: {
-    blurb: 'A real workspace for a first record, not a disposable trial.',
+    blurb: PLAN_BLURBS.free,
     color: 'var(--plan-mint)',
   },
   solo: {
-    blurb: 'For independent musicians working alone or with one collaborator.',
+    blurb: PLAN_BLURBS.solo,
     color: 'var(--plan-violet)',
   },
   band: {
-    blurb: 'For small bands actively working together.',
+    blurb: PLAN_BLURBS.band,
     color: 'var(--plan-lime)',
     featured: true,
   },
   band_plus: {
-    blurb: 'For active bands running multiple projects or several bands.',
+    blurb: PLAN_BLURBS.band_plus,
     color: 'var(--plan-amber)',
   },
 }
@@ -135,7 +137,7 @@ const FREE_INCLUDED = [
   'MIDI editor (piano roll)',
   'Song structure editor with manual chords',
   'Waveform comments with threads',
-  'Band chat, per project and band-wide',
+  'Chat, per project and space-wide',
   'Resources — files, links, lyrics',
   'Roadmap and checklist',
   'Recording and Rehearsal Mode',
@@ -163,6 +165,7 @@ export function PlansModal({
 }) {
   const { user } = useAuth()
   const { snapshot: plan, refresh } = usePaywall()
+  const track = usePlanTracking()
   // The card marked "Current plan" comes from the resolved entitlements, not
   // from a hardcoded 'free' — a paying user must not be told they are on free.
   const currentPlan = plan.plan
@@ -205,10 +208,12 @@ export function PlansModal({
   useEffect(() => {
     openTimeRef.current = nowMs()
     closedRef.current = false
-    trackEvent('paywall_modal_opened', { source })
+    track('paywall_modal_opened', { source })
     // Safety net: any unmount (navigation, parent teardown) still records the close.
     return fireClosed
-  }, [source, fireClosed])
+    // `track` is stable by construction (see `usePlanTracking`), so listing it
+    // cannot make this effect re-fire and re-count the open.
+  }, [source, fireClosed, track])
 
   useEffect(() => {
     // Fires after the confirmation state has rendered — the user completed the flow.
@@ -268,11 +273,10 @@ export function PlansModal({
 
   const handleSubscribe = useCallback(
     async (target: PaidPlanId) => {
-      trackEvent('paywall_subscribe_clicked', {
+      track('paywall_subscribe_clicked', {
         plan: target,
         source,
         time_to_click_ms: Math.round(nowMs() - openTimeRef.current),
-        billing_live: billingLive,
       })
       reachedRef.current = true
       setError('')
@@ -316,7 +320,7 @@ export function PlansModal({
         setPendingPlan(null)
       }
     },
-    [billingLive, source],
+    [billingLive, source, track],
   )
 
   if (!domReady) return null
@@ -366,6 +370,7 @@ export function PlansModal({
                   pending={pendingPlan === id}
                   anyPending={pendingPlan !== null}
                   billingLive={billingLive}
+                  price={plan.prices.plans[id]}
                   onSubscribe={handleSubscribe}
                   onPointerEnter={e => handleCardPointerEnter(id, e)}
                   onPointerLeave={e => handleCardPointerLeave(id, e)}
@@ -460,6 +465,7 @@ function PlanCard({
   pending,
   anyPending,
   billingLive,
+  price,
   onSubscribe,
   onPointerEnter,
   onPointerLeave,
@@ -470,6 +476,8 @@ function PlanCard({
   pending: boolean
   anyPending: boolean
   billingLive: boolean
+  /** From Stripe, via the plan snapshot. Absent → no price shown. */
+  price: CatalogPrice | undefined
   onSubscribe: (plan: PaidPlanId) => void
   onPointerEnter: (e: PointerEvent) => void
   onPointerLeave: (e: PointerEvent) => void
@@ -491,21 +499,39 @@ function PlanCard({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onPointerDown={onPointerDown}
-      className={`tb-plans-card relative grid grid-rows-[auto_auto_auto_1fr_auto] border bg-surface p-5 hover:bg-card ${
+      // Six tracks, and the badge gets one of its own on EVERY card.
+      //
+      // ⚠ This is the kit's own bug, carried over in the port. The badge used
+      // to be rendered only `{copy.featured && …}`, which makes the featured
+      // card have one more in-flow grid item than its neighbours — so every
+      // item after it shifted down a track and the `1fr` landed on the PRICE
+      // row instead of the limits row. The result: Band's price block stretched
+      // to fill the card and its limits list sat alone at the bottom, out of
+      // line with the other three.
+      //
+      // The rule to keep: a grid whose track list is positional must have the
+      // same number of in-flow children in every instance. A conditional child
+      // renumbers all of them. (The 3px top bar is exempt — it is absolutely
+      // positioned, so it is not a grid item at all.)
+      className={`tb-plans-card relative grid grid-rows-[auto_auto_auto_auto_1fr_auto] border bg-surface p-5 hover:bg-card ${
         copy.featured ? 'border-lime' : 'border-border'
       }`}
     >
       {copy.featured && (
-        <>
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-lime" aria-hidden />
-          <StatusBadge tone="lime" className="justify-self-start">Recommended</StatusBadge>
-        </>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-lime" aria-hidden />
       )}
 
-      {/* Row 1 — plan square */}
+      {/* Row 1 — badge slot, reserved whether or not it is filled */}
+      <div className="min-h-[18px]">
+        {copy.featured && (
+          <StatusBadge tone="lime" className="justify-self-start">Recommended</StatusBadge>
+        )}
+      </div>
+
+      {/* Row 2 — plan square */}
       <div className="mb-4 mt-3 size-3" style={{ background: copy.color }} aria-hidden />
 
-      {/* Row 2 — name and blurb */}
+      {/* Row 3 — name and blurb */}
       <div>
         <h3 className="font-display-tb m-0 text-3xl font-semibold uppercase tracking-normal text-foreground">
           {def.name}
@@ -515,13 +541,22 @@ function PlanCard({
         )}
       </div>
 
-      {/* Row 3 — price, on a shared row across all cards */}
+      {/* Row 4 — price, on a shared row across all cards */}
       <div className="my-5 border-y border-border py-5">
-        <span className="font-display-tb text-4xl font-semibold text-foreground">{def.price}</span>
-        <span className="text-xs text-muted-foreground"> / month</span>
+        {formatCatalogPrice(price) ? (
+          <>
+            <span className="font-display-tb text-4xl font-semibold text-foreground">
+              {formatCatalogPrice(price)}
+            </span>
+            <span className="text-xs text-muted-foreground"> / {formatInterval(price)}</span>
+          </>
+        ) : (
+          // Stripe could not be asked. No remembered price — see lib/planPrices.ts.
+          <span className="font-display-tb text-4xl font-semibold text-muted-foreground">—</span>
+        )}
       </div>
 
-      {/* Row 4 — limits, features, caveats */}
+      {/* Row 5 — limits, features, caveats — this is the `1fr` track */}
       <div className="space-y-5">
         <div className="space-y-2">
           {rows.map(row => (
@@ -573,7 +608,7 @@ function PlanCard({
         )}
       </div>
 
-      {/* Row 5 — CTA, pinned to the shared bottom row */}
+      {/* Row 6 — CTA, pinned to the shared bottom row */}
       {isCurrent ? (
         <div className="mt-6 flex w-full select-none items-center justify-center border border-dashed border-border px-4 py-2.5 font-display-tb text-sm font-semibold uppercase text-muted-foreground">
           Current plan

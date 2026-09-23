@@ -23,22 +23,28 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
-  ArrowRight, ChevronDown, CircleAlert, CircleCheck, CreditCard, ExternalLink,
+  ArrowRight, ChevronDown, CircleAlert, CircleCheck, ExternalLink,
   HardDrive, Layers3, Users,
 } from 'lucide'
 import { AppHeader } from '@/components/design/AppShell'
 import { LucideIcon } from '@/components/design/LucideIcon'
-import { TbButton } from '@/components/design/TbButton'
 import {
   Eyebrow, InlineNotice, StatusBadge, TONE, UsageBar, usageFraction, usageTone,
+  actionDestructive, actionOutlineTall, actionPrimaryTall, NEAR_LIMIT_FRACTION,
   type PlanTone,
 } from '@/components/plan/ui'
 import { GraceBanner } from '@/components/plan/GraceBanner'
 import { FrozenBandChip } from '@/components/plan/FrozenBandBanner'
 import { AddonRows } from '@/components/billing/AddonRows'
-import { formatDate, type BillingView } from '@/components/billing/types'
-import { usePaywall } from '@/contexts/PaywallContext'
+import {
+  formatDate,
+  formatMoney,
+  type BillingView,
+  type UpcomingInvoiceView,
+} from '@/components/billing/types'
+import { usePaywall, usePlanTracking } from '@/contexts/PaywallContext'
 import { apiErrorMessage } from '@/lib/planCopy'
+import { formatCatalogPrice, formatInterval } from '@/lib/planPrices'
 import { formatStorageLimit } from '@/lib/bandStorage'
 import { PLANS, isPlanId, type Limit, type PlanId } from '@/lib/plans'
 
@@ -86,6 +92,7 @@ export function BillingClient() {
     checkoutResult === 'success' ? 'checkout' : returnedFromPortal ? 'portal' : null
 
   const { snapshot: plan, openPaywall, refresh } = usePaywall()
+  const track = usePlanTracking()
   const [billing, setBilling] = useState<BillingView | null>(null)
   const [loading, setLoading] = useState(true)
   const [portalBusy, setPortalBusy] = useState(false)
@@ -94,6 +101,7 @@ export function BillingClient() {
   // Set on the very first render, not from an effect: between mount and the
   // first poll the snapshot still says `free`, and a frame of the OLD plan
   // rendered as current is exactly what this item exists to remove.
+  const [upcoming, setUpcoming] = useState<UpcomingInvoiceView | null>(null)
   const [confirming, setConfirming] = useState<'checkout' | 'portal' | null>(confirmMode)
   const [confirmTimedOut, setConfirmTimedOut] = useState(false)
 
@@ -111,9 +119,31 @@ export function BillingClient() {
     }
   }, [])
 
+  /**
+   * The next invoice, previewed by Stripe.
+   *
+   * Separate from `loadBilling` because it costs a live Stripe round trip
+   * where that one reads the local mirror, and because it has to be re-read
+   * after an add-on changes — a total that still shows the pre-change figure
+   * is worse than no total. A failure leaves the footer without a number
+   * rather than taking the screen down: `upcoming` stays null and the footer
+   * falls back to the plan's sticker price.
+   */
+  const loadUpcoming = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me/billing/upcoming')
+      if (!res.ok) throw new Error(String(res.status))
+      setUpcoming((await res.json()) as UpcomingInvoiceView)
+    } catch {
+      console.error('[billing] could not preview the next invoice')
+      setUpcoming(null)
+    }
+  }, [])
+
   useEffect(() => {
     void loadBilling()
-  }, [loadBilling])
+    void loadUpcoming()
+  }, [loadBilling, loadUpcoming])
 
   // ── Returning from Stripe ────────────────────────────────────────────────
   //
@@ -212,6 +242,8 @@ export function BillingClient() {
     tone: 'amber' as PlanTone,
   }) : null
   const def = PLANS[plan.plan]
+  // Stripe's price for the current plan (null when Stripe could not be read).
+  const planPrice = formatCatalogPrice(plan.prices.plans[plan.plan])
 
   // ── Usage headlines ───────────────────────────────────────────────────────
   //
@@ -226,6 +258,21 @@ export function BillingClient() {
     plan.addons.filter(a => a.type === 'extra_storage' && a.bandId).map(a => a.bandId as string),
   )
 
+  // The kit's usage heading is a verdict ("Plenty of room left"), not a label,
+  // so it has to be earned from the same three figures the tiles show. A
+  // headline that says "plenty" over a full bar is worse than no headline.
+  const worstFraction = Math.max(
+    usageFraction(plan.usage.bandsOwned, plan.limits.bandsOwned) ?? 0,
+    usageFraction(topStorage, plan.limits.storagePerBandBytes) ?? 0,
+    usageFraction(topMembers, plan.limits.membersPerBand) ?? 0,
+  )
+  const usageHeadline =
+    worstFraction >= 1
+      ? "You've reached a limit"
+      : worstFraction >= NEAR_LIMIT_FRACTION
+        ? 'Getting close to a limit'
+        : 'Plenty of room left'
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <AppHeader crumbs={<span className="text-foreground">Billing</span>} />
@@ -235,16 +282,15 @@ export function BillingClient() {
         <header className="mb-10 grid gap-5 border-b border-border pb-10 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
             <Eyebrow>Plan &amp; billing</Eyebrow>
-            <h1 className="font-display-tb m-0 mt-4 text-5xl font-bold uppercase leading-[.88] tracking-tight sm:text-7xl">
+            <h1 className="font-display-tb m-0 mt-4 text-5xl uppercase leading-[.88] tracking-normal! sm:text-7xl">
               Your plan,
               <br />
               at a glance.
             </h1>
           </div>
-          <p className="m-0 max-w-md text-sm leading-6 text-muted-foreground">
-            See what you have, what you use, and what changes your monthly total. Nothing here
-            deletes anything — your tracks, comments and versions stay exactly where they are, and
-            no member is ever removed for you.
+          <p className="font-body-tb m-0 max-w-md text-sm leading-6 text-muted-foreground">
+            See what you have, what you use, and what changes your monthly total. Nothing else
+            competes for attention.
           </p>
         </header>
 
@@ -292,23 +338,31 @@ export function BillingClient() {
                   <LucideIcon icon={CircleAlert} size={20} />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="font-display-tb m-0 text-xl font-bold uppercase tracking-tight">
+                  <h2 className="font-display-tb m-0 text-xl uppercase tracking-normal!">
                     We couldn&rsquo;t take the last payment
                   </h2>
-                  <p className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  <p className="font-body-tb m-0 mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
                     Everything keeps working while Stripe retries
                     {subscription.nextPaymentAttempt
                       ? ` — the next attempt is ${formatDate(subscription.nextPaymentAttempt)}`
                       : ''}
                     . Update the card and the retry usually clears it straight away. If the
-                    retries run out, the plan ends and bands over the limit go read-only —
+                    retries run out, the plan ends and spaces over the limit go read-only —
                     nothing is deleted even then.
                   </p>
                 </div>
               </div>
-              <TbButton variant="danger" onClick={openPortal} disabled={portalBusy}>
+              <button
+                type="button"
+                className={actionDestructive}
+                onClick={() => {
+                  track('billing_portal_opened', { source: 'payment_failed' })
+                  void openPortal()
+                }}
+                disabled={portalBusy}
+              >
                 {portalBusy ? 'Opening…' : 'Update payment method'}
-              </TbButton>
+              </button>
             </div>
           </section>
         )}
@@ -316,7 +370,7 @@ export function BillingClient() {
         <GraceBanner className="mb-8" />
 
         {/* ── Current plan ──────────────────────────────────────────────── */}
-        <section className="grid border border-border bg-surface/40 lg:grid-cols-[1fr_auto]">
+        <section className="grid border border-border bg-surface lg:grid-cols-[1fr_auto]">
           <div className="p-6 sm:p-8">
             <div className="flex flex-wrap items-center gap-3">
               <Eyebrow>Current plan</Eyebrow>
@@ -337,24 +391,25 @@ export function BillingClient() {
               bought and marks it pending instead.
             */}
             <div className="mt-6 flex flex-wrap items-end gap-x-5 gap-y-2">
-              <h2 className="font-display-tb m-0 text-5xl font-bold uppercase leading-none tracking-tight sm:text-6xl">
+              <h2 className="font-display-tb m-0 text-5xl uppercase leading-none tracking-normal! sm:text-6xl">
                 {confirming === 'checkout'
                   ? targetPlan
                     ? PLANS[targetPlan].name
                     : 'Your new plan'
                   : def.name}
               </h2>
-              {confirming !== 'checkout' && (
+              {confirming !== 'checkout' && planPrice && (
                 <div className="pb-1">
-                  <strong className="font-display-tb text-2xl font-bold tracking-tight">
-                    {def.price}
-                  </strong>
-                  <span className="text-sm text-muted-foreground"> / month</span>
+                  <strong className="font-display-tb text-2xl tracking-normal!">{planPrice}</strong>
+                  <span className="font-body-tb text-sm text-muted-foreground">
+                    {' '}
+                    / {formatInterval(plan.prices.plans[plan.plan])}
+                  </span>
                 </div>
               )}
             </div>
 
-            <p className="m-0 mt-3 text-sm text-muted-foreground">
+            <p className="font-body-tb m-0 mt-3 text-sm text-muted-foreground">
               {confirming === 'checkout' ? (
                 'Paid — waiting for Stripe to confirm it'
               ) : subscription?.currentPeriodEnd ? (
@@ -369,21 +424,34 @@ export function BillingClient() {
           </div>
 
           <div className="flex min-w-64 flex-col justify-center gap-2 border-t border-border p-6 lg:border-l lg:border-t-0">
-            <TbButton
-              variant="primary"
-              className="h-11"
-              onClick={() => openPaywall('preferences')}
+            <button
+              type="button"
+              className={actionPrimaryTall}
+              onClick={() => {
+                track('plan_change_clicked', {
+                  source: 'billing',
+                  intent: plan.plan === 'free' ? 'choose' : 'change',
+                })
+                openPaywall('preferences')
+              }}
             >
               {plan.plan === 'free' ? 'Choose a plan' : 'Change plan'}
-              <LucideIcon icon={ArrowRight} size={13} />
-            </TbButton>
+              <LucideIcon icon={ArrowRight} size={15} />
+            </button>
 
             {billing?.hasBillingAccount && (
-              <TbButton className="h-11" onClick={openPortal} disabled={portalBusy}>
-                <LucideIcon icon={CreditCard} size={12} />
+              <button
+                type="button"
+                className={actionOutlineTall}
+                onClick={() => {
+                  track('billing_portal_opened', { source: 'billing' })
+                  void openPortal()
+                }}
+                disabled={portalBusy}
+              >
                 {portalBusy ? 'Opening…' : 'Manage billing'}
-                <LucideIcon icon={ExternalLink} size={11} />
-              </TbButton>
+                <LucideIcon icon={ExternalLink} size={13} />
+              </button>
             )}
           </div>
         </section>
@@ -393,11 +461,11 @@ export function BillingClient() {
             className="mt-4"
             tone="amber"
             title={`Your subscription ends ${formatDate(subscription.currentPeriodEnd)}`}
-            detail="Everything works normally until then. Reactivate before that date and nothing changes at all — after it, bands over the free limit become read-only and nothing is deleted."
+            detail="Everything works normally until then. Reactivate before that date and nothing changes at all — after it, spaces over the free limit become read-only and nothing is deleted."
           />
         )}
 
-        <p className="m-0 mt-3 text-xs leading-relaxed text-muted-foreground">
+        <p className="font-body-tb m-0 mt-3 text-xs leading-5 text-muted-foreground">
           {billing?.hasBillingAccount
             ? 'Your card, billing address, VAT details, invoices, cancellation and reactivation all live in the Stripe portal — the same place the receipts come from.'
             : billingLive
@@ -410,8 +478,8 @@ export function BillingClient() {
           <div className="mb-5 flex items-end justify-between gap-4">
             <div>
               <Eyebrow>Usage</Eyebrow>
-              <h2 className="font-display-tb m-0 mt-2 text-3xl font-bold uppercase tracking-tight text-foreground">
-                What you&rsquo;re using
+              <h2 className="font-display-tb m-0 mt-2 text-3xl uppercase tracking-normal! text-foreground">
+                {usageHeadline}
               </h2>
             </div>
             <span className="font-mono-tb hidden text-[9px] uppercase tracking-[0.18em] text-muted-foreground sm:block">
@@ -422,7 +490,7 @@ export function BillingClient() {
           <div className="grid gap-px border border-border bg-border md:grid-cols-3">
             <UsageSummary
               icon={Layers3}
-              label="Bands you own"
+              label="Spaces you own"
               current={plan.usage.bandsOwned}
               limit={plan.limits.bandsOwned}
             />
@@ -435,7 +503,7 @@ export function BillingClient() {
             />
             <UsageSummary
               icon={Users}
-              label="Largest band"
+              label="Largest space"
               current={topMembers}
               limit={plan.limits.membersPerBand}
             />
@@ -444,8 +512,8 @@ export function BillingClient() {
           {/* The override is a FLOOR, so it is only worth naming when it is the
               number actually in force — see the same rule in PlanUsage. */}
           {plan.bandsOwnedOverridden && (
-            <p className="m-0 mt-3 border-l-2 border-[var(--wave-violet)] pl-3 text-xs leading-relaxed text-muted-foreground">
-              Your account has a guaranteed minimum allowance of owned bands, on top of whatever
+            <p className="font-body-tb m-0 mt-3 border-l-2 border-wave-violet pl-3 text-xs leading-5 text-muted-foreground">
+              Your account has a guaranteed minimum allowance of owned spaces, on top of whatever
               your plan grants.
             </p>
           )}
@@ -454,11 +522,14 @@ export function BillingClient() {
             <>
               <button
                 type="button"
-                onClick={() => setUsageOpen(v => !v)}
+                onClick={() => {
+                  track('plan_usage_toggled', { open: !usageOpen })
+                  setUsageOpen(v => !v)
+                }}
                 aria-expanded={usageOpen}
-                className="font-mono-tb mt-2 flex h-10 w-full items-center justify-between border-b border-border text-[10px] uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground"
+                className="font-body-tb mt-2 flex h-10 w-full items-center justify-between border-b border-border text-sm text-muted-foreground transition-colors hover:text-foreground"
               >
-                {usageOpen ? 'Hide band details' : 'Show usage by band'}
+                {usageOpen ? 'Hide space details' : 'Show usage by space'}
                 <LucideIcon
                   icon={ChevronDown}
                   size={14}
@@ -474,7 +545,7 @@ export function BillingClient() {
                       className="grid gap-4 p-4 sm:grid-cols-[1fr_130px_1fr] sm:items-center"
                     >
                       <div className="flex min-w-0 items-center gap-2">
-                        <strong className="truncate text-sm font-medium text-foreground">
+                        <strong className="font-body-tb truncate text-sm font-medium text-foreground">
                           {band.name}
                         </strong>
                         {band.frozen && <FrozenBandChip />}
@@ -509,7 +580,7 @@ export function BillingClient() {
         <section className="mt-10 grid gap-3 md:grid-cols-3">
           <LifecycleNote
             title="Upgrading"
-            body="New limits switch on as soon as the payment clears, and any band frozen for being over the old limit comes back immediately — nothing to restore."
+            body="New limits switch on as soon as the payment clears, and any space frozen for being over the old limit comes back immediately — nothing to restore."
           />
           <LifecycleNote
             title="Downgrading"
@@ -525,34 +596,58 @@ export function BillingClient() {
         <div className="mt-14">
           <AddonRows
             canBuy={billingLive && !loading && subscription !== null && subscription.entitling}
+            // The footer breakdown is Stripe's preview, so it is stale the
+            // moment an add-on lands or is scheduled to end. Re-read it.
+            onChanged={loadUpcoming}
+            // Offered after a declined card: the card lives in the portal.
+            onUpdatePaymentMethod={() => {
+              track('billing_portal_opened', { source: 'addon_declined' })
+              void openPortal()
+            }}
           />
         </div>
 
         {/*
-          The design closes on an "estimated monthly total". This does not, and
-          deliberately: `lib/plans.ts` says of its price strings that nothing
-          parses them, and no numeric price exists anywhere in the app —
-          `lib/billing/config.ts` maps plans to Stripe Price ids and restates no
-          amount, on purpose. A total computed here would be a second source of
-          truth for money, and the one place it must never disagree is the
-          invoice. So the footer keeps the shape and points at the authority.
+          The design closes on an "estimated monthly total". This closes on the
+          real one.
+
+          Not by adding up the price strings — `lib/plans.ts` is explicit that
+          nothing parses those, and a sum computed in the browser would be a
+          second source of truth for money standing next to the invoice. It
+          asks Stripe instead: `GET /api/me/billing/upcoming` previews the
+          invoice it would issue right now, prorations, credits and tax
+          included. Nothing here does arithmetic; `formatMoney` only puts
+          Stripe's own integer into the user's locale.
+
+          When there is no next invoice — free plan, no card, a subscription
+          ending at period end — the footer falls back to the plan's sticker
+          price, which is the honest thing to show when nothing is scheduled.
         */}
-        <footer className="mt-8 flex flex-col justify-between gap-4 border-t border-border pt-6 sm:flex-row sm:items-center">
-          <div>
-            <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-              Billed monthly
-            </span>
-            <div className="font-display-tb mt-1 text-3xl font-bold tracking-tight text-foreground">
-              {def.price}
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                + any add-ons
-              </span>
+        <footer className="mt-8 border-t border-border pt-6">
+          {upcoming?.available ? (
+            <UpcomingInvoice upcoming={upcoming} />
+          ) : (
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+              <div>
+                <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Billed every {formatInterval(plan.prices.plans[plan.plan])}
+                </span>
+                <div className="font-display-tb mt-1 text-3xl tracking-normal! text-foreground">
+                  {planPrice ?? '—'}
+                  <span className="font-body-tb ml-2 text-xs font-normal text-muted-foreground">
+                    + any add-ons
+                  </span>
+                </div>
+              </div>
+              <p className="font-body-tb m-0 flex items-center gap-2 text-xs text-muted-foreground">
+                <LucideIcon icon={CircleCheck} size={14} className="text-lime" />
+                {plan.prices.plans[plan.plan]
+                  ? `Prices in ${plan.prices.plans[plan.plan]!.currency.toUpperCase()} · cancel anytime`
+                  : 'Cancel anytime'}{' '}
+                · the exact charge is on your Stripe invoice.
+              </p>
             </div>
-          </div>
-          <p className="m-0 flex items-center gap-2 text-xs text-muted-foreground">
-            <LucideIcon icon={CircleCheck} size={14} className="text-lime" />
-            Prices in USD · cancel anytime · the exact charge is on your Stripe invoice.
-          </p>
+          )}
         </footer>
       </main>
     </div>
@@ -578,21 +673,23 @@ function UsageSummary({
   const tone = usageTone(current, limit)
 
   return (
-    <div className="bg-surface/40 p-5 sm:p-6">
+    // OPAQUE, and that is load-bearing. The grid behind these tiles is filled
+    // with `bg-border` so the 1px gaps read as hairlines; a translucent face
+    // lets that line colour through the whole tile, which is how the row came
+    // out as one grey slab with invisible separators.
+    <div className="bg-surface p-5 sm:p-6">
       <div className="flex items-center gap-2 text-lime">
         <LucideIcon icon={icon} size={14} />
         <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
           {label}
         </span>
       </div>
-      <div className="font-display-tb mt-5 text-2xl font-bold uppercase tracking-tight text-foreground">
-        {show(current)}
-        <span className="text-muted-foreground">
-          {' / '}
-          {limit === null ? 'Unlimited' : show(limit)}
-        </span>
+      {/* The kit does not mute the ceiling: "4 / 10" is one figure read as a
+          whole, and greying half of it makes the tile look half-loaded. */}
+      <div className="font-display-tb mt-5 text-2xl uppercase tracking-normal! text-foreground">
+        {show(current)} / {limit === null ? 'Unlimited' : show(limit)}
       </div>
-      <div className="mt-4 h-[3px] w-full bg-border">
+      <div className="mt-4 h-[3px] w-full bg-surface-2">
         {fraction !== null && (
           <div
             className={`h-full transition-[width] duration-700 ease-out ${TONE[tone].fill}`}
@@ -606,12 +703,97 @@ function UsageSummary({
 
 function LifecycleNote({ title, body }: { title: string; body: string }) {
   return (
-    <article className="border border-border bg-surface/40 p-5">
-      <h3 className="font-display-tb m-0 flex items-center gap-2 text-base font-bold uppercase tracking-tight text-foreground">
+    <article className="border border-border bg-surface p-5">
+      <h3 className="font-display-tb m-0 flex items-center gap-2 text-base uppercase tracking-normal! text-foreground">
         <LucideIcon icon={ArrowRight} size={13} className="text-lime" />
         {title}
       </h3>
-      <p className="m-0 mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+      <p className="font-body-tb m-0 mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
     </article>
+  )
+}
+
+/**
+ * The next invoice, as Stripe previews it — as a breakdown, not one number.
+ *
+ * Add-ons are charged when they are added, so the renewal holds only
+ * recurring amounts: the plan, then each add-on that renews. Add-ons
+ * scheduled to end are no longer on the subscription and cannot appear.
+ * Anything else Stripe will put on the invoice — a proration left over from
+ * a change made before add-ons were charged up front, a one-off item — is
+ * listed in its own group under "Adjustments" rather than merged silently
+ * into the total. Every figure is Stripe's; `formatMoney` only localises it.
+ */
+function UpcomingInvoice({ upcoming }: { upcoming: Extract<UpcomingInvoiceView, { available: true }> }) {
+  const credit = upcoming.startingBalance < 0 && upcoming.amountDue !== upcoming.total
+    ? upcoming.total - upcoming.amountDue
+    : 0
+  const money = (amount: number) => formatMoney(amount, upcoming.currency)
+
+  return (
+    <div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+            {upcoming.dueAt ? `Next invoice · ${formatDate(upcoming.dueAt)}` : 'Next invoice'}
+          </span>
+          <div className="font-display-tb mt-1 text-3xl tracking-normal! text-foreground">
+            {money(upcoming.amountDue)}
+          </div>
+        </div>
+        <p className="font-body-tb m-0 flex items-center gap-2 text-xs text-muted-foreground">
+          <LucideIcon icon={CircleCheck} size={14} className="text-lime" />
+          Previewed by Stripe · add-ons ending before this date are not included
+        </p>
+      </div>
+
+      <dl className="font-body-tb m-0 mt-5 grid gap-2 border-t border-border pt-4 text-xs leading-5">
+        {upcoming.plan && (
+          <InvoiceRow label={`${upcoming.plan.description} plan`} amount={money(upcoming.plan.amount)} />
+        )}
+        {upcoming.addons.map(addon => (
+          <InvoiceRow
+            key={addon.type}
+            label={`${addon.name}${addon.quantity > 1 ? ` × ${addon.quantity}` : ''}`}
+            amount={money(addon.amount)}
+          />
+        ))}
+
+        {upcoming.adjustments.length > 0 && (
+          <>
+            <dt className="font-mono-tb mt-2 text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
+              Adjustments from earlier changes
+            </dt>
+            {upcoming.adjustments.map((line, i) => (
+              <InvoiceRow key={`${line.description}-${i}`} label={line.description} amount={money(line.amount)} muted />
+            ))}
+          </>
+        )}
+
+        {upcoming.discount > 0 && <InvoiceRow label="Discount" amount={money(-upcoming.discount)} muted />}
+        {upcoming.tax > 0 && <InvoiceRow label="Tax" amount={money(upcoming.tax)} muted />}
+        {credit > 0 && <InvoiceRow label="Account credit" amount={money(-credit)} muted />}
+
+        <div className="mt-2 grid grid-cols-[1fr_auto] gap-4 border-t border-border pt-3">
+          <dt className="text-foreground">Total due</dt>
+          <dd className="font-mono-tb m-0 text-foreground">{money(upcoming.amountDue)}</dd>
+        </div>
+
+        {upcoming.truncated && (
+          <p className="m-0 text-muted-foreground">
+            More lines on the invoice itself — open the billing portal to see all of them.
+          </p>
+        )}
+      </dl>
+    </div>
+  )
+}
+
+function InvoiceRow({ label, amount, muted = false }: { label: string; amount: string; muted?: boolean }) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] gap-4">
+      <dt className={`min-w-0 ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{label}</dt>
+      <dd className="font-mono-tb m-0 text-foreground">{amount}</dd>
+    </div>
   )
 }

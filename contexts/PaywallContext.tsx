@@ -27,6 +27,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -35,14 +36,17 @@ import { trackEvent } from '@/lib/analytics'
 import { apiErrorMessage, parseLimitRefusal } from '@/lib/planCopy'
 import { trackLimitReached } from '@/lib/planAnalytics'
 import { PlansModal } from '@/components/paywall/PlansModal'
+import { PaidFeatureModal } from '@/components/paywall/PaidFeatureModal'
 import {
   DEFAULT_PLAN,
+  GATED_FEATURES,
   PLANS,
   type AddonType,
   type GatedFeature,
   type Limit,
   type PlanId,
 } from '@/lib/plans'
+import { EMPTY_PRICE_CATALOG, type PriceCatalog } from '@/lib/planPrices'
 import { DEV_PLAN_TOOLS_AVAILABLE as DEV_PLAN_TOOLS } from '@/lib/devPlanTools'
 
 /** Kept as the historical name so existing call sites read unchanged. */
@@ -87,6 +91,13 @@ export interface PlanAddon {
   /** Null for account-wide addons (`extra_band`). */
   bandId: string | null
   quantity: number
+  /**
+   * `stripe` renews; `ending` was removed and runs out at `endsAt` (already
+   * paid for); `manual` was granted by hand. Optional so an older server
+   * response still parses — absent reads as `stripe`.
+   */
+  source?: 'stripe' | 'ending' | 'manual'
+  endsAt?: string | null
 }
 
 export interface PlanSnapshot {
@@ -121,6 +132,12 @@ export interface PlanSnapshot {
   billingLive: boolean
   /** Explains a raised ceiling; never used to compute one. */
   addons: PlanAddon[]
+  /**
+   * What each plan and add-on costs, read from Stripe by the server. An entry
+   * is absent when Stripe could not be asked — render no price then, never a
+   * remembered one. Format with `formatCatalogPrice()` (`lib/planPrices.ts`).
+   */
+  prices: PriceCatalog
 }
 
 const EMPTY_SNAPSHOT: PlanSnapshot = {
@@ -150,6 +167,7 @@ const EMPTY_SNAPSHOT: PlanSnapshot = {
   // costs a redirect to a checkout that does not exist.
   billingLive: false,
   addons: [],
+  prices: EMPTY_PRICE_CATALOG,
 }
 
 /**
@@ -281,6 +299,56 @@ export function usePaywallGate(feature: PaywallFeature, bandFeatures?: GatedFeat
 }
 
 /**
+ * Every subscription event, with who the user is planwise already attached.
+ *
+ * The ask was "collect analytics on everything to do with subscriptions, and
+ * send which plan the user is on". Writing that by hand at each call site is
+ * the version that rots: the next button someone adds will ship without it and
+ * nobody will notice until the funnel is being read months later. So the plan
+ * is injected here instead, and a call site only names what it did.
+ *
+ * ⚠ The injected key is `current_plan`, NOT `plan`. Several existing events
+ * already use `plan` for the plan being *acted on* — the card someone clicked
+ * Subscribe on, the tier a limit belongs to. Reusing that name would have the
+ * viewer's own plan silently overwrite the target in half the funnel.
+ *
+ * `plan_state` rides along because "clicked upgrade" means something different
+ * from a healthy account than from one three days into grace.
+ *
+ * No PII, same rule as the rest of this file's neighbours in
+ * `lib/planAnalytics.ts`: plan ids, states, counts and enum-ish strings only.
+ */
+export function usePlanTracking() {
+  const { snapshot } = usePaywall()
+
+  // The returned function is STABLE on purpose, and reads the snapshot through
+  // a ref rather than closing over it.
+  //
+  // Closing over it means a new identity every time the plan refreshes — and
+  // call sites list this in effect dependency arrays. One of those effects
+  // reports "the feature modal was opened"; with an unstable identity it would
+  // report it again every time a background refresh landed while the modal sat
+  // open, and the open counts would quietly inflate.
+  const latest = useRef(snapshot)
+  useEffect(() => {
+    latest.current = snapshot
+  }, [snapshot])
+
+  return useCallback(
+    (event: string, params: Record<string, string | number | boolean> = {}) => {
+      const s = latest.current
+      trackEvent(event, {
+        current_plan: s.plan,
+        plan_state: s.state,
+        billing_live: s.billingLive,
+        ...params,
+      })
+    },
+    [],
+  )
+}
+
+/**
  * Turn any API error body into a sentence for the user, and — when it is a
  * structured limit refusal — record `limit_reached` with the current plan.
  *
@@ -336,6 +404,7 @@ export function PaywallProvider({
   const [fetched, setFetched] = useState<PlanSnapshot | null>(initialSnapshot ?? null)
   const [fetching, setFetching] = useState(!initialSnapshot)
   const [modalSource, setModalSource] = useState<PaywallSource | null>(null)
+  const [featureModal, setFeatureModal] = useState<GatedFeature | null>(null)
 
   // Three cases, deliberately not collapsed into two:
   //   signed in           → whatever we have, unresolved until it lands
@@ -391,7 +460,24 @@ export function PaywallProvider({
     void refresh()
   }, [refresh])
 
+  /**
+   * A LOCKED FEATURE gets explained before it gets priced.
+   *
+   * Someone who just clicked a lock asked "what is this", and a table of plans
+   * answers "what does it cost". So a gated-feature source opens
+   * `PaidFeatureModal` first and only reaches `PlansModal` through its "See
+   * plans" button. Every other source — the avatar menu, preferences, a
+   * ceiling — is already a pricing question and goes straight there.
+   *
+   * The demand signal is unaffected: `usePaywallGate` fires
+   * `paywall_lock_clicked` before this runs, and `PlansModal` still records its
+   * own open with the original source, so the funnel stays one chain.
+   */
   const openPaywall = useCallback((source: PaywallSource) => {
+    if ((GATED_FEATURES as readonly string[]).includes(source)) {
+      setFeatureModal(source as GatedFeature)
+      return
+    }
     setModalSource(source)
   }, [])
 
@@ -403,6 +489,18 @@ export function PaywallProvider({
   return (
     <PaywallContext.Provider value={value}>
       {children}
+      {featureModal && (
+        <PaidFeatureModal
+          feature={featureModal}
+          onClose={() => setFeatureModal(null)}
+          onSeePlans={() => {
+            // Hand the ORIGINAL source through, so the plans modal still
+            // reports which lock started this rather than a generic entry.
+            setModalSource(featureModal)
+            setFeatureModal(null)
+          }}
+        />
+      )}
       {modalSource && (
         <PlansModal source={modalSource} onClose={() => setModalSource(null)} />
       )}

@@ -16,6 +16,14 @@
  *   --sub-line    → --border          --color-accent-mint → --wave-mint
  *   --sub-muted   → --muted-foreground  …-violet          → --wave-violet
  *
+ * The three wave accents are declared at the theme root in
+ * `app/design-system.css` and registered as Tailwind colours in the `@theme`
+ * block of `app/globals.css`, which is what makes `text-wave-amber` a real
+ * utility. Never reach for `text-[var(--wave-amber)]` instead: an arbitrary
+ * value pointing at a var that is out of scope produces no error and no
+ * colour, and that is exactly how every amber surface in this app spent a
+ * while rendering white.
+ *
  * Nothing here knows a limit, a price or a plan. These are the shapes; the
  * numbers arrive as props, and they arrive — always — from `lib/plans.ts` by
  * way of the server. A component in this file that hardcoded a figure would be
@@ -52,34 +60,70 @@ export const TONE: Record<PlanTone, ToneClasses> = {
     solid: 'bg-lime text-primary-foreground',
   },
   amber: {
-    text: 'text-[var(--wave-amber)]',
-    border: 'border-[var(--wave-amber)]/40',
-    wash: 'bg-[var(--wave-amber)]/[0.06]',
-    fill: 'bg-[var(--wave-amber)]',
-    solid: 'bg-[var(--wave-amber)] text-primary-foreground',
+    text: 'text-wave-amber',
+    border: 'border-wave-amber/40',
+    wash: 'bg-wave-amber/8',
+    fill: 'bg-wave-amber',
+    solid: 'bg-wave-amber text-primary-foreground',
   },
   destructive: {
     text: 'text-destructive',
     border: 'border-destructive/40',
-    wash: 'bg-destructive/[0.06]',
+    wash: 'bg-destructive/8',
     fill: 'bg-destructive',
     solid: 'bg-destructive text-primary-foreground',
   },
   mint: {
-    text: 'text-[var(--wave-mint)]',
-    border: 'border-[var(--wave-mint)]/40',
-    wash: 'bg-[var(--wave-mint)]/[0.06]',
-    fill: 'bg-[var(--wave-mint)]',
-    solid: 'bg-[var(--wave-mint)] text-primary-foreground',
+    text: 'text-wave-mint',
+    border: 'border-wave-mint/40',
+    wash: 'bg-wave-mint/8',
+    fill: 'bg-wave-mint',
+    solid: 'bg-wave-mint text-primary-foreground',
   },
   violet: {
-    text: 'text-[var(--wave-violet)]',
-    border: 'border-[var(--wave-violet)]/40',
-    wash: 'bg-[var(--wave-violet)]/[0.06]',
-    fill: 'bg-[var(--wave-violet)]',
-    solid: 'bg-[var(--wave-violet)] text-primary-foreground',
+    text: 'text-wave-violet',
+    border: 'border-wave-violet/40',
+    wash: 'bg-wave-violet/8',
+    fill: 'bg-wave-violet',
+    solid: 'bg-wave-violet text-primary-foreground',
   },
 }
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+
+/**
+ * The kit's buttons, which `TbButton` cannot express.
+ *
+ * `TbButton`'s shell is `text-[10px] uppercase tracking-widest` on every
+ * variant — the app's control idiom, and right for a toolbar. The subscription
+ * kit uses body-sized text on taller buttons for the decisions that involve
+ * money, and the difference is deliberate: a 10px mono chip reads as a control,
+ * and "Change plan" is not a control.
+ *
+ * Class strings rather than components because every call site already has its
+ * own element, and a wrapper would only be a place to forget a prop.
+ *
+ * ⚠ `components/plan/GraceBanner.tsx` still carries its own `outlineAction` /
+ * `solidAction` copies. Fold them into these once that file settles — two
+ * spellings of one button is exactly the drift this module exists to stop.
+ */
+const ACTION_BASE =
+  'font-body-tb inline-flex items-center justify-center gap-2 px-4 text-sm font-medium transition-colors disabled:opacity-50'
+
+/** Inherits the surrounding tone through `currentColor`. */
+export const actionOutlineTone = `${ACTION_BASE} h-9 border border-current bg-transparent text-current hover:bg-current/10`
+
+/** Inverted surface — the kit's `--sub-fg` on `--sub-bg`. */
+export const actionSolid = `${ACTION_BASE} h-9 border-0 bg-foreground text-background hover:opacity-90`
+
+/** Red fill, for the one state that has earned it. */
+export const actionDestructive = `${ACTION_BASE} h-9 border-0 bg-destructive text-destructive-foreground hover:opacity-90`
+
+/** The primary money CTA: taller, accent fill, display caps. */
+export const actionPrimaryTall = `${ACTION_BASE} font-display-tb h-11 border-0 bg-lime uppercase tracking-tight text-primary-foreground hover:opacity-90`
+
+/** Its quieter sibling, same height. */
+export const actionOutlineTall = `${ACTION_BASE} h-11 border border-border bg-transparent text-foreground hover:border-lime hover:text-lime`
 
 // ── Eyebrow ──────────────────────────────────────────────────────────────────
 
@@ -150,17 +194,15 @@ export function InlineNotice({
 }) {
   const t = TONE[tone]
   return (
-    <div className={`border px-3 py-2.5 ${t.border} ${t.wash} ${className}`}>
+    <div className={`font-body-tb border p-3 ${t.border} ${t.wash} ${className}`}>
       <div className="flex items-start gap-2">
-        <span className={`mt-px shrink-0 ${t.text}`}>
-          <LucideIcon icon={CircleAlert} size={14} />
+        <span className={`mt-0.5 shrink-0 ${t.text}`}>
+          <LucideIcon icon={CircleAlert} size={16} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="m-0 font-mono-tb text-[11px] leading-relaxed text-foreground">{title}</p>
+          <p className="m-0 text-sm font-medium leading-6 text-foreground">{title}</p>
           {detail && (
-            <p className="m-0 mt-1 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-              {detail}
-            </p>
+            <p className="m-0 mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
           )}
         </div>
         {action && <div className="shrink-0">{action}</div>}
@@ -229,7 +271,7 @@ export function UsageBar({
         </span>
       </div>
       <div
-        className="mt-1.5 h-[3px] w-full bg-surface"
+        className="mt-1.5 h-[3px] w-full bg-surface-2"
         role="progressbar"
         aria-label={typeof label === 'string' ? label : undefined}
         aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
@@ -244,9 +286,7 @@ export function UsageBar({
         )}
       </div>
       {note && (
-        <p className="m-0 mt-1.5 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-          {note}
-        </p>
+        <p className="font-body-tb m-0 mt-1.5 text-xs leading-5 text-muted-foreground">{note}</p>
       )}
     </div>
   )

@@ -14,6 +14,8 @@
  * blocked script), so call sites never need to guard.
  */
 
+import { hasTrackingConsent } from './consent'
+
 declare global {
   interface Window {
     fbq?: (...args: unknown[]) => void
@@ -28,7 +30,11 @@ export function isMetaPixelEnabled(): boolean {
 }
 
 function fbqReady(): boolean {
-  return typeof window !== 'undefined' && typeof window.fbq === 'function'
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.fbq === 'function' &&
+    hasTrackingConsent()
+  )
 }
 
 /** Fire a Meta *standard* event (PageView, Lead, CompleteRegistration, Subscribe, Purchase, ...). */

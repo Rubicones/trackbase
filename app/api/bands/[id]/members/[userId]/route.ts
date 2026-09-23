@@ -4,6 +4,8 @@ import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { frozenBandRefusal } from '@/lib/planGuards'
 import { countBandOwners, LAST_OWNER_REFUSAL } from '@/lib/bandAccess'
+import { actorDisplayName, notifyMemberRemoved } from '@/lib/memberRemoval'
+import { sqlStateOf, SQLSTATE_BAND_OWNERLESS } from '@/lib/bandDelete'
 
 async function assertMember(bandId: string, userId: string) {
   const { data } = await supabase
@@ -90,6 +92,34 @@ export async function DELETE(
     .eq('band_id', bandId)
     .eq('user_id', targetUserId)
 
-  if (error) return serverErrorResponse('bands/members', error, 'Could not remove that member')
+  if (error) {
+    // The database guard caught what the read-then-write above raced past.
+    if (sqlStateOf(error) === SQLSTATE_BAND_OWNERLESS) {
+      return NextResponse.json({ error: LAST_OWNER_REFUSAL }, { status: 400 })
+    }
+    return serverErrorResponse('bands/members', error, 'Could not remove that member')
+  }
+
+  // ── Tell the person it happened to ───────────────────────────────────────
+  //
+  // Only when somebody else did it: leaving a space on your own does not need
+  // an email telling you that you left.
+  //
+  // Not awaited into the response and never able to fail it — the removal has
+  // already happened, and a notification that could undo it would be a worse
+  // bug than one that goes missing.
+  if (requesterId !== targetUserId) {
+    const [{ data: band }, removedByName] = await Promise.all([
+      supabase.from('bands').select('name').eq('id', bandId).maybeSingle(),
+      actorDisplayName(requesterId),
+    ])
+    void notifyMemberRemoved({
+      bandId,
+      bandName: band?.name ?? 'a space',
+      removedUserId: targetUserId,
+      removedByName,
+    })
+  }
+
   return NextResponse.json({ ok: true })
 }

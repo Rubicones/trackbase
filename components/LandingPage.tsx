@@ -17,8 +17,25 @@ import type { Section } from "@/lib/types";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
 import { isRunningAsInstalledPWA } from "@/lib/pwa";
 import { ENTRY_PATH } from "@/lib/lastBand";
+import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { CookieSettingsLink } from "@/components/consent/CookieSettingsLink";
 import { SeededWaveform } from "@/components/WaveformBars";
 import { SEO_FAQS } from "@/lib/seo";
+import {
+  FEATURE_LABELS,
+  PLANS,
+  PLAN_ORDER,
+  planLimitRows,
+  planTradeoffs,
+  type PlanId,
+} from "@/lib/plans";
+import { PLAN_BLURBS } from "@/lib/planCopy";
+import {
+  EMPTY_PRICE_CATALOG,
+  formatCatalogPrice,
+  formatInterval,
+  type PriceCatalog,
+} from "@/lib/planPrices";
 
 const LANDING_NAV_ITEMS: Array<[string, string]> = [
   ["#top", "HOME"],
@@ -28,7 +45,8 @@ const LANDING_NAV_ITEMS: Array<[string, string]> = [
   ["#philosophy", "PHILOSOPHY"],
   ["#themes", "THEMES"],
   ["#system", "SYSTEM"],
-  ["#roadmap", "ROADMAP"],
+  ["#pricing", "PRICING"],
+  // ["#roadmap", "ROADMAP"],   // section disabled — see the Roadmap block below
   ["#faq", "FAQ"],
 ];
 
@@ -61,7 +79,8 @@ import {
   Smartphone, SlidersHorizontal,
   FileAudio, Share2, Eye, Hash,
   Check, Sparkles,
-  Lock, Unlock, Plug,
+  // Lock, Unlock, Plug — used only by the disabled Roadmap block; restore
+  // this line when that section comes back.
 } from "lucide-react";
 
 /* ============================================================
@@ -479,9 +498,6 @@ export function TopBar({
           <a href={hrefFor("#top")} className="flex shrink-0 items-center gap-2 text-foreground">
             <span className="font-display-tb text-base font-bold tracking-tight text-lime sm:text-lg md:text-xl lg:text-2xl">
               sonicdesk.
-            </span>
-            <span className="hidden font-mono-tb text-[10px] text-muted-foreground sm:inline">
-              // v0.1
             </span>
           </a>
           <nav className="flex items-center gap-6">
@@ -2897,91 +2913,77 @@ function ThemingSection() {
  * Pricing
  * ============================================================ */
 
-function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
-  const tiers = [
-    {
-      tag: "SOLO",
-      name: "Home base",
-      price: "Free",
-      sub: "/ forever, during beta",
-      blurb: "For the bedroom producer and the duo trading stems across two cities.",
-      cta: "Start free",
-      featured: false,
-      color: "var(--wave-mint)",
-      features: [
-        "Up to 3 active projects",
-        "1 GB per project",
-        "Unlimited versions",
-        "Mixer, structure, chords",
-        "Mobile Rehearsal View",
-        "WAV export",
-      ],
-    },
-    {
-      tag: "BAND",
-      name: "Full band",
-      price: "$12",
-      sub: "/ member · month",
-      blurb: "For the working band — rehearsals, road, releases. The default choice.",
-      cta: "Bring the band",
-      featured: true,
-      color: "var(--lime)",
-      features: [
-        "Unlimited projects",
-        "10 GB per project",
-        "Versions, applies, version history",
-        "MIDI · piano roll · GM bank",
-        "Range comments & threads",
-        "Chat with version & track refs",
-        "Roadmap, checklist, lyrics",
-        "Priority Quick Peek rendering",
-      ],
-    },
-    {
-      tag: "BAND+",
-      name: "Full band+",
-      price: "$22",
-      sub: "/ member · month",
-      blurb: "For bands shipping releases — mastering hand-off, stems library, label-ready exports.",
-      cta: "Go pro",
-      featured: false,
-      color: "var(--wave-amber)",
-      features: [
-        "Everything in Full band",
-        "50 GB per project · cold storage",
-        "Stems library across all projects",
-        "Lossless WAV / FLAC / stems export",
-        "Mastering hand-off & release notes",
-        "Guest reviewer links with expiry",
-        "Advanced roles per project",
-        "Analytics: who listened, where it stalled",
-      ],
-    },
-    {
-      tag: "STUDIO",
-      name: "Studio · school · label",
-      price: "Custom",
-      sub: "/ team plan",
-      blurb: "For teams running dozens of artists, classes or releases in parallel.",
-      cta: "Talk to us",
-      featured: false,
-      color: "var(--wave-violet)",
-      features: [
-        "Everything in Full band+",
-        "Workspaces per artist / cohort",
-        "Roles, permissions, approval flow",
-        "Per-artist statistics & activity",
-        "SSO · domain · custom invite",
-        "Onboarding + dedicated contact",
-        "SLA & extended storage",
-      ],
-    },
-  ];
+/**
+ * The pricing section, generated from the plans the app actually sells.
+ *
+ * It used to be a hand-written table of its own — different plan names,
+ * different limits, and "$12 / $22 per member" against plans that cost
+ * something else and are paid by one person, not per member. Now every part
+ * that is a promise comes from the source the product enforces:
+ *   · names, limits, feature unlocks — `PLANS` (`lib/plans.ts`) through
+ *     `planLimitRows()` and `planTradeoffs()`, exactly as the plans modal;
+ *   · prices — the Stripe Prices themselves (`prices`, read at build /
+ *     revalidate time by `app/page.tsx` via `lib/billing/catalog.ts`).
+ * Only the colour, the CTA wording and the one-line blurb are written here.
+ * With no price available (Stripe unreachable at build) the card shows "—",
+ * never a remembered number.
+ */
+const LANDING_TIER_STYLE: Record<PlanId, { color: string; cta: string; featured?: boolean }> = {
+  free: { color: "var(--wave-mint)", cta: "Start free" },
+  solo: { color: "var(--wave-violet)", cta: "Go solo" },
+  band: { color: "var(--lime)", cta: "Bring the band", featured: true },
+  band_plus: { color: "var(--wave-amber)", cta: "Go bigger" },
+};
+
+function landingPlanLines(id: PlanId): string[] {
+  const index = PLAN_ORDER.indexOf(id);
+  const previous = index > 0 ? PLAN_ORDER[index - 1] : null;
+  const lines: string[] = [];
+
+  // "Everything in X" only where it is true in every dimension — Solo
+  // allows fewer members than Free, so Solo never claims it.
+  if (previous && previous !== "free" && planTradeoffs(previous, id).length === 0) {
+    lines.push(`Everything in ${PLANS[previous].name}`);
+  }
+  for (const row of planLimitRows(id)) {
+    if (row.label === "Spaces you join") continue; // said once, in the footnote
+    lines.push(`${row.label}: ${row.value}`);
+  }
+  for (const feature of PLANS[id].features) {
+    if (previous && PLANS[previous].features.includes(feature)) continue;
+    lines.push(FEATURE_LABELS[feature]);
+  }
+  if (id === "free") lines.push("Versions, MIDI, comments, chat, rehearsal mode");
+  return lines;
+}
+
+function Pricing({
+  signInHref = "/auth",
+  prices,
+}: {
+  signInHref?: string;
+  prices: PriceCatalog;
+}) {
+  const tiers = PLAN_ORDER.map((id) => {
+    const price = prices.plans[id];
+    const formatted = formatCatalogPrice(price);
+    return {
+      tag: PLANS[id].name.toUpperCase(),
+      name: PLANS[id].name,
+      price: formatted ?? (id === "free" ? "Free" : "—"),
+      sub: id === "free" ? "/ forever" : `/ ${formatInterval(price)}`,
+      blurb: PLAN_BLURBS[id],
+      cta: LANDING_TIER_STYLE[id].cta,
+      featured: LANDING_TIER_STYLE[id].featured ?? false,
+      color: LANDING_TIER_STYLE[id].color,
+      features: landingPlanLines(id),
+    };
+  });
 
   return (
     <section id="pricing" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
-        index="06"
+        index="07"
         kicker="PRICING"
         title="ONE SURFACE."
         accent="FOUR ROOMS."
@@ -3056,16 +3058,27 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
             </ul>
 
             <div className="mt-auto pt-6">
+              {/*
+                Same control as the plan cards in the app's plans modal
+                (`components/paywall/PlansModal.tsx`, "Row 6 — CTA"): the
+                display face at `text-sm font-semibold uppercase`, centred,
+                no arrow, lime when featured and inverted solid otherwise.
+                Matched class for class on purpose — a visitor who subscribes
+                here and then opens the same plans inside the app should not
+                have to work out that it is the same offer.
+
+                Only the wording stays the landing's own: "BRING THE BAND"
+                sells, "Subscribe" confirms, and they are not the same job.
+              */}
               <a
                 href={signInHref}
-                className={`group/btn flex w-full items-center justify-between border px-4 py-3 text-[11px] uppercase transition-all ${
+                className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 font-display-tb text-sm font-semibold uppercase transition-colors ${
                   t.featured
-                    ? "tb-btn-accent border-lime bg-lime text-primary-foreground"
-                    : "font-mono-tb tracking-[0.22em] border-[color-mix(in_oklab,var(--foreground)_40%,transparent)] text-foreground hover:border-lime hover:text-lime"
+                    ? "border border-lime bg-lime text-primary-foreground"
+                    : "border border-border bg-foreground text-background"
                 }`}
               >
-                <span>{t.cta}</span>
-                <motion.span className="inline-block" initial={false} whileHover={{ x: 4 }}>→</motion.span>
+                {t.cta}
               </a>
               {t.featured && (
                 <div className="mt-2 flex items-center gap-1.5 font-mono-tb text-[9px] uppercase tracking-[0.22em] text-lime">
@@ -3078,298 +3091,313 @@ function Pricing({ signInHref = "/auth" }: { signInHref?: string }) {
       </div>
 
       <p className="mx-auto mt-10 max-w-2xl text-center font-mono-tb text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-        All plans · WAV export · unlimited members · branches · Rehearsal View.
-        No card required for the free tier.
+        Every plan · join as many spaces as you like · only the space owner pays —
+        bandmates never see a paywall. No card required for Free.
       </p>
     </section>
   );
 }
 
 /* ============================================================
- * Roadmap
+ * Roadmap — DISABLED on the landing page (kept for later).
+ *
+ * Commented out whole rather than deleted: the snake-grid layout, the SVG
+ * connector maths and the stage copy are the expensive parts and none of
+ * them are reproducible from a description. To bring it back, uncomment
+ * this block, the `<Roadmap />` render at the bottom of the page, and the
+ * ["#roadmap", "ROADMAP"] entry in NAV — the footer's PRODUCT column is
+ * derived from NAV, so that one entry restores both the header and the
+ * footer link.
+ *
+ * Line-commented rather than wrapped in a block comment on purpose: the
+ * code below contains its own block comments, and block comments do not
+ * nest in JavaScript.
  * ============================================================ */
-
-type RoadmapGridPos = { row: number; col: number };
-
-function roadmapSnakePosition(index: number, cols: number, total: number): RoadmapGridPos {
-  const rowIdx = Math.floor(index / cols);
-  const posInRow = index % cols;
-  const itemsInRow = Math.min(cols, total - rowIdx * cols);
-  const isRtlRow = rowIdx % 2 === 1;
-  const colIdx = isRtlRow ? itemsInRow - 1 - posInRow : posInRow;
-  return { row: rowIdx + 1, col: colIdx + 1 };
-}
-
-function roadmapGridColumns(container: HTMLElement): number {
-  const template = getComputedStyle(container).gridTemplateColumns;
-  const tracks = template.split(/\s+/).filter(Boolean);
-  return tracks.length || 1;
-}
-
-function roadmapNodeCenter(node: HTMLElement, container: HTMLElement) {
-  const cb = container.getBoundingClientRect();
-  const nb = node.getBoundingClientRect();
-  return {
-    x: nb.left + nb.width / 2 - cb.left,
-    y: nb.top + nb.height / 2 - cb.top,
-  };
-}
-
-function roadmapConnectorPath(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  fromPos: RoadmapGridPos,
-  toPos: RoadmapGridPos,
-): string {
-  if (fromPos.row === toPos.row) {
-    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
-  }
-  if (fromPos.col === toPos.col) {
-    return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
-  }
-  const midY = (from.y + to.y) / 2;
-  return `M ${from.x} ${from.y} L ${from.x} ${midY} L ${to.x} ${midY} L ${to.x} ${to.y}`;
-}
-
-const ROADMAP_ITEMS = [
-  {
-    id: "private-beta",
-    label: "NOW",
-    title: "Private beta",
-    body: "Invite-only rooms are stress-testing the full workspace — branching, mixer, structure, chat and Rehearsal View — before the doors open wider.",
-    icon: Lock,
-    color: "var(--lime)",
-    active: true,
-  },
-  {
-    id: "open-beta",
-    label: "NEXT",
-    title: "Open beta",
-    body: "More projects, bigger rooms and no invite wall. Anyone can start a band, invite members and push their first commit.",
-    icon: Unlock,
-    color: "var(--wave-sky)",
-    active: false,
-  },
-  {
-    id: "android",
-    label: "LAUNCH",
-    title: "Android app",
-    body: "Chord charts, section loops and the quick recorder land on every Android phone in the band — the same context, pocket-sized.",
-    icon: Smartphone,
-    color: "var(--wave-mint)",
-    active: false,
-  },
-  {
-    id: "ios",
-    label: "LATER THIS YEAR",
-    title: "iOS app",
-    body: "The full Studio experience tuned for iPhone and iPad: rehearsal, review, and quick commits from the practice space or the tour van.",
-    icon: Smartphone,
-    color: "var(--wave-violet)",
-    active: false,
-  },
-  {
-    id: "vst3",
-    label: "COMING SOON",
-    title: "VST3 plugin",
-    body: "Sync changes, pull stems and push markers without leaving your DAW. Version control becomes part of the actual production flow.",
-    icon: Plug,
-    color: "var(--wave-amber)",
-    active: false,
-  },
-] as const;
-
-function roadmapItemPlacementClass(index: number): string {
-  switch (index) {
-    case 2:
-      return "sm:col-start-2 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
-    case 3:
-      return "sm:col-start-1 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
-    case 4:
-      return "sm:col-start-1 sm:row-start-3 xl:col-start-auto xl:row-start-auto";
-    default:
-      return "";
-  }
-}
-
-function Roadmap() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [connectors, setConnectors] = useState<string[]>([]);
-  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 });
-
-  const recalcConnectors = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const cols = roadmapGridColumns(container);
-    const total = ROADMAP_ITEMS.length;
-    const itemEls = container.querySelectorAll<HTMLElement>("[data-roadmap-item]");
-
-    setSvgSize({ w: container.offsetWidth, h: container.offsetHeight });
-
-    const paths: string[] = [];
-    for (let i = 0; i < total - 1; i++) {
-      const fromEl = itemEls[i];
-      const toEl = itemEls[i + 1];
-      const fromNode = fromEl?.querySelector<HTMLElement>("[data-roadmap-node]");
-      const toNode = toEl?.querySelector<HTMLElement>("[data-roadmap-node]");
-      if (!fromEl || !toEl || !fromNode || !toNode) continue;
-
-      const fromPos = roadmapSnakePosition(i, cols, total);
-      const toPos = roadmapSnakePosition(i + 1, cols, total);
-      const from = roadmapNodeCenter(fromNode, container);
-      const to = roadmapNodeCenter(toNode, container);
-      paths.push(roadmapConnectorPath(from, to, fromPos, toPos));
-    }
-    setConnectors(paths);
-  }, []);
-
-  useEffect(() => {
-    recalcConnectors();
-    const container = containerRef.current;
-    if (!container) return;
-
-    const ro = new ResizeObserver(() => recalcConnectors());
-    ro.observe(container);
-    window.addEventListener("resize", recalcConnectors);
-
-    const t1 = window.setTimeout(recalcConnectors, 100);
-    const t2 = window.setTimeout(recalcConnectors, 700);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", recalcConnectors);
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-    };
-  }, [recalcConnectors]);
-
-  return (
-    <section id="roadmap" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
-      <SectionHeader
-        index="07"
-        kicker="ROADMAP"
-        title="WHAT'S NEXT."
-        accent="SHIPPING SOON."
-        description="sonicdesk is built in public. Private beta is live now; every following release unlocks a new room in the studio."
-      />
-
-      <div
-        ref={containerRef}
-        className="relative mt-14 grid w-full min-w-0 grid-cols-1 gap-x-4 gap-y-10 sm:grid-cols-2 sm:gap-y-6 xl:grid-cols-5 xl:gap-x-3 xl:gap-y-6"
-      >
-        {svgSize.w > 0 && svgSize.h > 0 && connectors.length > 0 && (
-          <svg
-            aria-hidden
-            className="pointer-events-none absolute inset-0 overflow-visible"
-            width={svgSize.w}
-            height={svgSize.h}
-            viewBox={`0 0 ${svgSize.w} ${svgSize.h}`}
-          >
-            <defs>
-              <marker
-                id="roadmap-arrow"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto"
-              >
-                <path
-                  d="M0,0 L8,4 L0,8"
-                  fill="none"
-                  stroke="color-mix(in oklab, var(--border) 65%, transparent)"
-                  strokeWidth="1"
-                />
-              </marker>
-            </defs>
-            {connectors.map((d, i) => (
-              <path
-                key={i}
-                d={d}
-                fill="none"
-                stroke="color-mix(in oklab, var(--border) 65%, transparent)"
-                strokeWidth="1"
-                markerEnd="url(#roadmap-arrow)"
-              />
-            ))}
-          </svg>
-        )}
-
-        {ROADMAP_ITEMS.map((item, i) => {
-          const Icon = item.icon;
-          return (
-            <div
-              key={item.id}
-              data-roadmap-item={i}
-              className={`relative min-w-0 ${roadmapItemPlacementClass(i)}`}
-            >
-              <motion.div
-                initial={{ opacity: 0, y: 24 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.4 }}
-                transition={{ delay: i * 0.1, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-                onAnimationComplete={i === ROADMAP_ITEMS.length - 1 ? recalcConnectors : undefined}
-                className="h-full"
-              >
-                <motion.article
-                  whileHover={{ y: -4 }}
-                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                  className="relative h-full w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-5 transition-colors duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:border-(--roadmap-accent) hover:bg-[color-mix(in_oklab,var(--card)_55%,transparent)]"
-                  style={{ ["--roadmap-accent" as string]: item.color }}
-                >
-                <div className="mb-5 flex items-center gap-3">
-                  <div
-                    data-roadmap-node
-                    className="relative z-10 grid size-4 place-items-center"
-                    style={{ background: item.color }}
-                  >
-                    {item.active && (
-                      <motion.span
-                        className="absolute inset-0 -m-1.5 border"
-                        style={{ borderColor: item.color }}
-                        animate={{ opacity: [0.6, 0, 0.6], scale: [1, 1.8, 1] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
-                      />
-                    )}
-                  </div>
-                  {item.active && (
-                    <span className="tb-btn-accent inline-flex items-center gap-1.5 bg-lime px-2 py-1 text-[9px] uppercase text-primary-foreground">
-                      <span className="size-1.5 bg-black tb-blink" />
-                      LIVE
-                    </span>
-                  )}
-                </div>
-
-                <div className="mb-4 flex items-center gap-2">
-                  <span
-                    className="grid size-8 place-items-center border"
-                    style={{ borderColor: item.color, color: item.color }}
-                  >
-                    <Icon size={16} strokeWidth={2} />
-                  </span>
-                  <div>
-                    <h3
-                      className="font-display-tb text-lg font-bold tracking-tight"
-
-                    >
-                      {item.title}
-                    </h3>
-                    <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                      {item.label}
-                    </span>
-                  </div>
-                </div>
-                <p className="font-mono-tb text-[12px] leading-relaxed text-muted-foreground">{item.body}</p>
-                </motion.article>
-              </motion.div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
+// /* ============================================================
+//  * Roadmap
+//  * ============================================================ */
+//
+// type RoadmapGridPos = { row: number; col: number };
+//
+// function roadmapSnakePosition(index: number, cols: number, total: number): RoadmapGridPos {
+//   const rowIdx = Math.floor(index / cols);
+//   const posInRow = index % cols;
+//   const itemsInRow = Math.min(cols, total - rowIdx * cols);
+//   const isRtlRow = rowIdx % 2 === 1;
+//   const colIdx = isRtlRow ? itemsInRow - 1 - posInRow : posInRow;
+//   return { row: rowIdx + 1, col: colIdx + 1 };
+// }
+//
+// function roadmapGridColumns(container: HTMLElement): number {
+//   const template = getComputedStyle(container).gridTemplateColumns;
+//   const tracks = template.split(/\s+/).filter(Boolean);
+//   return tracks.length || 1;
+// }
+//
+// function roadmapNodeCenter(node: HTMLElement, container: HTMLElement) {
+//   const cb = container.getBoundingClientRect();
+//   const nb = node.getBoundingClientRect();
+//   return {
+//     x: nb.left + nb.width / 2 - cb.left,
+//     y: nb.top + nb.height / 2 - cb.top,
+//   };
+// }
+//
+// function roadmapConnectorPath(
+//   from: { x: number; y: number },
+//   to: { x: number; y: number },
+//   fromPos: RoadmapGridPos,
+//   toPos: RoadmapGridPos,
+// ): string {
+//   if (fromPos.row === toPos.row) {
+//     return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+//   }
+//   if (fromPos.col === toPos.col) {
+//     return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+//   }
+//   const midY = (from.y + to.y) / 2;
+//   return `M ${from.x} ${from.y} L ${from.x} ${midY} L ${to.x} ${midY} L ${to.x} ${to.y}`;
+// }
+//
+// const ROADMAP_ITEMS = [
+//   {
+//     id: "private-beta",
+//     label: "NOW",
+//     title: "Private beta",
+//     body: "Invite-only rooms are stress-testing the full workspace — branching, mixer, structure, chat and Rehearsal View — before the doors open wider.",
+//     icon: Lock,
+//     color: "var(--lime)",
+//     active: true,
+//   },
+//   {
+//     id: "open-beta",
+//     label: "NEXT",
+//     title: "Open beta",
+//     body: "More projects, bigger rooms and no invite wall. Anyone can start a band, invite members and push their first commit.",
+//     icon: Unlock,
+//     color: "var(--wave-sky)",
+//     active: false,
+//   },
+//   {
+//     id: "android",
+//     label: "LAUNCH",
+//     title: "Android app",
+//     body: "Chord charts, section loops and the quick recorder land on every Android phone in the band — the same context, pocket-sized.",
+//     icon: Smartphone,
+//     color: "var(--wave-mint)",
+//     active: false,
+//   },
+//   {
+//     id: "ios",
+//     label: "LATER THIS YEAR",
+//     title: "iOS app",
+//     body: "The full Studio experience tuned for iPhone and iPad: rehearsal, review, and quick commits from the practice space or the tour van.",
+//     icon: Smartphone,
+//     color: "var(--wave-violet)",
+//     active: false,
+//   },
+//   {
+//     id: "vst3",
+//     label: "COMING SOON",
+//     title: "VST3 plugin",
+//     body: "Sync changes, pull stems and push markers without leaving your DAW. Version control becomes part of the actual production flow.",
+//     icon: Plug,
+//     color: "var(--wave-amber)",
+//     active: false,
+//   },
+// ] as const;
+//
+// function roadmapItemPlacementClass(index: number): string {
+//   switch (index) {
+//     case 2:
+//       return "sm:col-start-2 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
+//     case 3:
+//       return "sm:col-start-1 sm:row-start-2 xl:col-start-auto xl:row-start-auto";
+//     case 4:
+//       return "sm:col-start-1 sm:row-start-3 xl:col-start-auto xl:row-start-auto";
+//     default:
+//       return "";
+//   }
+// }
+//
+// function Roadmap() {
+//   const containerRef = useRef<HTMLDivElement>(null);
+//   const [connectors, setConnectors] = useState<string[]>([]);
+//   const [svgSize, setSvgSize] = useState({ w: 0, h: 0 });
+//
+//   const recalcConnectors = useCallback(() => {
+//     const container = containerRef.current;
+//     if (!container) return;
+//
+//     const cols = roadmapGridColumns(container);
+//     const total = ROADMAP_ITEMS.length;
+//     const itemEls = container.querySelectorAll<HTMLElement>("[data-roadmap-item]");
+//
+//     setSvgSize({ w: container.offsetWidth, h: container.offsetHeight });
+//
+//     const paths: string[] = [];
+//     for (let i = 0; i < total - 1; i++) {
+//       const fromEl = itemEls[i];
+//       const toEl = itemEls[i + 1];
+//       const fromNode = fromEl?.querySelector<HTMLElement>("[data-roadmap-node]");
+//       const toNode = toEl?.querySelector<HTMLElement>("[data-roadmap-node]");
+//       if (!fromEl || !toEl || !fromNode || !toNode) continue;
+//
+//       const fromPos = roadmapSnakePosition(i, cols, total);
+//       const toPos = roadmapSnakePosition(i + 1, cols, total);
+//       const from = roadmapNodeCenter(fromNode, container);
+//       const to = roadmapNodeCenter(toNode, container);
+//       paths.push(roadmapConnectorPath(from, to, fromPos, toPos));
+//     }
+//     setConnectors(paths);
+//   }, []);
+//
+//   useEffect(() => {
+//     recalcConnectors();
+//     const container = containerRef.current;
+//     if (!container) return;
+//
+//     const ro = new ResizeObserver(() => recalcConnectors());
+//     ro.observe(container);
+//     window.addEventListener("resize", recalcConnectors);
+//
+//     const t1 = window.setTimeout(recalcConnectors, 100);
+//     const t2 = window.setTimeout(recalcConnectors, 700);
+//
+//     return () => {
+//       ro.disconnect();
+//       window.removeEventListener("resize", recalcConnectors);
+//       window.clearTimeout(t1);
+//       window.clearTimeout(t2);
+//     };
+//   }, [recalcConnectors]);
+//
+//   return (
+//     <section id="roadmap" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
+//       <SectionHeader
+//         index="08"
+//         kicker="ROADMAP"
+//         title="WHAT'S NEXT."
+//         accent="SHIPPING SOON."
+//         description="sonicdesk is built in public. Private beta is live now; every following release unlocks a new room in the studio."
+//       />
+//
+//       <div
+//         ref={containerRef}
+//         className="relative mt-14 grid w-full min-w-0 grid-cols-1 gap-x-4 gap-y-10 sm:grid-cols-2 sm:gap-y-6 xl:grid-cols-5 xl:gap-x-3 xl:gap-y-6"
+//       >
+//         {svgSize.w > 0 && svgSize.h > 0 && connectors.length > 0 && (
+//           <svg
+//             aria-hidden
+//             className="pointer-events-none absolute inset-0 overflow-visible"
+//             width={svgSize.w}
+//             height={svgSize.h}
+//             viewBox={`0 0 ${svgSize.w} ${svgSize.h}`}
+//           >
+//             <defs>
+//               <marker
+//                 id="roadmap-arrow"
+//                 markerWidth="8"
+//                 markerHeight="8"
+//                 refX="7"
+//                 refY="4"
+//                 orient="auto"
+//               >
+//                 <path
+//                   d="M0,0 L8,4 L0,8"
+//                   fill="none"
+//                   stroke="color-mix(in oklab, var(--border) 65%, transparent)"
+//                   strokeWidth="1"
+//                 />
+//               </marker>
+//             </defs>
+//             {connectors.map((d, i) => (
+//               <path
+//                 key={i}
+//                 d={d}
+//                 fill="none"
+//                 stroke="color-mix(in oklab, var(--border) 65%, transparent)"
+//                 strokeWidth="1"
+//                 markerEnd="url(#roadmap-arrow)"
+//               />
+//             ))}
+//           </svg>
+//         )}
+//
+//         {ROADMAP_ITEMS.map((item, i) => {
+//           const Icon = item.icon;
+//           return (
+//             <div
+//               key={item.id}
+//               data-roadmap-item={i}
+//               className={`relative min-w-0 ${roadmapItemPlacementClass(i)}`}
+//             >
+//               <motion.div
+//                 initial={{ opacity: 0, y: 24 }}
+//                 whileInView={{ opacity: 1, y: 0 }}
+//                 viewport={{ once: true, amount: 0.4 }}
+//                 transition={{ delay: i * 0.1, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+//                 onAnimationComplete={i === ROADMAP_ITEMS.length - 1 ? recalcConnectors : undefined}
+//                 className="h-full"
+//               >
+//                 <motion.article
+//                   whileHover={{ y: -4 }}
+//                   transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+//                   className="relative h-full w-full border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-5 transition-colors duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:border-(--roadmap-accent) hover:bg-[color-mix(in_oklab,var(--card)_55%,transparent)]"
+//                   style={{ ["--roadmap-accent" as string]: item.color }}
+//                 >
+//                 <div className="mb-5 flex items-center gap-3">
+//                   <div
+//                     data-roadmap-node
+//                     className="relative z-10 grid size-4 place-items-center"
+//                     style={{ background: item.color }}
+//                   >
+//                     {item.active && (
+//                       <motion.span
+//                         className="absolute inset-0 -m-1.5 border"
+//                         style={{ borderColor: item.color }}
+//                         animate={{ opacity: [0.6, 0, 0.6], scale: [1, 1.8, 1] }}
+//                         transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+//                       />
+//                     )}
+//                   </div>
+//                   {item.active && (
+//                     <span className="tb-btn-accent inline-flex items-center gap-1.5 bg-lime px-2 py-1 text-[9px] uppercase text-primary-foreground">
+//                       <span className="size-1.5 bg-black tb-blink" />
+//                       LIVE
+//                     </span>
+//                   )}
+//                 </div>
+//
+//                 <div className="mb-4 flex items-center gap-2">
+//                   <span
+//                     className="grid size-8 place-items-center border"
+//                     style={{ borderColor: item.color, color: item.color }}
+//                   >
+//                     <Icon size={16} strokeWidth={2} />
+//                   </span>
+//                   <div>
+//                     <h3
+//                       className="font-display-tb text-lg font-bold tracking-tight"
+//
+//                     >
+//                       {item.title}
+//                     </h3>
+//                     <span className="font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+//                       {item.label}
+//                     </span>
+//                   </div>
+//                 </div>
+//                 <p className="font-mono-tb text-[12px] leading-relaxed text-muted-foreground">{item.body}</p>
+//                 </motion.article>
+//               </motion.div>
+//             </div>
+//           );
+//         })}
+//       </div>
+//     </section>
+//   );
+// }
 
 /* ============================================================
  * FAQ — sticky intro + tag-filterable, single-open accordion.
@@ -3570,7 +3598,7 @@ function Footer() {
   return (
     <footer className="landing-full-bleed px-4 py-10 md:px-8">
       <div className="mx-auto w-full max-w-[1920px]">
-        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1fr_1.4fr_1.4fr]">
+        <div className="grid gap-8 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_30%,transparent)] p-6 md:grid-cols-[1fr_1.4fr_1.4fr_0.8fr]">
         <div>
           <div
             className="font-display-tb font-bold tracking-tight text-lime text-xl"
@@ -3614,13 +3642,31 @@ function Footer() {
             </ul>
           </div>
         ))}
+        {/* Legal — single column; "Cookie settings" re-opens the consent bar. */}
+        <div>
+          <div className="mb-3 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime">LEGAL</div>
+          <ul>
+            {[
+              { label: "Terms of Service", href: "/terms" },
+              { label: "Privacy Policy", href: PRIVACY_POLICY_HREF },
+              { label: "Refund Policy", href: "/refund" },
+            ].map((item) => (
+              <li key={item.href} className="mb-2 font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+                <a href={item.href}>{item.label}</a>
+              </li>
+            ))}
+            <li className="mb-2 font-mono-tb text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+              <CookieSettingsLink className="text-left" />
+            </li>
+          </ul>
+        </div>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2 px-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
           <span>
             <span className="text-(--signal)">● SYS OK</span>
           </span>
           <span>
-            sonicdesk <span className="text-foreground">// v0.1</span> · © 2026
+            sonicdesk · © 2026
           </span>
         </div>
       </div>
@@ -3632,7 +3678,12 @@ function Footer() {
  * Page root
  * ============================================================ */
 
-export default function LandingPage() {
+export default function LandingPage({
+  prices = EMPTY_PRICE_CATALOG,
+}: {
+  /** Stripe's prices, read by the server page at build/revalidate time. */
+  prices?: PriceCatalog;
+} = {}) {
   const { authHref, authLabel } = useLandingAuth()
   const router = useRouter()
   const [standaloneRedirect, setStandaloneRedirect] = useState(false)
@@ -3671,7 +3722,8 @@ export default function LandingPage() {
           <Philosophy />
           <ThemingSection />
           <FeatureIndex />
-          <Roadmap />
+          <Pricing signInHref={authHref} prices={prices} />
+          {/* <Roadmap /> — section disabled, see the commented block above */}
           <FAQ />
           <CTA signInHref={authHref} />
           <Footer />

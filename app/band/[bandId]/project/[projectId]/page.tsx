@@ -2958,18 +2958,19 @@ function uploadFileType(file: File): 'audio' | 'midi' {
                       + New Version
                     </span>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => requestNewVersion()}
-                      data-tour="new-branch-button"
-                      aria-disabled={atVersionLimit || undefined}
-                      title={versionLimitCopy}
-                      className={`shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border text-muted-foreground transition ${
-                        atVersionLimit ? paywallLockedButtonClass : 'hover:border-lime hover:text-lime'
-                      }`}
-                    >
-                      + New Version
-                    </button>
+                    <HoverTooltip label={versionLimitCopy} multiline className="shrink-0 inline-flex">
+                      <button
+                        type="button"
+                        onClick={() => requestNewVersion()}
+                        data-tour="new-branch-button"
+                        aria-disabled={atVersionLimit || undefined}
+                        className={`shrink-0 inline-flex items-center gap-1.5 bg-surface/40 text-[10px] uppercase tracking-widest px-2.5 py-1.5 border border-dashed border-border text-muted-foreground transition ${
+                          atVersionLimit ? paywallLockedButtonClass : 'hover:border-lime hover:text-lime'
+                        }`}
+                      >
+                        + New Version
+                      </button>
+                    </HoverTooltip>
                   )}
                   {(() => {
                     // No answer yet. A span carrying no handler — `ab_compare`

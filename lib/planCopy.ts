@@ -11,7 +11,14 @@
  * Isomorphic: no server-only imports, so both sides can use it.
  */
 
-import { FEATURE_LABELS, formatMB, type GatedFeature, type Limit } from '@/lib/plans'
+import {
+  FEATURE_LABELS,
+  formatMB,
+  type AddonType,
+  type GatedFeature,
+  type Limit,
+  type PlanId,
+} from '@/lib/plans'
 
 export type LimitType = 'bands' | 'members' | 'storage' | 'versions' | 'feature'
 
@@ -34,16 +41,16 @@ export function limitHeadline(d: LimitDescriptor): string {
   switch (d.limit_type) {
     case 'bands':
       return limit === null
-        ? 'You have reached your band limit.'
-        : `You already own ${limit} ${plural(limit, 'band')} — the most your plan allows.`
+        ? 'You have reached your space limit.'
+        : `You already own ${limit} ${plural(limit, 'space')} — the most your plan allows.`
 
     case 'members':
       return limit === null
-        ? 'This band has reached its member limit.'
-        : `This band is at its limit of ${limit} ${plural(limit, 'member')}.`
+        ? 'This space has reached its member limit.'
+        : `This space is at its limit of ${limit} ${plural(limit, 'member')}.`
 
     case 'storage':
-      return `This band has used all of its ${formatMB(limit === null ? null : limit / (1024 * 1024))} of storage.`
+      return `This space has used all of its ${formatMB(limit === null ? null : limit / (1024 * 1024))} of storage.`
 
     case 'versions':
       return limit === null
@@ -52,8 +59,8 @@ export function limitHeadline(d: LimitDescriptor): string {
 
     case 'feature':
       return d.feature
-        ? `${FEATURE_LABELS[d.feature]} is not included in this band's plan.`
-        : 'That feature is not included in this band\'s plan.'
+        ? `${FEATURE_LABELS[d.feature]} is not included in this space's plan.`
+        : 'That feature is not included in this space\'s plan.'
   }
 }
 
@@ -61,15 +68,15 @@ export function limitHeadline(d: LimitDescriptor): string {
 export function limitRemedy(d: LimitDescriptor): string {
   switch (d.limit_type) {
     case 'bands':
-      return 'Upgrade your plan, or delete a band you no longer need. Bands you join do not count — joining is unlimited on every plan.'
+      return 'Upgrade your plan, or delete a space you no longer need. Spaces you join do not count — joining is unlimited on every plan.'
     case 'members':
-      return 'The band owner can upgrade to raise this. Nobody is removed automatically; existing members stay.'
+      return 'The space owner can upgrade to raise this. Nobody is removed automatically; existing members stay.'
     case 'storage':
-      return 'Delete tracks or files to free space, or ask the band owner to upgrade. Storage is per band, so other bands are unaffected.'
+      return 'Delete tracks or files to free space, or ask the space owner to upgrade. Storage is per space, so other spaces are unaffected.'
     case 'versions':
       return 'Apply or delete a version to free a slot, or upgrade for unlimited versions. Master never counts toward this.'
     case 'feature':
-      return 'Upgrade the band to unlock it. Everyone in the band gets it, not just the owner.'
+      return 'Upgrade the space to unlock it. Everyone in the space gets it, not just the owner.'
   }
 }
 
@@ -80,7 +87,7 @@ export function limitMessage(d: LimitDescriptor): string {
 
 /** Human copy for a frozen band. Files are safe — say so explicitly. */
 export const FROZEN_BAND_MESSAGE =
-  'This band is frozen because its owner’s plan no longer covers it. Nothing has been deleted — every file, comment and version is still here, and you can still listen and download. Upgrade, or delete enough other bands to fit the limit, and it unfreezes immediately.'
+  'This space is frozen because its owner’s plan no longer covers it. Nothing has been deleted — every file, comment and version is still here, and you can still listen and download. Upgrade, or delete enough other spaces to fit the limit, and it unfreezes immediately.'
 
 export const FROZEN_BAND_SHORT = 'Frozen — read-only. Nothing was deleted.'
 
@@ -130,6 +137,33 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
     if (typeof body.error === 'string' && body.error) return body.error
   }
   return fallback
+}
+
+/**
+ * Why an add-on is not offered on the current plan — shown beside a disabled
+ * `+` rather than letting the purchase run into `addon_without_effect`.
+ */
+export function addonWithoutEffectCopy(type: AddonType): string {
+  switch (type) {
+    case 'extra_band':
+      return 'Your plan already includes unlimited spaces.'
+    case 'extra_storage':
+      return 'Your plan already includes unlimited storage.'
+    case 'extra_member':
+      return 'Your plan already includes unlimited members.'
+  }
+}
+
+/**
+ * One line on who each plan is for. Shared by the plans modal and the landing
+ * page's pricing section so the two describe the same plans in the same words.
+ * Describes people, never limits or prices — those are generated.
+ */
+export const PLAN_BLURBS: Record<PlanId, string> = {
+  free: 'A real workspace for a first record, not a disposable trial.',
+  solo: 'For independent musicians working alone or with one collaborator.',
+  band: 'For small bands actively working together.',
+  band_plus: 'For groups running multiple projects across several spaces.',
 }
 
 export type { Limit }

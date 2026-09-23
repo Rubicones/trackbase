@@ -14,6 +14,7 @@ import { META_PIXEL_ID, trackMetaPageView } from '@/lib/meta-pixel'
  * - Fires an additional PageView on every client-side route change (path or
  *   query-param change), since App Router SPA navigation doesn't reload.
  * - Skips the very first render so the initial load isn't double-counted.
+ * - Mounted only with cookie consent, by <ConsentedTrackers />.
  * - Renders nothing (and loads nothing) when the pixel ID env var is absent.
  */
 export function MetaPixel() {

@@ -378,6 +378,9 @@ html.dark[data-palette="green"] .theme-avatar {
   --color-ring: var(--ring);
   --color-lime: var(--lime);
   --color-lime-soft: var(--lime-soft);
+  --color-wave-amber: var(--wave-amber);
+  --color-wave-mint: var(--wave-mint);
+  --color-wave-violet: var(--wave-violet);
   --color-surface-2: var(--surface-2);
   --color-grid: var(--grid);
   --color-online: var(--online);
@@ -2067,6 +2070,19 @@ html:has(.landing-page) body {
 /* Lime CTAs are <a> tags — must beat unlayered inherit + themed primary-foreground */
 .landing-page a.bg-lime,
 .landing-page button.bg-lime {
+  color: oklch(0.13 0 0);
+}
+
+/*
+ * Inverted-solid CTAs (the pricing cards' non-featured buttons, matched to the
+ * app's plan cards) are <a> tags too, and hit the same trap as the lime ones
+ * above: `.landing-page a:not(.bg-lime)` sets `color: inherit` UNLAYERED,
+ * while `.text-background` lives in `@layer utilities`. Layer order beats
+ * specificity, so the utility loses and the label inherits the section's light
+ * foreground — light text on a light button, i.e. invisible. Hence this rule,
+ * unlayered, right beside the one that exists for the same reason.
+ */
+.landing-page a.bg-foreground {
   color: oklch(0.13 0 0);
 }
 

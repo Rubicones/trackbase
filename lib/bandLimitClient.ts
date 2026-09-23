@@ -17,12 +17,12 @@ export interface BandLimitInfo {
 
 /** The one place the limit is worded, so every entry point says the same thing. */
 export function bandLimitMessage(limit: number): string {
-  return `You've reached the limit of ${limit} band${limit === 1 ? '' : 's'}.`
+  return `You've reached the limit of ${limit} space${limit === 1 ? '' : 's'}.`
 }
 
 /** Follow-up line: what the user can actually do about it. */
 export const BAND_LIMIT_HINT =
-  'Delete one you no longer need, or join a bandmate’s space — bands you join don’t count.'
+  'Delete one you no longer need, or join someone else’s space — spaces you join don’t count.'
 
 // Once per page load per limit value: hitting the wall is one event, not one
 // per render or per retry.

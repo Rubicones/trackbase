@@ -1,6 +1,10 @@
 /**
- * Subscription plans — THE single source of truth for limits, features and
- * prices.
+ * Subscription plans — THE single source of truth for limits and features.
+ *
+ * NOT prices. What a plan or an add-on costs is the Stripe Price behind its
+ * `STRIPE_PRICE_*` id, read by `lib/billing/catalog.ts` and shown through
+ * `lib/planPrices.ts`. There used to be price strings here; nothing could
+ * catch them drifting from what Stripe actually charged, so they are gone.
  *
  * Every limit check in the application, server or client, resolves back to the
  * `PLANS` table below. **Never write a plan number anywhere else.** A literal
@@ -23,8 +27,8 @@
  * `remaining()` rather than comparing by hand.
  *
  * This module is isomorphic — it must stay free of server-only imports so the
- * plans modal and the preferences panel can render prices and limits from the
- * same constant the server enforces.
+ * plans modal and the preferences panel can render limits from the same
+ * constant the server enforces.
  */
 
 export type PlanId = 'free' | 'solo' | 'band' | 'band_plus'
@@ -84,8 +88,6 @@ export interface PlanDefinition {
   id: PlanId
   /** Display name. */
   name: string
-  /** Display-only price string. There is no billing; nothing parses this. */
-  price: string
   /** Bands the user may OWN. Membership of other people's bands is unlimited. */
   bandsOwned: Limit
   /** Members per band, resolved from the band OWNER's plan. */
@@ -117,7 +119,6 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   free: {
     id: 'free',
     name: 'Free',
-    price: '$0',
     bandsOwned: 1,
     membersPerBand: 3,
     storagePerBandMB: 500,
@@ -127,7 +128,6 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   solo: {
     id: 'solo',
     name: 'Solo',
-    price: '$6',
     bandsOwned: 1,
     membersPerBand: 2,
     storagePerBandMB: 10 * MB_PER_GB,
@@ -137,7 +137,6 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   band: {
     id: 'band',
     name: 'Band',
-    price: '$9',
     bandsOwned: 3,
     membersPerBand: null,
     storagePerBandMB: 10 * MB_PER_GB,
@@ -147,7 +146,6 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   band_plus: {
     id: 'band_plus',
     name: 'Band+',
-    price: '$15',
     bandsOwned: 5,
     membersPerBand: null,
     storagePerBandMB: 50 * MB_PER_GB,
@@ -267,14 +265,14 @@ export function planLimitRows(plan: PlanId): PlanLimitRow[] {
   const p = PLANS[plan]
   return [
     {
-      label: 'Bands you own',
+      label: 'Spaces you own',
       value: p.bandsOwned === null ? 'Unlimited' : String(p.bandsOwned),
     },
     {
-      label: 'Members / band',
+      label: 'Members / space',
       value: p.membersPerBand === null ? 'Unlimited' : String(p.membersPerBand),
     },
-    { label: 'Storage / band', value: formatMB(p.storagePerBandMB) },
+    { label: 'Storage / space', value: formatMB(p.storagePerBandMB) },
     {
       label: 'Active versions',
       value:
@@ -282,7 +280,7 @@ export function planLimitRows(plan: PlanId): PlanLimitRow[] {
           ? 'Unlimited'
           : `${p.activeVersionsPerProject} / project`,
     },
-    { label: 'Bands you join', value: 'Unlimited' },
+    { label: 'Spaces you join', value: 'Unlimited' },
   ]
 }
 
@@ -291,8 +289,6 @@ export function planLimitRows(plan: PlanId): PlanLimitRow[] {
 export interface AddonDefinition {
   type: AddonType
   name: string
-  /** Display-only price string, same contract as `PlanDefinition.price`. */
-  price: string
   /** What one unit grants, in the words the purchase card uses. */
   detail: string
   /**
@@ -307,23 +303,20 @@ export interface AddonDefinition {
 export const ADDONS: Record<AddonType, AddonDefinition> = {
   extra_band: {
     type: 'extra_band',
-    name: 'Extra band',
-    price: '$5',
-    detail: '+1 band you own, on top of your plan.',
+    name: 'Extra space',
+    detail: '+1 space you own, on top of your plan.',
     bandScoped: false,
   },
   extra_storage: {
     type: 'extra_storage',
     name: 'Extra storage',
-    price: '$4',
-    detail: `+${formatMB(EXTRA_STORAGE_MB_PER_UNIT)} of storage on one band.`,
+    detail: `+${formatMB(EXTRA_STORAGE_MB_PER_UNIT)} of storage on one space.`,
     bandScoped: true,
   },
   extra_member: {
     type: 'extra_member',
     name: 'Extra member',
-    price: '$2',
-    detail: '+1 member on one band.',
+    detail: '+1 member on one space.',
     bandScoped: true,
   },
 }
@@ -337,6 +330,28 @@ export const ADDON_ORDER: readonly AddonType[] = [
 
 export function isAddonType(value: unknown): value is AddonType {
   return typeof value === 'string' && value in ADDONS
+}
+
+/**
+ * Can this add-on raise anything on this plan?
+ *
+ * `addToLimit()` treats `null` (unlimited) as absorbing, so an add-on on a
+ * dimension the plan already leaves unlimited changes nothing — `extra_member`
+ * on Band and Band+ is the live case. Pure and isomorphic on purpose: the
+ * server refuses the purchase with it (`addonHasEffect` in
+ * `lib/entitlements.ts` delegates here) and the billing screen disables the
+ * `+` with it, so the two can never disagree.
+ */
+export function addonHasEffect(plan: PlanId, addon: AddonType): boolean {
+  const base = PLANS[plan]
+  switch (addon) {
+    case 'extra_band':
+      return base.bandsOwned !== null
+    case 'extra_storage':
+      return base.storagePerBandMB !== null
+    case 'extra_member':
+      return base.membersPerBand !== null
+  }
 }
 
 // ── What a plan adds, and what it takes away ─────────────────────────────────
@@ -374,21 +389,21 @@ export function planUpgradeHighlights(plan: PlanId): string[] {
   if (limitIsGreater(current.bandsOwned, previous.bandsOwned)) {
     lines.push(
       current.bandsOwned === null
-        ? 'Unlimited bands of your own'
-        : `Up to ${current.bandsOwned} bands you own`,
+        ? 'Unlimited spaces of your own'
+        : `Up to ${current.bandsOwned} spaces you own`,
     )
   }
 
   if (limitIsGreater(current.membersPerBand, previous.membersPerBand)) {
     lines.push(
       current.membersPerBand === null
-        ? 'Unlimited members per band'
-        : `Up to ${current.membersPerBand} members per band`,
+        ? 'Unlimited members per space'
+        : `Up to ${current.membersPerBand} members per space`,
     )
   }
 
   if (limitIsGreater(current.storagePerBandMB, previous.storagePerBandMB)) {
-    lines.push(`${formatMB(current.storagePerBandMB)} of storage per band`)
+    lines.push(`${formatMB(current.storagePerBandMB)} of storage per space`)
   }
 
   if (limitIsGreater(current.activeVersionsPerProject, previous.activeVersionsPerProject)) {
@@ -422,7 +437,7 @@ export function planTradeoffs(from: PlanId, to: PlanId): string[] {
 
   if (limitIsGreater(a.bandsOwned, b.bandsOwned)) {
     lines.push(
-      `${b.name} covers ${b.bandsOwned} owned ${b.bandsOwned === 1 ? 'band' : 'bands'}, not ${
+      `${b.name} covers ${b.bandsOwned} owned ${b.bandsOwned === 1 ? 'space' : 'spaces'}, not ${
         a.bandsOwned === null ? 'unlimited' : a.bandsOwned
       }`,
     )
@@ -430,14 +445,14 @@ export function planTradeoffs(from: PlanId, to: PlanId): string[] {
 
   if (limitIsGreater(a.membersPerBand, b.membersPerBand)) {
     lines.push(
-      `${b.name} allows ${b.membersPerBand} members per band, fewer than ${a.name}'s ${
+      `${b.name} allows ${b.membersPerBand} members per space, fewer than ${a.name}'s ${
         a.membersPerBand === null ? 'unlimited' : a.membersPerBand
       }`,
     )
   }
 
   if (limitIsGreater(a.storagePerBandMB, b.storagePerBandMB)) {
-    lines.push(`Storage per band drops to ${formatMB(b.storagePerBandMB)}`)
+    lines.push(`Storage per space drops to ${formatMB(b.storagePerBandMB)}`)
   }
 
   if (limitIsGreater(a.activeVersionsPerProject, b.activeVersionsPerProject)) {

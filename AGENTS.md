@@ -74,7 +74,8 @@ repo; mobile is the responsive web experience.
 - **googleapis** — Google Sheets mirror of feedback submissions.
 - **GA4** via `@next/third-parties` + **Meta Pixel** (`lib/meta-pixel.ts`)
   + **Yandex Metrica** (`lib/yandex-metrica.ts`) + **@vercel/analytics**
-  (all wired in `app/layout.tsx`).
+  (all wired in `app/layout.tsx`; the first three only with cookie consent —
+  see §4 *Cookie consent*).
 - **motion**, **lucide/lucide-react**, **next-themes**.
 
 ## 3. Directory map
@@ -557,8 +558,62 @@ route-change tracker handles SPA navigations — mirroring would double-count.
 Page views: `components/analytics/PageViewTracker.tsx` (GA4),
 `MetaPixel.tsx` (`fbq PageView`), `YandexMetrica.tsx` (`ym hit`, passing the
 previous URL as `referer` since Metrica can't infer it on an SPA navigation).
-GA/Pixel/Metrica/Vercel Analytics are all mounted in `app/layout.tsx`, and
-Pixel + Metrica render nothing when their env var is absent.
+GA/Pixel/Metrica are mounted by `components/analytics/ConsentedTrackers.tsx`
+(only with consent — next section); Vercel Analytics (cookieless) directly in
+`app/layout.tsx`. Pixel + Metrica also render nothing when their env var is
+absent.
+
+### Legal pages
+`/terms`, `/privacy`, `/refund` — static, public (`PUBLIC_PREFIXES` in
+`middleware.ts`), in `app/sitemap.ts`, linked from the landing and slice-page
+footers next to *Cookie settings*. Route files are thin wrappers around
+`components/legal/{Terms,Privacy,Refund}Document.tsx`, whose copy is verbatim
+from `sonicdesk_designs/src/routes/{terms,privacy,refund}.tsx` (the design
+source of truth — change copy there first, then mirror it). Shared shell:
+`components/legal/LegalDocument.tsx` (+ `legal.css`); bump
+`LEGAL_LAST_UPDATED` whenever a document's copy changes.
+
+**Terms acceptance.** The `/auth` email step shows, under Continue: "By
+continuing, you agree to our Terms of Service and acknowledge our Privacy
+Policy." — plain text, no checkbox. **"acknowledge", never "agree to", for the
+Privacy Policy** (GDPR: information, not a contract). Recorded server-side
+only, by `handle_new_user`, on the profile row it creates:
+`terms_accepted_at = now()`, `terms_version = public.current_terms_version()`
+(`supabase/migrations/20260923_terms_acceptance.sql`). That SQL function is the
+single source of the version (ISO date); **when the Terms change, re-run it
+with the new date and bump `LEGAL_LAST_UPDATED.terms` to match.** Existing
+users are never re-stamped. The browser cannot write either column (UPDATE is
+column-granted without them; INSERT on `profiles` is revoked).
+
+### Cookie consent (GDPR)
+GA4, the Meta Pixel and Yandex Metrica **must not load, set cookies or send a
+request before the visitor clicks Accept.** Gated at render time, never
+"loaded then suppressed":
+- **Storage:** cookie `sd_consent` = `accepted.<ms>` | `rejected.<ms>`,
+  Max-Age 12 months, and a stored timestamp older than 12 months also counts
+  as no choice (`lib/consent.ts` — `parseConsent`, `writeConsentCookie`).
+  A cookie, not localStorage, so `app/layout.tsx` reads it server-side.
+- **Rendering:** `ConsentProvider` (seeded with the server-read value,
+  re-read from `document.cookie` on mount) → `ConsentedTrackers` returns
+  null unless `accepted`. ⚠ The landing and `/features/*`, `/audience/*`,
+  `/tools/*` pages are `force-static`, where `cookies()` is empty: their HTML
+  is tracker-free for everyone and trackers mount after hydration. Don't
+  "fix" that by removing `force-static`.
+- **Sending:** `trackEvent`, `setUserProperties`, and every Meta/Metrica
+  helper check `hasTrackingConsent()` on each call, so withdrawing consent
+  stops events at once. On Reject, already-loaded scripts are also told to
+  stop via vendor switches (`ga-disable-<id>`, `fbq('consent','revoke')`)
+  but are **not** unloaded; they are simply not rendered on the next load.
+- **UI:** `components/consent/CookieBanner.tsx` — fixed bottom bar, not a
+  modal. Reject and Accept share one class string: **equal visual weight is a
+  legal requirement, never restyle one of them alone.** `CookieSettingsLink`
+  (landing + SliceChrome footers, AppShell/AuthShell status footers) reopens it.
+- **Privacy Policy:** `PRIVACY_POLICY_HREF` in `lib/consent.ts` is a
+  placeholder (`/privacy`, no page yet; already public in middleware).
+- **Any new non-essential tracker** goes inside `ConsentedTrackers` and its
+  helpers check `hasTrackingConsent()`. Essential cookies (auth session, theme)
+  are not gated. The Metrica `<noscript>` pixel was
+  removed on purpose — a no-JS visitor can never consent.
 
 **Metrica goals must also be created in the counter UI** (Settings → Goals →
 "JavaScript event", Identifier = the exact event name) before they appear in
@@ -635,7 +690,25 @@ capacity did not.
 The same rule lives in `effective_band_limit()` in the database
 (`supabase/migrations/20260921_band_limit_override_floor.sql`, applied by hand)
 and in `resolveEntitlements()` (`lib/entitlements.ts`). **All three must agree.**
-While they do not, the app offers a band the trigger then refuses with `BL001`. **Band capabilities always come from the band
+While they do not, the app offers a band the trigger then refuses with `BL001`.
+
+> **This actually happened, and it is the trap to watch for.** `20260807`
+> installed the plan-aware `enforce_band_owner_limit()` and
+> `create_band_with_owner()`. The `20260817` hotfix then ran *after* it and did
+> `create or replace` on exactly those two, returning them to reading
+> `profiles.band_limit`. `20260921` was applied later still, but by design it
+> replaces only `effective_band_limit()` — so it upgraded a function nothing
+> called. The database sat with a current resolver and two pre-plans callers,
+> and an account on Band+ with an `extra_band` addon resolved to 6 in the app
+> and was refused at 3 by Postgres. Restored by
+> `20260923_band_limit_restore_plan_aware.sql`, which carries sections 2 and 3
+> of `20260807` and deliberately **omits its section 1** — re-running the whole
+> file would silently regress the override back to replacement semantics. When
+> a limit refusal and the UI disagree, check which *version* of each of the
+> three objects is live before anything else:
+> `select proname, prosrc ilike '%effective_band_limit%' from pg_proc …`.
+
+**Band capabilities always come from the band
 OWNER's plan**; members inherit them, and a member's own plan governs only
 bands they own. Ownership is `band_members.role = 'owner'` everywhere.
 
@@ -875,12 +948,93 @@ failed retry would turn an expired card into something shaped like data loss.
 When Stripe gives up the status becomes `unpaid`/`canceled`, the plan drops to
 free through the ordinary path, and the 14-day grace period applies on top.
 
-**Add-ons are subscription items**, reconciled into the existing `plan_addons`
-table by `syncAddonsFromSubscription()`. Rows with a
-`stripe_subscription_item_id` are owned by Stripe and deleted when the item
-disappears; rows without one (support credits, grandfathered capacity) are
-never touched by a webhook. Band scope lives in the item's metadata and is
-verified against real ownership before it is honoured.
+**Add-ons are subscription items — ONE item per add-on price.** Stripe refuses
+the same price twice on one subscription, so the band split lives in the
+item's metadata (`b_<band uuid without hyphens>: "<units>"`, parsed by
+`lib/billing/addonItems.ts`; legacy items with `band_id` read as "all units on
+that band"). `syncAddonsFromSubscription()` writes one `plan_addons` row per
+(item, band), keyed by `stripe_allocation_key` = `<item id>:<band id | *>`.
+Units the metadata does not place on an owned band grant nothing (fail
+closed). A subscription that no longer entitles grants no add-ons. Rows with
+no Stripe item (support credits, grandfathered capacity) are never touched.
+Every webhook re-reads the subscription from Stripe rather than trusting the
+event snapshot — add-on flows produce several `updated` events in a row.
+
+**Adding charges NOW; the grant waits for payment** (`lib/billing/addonOrders.ts`).
+The `+`/`−` steppers only stage. `POST /api/billing/addons/preview` prices the
+staged set with `invoices.createPreview({ subscription_details: { items,
+proration_behavior: 'always_invoice', proration_date: t } })`. ⚠ The preview
+also lists invoice items already PENDING on the customer (left by the old
+flow); the pending-update invoice does not charge them. So the quoted amount
+is the preview's lines minus the ones whose invoice item id is currently
+pending — never `preview.amount_due` (that showed $6 for a $2 add-on). The
+order then stores the real invoice's `amount_due`; an unpaid invoice whose
+amount differs from the quote is voided. Plus two `preview_mode: 'recurring'` previews
+for the "then $Y/month" line. `POST /api/billing/addons/confirm` re-prices at
+the same `t`, refuses if the figure moved (409 `amount_changed`), then makes
+ONE `subscriptions.update` with `payment_behavior: 'pending_if_incomplete'`,
+`proration_behavior: 'always_invoice'`, `proration_date: t`: one invoice, one
+charge, and Stripe applies the items only if it is paid. Pending updates accept
+no item metadata, so which band gets the new units is stored on a
+`billing_addon_orders` row and written to the item by the webhook
+(`invoice.paid` / `customer.subscription.pending_update_applied` →
+`applyAddonOrder()`, idempotent: absolute targets from the order's
+`items_before` snapshot). **Nothing is granted from a route.** Declined →
+the route voids the invoice (discards the pending update) and reports it.
+3D Secure → the order is `requires_action`; the browser opens the invoice's
+`hosted_invoice_url` and polls `GET /api/billing/addons/orders/[id]`;
+`POST …/orders/[id]/cancel` voids it. One open order per user (partial
+unique index) — a double click cannot become a double charge. A declined
+add-on invoice never raises the dunning banner (`isAddonOrderInvoice`).
+
+**Removing takes effect at period end, with no refund, and is reversible.**
+The item is reduced immediately with `proration_behavior: 'none'` (so the
+renewal invoice cannot bill it and nothing is credited), and the paid-for
+capacity is kept by an **ending grant**: a `plan_addons` row with `ends_at` =
+the item's `current_period_end`, `ending_subscription_id`, and NO Stripe item
+id. `readAddons()` and `effective_band_limit()` ignore it the instant `ends_at`
+passes — change both together. `POST /api/billing/addons/keep` undoes it: the
+units go back on the item with `none` (free — the period is paid) and the
+grant is deleted; refused if the item's period no longer matches `ends_at`.
+Buying what is still ending is refused (409 `keep_first`) — that would charge
+twice for the same days. Subscription schedules were rejected for this: a
+schedule's next phase restates every item, so a portal plan switch or an
+add-on bought mid-period would be reverted at the boundary, and a phase change
+voids pending updates.
+
+⚠ The webhook endpoint must be subscribed to `invoice.paid`,
+`invoice.voided`, `customer.subscription.pending_update_applied` and
+`customer.subscription.pending_update_expired` in addition to the events it
+already took. Without `invoice.paid` / `pending_update_applied`, paid add-ons
+are never granted.
+
+`scripts/billing/verify-addons.mjs` checks all of the above against Stripe
+test mode on a test clock (refuses a live key).
+
+**Every money figure in the app comes from Stripe.** `GET
+/api/me/billing/upcoming` (`invoices.createPreview`) is the next invoice,
+broken down into the plan line, each renewing add-on, and "adjustments"
+(anything non-recurring — prorations left by the old flow, one-off items),
+plus tax, discount and credit. `POST /api/billing/addons/preview` is what a
+staged add-on change will charge. `formatMoney()` in
+`components/billing/types.ts` only moves Stripe's integer minor units into
+the user's locale and does no arithmetic. Do not extend this by summing
+anything in the browser. No customer, no live subscription or nothing left to
+bill answers `{ available: false, reason }` with a 200, and the footer then
+falls back to the plan's list price from the catalog below.
+
+**Prices come from Stripe, not from code.** There are no price strings in
+`lib/plans.ts` any more (`PlanDefinition.price` / `AddonDefinition.price` were
+removed — they drifted from what Stripe charged with nothing to catch it).
+`lib/billing/catalog.ts` (server) reads the Stripe Price behind each
+`STRIPE_PRICE_*` id — `unit_amount`, `currency`, `recurring.interval` — caches
+it 10 min (Prices are immutable; a new amount is a new id and a deploy), and
+never throws. Free is reported as 0 in the paid plans' currency. The browser
+gets it as `prices` on `GET /api/me/plan` (`PlanSnapshot.prices`); the static
+landing page gets it as a prop from `app/page.tsx` (`revalidate = 3600`).
+Format only with `formatCatalogPrice()` / `formatInterval()`
+(`lib/planPrices.ts`, isomorphic). An absent entry means Stripe could not be
+asked: render "—" or nothing, **never a remembered number**.
 
 **`BILLING_LIVE`** (`lib/billing/config.ts`) requires both the API key and the
 webhook secret — a deployment that can take money but cannot hear about it is
@@ -933,7 +1087,9 @@ period end, so "nothing changed yet" is a correct outcome.
 `plan_addons.band_id` cascades on band delete, so the row disappears while the
 Stripe subscription item keeps charging with nothing left in the app that can
 see it. `DELETE /api/bands/[id]` calls `removeBandScopedAddonItems(bandId)`
-BEFORE the delete (`lib/billing/store.ts`, proration credited), and a failure
+BEFORE the delete (`lib/billing/store.ts`: takes that band's units off the
+shared item with `proration_behavior: 'none'` — no credit, per the Refund
+Policy; it used to credit the unused days), and a failure
 there **blocks the deletion** with a 502 — the same trade account deletion
 makes, because a refused delete is a retry and billing for a band that no longer
 exists is not recoverable from this side. A band with no Stripe-backed add-ons,
@@ -946,19 +1102,79 @@ plain UNIQUE constraint; until it runs, **every addon purchase raises 42P10**
 in `syncAddonsFromSubscription()` and the paid-for row is never written) and
 `20260921_band_limit_override_floor.sql` (manual, §5 — makes
 `band_limit_override` a floor in `effective_band_limit()`; pairs with
-`lib/entitlements.ts`, apply together).
+`lib/entitlements.ts`, apply together), and
+`20260924_addon_charge_now.sql` (manual, §5 — `plan_addons.stripe_allocation_key`
+/ `ends_at` / `ending_subscription_id`, unique key moved from the item id to
+the allocation key, `effective_band_limit()` ignores expired ending grants, new
+`billing_addon_orders` table. **Run it before deploying the add-on code** — the
+sync upserts on `stripe_allocation_key`).
 Routes: `POST /api/billing/checkout`, `POST /api/billing/portal`,
-`POST /api/billing/addons`, `GET /api/me/billing`, `POST /api/stripe/webhook`.
+`POST /api/billing/addons/preview`, `POST /api/billing/addons/confirm`,
+`POST /api/billing/addons/keep`, `GET /api/billing/addons/orders/[id]`,
+`POST /api/billing/addons/orders/[id]/cancel`, `GET /api/me/billing`,
+`GET /api/me/billing/upcoming`, `POST /api/stripe/webhook`.
+`POST /api/billing/addons` answers 410 — the old charge-later endpoint.
 Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_{SOLO,BAND,BAND_PLUS}`,
 `STRIPE_PRICE_EXTRA_{BAND,STORAGE,MEMBER}`.
 
 ### Subscription UI
 
-Ported from the design kit in `sonicdesk_designs` (`/uikit/subscriptions`).
+Ported from the design kit in `sonicdesk_designs`. **Two routes there govern
+different things and neither is optional reading:**
+
+| kit route | governs |
+| --- | --- |
+| `/uikit/subscriptions` | every component STATE — grace, frozen, locks, usage, conflicts, messages |
+| `/subscription` | the Plan & billing SCREEN — `app/billing/` follows its layout |
+
 The kit paints on its own palette (`--sub-bg`, `--sub-line`, `--color-primary`);
 the mapping onto this app's tokens is fixed once in `components/plan/ui.tsx`
 (`TONE`) and nowhere else. Shared primitives: `Eyebrow`, `StatusBadge`,
 `InlineNotice`, `UsageBar`, `PlanPanel`.
+
+**The tone goes on the container, not on four children.** A banner sets
+`TONE[x].text` on its own section so the icon, the heading and any outline
+button inherit it through `currentColor`. Colouring each child separately is
+how a red banner ends up with an amber icon.
+
+**These screens do not use `TbButton`.** Its shell is
+`text-[10px] uppercase tracking-widest` on every variant — the app's control
+idiom, right for a toolbar and wrong for a decision about money. The kit uses
+body-sized text on taller buttons, so `components/plan/ui.tsx` exports the
+class strings instead: `actionOutlineTone`, `actionSolid`,
+`actionDestructive`, and the `…Tall` pair for the primary money CTA.
+⚠ `GraceBanner` still carries private copies of two of them; fold them in.
+
+**Body copy needs `font-body-tb`, and forgetting it is silent.** The app's
+default face IS mono — `--font-sans: var(--tb-font-mono)` (globals.css) and
+`html[data-theme] body { font-family: var(--tb-font-mono) }` — so a paragraph
+with no font class renders monospace and *looks* deliberate. The kit sets body
+copy in Inter, which is what `.font-body-tb` exists for. So: `font-mono-tb` at
+9–11px for labels, meta and badges; `font-body-tb` at `text-sm leading-6` for
+every sentence; `font-display-tb` for headings. The first port set explanatory
+prose in 11px mono, which is the app's caption style doing a paragraph's job,
+and the whole billing screen read as a terminal.
+
+**Headings need `tracking-normal!`, with the bang.** `html[data-theme] h1…h6`
+sets `letter-spacing: -0.02em` at specificity (0,1,1), which outranks a utility
+class; the kit's headings sit at normal tracking. **Tailwind here is v4, where
+the important modifier is a SUFFIX** — `tracking-normal!`, not
+`!tracking-normal`. The prefix form is not an error, it is simply an unknown
+class that does nothing, so the heading keeps the tight tracking and the diff
+looks correct.
+
+**A hairline grid needs OPAQUE cells.** The kit draws separators by filling a
+`grid gap-px` wrapper with the line colour and letting opaque cells cover
+everything but the 1px gaps. Give a cell a translucent face (`bg-surface/40`)
+and the line colour shows through its whole area: the row renders as one grey
+slab with separators you cannot see. Panels on these surfaces are `bg-surface`
+at full strength — the kit maps `--sub-panel` straight to `--surface`, and
+`--surface` is already only oklch 0.16 against a 0.13 page, so there is nothing
+to soften.
+
+**A 3px bar needs `bg-surface-2` as its track.** `bg-border` is the hairline
+colour; as a 3px fill it is invisible, and the bar then reads as a lone lime
+dash floating in nothing rather than as a proportion.
 
 **No component may state a limit or a price.** Cards render `planLimitRows()`,
 "plus:" bullets render `planUpgradeHighlights()` (a diff against the plan below
@@ -971,9 +1187,95 @@ allows 2 — one of our upgrades lowers a ceiling. Each plan card checks it
 against the viewer's current plan and says so before the button, rather than
 letting `too_many_members` refuse them after they have paid.
 
-`/billing` is the one transactional screen (`app/billing/`). Preferences keeps
-a `<PlanUsage compact />` summary and a link; two full copies would be two
-places to keep in step.
+`/billing` is the one transactional screen (`app/billing/`) and it follows the
+kit's `/subscription` route: hero, a two-column current-plan panel, three
+headline usage tiles over a collapsible per-band breakdown, add-on ROWS with a
+stepper (`components/billing/AddonRows.tsx` — the card grid it replaced was the
+`/uikit` treatment, which browses rather than adjusts), then the footer.
+
+**Add-on steppers STAGE; one button pays.** `+`/`−` never touch the account:
+the row shows the new count as pending ("+1 pending", tinted row) and a sticky
+summary bar lists every staged change across rows. It shows Stripe's price
+("Charged now: $X — for the rest of this period" / "Then $Y/month from …") and
+a single primary button with the amount in it ("Pay $X and add"; "Apply
+changes" when only removing). Confirm is disabled while pricing. During
+payment the steppers lock; 3D Secure shows "Confirm with your bank" (Stripe's
+hosted invoice page, new tab) and "Cancel payment"; a decline says "Payment
+didn't go through. Nothing was changed.", keeps the staged changes and offers
+the portal. The row never shows an add-on as active until the order is
+`applied`. A removed add-on shows "N ACTIVE · ENDS <date>" and "Keep it". A `+`
+that could not raise any limit on the current plan (`addonHasEffect`, now in
+`lib/plans.ts` so client and server share it) is disabled with
+`addonWithoutEffectCopy()` beside it.
+
+⚠ **The footer computes no total.** It renders Stripe's own next-invoice
+breakdown (`GET /api/me/billing/upcoming`). The kit closes on an "estimated
+monthly total" added up in the page; do not build one by summing catalog
+prices in the browser — a total computed there would be a second source of
+truth for money, and the invoice is the one place it must never disagree.
+
+Preferences keeps a `<PlanUsage compact />` summary and a link; two full copies
+would be two places to keep in step. `PlanUsage` is now the kit's single framed
+panel and `/billing` no longer renders it — the usage tiles there come from
+`/subscription`, so Preferences is its only consumer.
+
+### Deletion safety — `lib/bandDelete.ts`
+
+Four invariants, enforced in the API layer and (once
+`supabase/migrations/20260923_deletion_invariants.sql` is applied) in Postgres:
+
+1. A band can be deleted only when its owner is its **only** member.
+2. An account can be deleted only when the user owns **no** bands.
+3. A band can never become ownerless.
+4. Deleting a band purges its R2 objects.
+
+Invariants 1–3 are refusals, not errors. `DELETE /api/bands/[id]` answers 409
+`{ error: 'band_not_empty', others, message }` and `DELETE /api/profile/account`
+answers 409 `{ error: 'account_owns_spaces', spaces, message }` — both are
+constructed by helpers in `lib/bandDelete.ts` so the wording and shape live in
+one place, and `parseBandNotEmpty` recognises the band refusal on the client
+**by shape, not by status**. Do not route either through
+`serverErrorResponse`.
+
+**Order matters in the band DELETE, and each step must succeed before the next:**
+member guard → Stripe addon removal (blocking; a failure is a 502 and nothing is
+deleted, because billing for a band that no longer exists is worse than a blocked
+deletion) → `purgeBandStorage` → row delete → `settleAccount`. The storage purge
+is the one step that is allowed to fail partially: it logs what it orphaned and
+the deletion continues. Leaked bytes are a cost problem; a band that cannot be
+deleted is a user problem.
+
+`purgeBandStorage` generalises the per-project walk in `DELETE /api/projects/[id]`
+with two deliberate deviations, both of which matter if you touch it:
+
+- The reference scope is the **whole band**, not one project. Scoped per project,
+  two projects in the same band sharing a file hash would each see the other as
+  an outside reference and neither would delete it.
+- Membership is tested against an in-memory `Set` of version ids rather than a
+  PostgREST `.not('version_id','in','(…)')`, which would put hundreds of uuids in
+  the query string.
+
+It also removes each project's `preview_mix_storage_path`, which the original
+walk does not cover. It does **not** touch `project_resources` objects — a known
+gap, not an oversight.
+
+Account deletion refuses **before** the Stripe cancel. A validation that can
+refuse has to precede the first destructive step, or a refused deletion would
+have already cancelled the subscription. It no longer deletes owned bands as a
+side effect: the user is told which spaces to delete first, one at a time.
+Destroying other people's work should take explicit, visible steps.
+
+Removing a member is therefore the path every owner now has to take before
+deleting anything, so it is not silent: `lib/memberRemoval.ts` exports
+`REMOVAL_CONSEQUENCE`, the single sentence used **verbatim** by both the owner's
+confirmation dialog in `app/band/[bandId]/page.tsx` and the email the removed
+member gets. Keep them sharing that constant — the promise made in the dialog is
+the promise delivered in the email.
+
+`lib/email.ts` is provider-agnostic and **ships inert**: with `EMAIL_API_KEY` /
+`EMAIL_FROM` unset it logs the whole message and returns
+`{ sent: false, reason: 'not_configured' }`. It never throws, and notification
+failures never fail the removal.
 
 ### Default entry point — `/open`
 
@@ -997,7 +1299,14 @@ keyframes live in `app/globals.css`, and label sizing uses the `--vg-u`
 container-query unit so it scales with the hero column. The footer's
 PRODUCT column is **derived from `LANDING_NAV_ITEMS`** (`FOOTER_PRODUCT_LINKS`)
 so it can never drift from the sections the page actually has — add a section to
-the nav and the footer follows. The landing
+the nav and the footer follows. The **pricing section** (`Pricing`, `#pricing`)
+is generated like the plans modal: names, limits and feature unlocks from
+`PLANS` via `planLimitRows()` / `planTradeoffs()`, blurbs from `PLAN_BLURBS`
+(`lib/planCopy.ts`, shared with the modal), prices from Stripe via the `prices`
+prop. It used to be its own hand-written table ("$12 / $22 per member", plan
+names and limits the app never had) — do not reintroduce copy that states a
+limit or a price. The home FAQ's free-plan numbers are templated from
+`PLANS.free` (`lib/seo.ts`) for the same reason. The landing
 page forwards to `/dashboard` **only** when running as the installed app, via
 `isRunningAsInstalledPWA()` (`lib/pwa.ts`). That check matches
 `(display-mode: standalone)` — mirroring `display: 'standalone'` in
@@ -1074,10 +1383,15 @@ have no CREATE files here. Columns below are inferred from actual queries.
   **onboarding jsonb** (tour flags, e.g.
   `project_tour_completed`), **acquisition_source** (text, null = direct) and
   **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
-  account creation only, see Campaign attribution in §4. RLS (public read,
+  account creation only, see Campaign attribution in §4,
+  **terms_accepted_at** (timestamptz) and **terms_version** (text) — written
+  only by `handle_new_user` at account creation (see Legal pages in §4); NULL
+  for accounts created before `20260923_terms_acceptance.sql`. RLS (public read,
   self update). Rows are inserted by the `handle_new_user` trigger, **not** by
   app code. ⚠ **The deployed trigger is `insert into public.profiles (id)
-  values (new.id)` — nothing else.** `username` starts **NULL** and is first
+  values (new.id)` — nothing else** (once `20260923_terms_acceptance.sql` is
+  applied: `(id, terms_accepted_at, terms_version)` with `now()` and
+  `current_terms_version()`, still nothing else). `username` starts **NULL** and is first
   set by `PATCH /api/profile/username`; there is no `user_<uuid>` placeholder,
   despite what `supabase/migrations/001_auth.sql` shows. That file was never
   applied in the form it records. Verify against the database, not the file:
@@ -1218,6 +1532,30 @@ post-checkout confirmation poll on `/billing`.
   `app/design-system.css` (light + dark + multiple palettes via
   `PaletteContext` / `lib/design-theme.tsx`). `/uikit` is the living
   reference.
+- **In the product a band is a SPACE, and that is display-only too.** No
+  user-facing string inside the app says "band" — it says "space". The landing
+  pages are the exception and keep the musicians' word. Everything underneath
+  stays `band`: the tables (`bands`, `band_members`), the columns
+  (`bandsOwned`, `membersPerBand`), the routes (`/api/bands/[id]`,
+  `/api/me/plan/keep-bands`), the analytics parameter values
+  (`limit_type: 'bands'`), the `PlanId` `'band'` and the `AddonType`
+  `'extra_band'` — those are data and wire format, and a wording change must
+  never reach them. ⚠ A blanket find-and-replace WILL break this: `bands.` and
+  `band.` are property access, `band:` is an object key, and `'band'` is a
+  `PlanId` written to `profiles.plan` and mapped to a Stripe Price. Change
+  strings, by hand, and let `tsc` confirm nothing else moved. "Bandmate" is a
+  person, not a space — leave it or reword the sentence.
+- **Every subscription control reports through `usePlanTracking()`**
+  (`contexts/PaywallContext.tsx`), not through a bare `trackEvent`. It injects
+  `current_plan`, `plan_state` and `billing_live` into each event, so no call
+  site has to remember the one thing every subscription question needs: which
+  plan the person was on when they did it. The key is `current_plan` and NOT
+  `plan`, because several events already use `plan` for the tier being acted on
+  — a card someone pressed Subscribe on, the tier a limit belongs to — and
+  reusing the name would have the viewer's own plan overwrite the target. The
+  returned function is referentially stable, so it is safe in a dependency
+  array; that is deliberate, since one of its callers reports "modal opened"
+  from an effect and an unstable identity would re-count it on every refresh.
 - **Git→music terminology is display-only.** branch→version, main→Master,
   merge→apply. DB values stay `'main'`; resolve display names only via
   `getVersionDisplayName()`. "Master" is a reserved version name.
@@ -1261,7 +1599,8 @@ post-checkout confirmation poll on `/billing`.
   behind a column grant, applied by
   `supabase/migrations/20260806_lock_entitlement_columns.sql`: `authenticated`
   may update `username`, `display_name`, `avatar_color`, `onboarding` and
-  nothing else. **Adding a user-editable column to `profiles` means adding it to
+  nothing else (and, since `20260923_terms_acceptance.sql`, cannot INSERT into
+  `profiles` at all). **Adding a user-editable column to `profiles` means adding it to
   that grant; adding any other column means leaving it out.** Never add a
   privileged field to a table a client can update without checking the grant.
   **No client component writes `profiles` any more** — `PreferencesModal`'s
@@ -1300,6 +1639,20 @@ post-checkout confirmation poll on `/billing`.
   checks `band_members` itself must call `frozenBandRefusal()` /
   `isBandFrozenForWrite()` explicitly — the resources routes and the
   member-role route did not, and were writable in a frozen band.
+- **An accent used outside the landing page must be declared at the theme
+  root.** `--wave-amber`, `--wave-mint` and `--wave-violet` lived only inside
+  `.landing-page` (globals.css) while `TONE` (`components/plan/ui.tsx`) used
+  them on every subscription surface, so outside the landing page they resolved
+  to nothing — and an undefined var inside a colour throws no error and logs
+  nothing. `color: var(--missing)` falls back to inherit; `border-color:
+  color-mix(… var(--missing) …)` falls back to currentColor. The grace banner
+  therefore rendered WHITE and looked deliberate. They are now declared in
+  `:root` in `app/design-system.css` (with darkened values for the three light
+  themes) and registered in the `@theme` block, which is what makes
+  `text-wave-amber` a real utility. **Use the registered token, never
+  `text-[var(--wave-amber)]`** — the arbitrary form fails the same silent way if
+  the variable ever moves again. `--wave-coral` and `--wave-sky` are still
+  landing-only on purpose; nothing outside `.landing-page` may reference them.
 - **Never hardcode a plan limit.** `lib/plans.ts` is the only place a limit,
   feature or price is written. Every check reads it through
   `getEffectiveEntitlements()` / `getBandEntitlements()`. The one deliberate

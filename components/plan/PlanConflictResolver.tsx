@@ -102,7 +102,7 @@ export function PlanConflictResolver({
         </h3>
         <p className="m-0 mt-2 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
           {blocking.length > 0
-            ? `${PLANS[targetPlan].name} allows fewer members per band than you have right now. Remove the extras below and the switch unlocks.`
+            ? `${PLANS[targetPlan].name} allows fewer members per space than you have right now. Remove the extras below and the switch unlocks.`
             : 'Nothing is blocking this switch.'}
         </p>
       </header>
@@ -116,7 +116,7 @@ export function PlanConflictResolver({
 
           {memberConflicts.length === 0 && (
             <p className="m-0 mt-4 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-              No band is over the member limit of the plan you are moving to.
+              No space is over the member limit of the plan you are moving to.
             </p>
           )}
 
@@ -132,7 +132,7 @@ export function PlanConflictResolver({
                 Remove {conflict.current - conflict.limit}{' '}
                 {conflict.current - conflict.limit === 1 ? 'member' : 'members'}. Anything they
                 made stays: their comments, tracks and activity history are untouched — they just
-                lose access to this band.
+                lose access to this space.
               </p>
 
               <ul className="m-0 mt-3 list-none space-y-1.5 p-0">
@@ -184,7 +184,7 @@ export function PlanConflictResolver({
                   key={i}
                   className="flex items-start gap-2 font-mono-tb text-[10px] leading-relaxed text-muted-foreground"
                 >
-                  <span className="mt-px shrink-0 text-[var(--wave-amber)]">
+                  <span className="mt-px shrink-0 text-wave-amber">
                     <LucideIcon icon={CircleCheck} size={13} />
                   </span>
                   <span>{describeAutoResolving(c)}</span>
@@ -222,7 +222,7 @@ export function PlanConflictResolver({
 function describeAutoResolving(c: Conflict): string {
   switch (c.type) {
     case 'too_many_bands':
-      return `You own ${c.current} bands; the new plan allows ${c.limit}. Nothing is deleted — you get 14 days to decide, and bands over the limit keep working until then.`
+      return `You own ${c.current} spaces; the new plan allows ${c.limit}. Nothing is deleted — you get 14 days to decide, and bands over the limit keep working until then.`
     case 'storage_exceeded':
       return `${c.bandName} is using ${formatStorageLimit(c.currentMB * 1024 * 1024)} of ${formatMB(c.limitMB)}. Existing files stay; new uploads to that band are paused until it fits.`
     case 'versions_exceeded':

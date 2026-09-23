@@ -142,7 +142,7 @@ export function DevPlanSwitcher() {
 
   if (pending) {
     return (
-      <div className="border border-[var(--wave-amber)]/40 bg-[var(--wave-amber)]/5 p-3">
+      <div className="border border-wave-amber/40 bg-wave-amber/5 p-3">
         <PlanConflictResolver
           targetPlan={pending.target}
           conflicts={pending.conflicts}
@@ -305,8 +305,8 @@ export function DevPlanSwitcher() {
             so the warning is tied to the number in force, not to the column
             merely being set. */}
         {plan.bandsOwnedOverridden && (
-          <div className="border border-[var(--wave-amber)]/40 bg-[var(--wave-amber)]/5 px-2.5 py-2 mb-2">
-            <p className="font-mono text-[10px] text-[var(--wave-amber)] m-0 leading-relaxed">
+          <div className="border border-wave-amber/40 bg-wave-amber/5 px-2.5 py-2 mb-2">
+            <p className="font-mono text-[10px] text-wave-amber m-0 leading-relaxed">
               Override active — your owned-band limit is {plan.limits.bandsOwned}, the higher of
               the override and what your plan plus add-ons grant.
             </p>
@@ -345,7 +345,7 @@ export function DevPlanSwitcher() {
 
       {error && <p className="font-mono text-[11px] text-destructive m-0 mt-3">{error}</p>}
       {!plan.provisioned && (
-        <p className="font-mono text-[10px] text-[var(--wave-amber)] m-0 mt-3 leading-relaxed">
+        <p className="font-mono text-[10px] text-wave-amber m-0 mt-3 leading-relaxed">
           The plan schema is not in the database yet — everything here is inert. Run
           supabase/migrations/20260806_subscription_plans.sql first.
         </p>

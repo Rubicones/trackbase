@@ -48,6 +48,13 @@ import {
 } from '@/lib/billing/store'
 import { changePlan } from '@/lib/planChange'
 import { settleAccount } from '@/lib/bandFreeze'
+import {
+  applyAddonOrderForInvoice,
+  applyAddonOrderForSubscription,
+  closeAddonOrderForInvoice,
+  closeAddonOrdersForSubscription,
+  isAddonOrderInvoice,
+} from '@/lib/billing/addonOrders'
 
 // Signature verification needs the raw body, and `stripe` is a Node library.
 export const runtime = 'nodejs'
@@ -142,8 +149,8 @@ async function resolveUserId(customer: unknown): Promise<string | null> {
  * and its own event is then skipped below as superseded. Recency alone would
  * hand it the decision.
  */
-async function applySubscription(sub: Stripe.Subscription): Promise<void> {
-  const userId = await resolveUserId(sub.customer)
+async function applySubscription(eventSub: Stripe.Subscription): Promise<void> {
+  const userId = await resolveUserId(eventSub.customer)
   if (!userId) {
     // Nothing to do and nothing a retry would fix: this customer belongs to
     // another environment sharing the same Stripe account, or predates us.
@@ -152,11 +159,21 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
     // `resolveUserId` for why a user id in metadata is not accepted instead.
     console.warn(
       '[stripe] subscription for a customer not in billing_customers — no plan changed',
-      sub.id,
-      idOf(sub.customer),
+      eventSub.id,
+      idOf(eventSub.customer),
     )
     return
   }
+
+  // ── Re-read, never trust the event's snapshot ─────────────────────────────
+  //
+  // Events arrive in any order. An add-on purchase produces a
+  // `customer.subscription.updated` from the pending update landing AND
+  // another from the webhook writing the band split into the item's metadata;
+  // processed out of order, the older snapshot would re-state a split that no
+  // longer exists. Everything below reasons about the subscription as it is
+  // NOW. (`retrieve` still answers for a cancelled subscription.)
+  const sub = await stripeClient().subscriptions.retrieve(eventSub.id)
 
   // Bookkeeping first, unconditionally. Even a superseded subscription's final
   // state belongs in the table — it is what a support question is answered
@@ -264,10 +281,44 @@ export async function POST(req: NextRequest) {
         break
       }
 
+      // ── Add-on purchases (lib/billing/addonOrders.ts) ────────────────────
+      //
+      // The pending update was paid and Stripe applied it: the items now carry
+      // the new quantity. Granting — writing which band each new unit belongs
+      // to, then the rows — happens here and only here. `invoice.paid` below
+      // reaches the same idempotent `applyAddonOrder`; whichever arrives first
+      // does the work.
+      case 'customer.subscription.pending_update_applied': {
+        const sub = event.data.object as Stripe.Subscription
+        await applySubscription(sub)
+        await applyAddonOrderForSubscription(sub)
+        break
+      }
+
+      // Unpaid past its deadline (or voided by a phase change): Stripe threw
+      // the change away. Nothing was charged and nothing is granted.
+      case 'customer.subscription.pending_update_expired': {
+        const sub = event.data.object as Stripe.Subscription
+        await closeAddonOrdersForSubscription(sub.id)
+        await applySubscription(sub)
+        break
+      }
+
+      case 'invoice.voided': {
+        await closeAddonOrderForInvoice((event.data.object as Stripe.Invoice).id)
+        break
+      }
+
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
         const subscriptionId = subscriptionIdFromInvoice(invoice)
         if (!subscriptionId) break
+        // A declined ADD-ON charge is not a failing subscription: the
+        // subscription is untouched (pending update) and the add-on screen
+        // already told the user. Recording it here would raise the dunning
+        // banner — "we couldn't take the last payment, the plan will end" —
+        // over a renewal that is perfectly fine.
+        if (await isAddonOrderInvoice(invoice)) break
         await recordPaymentFailure(
           subscriptionId,
           invoice.id ?? null,
@@ -283,8 +334,13 @@ export async function POST(req: NextRequest) {
       case 'invoice.paid':
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as Stripe.Invoice
+        // An add-on order's invoice clears nothing about dunning — it was
+        // never the renewal that failed.
+        const addonOrder = await isAddonOrderInvoice(invoice)
         const subscriptionId = subscriptionIdFromInvoice(invoice)
-        if (subscriptionId) await clearPaymentFailure(subscriptionId)
+        if (subscriptionId && !addonOrder) await clearPaymentFailure(subscriptionId)
+        // Paid: grant it (idempotent; `pending_update_applied` may beat us).
+        if (event.type === 'invoice.paid') await applyAddonOrderForInvoice(invoice)
         break
       }
 

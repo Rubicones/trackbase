@@ -33,30 +33,29 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import { CircleAlert, LoaderCircle } from 'lucide'
 import { PLANS } from '@/lib/plans'
 import { formatStorageLimit } from '@/lib/bandStorage'
-import { usePaywall } from '@/contexts/PaywallContext'
+import { usePaywall, usePlanTracking } from '@/contexts/PaywallContext'
 import { trackGracePeriodExpired } from '@/lib/planAnalytics'
 import { LucideIcon } from '@/components/design/LucideIcon'
-import { TbButton } from '@/components/design/TbButton'
 import { StatusBadge, TONE } from '@/components/plan/ui'
 
 /**
- * The kit's tone-inheriting outline button: `border-current` and `text-current`
- * so it picks up amber or red from the banner around it rather than carrying a
- * second colour decision.
- *
- * A plain button rather than `TbButton`, because overriding `border-border` on
- * a variant would put two `border-color` utilities on one element and leave the
- * winner to stylesheet order.
+ * Kit buttons (`subscription-ui` GraceBanner). Outline inherits the banner
+ * tone via `currentColor`. Solid is inverted surface (kit `--sub-fg` on
+ * `--sub-bg`). Neither is `TbButton` — that component forces 10px mono caps.
  */
-const TONE_BUTTON =
-  'inline-flex items-center justify-center gap-1.5 border border-current bg-transparent px-3 py-1.5 ' +
-  'font-mono-tb text-[10px] uppercase tracking-widest text-current transition-colors hover:bg-current/10'
+const outlineAction =
+  'font-body-tb inline-flex h-9 items-center justify-center gap-2 rounded-none border border-current bg-transparent px-4 text-sm font-medium text-current transition-colors hover:bg-current/10 disabled:opacity-50'
+
+const solidAction =
+  'font-body-tb inline-flex h-9 items-center justify-center gap-2 rounded-none border-0 bg-foreground px-4 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50'
 
 export function GraceBanner({ className = '' }: { className?: string }) {
   const { snapshot: plan, refresh, openPaywall } = usePaywall()
+  const track = usePlanTracking()
   const [choosing, setChoosing] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -97,6 +96,7 @@ export function GraceBanner({ className = '' }: { className?: string }) {
   }, [overBands, limit, keep, plan.usage.bands])
 
   const saveChoice = useCallback(async () => {
+    track('grace_keep_saved', { kept: keep.length })
     setSaving(true)
     try {
       await fetch('/api/me/plan/keep-bands', {
@@ -110,7 +110,7 @@ export function GraceBanner({ className = '' }: { className?: string }) {
     } finally {
       setSaving(false)
     }
-  }, [keep, refresh])
+  }, [keep, refresh, track])
 
   if (plan.state === 'active') return null
 
@@ -124,29 +124,32 @@ export function GraceBanner({ className = '' }: { className?: string }) {
     // The tone lives on the section, so the icon, the heading and the outline
     // button all inherit it through `currentColor` — one colour decision, not
     // four that can drift apart.
-    <section className={`border p-5 ${t.text} ${t.border} ${t.wash} ${className}`}>
+    <motion.section
+      layout
+      className={`border p-5 ${t.text} ${t.border} ${t.wash} ${className}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-5">
         <div className="flex min-w-0 grow basis-72 gap-3">
           <span className="mt-0.5 shrink-0">
             <LucideIcon icon={CircleAlert} size={20} />
           </span>
           <div className="min-w-0">
-            <h3 className="font-display-tb m-0 text-xl font-bold uppercase tracking-tight">
+            <h3 className="font-display-tb m-0 text-xl uppercase tracking-normal!">
               {expired
                 ? 'Your plan no longer covers everything here'
                 : `${plan.graceDaysLeft} ${plan.graceDaysLeft === 1 ? 'day' : 'days'} to sort this out`}
             </h3>
 
-            <p className="m-0 mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+            <p className="font-body-tb m-0 mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
               {expired ? (
                 <>
-                  Bands over your {PLANS[plan.plan].name} limit are frozen — read-only, nothing
+                  Spaces over your {PLANS[plan.plan].name} limit are frozen — read-only, nothing
                   deleted. Every file, comment and version is still there. Upgrade, or delete a
-                  band you no longer need, and they unfreeze straight away.
+                  space you no longer need, and they unfreeze straight away.
                 </>
               ) : (
                 <>
-                  {PLANS[plan.plan].name} covers {limit} owned {limit === 1 ? 'band' : 'bands'};
+                  {PLANS[plan.plan].name} covers {limit} owned {limit === 1 ? 'space' : 'spaces'};
                   you currently own {plan.usage.bandsOwned}.{' '}
                   {overBands && deadline
                     ? `Choose the ${limit} to keep active by ${deadline}.`
@@ -162,21 +165,42 @@ export function GraceBanner({ className = '' }: { className?: string }) {
 
         <div className="flex flex-wrap gap-2">
           {overBands && !expired && (
-            <button type="button" className={TONE_BUTTON} onClick={() => setChoosing(v => !v)}>
+            <button
+              type="button"
+              className={outlineAction}
+              onClick={() => {
+                track('grace_choose_toggled', { open: !choosing })
+                setChoosing(v => !v)
+              }}
+            >
               {choosing ? 'Close' : 'Choose which to keep'}
             </button>
           )}
-          <TbButton variant="solid" onClick={() => openPaywall('limit')}>
+          <button
+            type="button"
+            className={solidAction}
+            onClick={() => {
+              track('plan_cta_clicked', { source: 'grace_banner', cta: 'see_plans' })
+              openPaywall('limit')
+            }}
+          >
             See plans
-          </TbButton>
+          </button>
         </div>
       </div>
 
       {/* ── The choice ──────────────────────────────────────────────────── */}
-      {choosing && limit !== null && (
-        <div className="mt-5 border-t border-current/20 pt-5">
-          <p className="m-0 mb-4 text-xs leading-relaxed text-muted-foreground">
-            Pick the {limit} {limit === 1 ? 'band' : 'bands'} to keep active. Anything unpicked
+      <AnimatePresence initial={false}>
+        {choosing && limit !== null && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-5 border-t border-current/20 pt-5">
+          <p className="font-body-tb m-0 mb-4 text-xs leading-5 text-muted-foreground">
+            Pick the {limit} {limit === 1 ? 'space' : 'spaces'} to keep active. Anything unpicked
             goes read-only when the {plan.graceDaysLeft} days are up — and comes straight back if
             you upgrade later. Leave this alone and we keep your most recently active.
           </p>
@@ -203,7 +227,7 @@ export function GraceBanner({ className = '' }: { className?: string }) {
                       }
                       className="size-4 shrink-0 accent-lime"
                     />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                    <span className="font-body-tb min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                       {band.name}
                     </span>
                     <span className="font-mono-tb shrink-0 text-[9px] uppercase text-muted-foreground">
@@ -220,23 +244,30 @@ export function GraceBanner({ className = '' }: { className?: string }) {
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
-              className="font-mono-tb px-3 py-1.5 text-[10px] uppercase tracking-widest text-current opacity-80 transition-opacity hover:opacity-100 disabled:opacity-40"
+              className="font-body-tb inline-flex h-9 items-center px-4 text-sm font-medium text-current opacity-75 transition-opacity hover:opacity-100 disabled:opacity-40"
               onClick={() => setDraft(null)}
               disabled={saving}
             >
               Reset
             </button>
-            <TbButton variant="solid" onClick={saveChoice} disabled={saving}>
+            <button
+              type="button"
+              className={solidAction}
+              onClick={saveChoice}
+              disabled={saving}
+            >
               {saving && (
                 <span className="animate-spin">
-                  <LucideIcon icon={LoaderCircle} size={12} />
+                  <LucideIcon icon={LoaderCircle} size={14} />
                 </span>
               )}
               {saving ? 'Saving…' : 'Save choice'}
-            </TbButton>
+            </button>
           </div>
-        </div>
-      )}
-    </section>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.section>
   )
 }

@@ -19,6 +19,11 @@ import type Stripe from 'stripe'
 import { supabase } from '@/lib/supabase'
 import { stripeClient } from '@/lib/billing/stripe'
 import { addonForPriceId, planForPriceId, BILLING_LIVE } from '@/lib/billing/config'
+import {
+  allocationMetadata,
+  clampAllocations,
+  readAllocations,
+} from '@/lib/billing/addonItems'
 import { ADDONS, DEFAULT_PLAN, isAddonType, type AddonType, type PlanId } from '@/lib/plans'
 
 // ── Statuses ─────────────────────────────────────────────────────────────────
@@ -424,14 +429,18 @@ export async function clearPaymentFailure(subscriptionId: string): Promise<void>
 }
 
 // ── Addons ───────────────────────────────────────────────────────────────────
+//
+// ONE subscription item per add-on price; its metadata splits the quantity
+// across bands (`lib/billing/addonItems.ts` says why — Stripe refuses the same
+// price twice on one subscription). `plan_addons` holds one row per
+// (item, band), keyed by `stripe_allocation_key` = '<item id>:<band id | *>'.
 
 /**
- * The band a band-scoped addon item is attached to.
+ * The band a band-scoped allocation names, if the user really owns it.
  *
- * Carried in the subscription item's metadata because that is the only place
- * Stripe will keep it. It is checked against real ownership before it is
- * honoured — the worst a tampered value can do is move capacity between bands
- * the same user already owns, and even that is refused below.
+ * Checked against real ownership before it is honoured — the worst a tampered
+ * metadata value can do is move capacity between bands the same user already
+ * owns, and even that is refused here.
  */
 async function ownedBandId(userId: string, value: unknown): Promise<string | null> {
   if (typeof value !== 'string' || !value) return null
@@ -445,122 +454,155 @@ async function ownedBandId(userId: string, value: unknown): Promise<string | nul
   return data ? value : null
 }
 
+export function allocationRowKey(itemId: string, bandId: string | null): string {
+  return `${itemId}:${bandId ?? '*'}`
+}
+
 /**
  * Reconcile `plan_addons` against what the subscription actually contains.
  *
- * Rows that came from Stripe are owned by Stripe: an item that is gone means
- * the addon is gone. Rows granted by hand have no `stripe_subscription_item_id`
- * and are never touched here — support credits and grandfathered capacity must
- * survive every webhook.
+ * Rows that came from Stripe are owned by Stripe: an allocation that is gone
+ * means that band's add-on is gone. Rows granted by hand have no item id and
+ * are never touched here — support credits and grandfathered capacity must
+ * survive every webhook. Ending grants (scheduled removals) have no item id
+ * either; they are removed only when their period is over, or when the
+ * subscription they belong to stops entitling anything.
+ *
+ * A subscription that no longer entitles a plan grants no add-ons. The old
+ * sync wrote rows for a `canceled` subscription too — its object still lists
+ * the items — so a cancelled account kept its add-on capacity forever.
  */
 export async function syncAddonsFromSubscription(
   userId: string,
   sub: Stripe.Subscription,
 ): Promise<void> {
   const seen = new Set<string>()
+  const grants = statusEntitles(sub.status)
 
-  for (const item of sub.items.data) {
-    const type = addonForPriceId(item.price?.id)
-    if (!type || !isAddonType(type)) continue
+  if (grants) {
+    for (const item of sub.items.data) {
+      const type = addonForPriceId(item.price?.id)
+      if (!type || !isAddonType(type)) continue
 
-    const quantity = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 0
-    if (quantity === 0) continue
+      const quantity = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 0
+      if (quantity === 0) continue
 
-    const bandId = await resolveAddonBand(userId, type, item)
-    // A band-scoped addon with no band it can legitimately land on is dropped
-    // rather than applied account-wide: storage is never pooled, and guessing
-    // a band would hand capacity to whichever one sorted first.
-    if (type !== 'extra_band' && !bandId) continue
+      if (!ADDONS[type].bandScoped) {
+        await upsertAllocationRow(userId, item, type, null, quantity)
+        seen.add(allocationRowKey(item.id, null))
+        continue
+      }
 
-    seen.add(item.id)
-
-    const { error } = await supabase.from('plan_addons').upsert(
-      {
-        user_id: userId,
-        band_id: type === 'extra_band' ? null : bandId,
-        addon_type: type,
-        quantity,
-        stripe_subscription_item_id: item.id,
-        stripe_price_id: item.price?.id ?? null,
-      },
-      { onConflict: 'stripe_subscription_item_id' },
-    )
-    if (error) throw error
+      // Units the metadata does not place on an owned band grant nothing —
+      // see "Fail closed" in addonItems.ts. Storage is never pooled, and
+      // guessing a band would hand capacity to whichever one sorted first.
+      const split = clampAllocations(readAllocations(item), quantity)
+      for (const [bandId, units] of split) {
+        if (!(await ownedBandId(userId, bandId))) continue
+        await upsertAllocationRow(userId, item, type, bandId, units)
+        seen.add(allocationRowKey(item.id, bandId))
+      }
+    }
   }
 
-  // ── Remove Stripe-owned rows this subscription no longer contains ─────────
+  // ── Remove Stripe-owned rows this subscription no longer backs ────────────
   //
-  // ⚠ The sweep is scoped to ONE subscription, and that scoping is the whole
-  // point. It used to select every Stripe-owned row belonging to the user and
-  // delete any whose item id was not in `seen` — but `seen` is built from the
-  // items of the subscription being synced. A user can hold more than one live
-  // subscription (a second checkout stuck on 3DS leaves an `incomplete`; a
-  // resubscribe can overlap the old subscription's `deleted` event), and any
-  // webhook for subscription A would then delete subscription B's add-on rows.
-  // Capacity the user is still being billed for disappeared until a webhook for
-  // B happened to arrive.
-  //
-  // `plan_addons` does not record WHICH subscription an item came from — only
-  // the item id — so the set of item ids that must survive is assembled from
-  // Stripe: this subscription's items, plus every item on every other
-  // subscription this customer has. A row is stale only when its item belongs
-  // to none of them.
-  const candidates = await staleAddonCandidates(userId, seen)
-  if (!candidates.length) return
+  // ⚠ Scoped to ONE subscription. A user can hold more than one live
+  // subscription for a moment (a second checkout stuck on 3DS, a resubscribe
+  // overlapping the old one's `deleted`), and a webhook for A must not delete
+  // B's rows. So a stale row survives when its item belongs to ANOTHER
+  // subscription that still entitles — and is removed when its item is this
+  // subscription's (its band's allocation went away) or belongs to nothing
+  // live at all.
+  const { data: owned, error: ownedError } = await supabase
+    .from('plan_addons')
+    .select('id, stripe_subscription_item_id, stripe_allocation_key')
+    .eq('user_id', userId)
+    .not('stripe_subscription_item_id', 'is', null)
+  if (ownedError) throw ownedError
 
-  const protectedItemIds = await liveItemIdsForCustomer(sub)
-  const stale = candidates
-    .filter(row => !protectedItemIds.has(row.stripe_subscription_item_id))
-    .map(row => row.id)
-
-  if (stale.length) {
-    await supabase.from('plan_addons').delete().in('id', stale)
+  const candidates = ((owned ?? []) as StaleCandidate[]).filter(
+    row => !row.stripe_allocation_key || !seen.has(row.stripe_allocation_key),
+  )
+  if (candidates.length) {
+    const protectedItemIds = await itemIdsOfOtherEntitlingSubscriptions(sub)
+    const stale = candidates
+      .filter(row => !protectedItemIds.has(row.stripe_subscription_item_id))
+      .map(row => row.id)
+    if (stale.length) {
+      const { error } = await supabase.from('plan_addons').delete().in('id', stale)
+      if (error) throw error
+    }
   }
+
+  // ── Ending grants ──────────────────────────────────────────────────────────
+  // Past their end: gone (they already stopped counting in `readAddons`; this
+  // only tidies). Tied to a subscription that no longer entitles: gone now.
+  await supabase
+    .from('plan_addons')
+    .delete()
+    .eq('user_id', userId)
+    .not('ends_at', 'is', null)
+    .lte('ends_at', new Date().toISOString())
+
+  if (!grants) {
+    await supabase
+      .from('plan_addons')
+      .delete()
+      .eq('user_id', userId)
+      .eq('ending_subscription_id', sub.id)
+  }
+}
+
+async function upsertAllocationRow(
+  userId: string,
+  item: Stripe.SubscriptionItem,
+  type: AddonType,
+  bandId: string | null,
+  quantity: number,
+): Promise<void> {
+  const { error } = await supabase.from('plan_addons').upsert(
+    {
+      user_id: userId,
+      band_id: bandId,
+      addon_type: type,
+      quantity,
+      stripe_subscription_item_id: item.id,
+      stripe_price_id: item.price?.id ?? null,
+      stripe_allocation_key: allocationRowKey(item.id, bandId),
+    },
+    { onConflict: 'stripe_allocation_key' },
+  )
+  if (error) throw error
 }
 
 /**
  * Stop billing for the add-ons attached to a band that is about to be deleted.
  *
  * `plan_addons.band_id` cascades on band delete, so the ROW disappears the
- * moment the band does — but the Stripe subscription item it came from is
- * untouched and keeps charging, every month, forever. Nothing in the app can
- * show it afterwards either: the next webhook cannot resolve the dead band, so
- * `syncAddonsFromSubscription` skips the item, and the row it would have
- * matched is already gone, so the sweep has nothing to remove. The charge
- * becomes invisible from inside the product and the user has no way to find
- * it except on a card statement.
+ * moment the band does — but the Stripe item that bills for it does not, and
+ * nothing in the app can see it afterwards. So this takes the band's units off
+ * the shared item (or deletes the item when they were all it had).
+ *
+ * ── No credit ───────────────────────────────────────────────────────────────
+ * `proration_behavior: 'none'`: the period is paid for and the Refund Policy
+ * does not refund partial months. This used to credit the unused days
+ * (`create_prorations`); it is now the same rule as removing an add-on by
+ * hand, minus the "keep it until period end" — there is no band left to keep
+ * it for. The next renewal does not bill it.
  *
  * ── Removed, not re-scoped ──────────────────────────────────────────────────
- * The other option was moving the item to another band the user owns. That
- * spends money on their behalf, on a band they did not choose, at the moment
- * they asked for something to be deleted. Removing it is the reading of
- * "delete this band" that does not surprise anyone, and buying it again is one
- * click on the billing page.
- *
- * Proration is explicit rather than left to the account default: the unused
- * part of the period is credited against the next invoice, which is what makes
- * this a cancellation rather than a forfeit.
+ * Moving the units to another band would spend money on the user's behalf on
+ * a band they did not choose. Buying again is one click on the billing page.
  *
  * ── THROWS ──────────────────────────────────────────────────────────────────
- * Every failure throws, and the caller must abandon the band deletion. Same
- * principle as account deletion (`cancelSubscriptionsForAccountDeletion`): a
- * deletion the user has to retry is an annoyance, a subscription item billing
- * for a band that no longer exists is not recoverable from this side at all.
- * An item Stripe reports as already gone is success — the goal is that it is
- * not billing, not that we were the one to remove it.
- *
- * Returns how many items were removed; zero for the ordinary band, which does
- * not touch Stripe at all.
+ * Every failure throws and the caller must abandon the deletion — a refused
+ * delete is a retry; an item billing for a band that no longer exists is not
+ * recoverable from this side. An item already gone is success.
  */
 export async function removeBandScopedAddonItems(bandId: string): Promise<number> {
-  // No keys means nothing was ever charged from this deployment, and
-  // `stripeClient()` would throw and block a deletion for no reason.
   if (!BILLING_LIVE) return 0
 
-  // The addon types are derived from the catalog rather than listed here, so
-  // a band-scoped addon added to `lib/plans.ts` later is covered without
-  // anyone remembering this file. `band_id` alone would in fact be enough —
-  // account-wide addons never carry one — but the two agreeing is the check.
   const bandScopedTypes = (Object.keys(ADDONS) as AddonType[]).filter(
     type => ADDONS[type].bandScoped,
   )
@@ -572,8 +614,7 @@ export async function removeBandScopedAddonItems(bandId: string): Promise<number
     .in('addon_type', bandScopedTypes)
     .not('stripe_subscription_item_id', 'is', null)
 
-  // A read failure is NOT "no add-ons": treating it that way is how the band
-  // gets deleted with the item still billing.
+  // A read failure is NOT "no add-ons".
   if (error) throw error
 
   const itemIds = Array.from(
@@ -589,12 +630,32 @@ export async function removeBandScopedAddonItems(bandId: string): Promise<number
   let removed = 0
 
   for (const itemId of itemIds) {
+    let item: Stripe.SubscriptionItem
     try {
-      await stripe.subscriptionItems.del(itemId, { proration_behavior: 'create_prorations' })
+      item = await stripe.subscriptionItems.retrieve(itemId)
+    } catch (err) {
+      if (isStripeResourceMissing(err)) continue
+      throw err
+    }
+
+    const allocations = readAllocations(item)
+    const units = allocations.get(bandId) ?? 0
+    if (units === 0) continue
+    allocations.delete(bandId)
+
+    const quantity = (item.quantity ?? 0) - units
+    try {
+      if (quantity <= 0) {
+        await stripe.subscriptionItems.del(itemId, { proration_behavior: 'none' })
+      } else {
+        await stripe.subscriptionItems.update(itemId, {
+          quantity,
+          metadata: allocationMetadata(item.metadata, allocations),
+          proration_behavior: 'none',
+        })
+      }
       removed += 1
     } catch (err) {
-      // Already deleted in the dashboard, or on a subscription that has since
-      // been cancelled: the item is not billing, which is the whole objective.
       if (isStripeResourceMissing(err)) continue
       throw err
     }
@@ -604,7 +665,7 @@ export async function removeBandScopedAddonItems(bandId: string): Promise<number
 }
 
 /** Stripe's "this object no longer exists" — the one failure that is a success here. */
-function isStripeResourceMissing(err: unknown): boolean {
+export function isStripeResourceMissing(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false
   const e = err as { code?: unknown; statusCode?: unknown }
   return e.code === 'resource_missing' || e.statusCode === 404
@@ -613,42 +674,21 @@ function isStripeResourceMissing(err: unknown): boolean {
 interface StaleCandidate {
   id: string
   stripe_subscription_item_id: string
+  stripe_allocation_key: string | null
 }
 
 /**
- * Stripe-owned rows for this user whose item was not just re-stated from the
- * subscription being synced. These are only *candidates* — see the caller.
- */
-async function staleAddonCandidates(
-  userId: string,
-  seen: Set<string>,
-): Promise<StaleCandidate[]> {
-  const { data } = await supabase
-    .from('plan_addons')
-    .select('id, stripe_subscription_item_id')
-    .eq('user_id', userId)
-    .not('stripe_subscription_item_id', 'is', null)
-
-  return ((data ?? []) as StaleCandidate[]).filter(
-    row => !seen.has(row.stripe_subscription_item_id),
-  )
-}
-
-/**
- * Every subscription item id currently attached to this subscription's
- * customer, across all of their subscriptions.
+ * Item ids on every OTHER subscription of this customer that still entitles.
  *
- * FAILS CLOSED. If the customer cannot be read, or Stripe reports more
- * subscriptions than one page holds, this throws rather than returning a
- * partial set — a short answer here means deleting rows that should have
- * survived, which is paid-for capacity. The caller is a webhook handler: a
- * throw releases the event claim and Stripe retries, where a silent partial
- * sweep would not be noticed at all.
+ * FAILS CLOSED: an unreadable customer, or more subscriptions than one page
+ * holds, throws — a short answer here deletes rows that should have survived,
+ * which is paid-for capacity. The caller is a webhook: a throw releases the
+ * event claim and Stripe retries.
  */
-async function liveItemIdsForCustomer(sub: Stripe.Subscription): Promise<Set<string>> {
+async function itemIdsOfOtherEntitlingSubscriptions(
+  sub: Stripe.Subscription,
+): Promise<Set<string>> {
   const ids = new Set<string>()
-  for (const item of sub.items.data) ids.add(item.id)
-
   const customerId =
     typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? null
   if (!customerId) {
@@ -657,7 +697,6 @@ async function liveItemIdsForCustomer(sub: Stripe.Subscription): Promise<Set<str
     )
   }
 
-  // 100 is Stripe's page maximum and far beyond anything this app creates.
   const all = await stripeClient().subscriptions.list({
     customer: customerId,
     status: 'all',
@@ -671,19 +710,10 @@ async function liveItemIdsForCustomer(sub: Stripe.Subscription): Promise<Set<str
   }
 
   for (const other of all.data) {
+    if (other.id === sub.id || !statusEntitles(other.status)) continue
     for (const item of other.items.data) ids.add(item.id)
   }
-
   return ids
-}
-
-async function resolveAddonBand(
-  userId: string,
-  type: AddonType,
-  item: Stripe.SubscriptionItem,
-): Promise<string | null> {
-  if (type === 'extra_band') return null
-  return ownedBandId(userId, item.metadata?.band_id)
 }
 
 // ── Idempotency ──────────────────────────────────────────────────────────────

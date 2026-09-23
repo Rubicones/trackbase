@@ -21,9 +21,9 @@
 import { useEffect } from 'react'
 import { LockKeyhole } from 'lucide'
 import { LucideIcon } from '@/components/design/LucideIcon'
-import { usePaywall } from '@/contexts/PaywallContext'
+import { usePaywall, usePlanTracking } from '@/contexts/PaywallContext'
 import { trackBandFrozen } from '@/lib/planAnalytics'
-import { TbButton } from '@/components/design/TbButton'
+import { actionDestructive } from '@/components/plan/ui'
 import { Eyebrow, StatusBadge } from '@/components/plan/ui'
 
 export function FrozenBandBanner({
@@ -34,49 +34,54 @@ export function FrozenBandBanner({
   isOwner: boolean
 }) {
   const { openPaywall } = usePaywall()
+  const track = usePlanTracking()
 
   useEffect(() => {
     trackBandFrozen(reason ?? 'plan_downgrade')
   }, [reason])
 
   return (
-    <section className="border border-destructive/40 bg-destructive/[0.06] px-4 py-4">
-      {/* See the note in GraceBanner: a basis, not just grow, or the copy
-          collapses into a one-word column beside the button. */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 grow basis-72">
-          <Eyebrow tone="destructive">This band is frozen</Eyebrow>
+    // The kit stacks this one rather than putting the button beside the copy,
+    // and fills it destructive rather than lime: a frozen band is not an
+    // upsell opportunity dressed in the accent colour, it is a red state with
+    // one way out.
+    <section className="border border-destructive/45 bg-destructive/[0.07] p-5">
+      <Eyebrow tone="destructive">This space is frozen</Eyebrow>
 
-          <p className="m-0 mt-3 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
-            <span className="text-foreground">Nothing has been deleted.</span> Every track,
-            comment, version and file is exactly where it was, and you can still listen, browse
-            and download all of it. What&rsquo;s paused is writing: uploads, recording, new
-            versions, structure edits, chat and adding members.
-          </p>
+      <p className="font-body-tb m-0 mt-3 text-sm leading-6 text-foreground">
+        <strong className="font-bold">Nothing has been deleted.</strong> Every track, comment,
+        version and file is exactly where it was, and you can still listen, browse and download
+        all of it. What&rsquo;s paused is writing: uploads, recording, new versions, structure
+        edits, chat and adding members.
+      </p>
 
-          <p className="m-0 mt-2 font-mono-tb text-[11px] leading-relaxed text-muted-foreground">
-            {isOwner ? (
-              <>
-                It froze because your plan no longer covers this many bands. Upgrade, or delete
-                enough other bands to fit your limit — either one unfreezes it immediately, with
-                nothing to restore.
-              </>
-            ) : (
-              <>
-                It froze because the band owner&rsquo;s plan no longer covers this many bands.
-                When they upgrade — or free up a slot — it comes back immediately, exactly as it
-                is now.
-              </>
-            )}
-          </p>
-        </div>
-
-        {isOwner && (
-          <TbButton variant="primary" onClick={() => openPaywall('limit')}>
-            See plans
-          </TbButton>
+      <p className="font-body-tb m-0 mt-2 text-sm leading-6 text-muted-foreground">
+        {isOwner ? (
+          <>
+            It froze because your plan no longer covers this many spaces. Upgrade, or delete
+            enough other spaces to fit your limit — either one unfreezes it immediately, with
+            nothing to restore.
+          </>
+        ) : (
+          <>
+            It froze because the space owner&rsquo;s plan no longer covers this many spaces. When
+            they upgrade — or free up a slot — it comes back immediately, exactly as it is now.
+          </>
         )}
-      </div>
+      </p>
+
+      {isOwner && (
+        <button
+          type="button"
+          className={`${actionDestructive} mt-4`}
+          onClick={() => {
+            track('plan_cta_clicked', { source: 'frozen_space', cta: 'see_plans' })
+            openPaywall('limit')
+          }}
+        >
+          See plans
+        </button>
+      )}
     </section>
   )
 }

@@ -5,12 +5,12 @@ import { fontVariables } from '@/lib/fonts'
 import { buildThemeBootstrapScript, DEFAULT_DESIGN_THEME } from '@/lib/design-theme-shared'
 import { PALETTE_STORAGE_KEY } from '@/lib/palettes'
 import { buildRootMetadata } from '@/lib/seo'
+import { cookies } from 'next/headers'
 import { Analytics } from "@vercel/analytics/next"
-import { GoogleAnalytics } from '@next/third-parties/google'
-import { MetaPixel } from '@/components/analytics/MetaPixel'
-import { YandexMetrica } from '@/components/analytics/YandexMetrica'
-
-const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID
+import { ConsentedTrackers } from '@/components/analytics/ConsentedTrackers'
+import { ConsentProvider } from '@/components/consent/ConsentProvider'
+import { CookieBanner } from '@/components/consent/CookieBanner'
+import { CONSENT_COOKIE, parseConsent } from '@/lib/consent'
 
 export const metadata = buildRootMetadata()
 export const viewport: Viewport = {
@@ -23,7 +23,11 @@ export const viewport: Viewport = {
   ],
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // GDPR: GA4 / Meta Pixel / Yandex Metrica render only with stored consent
+  // (see components/analytics/ConsentedTrackers.tsx). On force-static pages
+  // this read is empty by design and the client resolves it after hydration.
+  const initialConsent = parseConsent((await cookies()).get(CONSENT_COOKIE)?.value)
   const paletteScript = `(function(){try{var p=localStorage.getItem('${PALETTE_STORAGE_KEY}');if(p&&p!=='default')document.documentElement.setAttribute('data-palette',p)}catch(e){}})()`
 
   return (
@@ -39,11 +43,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: paletteScript }} />
       </head>
       <body style={{ height: '100%' }}>
-        <Providers>{children}</Providers>
+        <ConsentProvider initialConsent={initialConsent}>
+          <Providers>{children}</Providers>
+          <CookieBanner />
+          <ConsentedTrackers />
+        </ConsentProvider>
+        {/* Cookieless, no cross-site identifier — not gated by consent. */}
         <Analytics />
-        {gaId ? <GoogleAnalytics gaId={gaId} /> : null}
-        <MetaPixel />
-        <YandexMetrica />
       </body>
     </html>
   )

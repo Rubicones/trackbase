@@ -1,0 +1,1095 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Lock } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { formatActivityLine } from '@/lib/activityFormat'
+import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
+import { usePalette } from '@/contexts/PaletteContext'
+import { usePaywall } from '@/contexts/PaywallContext'
+import {
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
+import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
+import { GraceBanner } from '@/components/plan/GraceBanner'
+import { FrozenBandChip } from '@/components/plan/FrozenBandBanner'
+import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
+import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
+import { TbButton, TbMenuButton, tbButtonClassName } from '@/components/design/TbButton'
+import { TbInput } from '@/components/design/TbInput'
+import { TbModal } from '@/components/design/TbModal'
+import { Toast } from '@/components/design/Toast'
+import { trackEvent } from '@/lib/analytics'
+import {
+  type BandLimitInfo,
+  bandLimitMessage,
+  BAND_LIMIT_HINT,
+  parseBandLimitError,
+  reportBandLimitReached,
+} from '@/lib/bandLimitClient'
+import { formatStorageLimit } from '@/lib/bandStorage'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ActivityItem {
+  action: string; subject: string; detail: string | null
+  created_at: string; project_name: string | null
+}
+
+interface DashboardBand {
+  id: string; name: string; created_at: string
+  userRole: string; userRoleLabel: string | null
+  projectCount: number; memberCount: number; lastUpdated: string
+  latestActivity: ActivityItem | null
+  storageBytes: number
+  /**
+   * The band's own ceiling in bytes, resolved server-side from its OWNER's
+   * plan plus that band's addons. Null means unlimited, or not resolvable —
+   * either way the card shows no ceiling rather than a wrong one. Pending
+   * bands (not joined yet) always send null. Display only; never asserted.
+   */
+  storageLimitBytes: number | null
+  /** Read-only because the owner's plan no longer covers it. Display only. */
+  frozen?: boolean
+  isPending?: boolean
+  joinRequestId?: string
+  joinRequestedAt?: string
+}
+
+type FilterTab = 'all' | 'owner' | 'member' | 'recent'
+type SortOption = 'recent' | 'name-asc' | 'name-desc' | 'projects' | 'storage'
+
+const FILTER_TABS: { id: FilterTab; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'owner', label: 'Owner' },
+  { id: 'member', label: 'Member' },
+  { id: 'recent', label: 'Recently active' },
+]
+
+const SORT_OPTIONS: { id: SortOption; label: string }[] = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'name-asc', label: 'Name A–Z' },
+  { id: 'name-desc', label: 'Name Z–A' },
+  { id: 'projects', label: 'Most projects' },
+  { id: 'storage', label: 'Most storage' },
+]
+
+function compareBands(a: DashboardBand, b: DashboardBand, sort: SortOption): number {
+  if (a.isPending !== b.isPending) return a.isPending ? 1 : -1
+
+  switch (sort) {
+    case 'name-asc':
+      return a.name.localeCompare(b.name)
+    case 'name-desc':
+      return b.name.localeCompare(a.name)
+    case 'projects':
+      return b.projectCount - a.projectCount || a.name.localeCompare(b.name)
+    case 'storage':
+      return b.storageBytes - a.storageBytes || a.name.localeCompare(b.name)
+    case 'recent':
+    default: {
+      const aAct = a.isPending
+        ? (a.joinRequestedAt ?? '')
+        : (a.latestActivity?.created_at ?? a.lastUpdated)
+      const bAct = b.isPending
+        ? (b.joinRequestedAt ?? '')
+        : (b.latestActivity?.created_at ?? b.lastUpdated)
+      return bAct.localeCompare(aAct)
+    }
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = diff / 60000
+  const hours = diff / 3600000
+  const days = diff / 86400000
+  if (mins < 2) return 'just now'
+  if (mins < 60) return `${Math.floor(mins)}m ago`
+  if (hours < 24) return `${Math.floor(hours)}h ago`
+  if (days < 2) return 'yesterday'
+  return `${Math.floor(days)}d ago`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+/**
+ * A band's storage ceiling for display.
+ *
+ * Delegates to `formatStorageLimit`, which is what every other storage surface
+ * uses. The local version rounded to whole GB, which was harmless while every
+ * band had the same 1 GB ceiling and wrong the moment plans arrived: free's
+ * real 500 MB rendered as "0 GB".
+ */
+function formatLimit(bytes: number | null): string {
+  // Null is "no ceiling to show" — unresolvable, or a band not joined yet.
+  // Deliberately not "Unlimited": no plan grants unlimited storage, so that
+  // word would only ever appear on a failed read, on a free band.
+  if (bytes === null) return '—'
+  return formatStorageLimit(bytes)
+}
+
+function timeGreeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function displayName(username?: string | null): string {
+  if (!username) return 'there.'
+  return `${username.charAt(0).toUpperCase()}${username.slice(1)}.`
+}
+
+// ─── Modals ───────────────────────────────────────────────────────────────────
+
+function JoinBandModal({ onClose, onSubmitted }: {
+  onClose: () => void
+  onSubmitted: (bandName: string) => void
+}) {
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [preview, setPreview] = useState<{ band_name: string; member_count: number } | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  useEffect(() => {
+    const raw = code.trim()
+    if (!raw) { setPreview(null); setError(''); return }
+    setChecking(true)
+    const t = setTimeout(async () => {
+      const res = await fetch(`/api/bands/join/check?code=${encodeURIComponent(raw)}`)
+      const data = await res.json()
+      if (data.valid) {
+        setPreview({ band_name: data.band_name, member_count: data.member_count })
+        setError('')
+      } else {
+        setPreview(null)
+        setError(data.error ?? 'Invalid invite code')
+      }
+      setChecking(false)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [code])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!code.trim() || !preview) return
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/bands/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed')
+      trackEvent('band_join_submitted')
+      onSubmitted(data.band_name ?? preview.band_name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-1 m-0">Join a band</p>
+      <p className="text-sm text-muted-foreground m-0 mb-4">
+        Enter the invite code from the band owner. They&apos;ll need to approve your request.
+      </p>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <TbInput
+          value={code}
+          onChange={e => setCode(e.target.value.toUpperCase())}
+          placeholder="e.g. BLUE-JAM-42"
+          autoFocus
+          className="font-mono tracking-wider"
+        />
+        {checking && <p className="text-xs text-muted-foreground m-0">Checking code…</p>}
+        {preview && !checking && (
+          <p className="text-xs text-muted-foreground m-0">
+            Request to join <span className="text-foreground font-bold">{preview.band_name}</span>
+            {' '}({preview.member_count} member{preview.member_count !== 1 ? 's' : ''})
+          </p>
+        )}
+        {error && <p className="text-destructive text-xs m-0">{error}</p>}
+        <div className="flex gap-2 justify-end mt-1">
+          <TbButton onClick={onClose}>Cancel</TbButton>
+          <TbButton type="submit" variant="primary" disabled={loading || !preview || checking} className="px-4">
+            {loading ? 'Sending…' : 'Send request'}
+          </TbButton>
+        </div>
+      </form>
+    </TbModal>
+  )
+}
+
+function NewBandModal({ onClose, onCreated, onLimitReached }: {
+  onClose: () => void
+  onCreated: (bandId: string) => void
+  /** The server refused: refresh the dashboard's copy of the limit. */
+  onLimitReached: (info: BandLimitInfo) => void
+}) {
+  const [name, setName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [limitInfo, setLimitInfo] = useState<BandLimitInfo | null>(null)
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim() || limitInfo) return
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/bands', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Only the name. The limit and the count are never asserted by the client.
+        body: JSON.stringify({ name: name.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        // Stale UI, a race, or a direct call — the server is the gate, so this
+        // gets the same plain explanation rather than a generic error.
+        const limit = parseBandLimitError(data)
+        if (limit) {
+          setLimitInfo(limit)
+          reportBandLimitReached(limit.limit)
+          onLimitReached(limit)
+          return
+        }
+        throw new Error(data.error ?? 'Failed')
+      }
+
+      trackEvent('band_created')
+      onCreated(data.band.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      // Always cleared: no spinner left running on the refusal path either.
+      setLoading(false)
+    }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground mb-4 m-0">New space</p>
+      {limitInfo ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-foreground m-0">{bandLimitMessage(limitInfo.limit)}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed m-0">{BAND_LIMIT_HINT}</p>
+          <div className="flex justify-end mt-1">
+            <TbButton variant="primary" onClick={onClose} className="px-4">Got it</TbButton>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleCreate} className="flex flex-col gap-3">
+          <TbInput
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="The Noise, Blue Period…"
+            autoFocus
+          />
+          {error && <p className="text-destructive text-xs m-0">{error}</p>}
+          <div className="flex gap-2 justify-end mt-1">
+            <TbButton onClick={onClose}>Cancel</TbButton>
+            <TbButton type="submit" variant="primary" disabled={loading || !name.trim()} className="px-4">
+              {loading ? 'Creating…' : 'Create'}
+            </TbButton>
+          </div>
+        </form>
+      )}
+    </TbModal>
+  )
+}
+
+function DeleteBandModal({ band, onClose, onDeleted }: {
+  band: { id: string; name: string }; onClose: () => void; onDeleted: () => void
+}) {
+  const [confirm, setConfirm] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleDelete() {
+    if (confirm !== band.name) return
+    setLoading(true); setError('')
+    try {
+      const res = await fetch(`/api/bands/${band.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
+      onDeleted()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setLoading(false)
+    }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-2">Delete {band.name}?</p>
+      <p className="text-sm text-destructive leading-relaxed m-0 mb-4">
+        This permanently deletes all projects, tracks, and versions. This cannot be undone.
+      </p>
+      <label className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-2">
+        Type the band name to confirm:
+      </label>
+      <TbInput
+        value={confirm}
+        onChange={e => setConfirm(e.target.value)}
+        placeholder={band.name}
+        autoFocus
+        className="mb-4"
+      />
+      {error && <p className="text-destructive text-xs m-0 mb-3">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <TbButton onClick={onClose}>Cancel</TbButton>
+        <TbButton variant="danger" onClick={handleDelete} disabled={confirm !== band.name || loading}>
+          {loading ? 'Deleting…' : 'Delete band'}
+        </TbButton>
+      </div>
+    </TbModal>
+  )
+}
+
+function LeaveBandModal({ band, onClose, onLeft }: {
+  band: { id: string; name: string }; onClose: () => void; onLeft: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleLeave() {
+    setLoading(true); setError('')
+    try {
+      const res = await fetch(`/api/bands/${band.id}/members/me`, { method: 'DELETE' })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed')
+      onLeft()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setLoading(false)
+    }
+  }
+
+  return (
+    <TbModal onClose={onClose}>
+      <p className="font-display text-lg uppercase tracking-tight text-foreground m-0 mb-2">Leave {band.name}?</p>
+      <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-4">
+        You&apos;ll lose access to all projects in this band.
+      </p>
+      {error && <p className="text-destructive text-xs m-0 mb-3">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <TbButton onClick={onClose}>Cancel</TbButton>
+        <TbButton variant="danger" onClick={handleLeave} disabled={loading}>
+          {loading ? 'Leaving…' : 'Leave band'}
+        </TbButton>
+      </div>
+    </TbModal>
+  )
+}
+
+// ─── Band card ────────────────────────────────────────────────────────────────
+
+function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
+  band: DashboardBand
+  index: number
+  onNavigate: () => void
+  onDelete: () => void
+  onLeave: () => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const { palette } = usePalette()
+  const isPending = band.isPending === true
+  const isOwner = !isPending && band.userRole === 'owner'
+  const color = avatarColor(band.name, palette)
+  const initials = avatarInitials(band.name, 'band')
+  // Null ceiling (unlimited, unresolvable, or a pending band) draws an empty
+  // bar rather than a full one.
+  const storagePct =
+    band.storageLimitBytes && band.storageLimitBytes > 0
+      ? band.storageBytes / band.storageLimitBytes
+      : 0
+  const roleLabel = isPending
+    ? 'pending'
+    : (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
+  const activityLine = !isPending && band.latestActivity
+    ? formatActivityLine(
+        band.latestActivity.action,
+        band.latestActivity.subject,
+        band.latestActivity.detail,
+        band.latestActivity.project_name,
+      )
+    : null
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function handler(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
+  return (
+    <article
+      role={isPending ? 'group' : 'link'}
+      tabIndex={isPending ? -1 : 0}
+      onClick={isPending ? undefined : onNavigate}
+      onKeyDown={isPending ? undefined : e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate() }
+      }}
+      aria-disabled={isPending}
+      className={`group relative bg-background p-5 transition-colors animate-slide-in text-left ${
+        isPending
+          ? 'opacity-60 cursor-not-allowed border border-dashed border-border'
+          : 'hover:bg-surface cursor-pointer'
+      }`}
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <div className="flex items-start justify-between mb-5">
+        <div
+          className={`size-12 grid place-items-center font-display font-bold text-lg shrink-0 ${
+            isPending ? 'text-muted-foreground bg-surface-2 border border-border' : 'text-background'
+          }`}
+          style={isPending ? undefined : { backgroundColor: color }}
+        >
+          {initials}
+        </div>
+        <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+          {/* The grace banner above this grid says bands over the limit are
+              frozen. Without a marker on the cards that sentence names no
+              band, and the user is left comparing a warning against four
+              identical-looking spaces. */}
+          {band.frozen && <FrozenBandChip />}
+          <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
+            isPending
+              ? 'border-lime/50 text-lime'
+              : isOwner
+                ? 'border-lime text-lime'
+                : 'border-border text-muted-foreground'
+          }`}>
+            {roleLabel}
+          </span>
+          {!isPending && (
+            <div ref={menuRef} className="relative">
+              <button
+                type="button"
+                aria-label="Band options"
+                aria-expanded={menuOpen}
+                onClick={e => { e.stopPropagation(); setMenuOpen(m => !m) }}
+                className="size-7 border border-border bg-background grid place-items-center text-muted-foreground hover:border-lime hover:text-lime transition-colors"
+              >
+                <DotsVIcon />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 min-w-[168px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
+                  <TbMenuButton onClick={() => { setMenuOpen(false); onNavigate() }}>Open band</TbMenuButton>
+                  {isOwner
+                    ? <TbMenuButton danger onClick={() => { setMenuOpen(false); onDelete() }}>Delete band</TbMenuButton>
+                    : <TbMenuButton danger onClick={() => { setMenuOpen(false); onLeave() }}>Leave band</TbMenuButton>
+                  }
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <h3 className={`tb-type-name text-2xl uppercase tracking-tight m-0 ${
+        isPending ? 'text-muted-foreground' : 'group-hover:text-lime transition-colors'
+      }`}>
+        {band.name}
+      </h3>
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
+        {isPending
+          ? `REQUESTED ${formatRelative(band.joinRequestedAt ?? band.lastUpdated).toUpperCase()}`
+          : `${band.projectCount} PROJECTS · ${band.memberCount} MEMBERS · ${formatRelative(band.lastUpdated)}`}
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {isPending ? (
+          <div className="text-[10px] text-muted-foreground line-clamp-2 border-l-2 border-lime/60 pl-2 leading-relaxed">
+            Waiting for the owner to approve your join request. You&apos;ll get access once they do.
+          </div>
+        ) : activityLine ? (
+          <div className="text-[10px] text-muted-foreground line-clamp-1 border-l-2 border-lime/60 pl-2" title={activityLine}>
+            {activityLine}
+          </div>
+        ) : (
+          <div className="text-[10px] text-muted-foreground/50 line-clamp-1 border-l-2 border-border pl-2">
+            No recent activity
+          </div>
+        )}
+        {!isPending && (
+          <div>
+            <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
+              <span>STORAGE</span>
+              <span className="tabular-nums text-foreground">
+                {formatBytes(band.storageBytes)} / {formatLimit(band.storageLimitBytes)}
+              </span>
+            </div>
+            <div className="h-1 bg-surface-2 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${storagePct > 0.9 ? 'bg-destructive' : 'bg-lime'}`}
+                style={{ width: `${Math.min(storagePct * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
+  )
+}
+
+function DotsVIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="4" r="1.2" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+      <circle cx="8" cy="12" r="1.2" fill="currentColor" />
+    </svg>
+  )
+}
+
+// ─── Skeletons ────────────────────────────────────────────────────────────────
+
+function BandCardSkeleton() {
+  return (
+    <div className="bg-background p-5">
+      <div className="flex items-start justify-between mb-5">
+        <Skeleton width={48} height={48} />
+        <Skeleton width={60} height={24} />
+      </div>
+      <Skeleton width="55%" height={20} className="mb-2" />
+      <Skeleton width="75%" height={12} className="mb-5" />
+      <div className="space-y-3">
+        <Skeleton width="80%" height={12} />
+        <div>
+          <div className="flex justify-between mb-1">
+            <Skeleton width={50} height={10} />
+            <Skeleton width={80} height={10} />
+          </div>
+          <Skeleton width="100%" height={4} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const router = useRouter()
+  const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
+  // The band ceiling is lifted by a bigger plan, so meeting it opens the plans
+  // modal with `limit` as the source — the same demand signal every other
+  // locked surface records.
+  const { openPaywall } = usePaywall()
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const [bands, setBands] = useState<DashboardBand[]>([])
+  const [totalBands, setTotalBands] = useState(0)
+  const [totalProjects, setTotalProjects] = useState(0)
+  const [totalCollaborators, setTotalCollaborators] = useState(0)
+  const [loadingData, setLoadingData] = useState(true)
+  // Server-supplied, display only. Null while loading or if it couldn't be
+  // read — in that case the UI stays unlocked and the server still refuses.
+  const [bandLimit, setBandLimit] = useState<BandLimitInfo | null>(null)
+
+  const [filter, setFilter] = useState<FilterTab>('all')
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortOption>('recent')
+  const [sortOpen, setSortOpen] = useState(false)
+  const sortRef = useRef<HTMLDivElement>(null)
+
+  const [showNewBand, setShowNewBand] = useState(false)
+  const [showJoinBand, setShowJoinBand] = useState(false)
+  const [deletingBand, setDeletingBand] = useState<DashboardBand | null>(null)
+  const [leavingBand, setLeavingBand] = useState<DashboardBand | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const [showWelcomeDismissed, setShowWelcomeDismissed] = useState(false)
+  const showWelcome =
+    !showWelcomeDismissed &&
+    !authLoading &&
+    !!profile &&
+    !profile.onboarding?.dashboard_seen
+
+  // Shown only to a just-signed-up user, and only once they've closed the
+  // welcome modal — never to someone who already saw the dashboard before this
+  // hint existed (they'd have `dashboard_seen` but no `feedback_hint_seen`).
+  const [showFeedbackHint, setShowFeedbackHint] = useState(false)
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace('/auth')
+  }, [authLoading, user, router])
+
+  useEffect(() => {
+    if (authLoading || !user) return
+    setLoadingData(true)
+    const controller = new AbortController()
+    fetch('/api/dashboard', { signal: controller.signal })
+      .then(r => r.json())
+      .then(data => {
+        setBands(data.bands ?? [])
+        setTotalBands(data.totalBands ?? 0)
+        setTotalProjects(data.totalProjects ?? 0)
+        setTotalCollaborators(data.totalCollaborators ?? 0)
+        setBandLimit(data.bandLimit ?? null)
+        setLoadingData(false)
+      })
+      .catch(err => {
+        if (err.name !== 'AbortError') {
+          console.error(err)
+          setLoadingData(false)
+        }
+        // On abort: don't touch loadingData — next effect run resets it
+      })
+    return () => controller.abort()
+  }, [authLoading, user])
+
+  function reloadDashboard() {
+    fetch('/api/dashboard')
+      .then(r => r.json())
+      .then(data => {
+        setBands(data.bands ?? [])
+        setTotalBands(data.totalBands ?? 0)
+        setTotalProjects(data.totalProjects ?? 0)
+        setTotalCollaborators(data.totalCollaborators ?? 0)
+        setBandLimit(data.bandLimit ?? null)
+      })
+  }
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!sortOpen) return
+    function handler(e: MouseEvent) {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) setSortOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [sortOpen])
+
+  function showToastMsg(msg: string) {
+    setToast(msg); setTimeout(() => setToast(null), 3000)
+  }
+
+  const atBandLimit = bandLimit?.atLimit === true
+  const bandLimitCopy = bandLimit ? bandLimitMessage(bandLimit.limit) : ''
+
+  /**
+   * No answer on the ceiling yet — in flight, not "no ceiling".
+   *
+   * `bandLimit` is null in two situations that want opposite treatments: the
+   * dashboard fetch has not landed (wait), or it landed and the server could
+   * not read the limit (proceed, and let the create refuse). `loadingData` is
+   * the only thing that tells them apart, so it is part of the condition.
+   */
+  const bandLimitPending = loadingData && bandLimit === null
+
+  // The create action is locked, so this is the moment the user meets the cap.
+  // Guarded inside reportBandLimitReached so re-renders don't re-fire it.
+  useEffect(() => {
+    if (atBandLimit && bandLimit) reportBandLimitReached(bandLimit.limit)
+  }, [atBandLimit, bandLimit])
+
+  /**
+   * Three states here too, for the same reason the mixer has three.
+   *
+   * A ceiling is not a feature gate: it depends on what the user has already
+   * done, so it cannot be read off a plan id and it costs a `count(*)`. That
+   * argues for letting the server refuse — and it still does, twice, in
+   * `createBandForUser()` and the database trigger behind it. What it does not
+   * argue for is leaving the affordance live while the answer is in flight. A
+   * user who opens the modal, names a band and presses create only to be
+   * refused had the worse experience of the two, and it is the one this file
+   * used to hand them on every load.
+   *
+   * `pending` costs nothing here because the band grid directly below this
+   * button is already rendering skeletons in exactly the same window. Nobody is
+   * shown a cap they do not have — they are shown a page that has not finished
+   * loading, which is what is happening.
+   *
+   * Once the answer lands and there is still no limit to show (the server could
+   * not read it), the affordance goes live and the server refuses. THAT is the
+   * case the "null stays unlocked" rule was written for, and it still holds.
+   */
+  function openNewBandModal() {
+    // Second line of defence. The pending branch renders no handler at all, so
+    // this only matters if some other path reaches here.
+    if (bandLimitPending) return
+    if (atBandLimit) {
+      // Was `return`, which made a dimmed control do nothing at all — the exact
+      // dead-button failure `PaywallLock` warns about. The way past this cap is
+      // a bigger plan, so say so.
+      trackEvent('band_create_blocked')
+      openPaywall('limit')
+      return
+    }
+    trackEvent('band_create_clicked')
+    setShowNewBand(true)
+  }
+
+  const filteredBands = bands
+    .filter(b => {
+      if (b.isPending) return filter === 'all' || filter === 'recent'
+      if (filter === 'owner') return b.userRole === 'owner'
+      if (filter === 'member') return b.userRole === 'member'
+      return true
+    })
+    .filter(b => !search || b.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => compareBands(a, b, sort))
+
+  const sortLabel = SORT_OPTIONS.find(o => o.id === sort)?.label ?? 'Recent'
+
+  const totalStorageBytes = bands
+    .filter(b => !b.isPending)
+    .reduce((s, b) => s + b.storageBytes, 0)
+
+  const pendingBandCount = bands.filter(b => b.isPending).length
+
+  const heroLoading = authLoading || loadingData
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <AppHeader />
+
+      {/* Hero */}
+      <section className="border-b border-border bg-surface/40">
+        <div className="mx-auto max-w-7xl px-6 py-10 grid lg:grid-cols-[1fr_auto] gap-8 items-end">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-lime font-bold mb-2">/ HOME BASE</div>
+            <h1 className="tb-type-name text-4xl sm:text-6xl uppercase tracking-tighter m-0 leading-none">
+              {timeGreeting()},{' '}
+              {heroLoading
+                ? <Skeleton width={220} height={44} className="inline-block align-middle" />
+                : <span className="text-lime">{displayName(profile?.username)}</span>}
+            </h1>
+            {heroLoading ? (
+              <Skeleton width="60%" height={14} className="mt-3" />
+            ) : (
+              <p className="text-sm text-muted-foreground mt-3 max-w-md m-0">
+                {totalBands} band{totalBands !== 1 ? 's' : ''}
+                {pendingBandCount > 0 && (
+                  <>, {pendingBandCount} pending</>
+                )}
+                . {totalProjects} project{totalProjects !== 1 ? 's' : ''} in flight.
+                {totalCollaborators > 0 && (
+                  <> {totalCollaborators} collaborator{totalCollaborators !== 1 ? 's' : ''} across your roster.</>
+                )}
+                {' '}Open one to keep going, or spin up a new one.
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-px bg-border border border-border shrink-0">
+            {[
+              [totalBands, 'BANDS'],
+              [totalProjects, 'PROJECTS'],
+              [totalCollaborators, 'COLLABORATORS'],
+            ].map(([n, l]) => (
+              <div key={l as string} className="bg-background px-6 py-4 min-w-[7rem]">
+                {heroLoading
+                  ? <Skeleton width={48} height={32} className="mb-1" />
+                  : <div className="font-display text-3xl text-foreground tabular-nums leading-none">{n}</div>}
+                <div className="text-[9px] uppercase tracking-widest text-muted-foreground mt-1">{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Search + filters + new band */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-7xl px-6 py-4 flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
+          <div className="flex-1 flex items-center border border-border bg-surface/60 px-3 h-10 focus-within:border-lime transition-colors">
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground mr-3 shrink-0">SEARCH</span>
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Find a space…"
+              className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none text-foreground min-w-0"
+            />
+            <kbd className="hidden sm:inline text-[10px] uppercase tracking-widest text-muted-foreground/60 ml-2 shrink-0 border border-border px-1.5 py-0.5 bg-background">
+              ⌘K
+            </kbd>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex">
+              {FILTER_TABS.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    if (filter !== id) trackEvent('dashboard_filter_changed', { filter: id })
+                    setFilter(id)
+                  }}
+                  className={`px-4 h-10 text-[10px] uppercase tracking-widest border border-border -ml-px first:ml-0 transition-colors whitespace-nowrap ${
+                    filter === id
+                      ? 'bg-lime text-primary-foreground border-lime z-[1] relative'
+                      : 'bg-background text-foreground hover:border-lime hover:text-lime hover:relative hover:z-[1]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {bandLimitPending ? (
+              // Inert markup carrying no click handler — never a `disabled`
+              // TbButton. Same rule as the mixer gates: an attribute can be
+              // deleted from the markup, a handler React never attached cannot
+              // be restored. `tbButtonClassName` keeps it pixel-identical to the
+              // real button so nothing shifts when the answer lands.
+              <span
+                className={`${tbButtonClassName({ variant: 'primary', className: 'h-10 px-4 shrink-0' })} ${paywallPendingButtonClass}`}
+                {...paywallPendingProps}
+              >
+                + New space
+              </span>
+            ) : (
+              <TbButton
+                variant="primary"
+                onClick={openNewBandModal}
+                aria-disabled={atBandLimit || undefined}
+                title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                className={`h-10 px-4 shrink-0 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+              >
+                + New space
+              </TbButton>
+            )}
+            <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
+              Join band
+            </TbButton>
+          </div>
+        </div>
+
+        {/* Own row, separated from the controls above — it explains why the
+            create button is locked, so it must not compete with them for space. */}
+        {atBandLimit && (
+          <div className="border-t border-border">
+            <div className="mx-auto max-w-7xl px-6 py-3 flex items-start gap-2.5">
+              <Lock size={14} strokeWidth={1.5} className="text-muted-foreground mt-px shrink-0" />
+              <p className="text-xs text-muted-foreground m-0 leading-relaxed">
+                <span className="text-foreground">{bandLimitCopy}</span> {BAND_LIMIT_HINT}
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Grace / enforced banner. Persistent, non-alarming, and self-hiding
+          while the account is active — see components/plan/GraceBanner.tsx. */}
+      {/* Spacing goes on the banner, not on this wrapper: `GraceBanner`
+          renders nothing while the account is active, and a margin on the
+          wrapper would leave that gap behind on every healthy dashboard. */}
+      <div className="mx-auto max-w-7xl px-6 w-full">
+        <GraceBanner className="mt-8" />
+      </div>
+
+      {/* Band grid */}
+      <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">
+        {loadingData ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border border border-border">
+            {[0, 1, 2].map(i => <BandCardSkeleton key={i} />)}
+          </div>
+        ) : bands.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center border border-border bg-surface/30 px-6">
+            <div className="font-display text-2xl uppercase tracking-tight text-muted-foreground">No bands yet</div>
+            <p className="text-sm text-muted-foreground max-w-sm m-0">
+              Create your first band or request to join one with an invite code
+            </p>
+            <div className="flex flex-wrap gap-3 justify-center mt-2">
+              <TbButton
+                variant="primary"
+                onClick={openNewBandModal}
+                aria-disabled={atBandLimit || undefined}
+                title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                className={`px-4 py-2 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+              >
+                Create a band
+              </TbButton>
+              <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
+                Join with code
+              </TbButton>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <SectionLabel>{filteredBands.length} ACTIVE SPACE{filteredBands.length !== 1 ? 'S' : ''}</SectionLabel>
+              <div className="relative" ref={sortRef}>
+                <button
+                  type="button"
+                  onClick={() => setSortOpen(open => !open)}
+                  className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-lime transition-colors"
+                  aria-expanded={sortOpen}
+                  aria-haspopup="listbox"
+                >
+                  SORT: {sortLabel.toUpperCase()} {sortOpen ? '↑' : '↓'}
+                </button>
+                {sortOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute right-0 top-full z-20 mt-1 min-w-[11rem] border border-border bg-popover flex flex-col overflow-hidden shadow-lg"
+                  >
+                    {SORT_OPTIONS.map(opt => (
+                      <TbMenuButton
+                        key={opt.id}
+                        role="option"
+                        aria-selected={sort === opt.id}
+                        active={sort === opt.id}
+                        onClick={() => { setSort(opt.id); setSortOpen(false) }}
+                      >
+                        {opt.label}
+                      </TbMenuButton>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {filteredBands.length === 0 && search ? (
+              <div className="py-16 text-center text-sm text-muted-foreground border border-border">
+                No bands matching &ldquo;{search}&rdquo;
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-px bg-border border border-border">
+                {filteredBands.map((band, i) => (
+                  <BandCard
+                    key={band.isPending ? `pending-${band.joinRequestId}` : band.id}
+                    band={band}
+                    index={i}
+                    onNavigate={() => {
+                      if (!band.isPending) {
+                        trackEvent('band_opened')
+                        router.push(`/band/${band.id}`)
+                      }
+                    }}
+                    onDelete={() => { if (!band.isPending) setDeletingBand(band) }}
+                    onLeave={() => { if (!band.isPending) setLeavingBand(band) }}
+                  />
+                ))}
+
+                {filter === 'all' && !search && (
+                  atBandLimit ? (
+                    // Locked, not hidden: the affordance stays where the user
+                    // expects it and explains itself instead of failing later.
+                    <button
+                      type="button"
+                      onClick={openNewBandModal}
+                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground min-h-[200px] text-center opacity-60 w-full"
+                    >
+                      <div className="size-12 border border-dashed border-border grid place-items-center text-muted-foreground">
+                        <Lock size={18} strokeWidth={1.5} />
+                      </div>
+                      <div className="font-display text-sm uppercase tracking-widest">{bandLimitCopy}</div>
+                      <div className="text-[10px] text-muted-foreground max-w-[15rem] leading-relaxed">
+                        {BAND_LIMIT_HINT}
+                      </div>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openNewBandModal}
+                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-lime hover:bg-surface transition-colors min-h-[200px]"
+                    >
+                      <div className="size-12 border border-dashed border-border grid place-items-center text-2xl font-light group-hover:border-lime">+</div>
+                      <div className="font-display text-sm uppercase tracking-widest">Create new space</div>
+                      <div className="text-[10px] text-muted-foreground">or enter an invite code</div>
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      <StatusFooter
+        left={
+          <span className="uppercase tracking-widest truncate">
+            {totalBands} BANDS · {totalProjects} PROJECTS · {formatBytes(totalStorageBytes)} USED
+          </span>
+        }
+      />
+
+      {showJoinBand && (
+        <JoinBandModal
+          onClose={() => setShowJoinBand(false)}
+          onSubmitted={bandName => {
+            setShowJoinBand(false)
+            reloadDashboard()
+            showToastMsg(`Request sent to ${bandName}`)
+          }}
+        />
+      )}
+      {showNewBand && (
+        <NewBandModal
+          onClose={() => setShowNewBand(false)}
+          onCreated={id => { setShowNewBand(false); router.push(`/band/${id}`) }}
+          onLimitReached={info => setBandLimit(info)}
+        />
+      )}
+      {deletingBand && (
+        <DeleteBandModal
+          band={deletingBand}
+          onClose={() => setDeletingBand(null)}
+          onDeleted={() => {
+            const name = deletingBand.name
+            setBands(prev => prev.filter(b => b.id !== deletingBand.id))
+            setTotalBands(n => n - 1)
+            setDeletingBand(null)
+            showToastMsg(`${name} has been deleted`)
+          }}
+        />
+      )}
+      {leavingBand && (
+        <LeaveBandModal
+          band={leavingBand}
+          onClose={() => setLeavingBand(null)}
+          onLeft={() => {
+            setBands(prev => prev.filter(b => b.id !== leavingBand.id))
+            setTotalBands(n => n - 1)
+            setLeavingBand(null)
+          }}
+        />
+      )}
+
+      {toast && <Toast message={toast} />}
+
+      {showWelcome && (
+        <DashboardWelcomeModal
+          onDismiss={() => {
+            setShowWelcomeDismissed(true)
+            updateOnboarding('dashboard_seen', true)
+            if (!profile?.onboarding?.feedback_hint_seen) setShowFeedbackHint(true)
+          }}
+        />
+      )}
+
+      {showFeedbackHint && (
+        <FeedbackHint
+          onDismiss={() => {
+            setShowFeedbackHint(false)
+            updateOnboarding('feedback_hint_seen', true)
+          }}
+        />
+      )}
+    </div>
+  )
+}

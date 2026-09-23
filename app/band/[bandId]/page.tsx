@@ -16,6 +16,7 @@ import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppSh
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
@@ -24,6 +25,7 @@ import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
 import { trackEvent } from '@/lib/analytics'
+import { REMOVAL_CONSEQUENCE } from '@/lib/memberRemovalCopy'
 import { bytesToMB, formatMB, type Limit } from '@/lib/plans'
 import { useBandPlan } from '@/components/plan/BandEntitlements'
 import { usePaywall } from '@/contexts/PaywallContext'
@@ -709,6 +711,11 @@ export default function BandPage() {
   const [editRoleLabel, setEditRoleLabel] = useState('')
   const [memberMenu, setMemberMenu] = useState<string | null>(null)
   const [deleteModal, setDeleteModal] = useState<{ id: string; name: string } | null>(null)
+  // Removing a member used to fire on the menu click with no confirmation at
+  // all — and it is now the step an owner has to repeat for every person before
+  // a space can be deleted, so it is the one that needs a moment of friction.
+  const [removeMember, setRemoveMember] = useState<{ id: string; name: string } | null>(null)
+  const [removingMember, setRemovingMember] = useState(false)
   const [renameModal, setRenameModal] = useState<{ id: string; name: string } | null>(null)
   const [projectSearch, setProjectSearch] = useState('')
   const projectSearchRef = useRef<HTMLInputElement>(null)
@@ -995,12 +1002,23 @@ export default function BandPage() {
     if (res.ok) trackEvent('member_role_edited')
   }
 
-  async function handleRemoveMember(memberId: string) {
-    setMemberMenu(null)
-    // Optimistic update — remove the member from state immediately
-    setMembers(prev => prev.filter(m => m.user_id !== memberId))
-    invalidateBandCache()
-    await fetch(`/api/bands/${bandId}/members/${memberId}`, { method: 'DELETE' })
+  async function handleRemoveMember() {
+    if (!removeMember) return
+    const memberId = removeMember.id
+    setRemovingMember(true)
+    try {
+      const res = await fetch(`/api/bands/${bandId}/members/${memberId}`, { method: 'DELETE' })
+      if (!res.ok) return
+      // Only after the server agrees. The old version removed the row from
+      // state first and never read the response, so a refused removal — the
+      // last-owner guard, a frozen space — looked like it had worked until the
+      // next reload put the person back.
+      setMembers(prev => prev.filter(m => m.user_id !== memberId))
+      invalidateBandCache()
+      setRemoveMember(null)
+    } finally {
+      setRemovingMember(false)
+    }
   }
 
   async function handleDeleteProject() {
@@ -1679,18 +1697,19 @@ export default function BandPage() {
                               Approve
                             </span>
                           ) : (
-                            <button
-                              type="button"
-                              disabled={resolvingRequestId === req.id}
-                              aria-disabled={atMemberLimit || undefined}
-                              title={memberLimitCopy}
-                              onClick={() => handleResolveJoinRequest(req.id, 'approve')}
-                              className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent cursor-pointer disabled:opacity-50 ${
-                                atMemberLimit ? paywallLockedButtonClass : 'hover:bg-online/10'
-                              }`}
-                            >
-                              Approve
-                            </button>
+                            <HoverTooltip label={memberLimitCopy} multiline className="inline-flex">
+                              <button
+                                type="button"
+                                disabled={resolvingRequestId === req.id}
+                                aria-disabled={atMemberLimit || undefined}
+                                onClick={() => handleResolveJoinRequest(req.id, 'approve')}
+                                className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent cursor-pointer disabled:opacity-50 ${
+                                  atMemberLimit ? paywallLockedButtonClass : 'hover:bg-online/10'
+                                }`}
+                              >
+                                Approve
+                              </button>
+                            </HoverTooltip>
                           )}
                           <button
                             type="button"
@@ -1762,8 +1781,17 @@ export default function BandPage() {
                           </button>
                           {memberMenu === m.user_id && (
                             <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
-                              <TbMenuButton danger onClick={() => handleRemoveMember(m.user_id)}>
-                                Remove from band
+                              <TbMenuButton
+                                danger
+                                onClick={() => {
+                                  setMemberMenu(null)
+                                  setRemoveMember({
+                                    id: m.user_id,
+                                    name: m.profiles?.display_name ?? m.profiles?.username ?? 'this member',
+                                  })
+                                }}
+                              >
+                                Remove from space
                               </TbMenuButton>
                             </div>
                           )}
@@ -1973,6 +2001,30 @@ export default function BandPage() {
           onClose={() => setRenameModal(null)}
           onRenamed={name => handleProjectRenamed(renameModal.id, name)}
         />
+      )}
+
+      {removeMember && (
+        <TbModal onClose={() => setRemoveMember(null)}>
+          <p className="font-display text-lg uppercase tracking-tight text-foreground mb-3 m-0">
+            Remove {removeMember.name}?
+          </p>
+          {/*
+            The same two facts the removed person is emailed, in the same words
+            — `REMOVAL_CONSEQUENCE` is shared by both so the promise made here
+            is the promise delivered there. Owners hold off on removing people
+            because they assume it takes the person's uploads with them; it
+            does not, and saying so is what makes this step usable.
+          */}
+          <p className="text-xs leading-relaxed text-muted-foreground mb-4 m-0">
+            {REMOVAL_CONSEQUENCE} We&rsquo;ll let them know.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <TbButton onClick={() => setRemoveMember(null)}>Cancel</TbButton>
+            <TbButton variant="danger" onClick={handleRemoveMember} disabled={removingMember}>
+              {removingMember ? 'Removing…' : 'Remove'}
+            </TbButton>
+          </div>
+        </TbModal>
       )}
 
       {deleteModal && (

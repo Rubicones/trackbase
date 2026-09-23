@@ -20,6 +20,7 @@ import { useMemo, type ReactNode } from 'react'
 import { PLANS, formatMB, type AddonType } from '@/lib/plans'
 import { formatStorageLimit } from '@/lib/bandStorage'
 import { usePaywall, usePlan, type PlanAddon } from '@/contexts/PaywallContext'
+import { formatCatalogPrice, formatInterval } from '@/lib/planPrices'
 import { Eyebrow, StatusBadge, UsageBar, usageTone } from '@/components/plan/ui'
 import { FrozenBandChip } from '@/components/plan/FrozenBandBanner'
 
@@ -63,17 +64,22 @@ export function PlanUsage({
   if (loading && plan.usage.bands.length === 0) return <PlanUsageSkeleton />
 
   return (
-    <div>
+    // One framed panel, as in the kit: the plan header sits inside it rather
+    // than in a strip of its own above loose content.
+    <section className="border border-border bg-surface p-5">
       {/* ── Current plan ─────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-3 border border-border bg-surface/40 px-3 py-3">
+      <div className="mb-6 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <Eyebrow>Your plan</Eyebrow>
-          <p className="font-display-tb m-0 mt-2 text-[18px] font-bold uppercase leading-none tracking-tight text-foreground">
+          <Eyebrow>Plan usage</Eyebrow>
+          <h3 className="font-display-tb m-0 mt-2 text-3xl uppercase leading-none tracking-normal! text-foreground">
             {def.name}
-            <span className="ml-2 font-mono-tb text-[10px] font-normal tracking-widest text-muted-foreground">
-              {def.price} / month
-            </span>
-          </p>
+            {formatCatalogPrice(plan.prices.plans[plan.plan]) && (
+              <span className="font-body-tb ml-2 text-sm font-normal normal-case text-muted-foreground">
+                {formatCatalogPrice(plan.prices.plans[plan.plan])} /{' '}
+                {formatInterval(plan.prices.plans[plan.plan])}
+              </span>
+            )}
+          </h3>
         </div>
         {plan.state !== 'active' && (
           <StatusBadge tone={plan.state === 'grace' ? 'amber' : 'destructive'}>
@@ -83,51 +89,51 @@ export function PlanUsage({
       </div>
 
       {/* ── Account-wide usage ───────────────────────────────────────────── */}
-      <div className="mt-4">
+      <div>
         <UsageBar
-          label="Bands you own"
+          label="Spaces you own"
           current={plan.usage.bandsOwned}
           limit={plan.limits.bandsOwned}
           note={
             <>
-              Bands you <span className="text-foreground">join</span> are unlimited on every plan
+              Spaces you <span className="text-foreground">join</span> are unlimited on every plan
               and never count here.
             </>
           }
         />
 
         {overrideRaisesLimit && (
-          <p className="m-0 mt-2 border-l-2 border-[var(--wave-violet)] pl-2.5 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
+          <p className="font-body-tb m-0 mt-3 border-l-2 border-wave-violet pl-3 text-xs leading-5 text-muted-foreground">
             Your account has a guaranteed minimum of{' '}
             <span className="text-foreground">{plan.limits.bandsOwned}</span> owned bands, which
-            is more than {def.name} alone would give you. Upgrading or adding bands raises it
+            is more than {def.name} alone would give you. Upgrading or adding spaces raises it
             further.
           </p>
         )}
 
         {/* An extra_band addon counts on every account now, override or not. */}
         {extraBands > 0 && (
-          <p className="m-0 mt-2 border-l-2 border-lime pl-2.5 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-            Includes +{extraBands} from the extra band add-on.
+          <p className="font-body-tb m-0 mt-3 border-l-2 border-lime pl-3 text-xs leading-5 text-muted-foreground">
+            Includes +{extraBands} from the extra space add-on.
           </p>
         )}
 
         {bandsTone !== 'lime' && (
-          <p className="m-0 mt-2 font-mono-tb text-[10px] leading-relaxed text-[var(--wave-amber)]">
-            You are at or near your owned-band limit. Upgrading raises it; joining someone
-            else&rsquo;s band does not need it.
+          <p className="font-body-tb m-0 mt-3 text-xs leading-5 text-wave-amber">
+            You are at or near your owned-space limit. Upgrading raises it; joining someone
+            else&rsquo;s space does not need it.
           </p>
         )}
       </div>
 
       {/* ── Per-band usage ───────────────────────────────────────────────── */}
       {!compact && plan.usage.bands.length > 0 && (
-        <div className="mt-6">
-          <p className="m-0 font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-            Per band
-          </p>
-          <p className="m-0 mb-4 mt-2 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-            Storage is measured per band and is never shared between them — each band gets the
+        <div className="mt-5 border-t border-border pt-5">
+          <h4 className="font-display-tb m-0 text-base uppercase tracking-normal! text-foreground">
+            Per space
+          </h4>
+          <p className="font-body-tb m-0 mb-4 mt-1 text-xs leading-5 text-muted-foreground">
+            Storage is measured per space and is never shared between them — each space gets the
             full {formatMB(plan.limits.storagePerBandMB)}.
           </p>
 
@@ -136,14 +142,14 @@ export function PlanUsage({
               const extraStorage = unitsFor(plan.addons, 'extra_storage', band.id)
               const extraMembers = unitsFor(plan.addons, 'extra_member', band.id)
               return (
-                <div key={band.id} className="border border-border bg-card/50 px-3 py-3">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <p className="m-0 truncate font-mono-tb text-[11px] text-foreground">
+                <div key={band.id} className="border border-border bg-card/50 p-4">
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <strong className="font-display-tb m-0 truncate text-sm uppercase tracking-normal! text-foreground">
                       {band.name}
-                    </p>
+                    </strong>
                     {band.frozen && <FrozenBandChip />}
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <UsageBar
                       label="Members"
                       current={band.memberCount}
@@ -173,15 +179,15 @@ export function PlanUsage({
         </div>
       )}
 
-      {plan.limits.activeVersionsPerProject !== null && (
-        <p className="m-0 mt-4 font-mono-tb text-[10px] leading-relaxed text-muted-foreground">
-          Up to {plan.limits.activeVersionsPerProject} active versions per project. Master never
-          counts, and applying a version frees its slot.
-        </p>
-      )}
+      <p className="font-mono-tb m-0 mt-5 border-t border-border pt-4 text-[9px] uppercase leading-relaxed tracking-[0.18em] text-muted-foreground">
+        Active versions ·{' '}
+        {plan.limits.activeVersionsPerProject === null
+          ? 'Unlimited on this plan'
+          : `${plan.limits.activeVersionsPerProject} per project, Master never counts`}
+      </p>
 
       {footer}
-    </div>
+    </section>
   )
 }
 
