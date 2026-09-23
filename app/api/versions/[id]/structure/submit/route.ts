@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { frozenBandRefusal } from '@/lib/planGuards'
 
 // POST /api/versions/[id]/structure/submit — log structure submission to band activity
 export async function POST(
@@ -35,6 +36,11 @@ export async function POST(
       .eq('user_id', userId)
       .maybeSingle()
     if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    // Hand-rolled membership check, so no method-keyed frozen block applies.
+    // This writes a `band_activity` row, which is a write like any other.
+    const frozen = await frozenBandRefusal(project.band_id)
+    if (frozen) return frozen
 
     const { count } = await supabase
       .from('sections')

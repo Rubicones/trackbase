@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { logActivity } from '@/lib/activity'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { frozenBandRefusal } from '@/lib/planGuards'
 
 // ── PUT /api/projects/[id]/resources/lyrics ───────────────────────────────────
 // Upsert the lyrics resource for a project. There is at most one lyrics entry
@@ -37,6 +38,11 @@ export async function PUT(
   if (!member) {
     return NextResponse.json({ error: 'Not a member of this band' }, { status: 403 })
   }
+
+  // Hand-rolled membership check, so the method-keyed frozen block in
+  // `requireBandMember` does not apply here — ask for it explicitly.
+  const frozen = await frozenBandRefusal(project.band_id)
+  if (frozen) return frozen
 
   let body: { content?: string }
   try {

@@ -21,6 +21,7 @@ import {
   refreshAccessToken,
 } from '@/lib/auth/session'
 import { verifyAccessToken, type VerifiedUser } from '@/lib/auth/verify'
+import { BAND_FROZEN_STATUS, ensureBandFreezeState } from '@/lib/bandFreeze'
 
 export type { VerifiedUser as JwtPayload }
 
@@ -128,13 +129,77 @@ export interface MembershipResult {
 }
 
 /**
+ * Options for the membership guards.
+ *
+ * `readOnlyRequest` opts a POST out of the frozen-band write block. A handful
+ * of endpoints in this codebase use POST for a read — a merge *preview*, a
+ * preview-mix recompute — because they need a body or because they write only
+ * a derived cache. Those must keep working inside a frozen band: a frozen band
+ * is read-only, not offline, and playback depends on them.
+ */
+export interface BandAccessOptions {
+  readOnlyRequest?: boolean
+  /**
+   * Permit this DELETE inside a frozen band.
+   *
+   * A frozen band is read-only, and the rule's value is that it has no
+   * exceptions to remember — every mutation is blocked by HTTP method, so a
+   * route added next year is covered without anybody thinking about it. This
+   * is the deliberate hole in that, and it is narrow on purpose.
+   *
+   * A band freezes because its owner is over a plan limit, and freezing is
+   * supposed to be survivable: nothing is deleted, and the user is expected to
+   * get back under the limit. But every action that reduces what the plan has
+   * to cover was itself a write, so a band frozen while also over its storage
+   * ceiling could not shrink. There was no route out except deleting the whole
+   * space — the outcome freezing exists to avoid.
+   *
+   * So deletion joins the exceptions that already exist for exactly this
+   * reason: deleting the band (`DELETE /api/bands/[id]`) and removing a member
+   * (`DELETE .../members/[userId]`). All four share one justification —
+   * removing something reduces what the plan must cover, and destroys nothing
+   * the user wanted kept, because the user is the one asking.
+   *
+   * It is ignored for anything that is not a DELETE, so a route cannot
+   * accidentally unblock a POST by passing it. Uploading, recording, editing
+   * and creating a version stay refused.
+   *
+   * NOT `readOnlyRequest`, which means something different: "this POST is
+   * actually a read". A delete is not a read, and conflating the two would
+   * eventually let a genuine write through the wrong door.
+   */
+  allowFrozenDelete?: boolean
+}
+
+/** Methods that mutate. Everything else is a read and is always permitted. */
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function isWriteRequest(req: NextRequest, options?: BandAccessOptions): boolean {
+  if (options?.readOnlyRequest) return false
+  const method = req.method.toUpperCase()
+  if (options?.allowFrozenDelete && method === 'DELETE') return false
+  return WRITE_METHODS.has(method)
+}
+
+/**
  * Verify that the requesting user is an active member of the band that owns
  * the given project.  Returns the userId, project row, and membership role on
  * success, or an error descriptor that the route should forward as a response.
+ *
+ * **This is also where a frozen band's writes are refused.** Enforcement is
+ * keyed off the HTTP method rather than a per-route flag, so every existing
+ * mutation endpoint — and every one added later — is covered without having to
+ * remember. Reads are untouched: viewing, playback and downloads keep working
+ * in a frozen band, which is the whole design.
+ *
+ * The freeze state is *evaluated* here, not merely read, so a band whose grace
+ * period expired while nobody was looking is frozen the moment it is written
+ * to. That evaluation runs on writes only; reads pay nothing for it.
  */
 export async function requireBandMember(
   req: NextRequest,
   projectId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult | { error: string; status: number }> {
   const userId = await getRequestUserId(req)
   if (!userId) return { error: 'Unauthorized', status: 401 }
@@ -154,6 +219,11 @@ export async function requireBandMember(
     .maybeSingle()
   if (!membership) return { error: 'Not found', status: 404 }
 
+  if (isWriteRequest(req, options)) {
+    const freeze = await ensureBandFreezeState(project.band_id)
+    if (freeze.frozen) return { error: 'band_frozen', status: BAND_FROZEN_STATUS }
+  }
+
   return { userId, project, role: membership.role }
 }
 
@@ -161,6 +231,7 @@ export async function requireBandMember(
 export async function requireBandMemberForTrack(
   req: NextRequest,
   trackId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { track: { id: string; version_id: string } } | { error: string; status: number }> {
   const { data: track } = await supabase
     .from('tracks')
@@ -176,7 +247,7 @@ export async function requireBandMemberForTrack(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, track }
 }
@@ -185,6 +256,7 @@ export async function requireBandMemberForTrack(
 export async function requireBandMemberForVersion(
   req: NextRequest,
   versionId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { version: { id: string; project_id: string } } | { error: string; status: number }> {
   const { data: version } = await supabase
     .from('versions')
@@ -193,7 +265,7 @@ export async function requireBandMemberForVersion(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, version }
 }
@@ -202,6 +274,7 @@ export async function requireBandMemberForVersion(
 export async function requireBandMemberForSection(
   req: NextRequest,
   sectionId: string,
+  options?: BandAccessOptions,
 ): Promise<MembershipResult & { section: { id: string; version_id: string } } | { error: string; status: number }> {
   const { data: section } = await supabase
     .from('sections')
@@ -210,7 +283,7 @@ export async function requireBandMemberForSection(
     .single()
   if (!section) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, section.project_id)
+  const access = await requireBandMember(req, section.project_id, options)
   if ('error' in access) return access
   return { ...access, section }
 }
@@ -219,6 +292,7 @@ export async function requireBandMemberForSection(
 export async function requireBandMemberForComment(
   req: NextRequest,
   commentId: string,
+  options?: BandAccessOptions,
 ): Promise<
   MembershipResult & { comment: { id: string; created_by: string } } | { error: string; status: number }
 > {
@@ -236,7 +310,7 @@ export async function requireBandMemberForComment(
     .single()
   if (!version) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMember(req, version.project_id)
+  const access = await requireBandMember(req, version.project_id, options)
   if ('error' in access) return access
   return { ...access, comment }
 }
@@ -245,6 +319,7 @@ export async function requireBandMemberForComment(
 export async function requireBandMemberForReply(
   req: NextRequest,
   replyId: string,
+  options?: BandAccessOptions,
 ): Promise<
   MembershipResult & { reply: { id: string; created_by: string; comment_id: string } } | { error: string; status: number }
 > {
@@ -255,7 +330,7 @@ export async function requireBandMemberForReply(
     .single()
   if (!reply) return { error: 'Not found', status: 404 }
 
-  const access = await requireBandMemberForComment(req, reply.comment_id)
+  const access = await requireBandMemberForComment(req, reply.comment_id, options)
   if ('error' in access) return access
   return { ...access, reply }
 }

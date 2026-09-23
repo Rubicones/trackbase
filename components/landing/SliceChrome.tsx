@@ -13,6 +13,8 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
+import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { CookieSettingsLink } from "@/components/consent/CookieSettingsLink";
 
 export type SliceKind = "feature" | "audience";
 
@@ -321,7 +323,23 @@ export function SliceFooter({ kind, label }: { kind: SliceKind; label: string })
 
       <footer className="border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-4 py-8 sm:px-6">
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-4 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          <span>© sonicdesk · v0.1 · built for musicians</span>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>© sonicdesk · built for musicians</span>
+            <span aria-hidden>·</span>
+            <Link href={PRIVACY_POLICY_HREF} className="underline-offset-4 hover:text-foreground hover:underline">
+              Privacy
+            </Link>
+            <span aria-hidden>·</span>
+            <Link href="/refund" className="underline-offset-4 hover:text-foreground hover:underline">
+              Refunds
+            </Link>
+            <span aria-hidden>·</span>
+            <Link href="/terms" className="underline-offset-4 hover:text-foreground hover:underline">
+              Terms
+            </Link>
+            <span aria-hidden>·</span>
+            <CookieSettingsLink className="uppercase tracking-[0.18em] underline-offset-4 hover:text-foreground hover:underline" />
+          </span>
           <Link href="/" className="text-lime underline-offset-4 hover:underline">
             ← Back to landing
           </Link>

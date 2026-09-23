@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // PATCH /api/tracks/[id]/rename — update display_name (cosmetic metadata only)
 export async function PATCH(
@@ -27,6 +28,6 @@ export async function PATCH(
     .update({ display_name: name.trim() })
     .eq('id', trackId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('tracks/rename', error, 'Could not rename the track')
   return NextResponse.json({ ok: true, display_name: name.trim() })
 }

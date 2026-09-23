@@ -4,6 +4,7 @@ import { logActivity } from '@/lib/activity'
 import { requireBandMember } from '@/lib/supabase/server'
 import { isValidProjectTimeSignature } from '@/lib/metronomeAudio'
 import { markPreviewMixStale } from '@/lib/previewMix'
+import { getBandEntitlements } from '@/lib/entitlements'
 
 // PATCH /api/projects/[id] — update project metadata (name, bpm, key, time_signature)
 export async function PATCH(
@@ -267,7 +268,35 @@ export async function GET(
       ),
     }))
 
-    return NextResponse.json({ project, versions: versionsWithTracks })
+    // ── What this BAND can do, not what the viewer's own plan allows ────────
+    //
+    // Gated features are a property of the band, resolved from its OWNER's plan
+    // (`lib/entitlements.ts`) — that is the whole point of paying for a band
+    // rather than a seat. The client could not work this out for itself: all it
+    // knows is the viewer's own plan, from `GET /api/me/plan`.
+    //
+    // Without this, `usePaywallGate()` fell back to the viewer's plan at every
+    // call site, so a free member of a Band+ band saw four locked features. For
+    // `track_edit` and `cherry_pick` that was only a hidden button — the server
+    // would have allowed the request. For `ab_compare` and `chord_detect` the
+    // client gate is the ONLY gate (both run in the browser; see
+    // `lib/plans.ts`), so those two were genuinely withheld from exactly the
+    // people the band's owner is paying for.
+    //
+    // One entitlement read on a route that already runs eight queries. It is
+    // the resolver's answer, never a client-side computation.
+    const bandEntitlements = await getBandEntitlements(project.band_id)
+
+    return NextResponse.json({
+      project,
+      versions: versionsWithTracks,
+      bandFeatures: bandEntitlements.features,
+      // The active-version ceiling, from the same resolver answer. Display
+      // only — `assertCanCreateVersion()` re-counts and re-checks on every
+      // create. It is here so "+ New Version" can refuse before the user names
+      // a version, rather than after.
+      activeVersionLimit: bandEntitlements.activeVersionsPerProject,
+    })
   } catch (err) {
     console.error(err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

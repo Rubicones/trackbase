@@ -1,26 +1,56 @@
 /**
  * Band ownership limit — the single server-side implementation.
  *
- * THE RULE: a user may own at most `profiles.band_limit` bands. The default is
- * 3, but users who already owned more at migration time carry a higher
- * personal limit, which is exactly why the number lives in a per-user column.
- * **Never substitute a literal here.** If the limit cannot be read, this module
- * fails closed rather than assuming a default — silently demoting a
- * grandfathered user to 3 would be worse than a temporary error.
+ * THE RULE: a user may own at most their *effective* owned-bands limit, which
+ * is resolved by `getEffectiveEntitlements()` (`lib/entitlements.ts`) from
+ * their plan, their `extra_band` addons, and — when it is non-null — the
+ * `profiles.band_limit_override` manual value. **Never read that column
+ * directly and never substitute a literal.**
+ *
+ * The override is a FLOOR, not a replacement: the limit is
+ * `greatest(override, plan base + extra_band addons)`. It guarantees a
+ * grandfathered beta account (and later a B2B deal) an allowance their plan
+ * would not give them, and it gets out of the way the moment the plan gives
+ * more. It does NOT mean "ignore the plan for this account" — that was the old
+ * reading, and it was wrong in the direction that costs money: an account on
+ * override 3 that bought Band+ (5) resolved to 3, and any `extra_band` addon
+ * on top granted nothing at all, silently, at any quantity.
+ *
+ * The same rule is implemented in `effective_band_limit()` in the database
+ * (`supabase/migrations/20260921_band_limit_override_floor.sql`) and in
+ * `resolveEntitlements()`. All three must agree exactly — while one says 5 and
+ * another says 3, the app offers a band the trigger refuses with BL001.
+ *
+ * `profiles.band_limit` is a DIFFERENT column and belongs to the pre-plans code
+ * path (`main`). It stays NOT NULL DEFAULT 3 so a rollback needs no data
+ * migration. Nothing in the plan system reads it.
+ *
+ * If the limit cannot be resolved this module fails closed rather than
+ * guessing — silently demoting a grandfathered user would be worse than a
+ * temporary error.
  *
  * Ownership in this schema is `band_members.role = 'owner'`, not a column on
  * `bands` (see `requireBandMember` and every other role check in the app).
  * Bands the user merely joined are members rows with a different role and cost
- * them nothing.
+ * them nothing — there is no cap of any kind on joining.
  *
  * Every path that can create a band must go through `createBandForUser`:
  *   - POST /api/bands            (dashboard + onboarding "create a space")
  *   - POST /api/projects         (implicit band when no band_id is supplied)
  * Defence in depth lives in the database — see
- * `supabase/migrations/20260730_band_limit_enforcement.sql`.
+ * `supabase/migrations/20260806_subscription_plans.sql`, which replaces the
+ * old flat-cap trigger with one that computes the same effective limit.
  */
 
 import { supabase } from '@/lib/supabase'
+import {
+  countOwnedBands,
+  getEffectiveEntitlements,
+  limitReachedBody,
+  LIMIT_REACHED_STATUS,
+  type LimitReachedBody,
+} from '@/lib/entitlements'
+import { withinLimit, type Limit } from '@/lib/plans'
 
 /** SQLSTATE raised by the DB trigger / RPC when the limit would be exceeded. */
 const PG_BAND_LIMIT_REACHED = 'BL001'
@@ -30,8 +60,8 @@ const PG_BAND_LIMIT_UNKNOWN = 'BL002'
 const PGRST_NO_SUCH_FUNCTION = 'PGRST202'
 
 export interface BandLimitStatus {
-  /** The acting user's personal allowance, read from profiles.band_limit. */
-  limit: number
+  /** The acting user's effective allowance. `null` means unlimited. */
+  limit: Limit
   /** Bands the user currently owns. */
   current: number
   /** True when creating another band would exceed the allowance. */
@@ -40,10 +70,10 @@ export interface BandLimitStatus {
 
 /** Thrown when a create attempt is refused because the user is at their limit. */
 export class BandLimitReachedError extends Error {
-  readonly limit: number
+  readonly limit: Limit
   readonly current: number
 
-  constructor(limit: number, current: number) {
+  constructor(limit: Limit, current: number) {
     super('band_limit_reached')
     this.name = 'BandLimitReachedError'
     this.limit = limit
@@ -79,29 +109,15 @@ function isBandLimitError(err: unknown): boolean {
 /**
  * Read the acting user's allowance and their current owned-band count.
  * Both values come from the database; nothing here trusts the request.
- * Throws when the allowance cannot be determined (fail closed).
  */
 export async function getBandLimitStatus(userId: string): Promise<BandLimitStatus> {
-  const [profileRes, countRes] = await Promise.all([
-    supabase.from('profiles').select('band_limit').eq('id', userId).maybeSingle(),
-    supabase
-      .from('band_members')
-      .select('band_id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('role', 'owner'),
+  const [entitlements, current] = await Promise.all([
+    getEffectiveEntitlements(userId),
+    countOwnedBands(userId),
   ])
 
-  if (profileRes.error) throw profileRes.error
-  if (countRes.error) throw countRes.error
-
-  const limit = profileRes.data?.band_limit
-  if (typeof limit !== 'number') {
-    // No profile row, or the column is missing. Refuse rather than guess.
-    throw new Error('band_limit_unknown')
-  }
-
-  const current = countRes.count ?? 0
-  return { limit, current, atLimit: current >= limit }
+  const limit = entitlements.bandsOwned
+  return { limit, current, atLimit: !withinLimit(limit, current + 1) }
 }
 
 export interface CreatedBand {
@@ -188,7 +204,7 @@ async function createBandForUserWithoutTransaction(
   // Re-verify: another request may have inserted its own owner row between our
   // check and our insert. The loser of that race undoes itself.
   const after = await getBandLimitStatus(userId)
-  if (after.current > after.limit) {
+  if (after.limit !== null && after.current > after.limit) {
     await supabase.from('band_members').delete().eq('band_id', band.id).eq('user_id', userId)
     await supabase.from('bands').delete().eq('id', band.id)
     throw new BandLimitReachedError(after.limit, after.limit)
@@ -199,14 +215,13 @@ async function createBandForUserWithoutTransaction(
 
 /**
  * The structured, machine-readable body the client renders its message from.
- * 403 matches how this codebase reports "you're allowed to be here, but not
- * allowed to do this" (e.g. "Only owners can rename a band").
+ * Shared shape with every other limit refusal — see `LimitReachedBody`.
  */
-export function bandLimitReachedBody(err: BandLimitReachedError) {
-  return { error: 'band_limit_reached' as const, limit: err.limit, current: err.current }
+export function bandLimitReachedBody(err: BandLimitReachedError): LimitReachedBody {
+  return limitReachedBody('bands', err.limit, err.current)
 }
 
-export const BAND_LIMIT_REACHED_STATUS = 403
+export const BAND_LIMIT_REACHED_STATUS = LIMIT_REACHED_STATUS
 
 /** True for the "no profiles row / column unreadable" fail-closed case. */
 export function isBandLimitUnknown(err: unknown): boolean {

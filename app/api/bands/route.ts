@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import {
   createBandForUser,
   BandLimitReachedError,
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
     .eq('user_id', userId)
     .order('joined_at', { ascending: false })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands', error, 'Could not load your spaces')
 
   // Flatten into band objects with member metadata
   const bands = (data ?? []).map((row: Record<string, unknown>) => ({

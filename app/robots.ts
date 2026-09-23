@@ -6,6 +6,7 @@ const DISALLOWED_PREFIXES = [
   '/api/',
   '/auth/',
   '/band/',
+  '/billing',
   '/dashboard/',
   '/invite/',
   '/onboarding/',

@@ -4,6 +4,8 @@ import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, trackActivityLabel } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { sanitizeTrackStartBarForServer } from '@/lib/trackMerge'
+import { isValidProjectObjectKey } from '@/lib/r2'
+import { settleAfterFreeingSpace } from '@/lib/planSettle'
 
 /** Returns true if the given version_id belongs to the main version of its project. */
 async function isMainVersion(versionId: string): Promise<boolean> {
@@ -23,7 +25,13 @@ export async function DELETE(
   try {
     const { id } = await params
 
-    const access = await requireBandMemberForTrack(req, id)
+    // Deleting a track is allowed in a FROZEN band. It is one of the four
+    // exceptions to the read-only rule (band delete, member remove, track
+    // delete, version delete), all for the same reason: it reduces what the
+    // owner's plan has to cover. Without it, a band frozen while over its
+    // storage ceiling had no way to shrink and the only exit was deleting the
+    // whole space. See `BandAccessOptions.allowFrozenDelete`.
+    const access = await requireBandMemberForTrack(req, id, { allowFrozenDelete: true })
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project, track } = access
 
@@ -49,6 +57,12 @@ export async function DELETE(
       projectId: project.id,
     })
 
+    // Bytes just came back. Settle the OWNER's account so a storage conflict
+    // this resolved can clear grace — and unfreeze the band — now, rather than
+    // on whatever page load happens to call `settleAccount` next. The user who
+    // just made room is looking at the screen; the banner has to agree.
+    await settleAfterFreeingSpace(project.band_id)
+
     return NextResponse.json({ deleted: true })
   } catch (err) {
     console.error(err)
@@ -57,7 +71,8 @@ export async function DELETE(
 }
 
 // PATCH /api/tracks/[id]
-// Supports: file_hash, storage_path, midi_data updates (for MIDI save flow)
+// Supports: storage_path, midi_data, duration_ms and start_bar updates.
+// NOT file_hash and NOT file_size_bytes — see the allow-list comment below.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -71,11 +86,46 @@ export async function PATCH(
 
     const body = await req.json()
 
-    const allowed = ['file_hash', 'storage_path', 'midi_data', 'duration_ms', 'file_size_bytes', 'midi_start_bar', 'start_bar']
+    // ⚠ `file_size_bytes` is deliberately NOT here. It is the storage
+    // accounting value: `getBandStorageUsed()` sums it, so a writable one lets
+    // a member set a negative size and drive their band's measured usage below
+    // zero, which lifts the storage ceiling entirely. Byte counts are only ever
+    // written by the paths that actually produced the bytes (tracks/process,
+    // tracks/upload, tracks/edit, tracks/midi-upload), from the buffer they
+    // just hashed.
+    //
+    // ⚠ `file_hash` is NOT here either, for the same reason by a different
+    // route. `getBandStorageUsed()` does not sum every row — it sums the FIRST
+    // row it sees per distinct `file_hash` (`lib/bandStorage.ts`), because one
+    // stored object referenced from five versions must be paid for once. So the
+    // hash is the key the whole accounting is grouped by, and a client that can
+    // write it can collide two unrelated tracks onto one value: the second one
+    // stops counting, its bytes stay in R2, and the band's measured usage drops
+    // by its size. One PATCH per track, repeatable, unbounded — a free band
+    // could hold any number of bytes against a 500 MB ceiling.
+    //
+    // Nothing legitimate needs it here. The hash is only ever meaningful
+    // alongside the object it describes, and every path that stores an object
+    // writes both in the same statement: `tracks/[id]/midi-upload` (MIDI save),
+    // `tracks/[id]/edit` (rendered edit), `versions/[id]/tracks/process` and
+    // `.../upload` (uploads). If a new path stores bytes, it writes the hash
+    // itself — it does not hand the value to the browser to send back.
+    const allowed = ['storage_path', 'midi_data', 'duration_ms', 'midi_start_bar', 'start_bar']
     const updates: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in body) updates[key] = body[key]
     }
+    // ── The two fields that point at storage ────────────────────────────────
+    // `storage_path` is an R2 object key, so it may not be free text. An
+    // arbitrary key lets a member of one band point a row at another band's
+    // object and read it back through `/api/tracks/[id]/stream`, which
+    // authorises the *track*, not the key. It is constrained to the canonical
+    // `projects/{thisProject}/{sha256}` shape — the only shape the upload paths
+    // ever produce.
+    if ('storage_path' in updates && !isValidProjectObjectKey(updates.storage_path, project.id)) {
+      return NextResponse.json({ error: 'Invalid storage path' }, { status: 400 })
+    }
+
     if ('start_bar' in updates) {
       updates.start_bar = sanitizeTrackStartBarForServer(Number(updates.start_bar) || 0)
       updates.midi_start_bar = updates.start_bar
@@ -104,9 +154,11 @@ export async function PATCH(
       .single()
     if (error) throw error
 
-    // start_bar or file_hash changes on a main audio track affect the rendered mix.
+    // start_bar or storage_path changes on a main audio track affect the rendered mix.
+    // (`file_hash` moved out of the allow-list; the paths that rewrite the stored
+    // object mark the mix stale themselves.)
     const affectsAudio = existingTrack?.file_type !== 'midi'
-    const affectsRendering = 'start_bar' in updates || 'midi_start_bar' in updates || 'file_hash' in updates
+    const affectsRendering = 'start_bar' in updates || 'midi_start_bar' in updates || 'storage_path' in updates
     if (affectsAudio && affectsRendering && await isMainVersion(track.version_id)) {
       void markPreviewMixStale(project.id)
     }

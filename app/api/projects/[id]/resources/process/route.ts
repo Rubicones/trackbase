@@ -4,7 +4,7 @@ import { logActivity, fmtFileSize } from '@/lib/activity'
 import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2, uploadToR2 } from '@/lib/r2'
 import { getRequestUserId } from '@/lib/supabase/server'
-import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { frozenBandRefusal, storageRefusal } from '@/lib/planGuards'
 import { isValidTempKey, uuidFromTempKey } from '@/lib/r2TempKey'
 
 // ── POST /api/projects/[id]/resources/process ─────────────────────────────────
@@ -48,6 +48,12 @@ export async function POST(
   if (!member) {
     return NextResponse.json({ error: 'Not a member of this band' }, { status: 403 })
   }
+
+  // This route authenticates by hand rather than through `requireBandMember`,
+  // so it does not inherit that guard's method-keyed frozen-band block and has
+  // to ask explicitly. A frozen band is read-only: no new resource files.
+  const frozen = await frozenBandRefusal(project.band_id)
+  if (frozen) return frozen
 
   let body: {
     tempKey?: string
@@ -97,14 +103,6 @@ export async function POST(
     return NextResponse.json({ error: ctx.error }, { status: 400 })
   }
 
-  const quota = await checkBandStorageQuota(supabase, project.band_id, fileSize)
-  if (!quota.ok) {
-    return NextResponse.json(
-      { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-      { status: 413 },
-    )
-  }
-
   // Build final storage key: resources/{projectId}/{uuid}-{filename}
   // UUID comes only from a validated temp key (never from arbitrary client input).
   const uuid = uuidFromTempKey(tempKey, 'resource')
@@ -126,6 +124,27 @@ export async function POST(
   } catch (err) {
     console.error('[resources/process] R2 download failed:', err)
     return NextResponse.json({ error: 'Failed to retrieve uploaded file' }, { status: 502 })
+  }
+
+  // ── The authoritative byte count ────────────────────────────────────────────
+  // `body.fileSize` is what the browser SAYS it uploaded. It is used for the
+  // early 400 above and nothing else: the object is already in R2 by the time we
+  // get here, so the only number that means anything is the one we just read.
+  // Checking the quota against a declared size — and then storing that declared
+  // size — let a caller PUT 500 MB to the presigned URL, declare 1 byte, and
+  // have the band's usage under-count it forever.
+  const actualBytes = fileBuffer.byteLength
+
+  // Per-band storage ceiling, resolved from the band owner's plan plus
+  // this band's extra_storage addons. Never pooled across bands.
+  // Checked after the download and before the final write, so nothing that
+  // exceeds the ceiling is ever committed to a resource row.
+  const overQuota = await storageRefusal(project.band_id, actualBytes)
+  if (overQuota) {
+    deleteFromR2(tempKey).catch(err =>
+      console.warn('[resources/process] temp cleanup after refusal failed:', err),
+    )
+    return overQuota
   }
 
   try {
@@ -154,7 +173,7 @@ export async function POST(
       type: 'file',
       storage_path: finalKey,
       original_filename: originalFilename,
-      file_size_bytes: fileSize,
+      file_size_bytes: actualBytes,
       mime_type: mimetype,
       title: title?.trim() || null,
       created_by: userId,
@@ -175,7 +194,7 @@ export async function POST(
     userId,
     action: 'resource',
     subject: title?.trim() || originalFilename,
-    detail: fmtFileSize(fileSize),
+    detail: fmtFileSize(actualBytes),
     projectId,
   })
 

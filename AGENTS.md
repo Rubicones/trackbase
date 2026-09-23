@@ -31,9 +31,25 @@ per-comment cherry-picking. Terminology is a display-layer mapping of git
 concepts: branch→version, main→Master, merge→apply, conflict→overlapping
 changes. **The DB keeps git terms** (`versions.type = 'main'`).
 
-There is currently **no billing** (a measurement-only test paywall exists,
-see §4) and **no native mobile app** — no Capacitor/Android code exists in
-this repo; mobile is the responsive web experience.
+There is a full **subscription plan and entitlement system** (§4): plans,
+limits, addons, upgrades, downgrades, grace periods and frozen bands, all
+enforced server-side. **Stripe is wired in** — checkout, the customer portal,
+add-ons as subscription items, and a signature-verified webhook — and it does
+exactly one thing to entitlements: set `profiles.plan` and reconcile
+`plan_addons` rows.
+
+What gates it is **`BILLING_LIVE`** (`lib/billing/config.ts`), which requires
+BOTH `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. While it is false — which
+is the state of any deployment without those two env vars — the checkout and
+add-on routes answer 503, the webhook 404s, "Subscribe" records demand in
+`subscription_intents`, and plans are assigned only through the dev-only
+switcher. So "no billing" is a *configuration*, not a missing feature: do not
+read an unconfigured deployment as an excuse to build a second payment path.
+Two of the billing migrations are applied by hand and are not optional — see
+§4 *Billing (Stripe)*.
+
+There is **no native mobile app** — no Capacitor/Android code exists in this
+repo; mobile is the responsive web experience.
 
 ## 2. Tech stack
 
@@ -58,7 +74,8 @@ this repo; mobile is the responsive web experience.
 - **googleapis** — Google Sheets mirror of feedback submissions.
 - **GA4** via `@next/third-parties` + **Meta Pixel** (`lib/meta-pixel.ts`)
   + **Yandex Metrica** (`lib/yandex-metrica.ts`) + **@vercel/analytics**
-  (all wired in `app/layout.tsx`).
+  (all wired in `app/layout.tsx`; the first three only with cookie consent —
+  see §4 *Cookie consent*).
 - **motion**, **lucide/lucide-react**, **next-themes**.
 
 ## 3. Directory map
@@ -93,6 +110,8 @@ components/                 Reusable UI (flat) + subfolders:
   merge/                    Apply/cherry-pick UI (CherryPickDiff, targets)
   onboarding/               Welcome modals + ProjectTour + tour step defs
   paywall/                  PaywallLock, PlansModal
+  plan/                     PlanUsage, DevPlanSwitcher, PlanConflictResolver,
+                            GraceBanner, FrozenBandBanner
   push/                     Push permission UI + provider
   landing/, seo/, tools/, feedback/, analytics/, auth/
 contexts/                   AuthContext, PaletteContext, PaywallContext
@@ -118,8 +137,17 @@ lib/                        Shared logic (flat). Highlights:
   midi.ts, midiRender.ts, midiSoundfont.ts     MIDI engine
   serverEssentia.ts, serverChordDetection.ts, chordDetection.ts, chords.ts
   activity.ts               logActivity (band activity feed)
-  bandLimit.ts              per-user owned-band cap (server); bandLimitClient.ts (UI copy)
-  bandStorage.ts            1 GB per-band storage quota
+  plans.ts                  ★ THE plan table — limits, features, prices. Isomorphic.
+  entitlements.ts           getEffectiveEntitlements / getBandEntitlements, plan state
+  planConflicts.ts          checkPlanConflicts (upgrade + downgrade + state)
+  planChange.ts             changePlan (upgrade blocks, downgrade + grace)
+  bandFreeze.ts             lazy freeze/unfreeze + the frozen-band write block
+  freezeOrder.ts            pure keep/freeze split (shared preview + enforcement)
+  planGuards.ts             server-side assertCanAddMember / storage / versions / feature
+  planCopy.ts               all limit wording (isomorphic); apiErrorMessage
+  planAnalytics.ts          plan_changed, limit_reached, band_frozen, … (client)
+  bandLimit.ts              owned-band creation path (server); bandLimitClient.ts (UI copy)
+  bandStorage.ts            per-band storage accounting (ceiling comes from the plan)
   googleSheets.ts, push/, rate-limit.ts, seo.ts, site-url.ts
 public/
   sw.js                     Push service worker
@@ -260,19 +288,25 @@ notification to the owner. Legacy token invite links (`band_invites` table,
 `lib/activity.ts` `logActivity()` → `band_activity`, read via
 `/api/bands/[id]/activity`.
 
-**Band ownership limit.** A user may own at most `profiles.band_limit` bands
-(default 3; users who already owned more at migration time carry a higher
-personal limit — **never replace the column read with a literal 3**). Only
-bands the user *owns* count; `band_members.role = 'owner'` is the definition of
-ownership, so bands they joined are free. `lib/bandLimit.ts` is the single
-server-side implementation: `createBandForUser()` (limit check + both inserts,
-atomic) and `getBandLimitStatus()`. **Both band-creation paths go through it** —
-`POST /api/bands` and `POST /api/projects` when no `band_id` is supplied (that
-one spins up an implicit band). Refusal is `403 { error: 'band_limit_reached',
-limit, current }`. Defence in depth is in the DB: `create_band_with_owner()`
-(atomic RPC) and the `trg_enforce_band_owner_limit` BEFORE INSERT/UPDATE trigger
-**on `band_members`** — ownership is a membership row, not a column on `bands`,
-so that is the only table where the constraint can fire at the right moment.
+**Band ownership limit.** A user may own at most their *effective* owned-bands
+limit, resolved by `getEffectiveEntitlements()` from their plan + `extra_band`
+addons, **unless `profiles.band_limit` is non-null, in which case that value
+replaces the whole computation** (see Subscription plans below). Only bands the
+user *owns* count; `band_members.role = 'owner'` is the definition of
+ownership, so bands they joined are free and unlimited. `lib/bandLimit.ts` is
+the single server-side implementation: `createBandForUser()` (limit check +
+both inserts, atomic) and `getBandLimitStatus()`. **Both band-creation paths go
+through it** — `POST /api/bands` and `POST /api/projects` when no `band_id` is
+supplied (that one spins up an implicit band). Refusal is
+`403 { error: 'limit_reached', limit_type: 'bands', limit, current }` (the
+client parser also still accepts the legacy `band_limit_reached` shape).
+Defence in depth is in the DB: `create_band_with_owner()` (atomic RPC) and the
+`trg_enforce_band_owner_limit` BEFORE INSERT/UPDATE trigger **on
+`band_members`** — ownership is a membership row, not a column on `bands`, so
+that is the only table where the constraint can fire at the right moment. Both
+now compute the limit via `effective_band_limit()` (plan base + addons, or the
+override) and both take `SELECT … FOR UPDATE` on the profiles row, which is
+what makes two simultaneous creates at limit − 1 produce exactly one band.
 Both raise SQLSTATE `BL001` / message `band_limit_reached`, which the route
 translates instead of leaking a 500. The UI reads `bandLimit` from
 `/api/dashboard` (dashboard) or `GET /api/me/band-limit` (onboarding) and locks
@@ -550,8 +584,62 @@ route-change tracker handles SPA navigations — mirroring would double-count.
 Page views: `components/analytics/PageViewTracker.tsx` (GA4),
 `MetaPixel.tsx` (`fbq PageView`), `YandexMetrica.tsx` (`ym hit`, passing the
 previous URL as `referer` since Metrica can't infer it on an SPA navigation).
-GA/Pixel/Metrica/Vercel Analytics are all mounted in `app/layout.tsx`, and
-Pixel + Metrica render nothing when their env var is absent.
+GA/Pixel/Metrica are mounted by `components/analytics/ConsentedTrackers.tsx`
+(only with consent — next section); Vercel Analytics (cookieless) directly in
+`app/layout.tsx`. Pixel + Metrica also render nothing when their env var is
+absent.
+
+### Legal pages
+`/terms`, `/privacy`, `/refund` — static, public (`PUBLIC_PREFIXES` in
+`middleware.ts`), in `app/sitemap.ts`, linked from the landing and slice-page
+footers next to *Cookie settings*. Route files are thin wrappers around
+`components/legal/{Terms,Privacy,Refund}Document.tsx`, whose copy is verbatim
+from `sonicdesk_designs/src/routes/{terms,privacy,refund}.tsx` (the design
+source of truth — change copy there first, then mirror it). Shared shell:
+`components/legal/LegalDocument.tsx` (+ `legal.css`); bump
+`LEGAL_LAST_UPDATED` whenever a document's copy changes.
+
+**Terms acceptance.** The `/auth` email step shows, under Continue: "By
+continuing, you agree to our Terms of Service and acknowledge our Privacy
+Policy." — plain text, no checkbox. **"acknowledge", never "agree to", for the
+Privacy Policy** (GDPR: information, not a contract). Recorded server-side
+only, by `handle_new_user`, on the profile row it creates:
+`terms_accepted_at = now()`, `terms_version = public.current_terms_version()`
+(`supabase/migrations/20260923_terms_acceptance.sql`). That SQL function is the
+single source of the version (ISO date); **when the Terms change, re-run it
+with the new date and bump `LEGAL_LAST_UPDATED.terms` to match.** Existing
+users are never re-stamped. The browser cannot write either column (UPDATE is
+column-granted without them; INSERT on `profiles` is revoked).
+
+### Cookie consent (GDPR)
+GA4, the Meta Pixel and Yandex Metrica **must not load, set cookies or send a
+request before the visitor clicks Accept.** Gated at render time, never
+"loaded then suppressed":
+- **Storage:** cookie `sd_consent` = `accepted.<ms>` | `rejected.<ms>`,
+  Max-Age 12 months, and a stored timestamp older than 12 months also counts
+  as no choice (`lib/consent.ts` — `parseConsent`, `writeConsentCookie`).
+  A cookie, not localStorage, so `app/layout.tsx` reads it server-side.
+- **Rendering:** `ConsentProvider` (seeded with the server-read value,
+  re-read from `document.cookie` on mount) → `ConsentedTrackers` returns
+  null unless `accepted`. ⚠ The landing and `/features/*`, `/audience/*`,
+  `/tools/*` pages are `force-static`, where `cookies()` is empty: their HTML
+  is tracker-free for everyone and trackers mount after hydration. Don't
+  "fix" that by removing `force-static`.
+- **Sending:** `trackEvent`, `setUserProperties`, and every Meta/Metrica
+  helper check `hasTrackingConsent()` on each call, so withdrawing consent
+  stops events at once. On Reject, already-loaded scripts are also told to
+  stop via vendor switches (`ga-disable-<id>`, `fbq('consent','revoke')`)
+  but are **not** unloaded; they are simply not rendered on the next load.
+- **UI:** `components/consent/CookieBanner.tsx` — fixed bottom bar, not a
+  modal. Reject and Accept share one class string: **equal visual weight is a
+  legal requirement, never restyle one of them alone.** `CookieSettingsLink`
+  (landing + SliceChrome footers, AppShell/AuthShell status footers) reopens it.
+- **Privacy Policy:** `PRIVACY_POLICY_HREF` in `lib/consent.ts` is a
+  placeholder (`/privacy`, no page yet; already public in middleware).
+- **Any new non-essential tracker** goes inside `ConsentedTrackers` and its
+  helpers check `hasTrackingConsent()`. Essential cookies (auth session, theme)
+  are not gated. The Metrica `<noscript>` pixel was
+  removed on purpose — a no-JS visitor can never consent.
 
 **Metrica goals must also be created in the counter UI** (Settings → Goals →
 "JavaScript event", Identifier = the exact event name) before they appear in
@@ -569,26 +657,664 @@ Google Sheet (`lib/googleSheets.ts`; columns Timestamp|Email|Type|Message|
 Page URL; tab from `GOOGLE_SHEETS_TAB`, default `Sheet1`). Sheet failure
 never fails the request.
 
-### Paywall test mode (measurement only, LOCAL DEV ONLY)
-`contexts/PaywallContext.tsx` — a per-user localStorage toggle
-(`sd-paywall-test:{userId}`, surfaced in Preferences → Testing). **Purely
-presentational; nothing is gated server-side.**
+### Subscription plans & entitlements
 
-**`PAYWALL_TEST_MODE_AVAILABLE` (`process.env.NODE_ENV === 'development'`)
-gates both the toggle UI and `enabled` itself**, so the paywall cannot appear
-on any deployed build — preview deploys included, since `next build` always
-sets NODE_ENV=production. Gating the value and not just the switch is
-deliberate: hiding only the switch would strand users who had the flag ON
-behind locks they could no longer remove. The localStorage key is left in
-place, so running `next dev` restores the previous setting. Gated features:
-`chord_detect`, `cherry_pick`, `track_edit`, `ab_compare`
-(`components/paywall/PaywallLock.tsx`, `PlansModal.tsx`). "Subscribe" posts
-`POST /api/paywall/intent` → upserts `subscription_intents`
-(plan `solo|band|band_plus`, unique per user+plan, email resolved
-server-side). Not an entitlement table. NOTE: plan band-limits shown in the
-plans UI have known inconsistencies to resolve before real billing — and they
-are a **separate mechanism** from the beta-wide `profiles.band_limit` cap
-described under Bands. No plan logic reads or writes `band_limit` today.
+**No Stripe, no checkout, no webhooks, no invoices, no proration.** What
+exists is the entitlement engine Stripe will one day drive. When it arrives it
+will do exactly one thing: set `profiles.plan` and insert `plan_addons` rows.
+Nothing in this system may read a Stripe id, a subscription status or a price
+— design to that seam.
+
+**`lib/plans.ts` is THE source of truth** for every limit, feature and price.
+Four plans (`free` | `solo` | `band` | `band_plus`). **Never write a plan
+number anywhere else** — a literal `3` or `500` in a route handler is a bug,
+and with no test suite it is a silent one. `null` means unlimited (not
+`Infinity`, so the wire format and the in-memory format are identical); use
+`withinLimit()` / `remaining()` / `addToLimit()` rather than comparing by
+hand. Gated features: `ab_compare`, `track_edit`, `chord_detect`,
+`cherry_pick` — locked on free, included on every paid plan.
+
+⚠ **The four are not enforced the same way, and the difference is structural.**
+`track_edit` and `cherry_pick` have server endpoints that call
+`assertBandFeature()`, so hiding the button is not the gate. `ab_compare` and
+`chord_detect` have **no server endpoint to gate** — A/B Compare is client-side
+playback of versions the user may already read, and chord detection runs
+entirely in a browser worker (`public/workers/chordsWorker.js`). For those two
+the client check IS the enforcement, and anybody who can set a JavaScript
+variable has them. Do not assume otherwise, and do not "add the missing server
+check" without first moving the work to a server. Making them paid in any
+stronger sense is a product decision, not a patch.
+
+**Two rules that are easy to violate by accident:**
+- **Owned bands only.** There is NO limit on how many bands a user may be a
+  MEMBER of, on any plan, free included. Nothing counts non-owner
+  memberships and nothing should. (The plans modal used to advertise a "3
+  bands as a member" cap that never existed; the limit lines are now
+  generated from `lib/plans.ts` so that cannot recur.)
+- **Storage is strictly per band, never pooled.** A Band+ owner with five
+  bands has 50 GB in *each*. There is no account-wide storage total anywhere
+  in this codebase; do not add one.
+
+**Resolution — `lib/entitlements.ts`.** `getEffectiveEntitlements(userId)` is
+the only place limits are computed; everything else calls it (or the
+band-scoped `getBandEntitlements(bandId)`). Order: plan base → `plan_addons`
+(`extra_band` +N account-wide; `extra_storage` +10 GB × N on one band;
+`extra_member` +N on one band) → **`profiles.band_limit_override`**, which when
+non-null is a **FLOOR** under the result: the limit becomes
+`greatest(override, plan base + extra_band addons)`. It raises an allowance the
+plan would not give and never caps one that is already higher.
+
+Note both halves of that, because both were wrong before 2026-09-21. The column
+is `band_limit_override`, NOT `profiles.band_limit` — that second one belongs to
+the pre-plans code path, stays `NOT NULL DEFAULT 3` so a rollback needs no data
+migration, and the plan system never reads it (§5, §7). And the rule is a floor,
+not a replacement: as a replacement it was also a cap, so a grandfathered
+account on override 3 who bought Band+ (5) resolved to 3, and an `extra_band`
+addon on such an account granted nothing at any quantity. The money moved; the
+capacity did not.
+
+The same rule lives in `effective_band_limit()` in the database
+(`supabase/migrations/20260921_band_limit_override_floor.sql`, applied by hand)
+and in `resolveEntitlements()` (`lib/entitlements.ts`). **All three must agree.**
+While they do not, the app offers a band the trigger then refuses with `BL001`.
+
+> **This actually happened, and it is the trap to watch for.** `20260807`
+> installed the plan-aware `enforce_band_owner_limit()` and
+> `create_band_with_owner()`. The `20260817` hotfix then ran *after* it and did
+> `create or replace` on exactly those two, returning them to reading
+> `profiles.band_limit`. `20260921` was applied later still, but by design it
+> replaces only `effective_band_limit()` — so it upgraded a function nothing
+> called. The database sat with a current resolver and two pre-plans callers,
+> and an account on Band+ with an `extra_band` addon resolved to 6 in the app
+> and was refused at 3 by Postgres. Restored by
+> `20260923_band_limit_restore_plan_aware.sql`, which carries sections 2 and 3
+> of `20260807` and deliberately **omits its section 1** — re-running the whole
+> file would silently regress the override back to replacement semantics. When
+> a limit refusal and the UI disagree, check which *version* of each of the
+> three objects is live before anything else:
+> `select proname, prosrc ilike '%effective_band_limit%' from pg_proc …`.
+
+**Band capabilities always come from the band
+OWNER's plan**; members inherit them, and a member's own plan governs only
+bands they own. Ownership is `band_members.role = 'owner'` everywhere.
+
+**Plan state is derived, never stored.** `active` / `grace` / `enforced`,
+computed on read from `profiles.plan`, `grace_until` and the actual data.
+**There is no cron job.** `settleAccount()` (`lib/bandFreeze.ts`) is what makes
+"and the actual data" true, and every endpoint a plan banner renders from calls
+it first — `GET /api/me/plan` and `GET /api/dashboard`. It clears a deadline
+that no longer means anything, freezes the excess once grace has run out, and
+**starts** a period when the account is over its owned-band limit with no clock
+running. That last case is not hypothetical: `grace_until` is otherwise written
+only by `changePlan()` on a downgrade, so an account that went over the limit
+any other way (an addon revoked, `band_limit_override` lowered) sat in `active`
+indefinitely — over its limit, with no banner and nothing frozen. A band nobody opens does not get frozen in the
+background — it freezes the moment someone touches it, the same lazy pattern
+the preview-mix cache uses. `ensureBandFreezeState()` runs from the auth
+guards (writes) and from `GET /api/bands/[id]` (opening a band).
+
+**Enforcement is server-side, everywhere** (`lib/planGuards.ts`). Band
+creation (`lib/bandLimit.ts`), adding a member (join-request approval),
+uploads (`storageRefusal()` on every presign/process/upload/resource path),
+version creation, and the gated-feature endpoints (`POST /api/tracks/[id]/edit`
+→ `track_edit`; `POST /api/projects/[id]/merge` → `cherry_pick`, but only when
+selective fields are present — applying a whole version stays free). Every
+refusal is `403 { error: 'limit_reached', limit_type, limit, current, message }`
+so the UI can name the ceiling instead of showing a generic error.
+⚠ **In-app chord detection runs entirely in a browser worker
+(`public/workers/chordsWorker.js`) and has no server endpoint**, so
+`chord_detect` is gated in the UI only; the public `/tools/chord-detector`
+route is deliberately ungated (no login, marketing funnel, rate-limited).
+
+**Frozen bands** (`lib/bandFreeze.ts`) are READ-ONLY; **nothing is ever
+deleted**. Viewing, playback, downloads and chat history keep working. Writes
+are blocked in `requireBandMember` **by HTTP method**, so every existing
+mutation route and every future one is covered without remembering — pass
+`{ readOnlyRequest: true }` for the handful of POSTs that are actually reads
+(merge preview, preview-mix recompute). Band-level routes call
+`frozenBandRefusal(bandId)` explicitly.
+
+**Four writes are deliberately allowed in a frozen band**, and they share one
+reason: each REMOVES something, so it reduces what the owner's plan has to
+cover, and it destroys nothing the user wanted kept — the user is the one
+asking. Without them a frozen band could not shrink, and the only way out of
+the state freezing exists to avoid would be deleting the whole space.
+
+| Allowed | How |
+|---|---|
+| `DELETE /api/bands/[id]` | no frozen check on the route (its PATCH sibling has one) |
+| `DELETE /api/bands/[id]/members/[userId]` | no frozen check (its PATCH sibling has one); also the only way to clear a `too_many_members` conflict |
+| `DELETE /api/tracks/[id]` | `requireBandMemberForTrack(req, id, { allowFrozenDelete: true })` |
+| `DELETE /api/versions/[id]` | `requireBandMemberForVersion(req, id, { allowFrozenDelete: true })` |
+
+`allowFrozenDelete` is ignored for anything that is not a DELETE, so a route
+cannot unblock a POST by passing it. It is NOT `readOnlyRequest`, which means
+something else entirely ("this POST is actually a read") — do not reuse that
+flag here. Everything else stays refused: uploading, recording, editing a
+track, creating a version, renaming, chat.
+
+The two track/version deletes then call `settleAfterFreeingSpace(bandId)`
+(`lib/planSettle.ts`), and `DELETE /api/bands/[id]` calls `settleAccount()`
+directly, so a conflict the user just resolved clears the banner on the
+response to their own action rather than on some later page load.
+
+Unfreezing is immediate and automatic.
+
+**Upgrade vs downgrade are asymmetric on purpose.** Upgrades are BLOCKED until
+conflicts are resolved (only `too_many_members` blocks — everything else only
+rises); the resolution screen removes members inline and says plainly that
+their content stays. Downgrades are IMMEDIATE and unobstructed: features lock
+at once, uploads and new versions pause where over limit, and `grace_until` =
+now + 14 days if any structural conflict exists. **Members are NEVER removed
+automatically — not on downgrade, not after grace, not ever.** Being over the
+member limit blocks ADDING, nothing else.
+
+**Dev switcher** — Preferences → Development. Selecting a plan posts to
+`POST /api/me/plan`, the real flow. `/api/dev/plan` adds only what has no user
+equivalent yet (force grace expiry, grant/revoke addons, set the `band_limit`
+override). The component, `/api/dev/plan` **and `POST /api/me/plan`** all gate
+on the single constant `DEV_PLAN_TOOLS_AVAILABLE` (`lib/devPlanTools.ts`,
+`NODE_ENV === 'development'`); the routes 404 elsewhere rather than 403 so their
+existence is not advertised.
+
+⚠ **`POST /api/me/plan` must never be reachable in a deployed build.** With no
+billing there is no legitimate self-serve plan assignment, so an open POST here
+is a one-request grant of `band_plus` to anybody with a session — the entire
+entitlement system defeated. When Stripe arrives, the dev gate is replaced by
+webhook signature verification, **not removed**: the plan value must never
+originate from a browser. `GET /api/me/plan` is read-only and stays open.
+
+Routes: `GET|POST /api/me/plan`, `GET /api/me/plan/conflicts?target=`,
+`POST /api/me/plan/keep-bands`, `GET|POST /api/dev/plan`.
+"Subscribe" still posts `POST /api/paywall/intent` → upserts
+`subscription_intents` (demand measurement, unrelated to entitlements).
+
+The old measurement-only paywall — a `sd-paywall-test:{userId}` localStorage
+toggle in `contexts/PaywallContext.tsx` that gated nothing — **is gone**.
+`locked` now comes from the resolved plan.
+
+**`usePaywallGate` has three states, not two.** `allowed` / `locked` /
+`pending`, where `pending` means nothing has answered yet. It used to have two,
+with "no answer" folded into "unlocked" — so every gated control in the app was
+open for the whole of every page load, which is a paid feature given away on
+each visit for the two that have no server check. A gate resolves to `pending`
+until a real answer arrives from one of:
+
+| source | reaches the client | covers |
+| --- | --- | --- |
+| `app/band/[bandId]/layout.tsx` | first rendered byte | everything in a band |
+| `GET /api/projects/[id]` → `bandFeatures`, `activeVersionLimit` | with the project | mixer, authoritative |
+| `GET /api/bands/[id]` → `memberLimit`, `storageLimitBytes`, `features` | with the band | band page, authoritative |
+| `GET /api/me/plan` → `PlanSnapshot.resolved` | after auth + fetch | everything outside a band |
+
+The band layout is a server component: the band id is a path segment, so the
+owner's entitlements are knowable before render and there is no reason to make
+the browser ask. It serves `BandPlanSnapshot`
+(`components/plan/BandEntitlements.tsx`) — features AND the three band ceilings
+— through `useBandPlan()`. It resolves entitlements ONLY: no usage counters, no
+`settleAccount`, no conflict checks. Those are what make `GET /api/me/plan`
+expensive and nothing rendered from this context needs them.
+
+⚠ **Two kinds of null in that snapshot.** The SNAPSHOT being null means nobody
+has answered — wait. A LIMIT inside it being null means answered, and the answer
+is unlimited (the `Limit` vocabulary from `lib/plans.ts`). Collapsing them is how
+"unlimited" and "we do not know" end up rendering the same control. A failure in
+the layout resolves the snapshot to `null`, never to a concrete value.
+
+`PlanSnapshot.resolved` exists because `provisioned` used to carry two unrelated
+meanings — the server's "plan schema is not in the database" and the client's
+"the fetch has not landed" — both of which unlocked everything and could not be
+told apart. `provisioned` now means only what the server means by it.
+
+Gates still resolve against the BAND's features wherever they are known, and
+fall back to the *user's* plan otherwise (all the client knows), which can
+under-promise inside someone else's paid band and never over-promises. Pass
+`bandFeatures` where the band is known — every mixer call site does.
+
+**A ceiling is not a feature gate, but it still gets three states.** A gated
+feature is a property of one plan id. A ceiling (`bandsOwned`) is a property of
+what the user has already done: it costs a `count(*)`, cannot be read off a plan
+id, and is enforced twice server-side (`createBandForUser()` plus the database
+trigger). That makes the server refusal the real gate — it does not make the
+affordance safe to leave live while the count is in flight. Opening the create
+modal, naming a band and being refused is worse than waiting a moment, so
+`+ New space` renders inert until `/api/dashboard` answers, beside a grid that
+is already showing skeletons in the same window.
+
+**Which null it is decides the answer.** `bandLimit === null` while
+`loadingData` means "in flight" → pending. The same null after the load means
+the server could not read the limit → live, and the create refuses with the
+structured `limit_reached` body. Guessing "at the limit" in either case would
+show a paying user a cap they do not have, which is the one wrong answer with
+no recovery.
+
+**Every ceiling with a visible affordance has three states now**, and each one
+needs BOTH of its unknowns resolved — the ceiling, and the list it is counted
+against. An empty list makes any real ceiling read as roomy, so the page's own
+`loading` flag is part of every pending condition:
+
+| ceiling | affordance | counted against |
+| --- | --- | --- |
+| `bandsOwned` | `+ New space` (dashboard) | `bandLimit.atLimit` |
+| `activeVersionsPerProject` | `+ New Version` (mixer) | branches with no `merged_at` |
+| `membersPerBand` | `Approve` on a join request | `members.length` |
+
+`storagePerBandMB` gates nothing in the UI: a ceiling that depends on the size
+of a file the user has not chosen yet cannot be checked before the picker, and
+the presign route already refuses on the declared size before any bytes move.
+What it does need is to stop LYING while unknown — see below.
+
+**Creating a version goes through `requestNewVersion()` and nothing else.** Six
+surfaces open that modal (desktop toolbar, two mobile layouts, the tour, a
+keyboard path); gating them one by one is how the next one ships ungated.
+
+**Reject is never gated, only Approve.** Approving inserts a member and meets
+`assertCanAddMember()`; rejecting never does.
+
+**A ceiling must never be displayed as a default.** The band page used to seed
+`storageLimitBytes` with `BAND_STORAGE_LIMIT_BYTES` (the legacy pre-plans 1 GB
+constant, whose own docblock says not to use it as a value), so every band
+reported 1 GB until the fetch landed — and a 50 GB band briefly showed a full
+bar. It is `undefined` until answered and renders as `…`. The sidebar label was
+literally `STORAGE · 1 GB`, a hardcoded plan number in violation of §7, and
+`formatLimit()` rounded to whole gigabytes, rendering Free's 500 MB as `0 GB`
+and having no way to say "Unlimited" at all. Both now go through `formatMB()`.
+
+`PlansModal` calls `refresh()` when it opens. It is the recovery path every
+locked control depends on: the snapshot is fetched once per provider mount, so
+without it the modal can offer to sell a plan the user already bought.
+
+### Billing (Stripe)
+
+**Stripe is bolted onto the seam, not through it.** `lib/entitlements.ts` and
+`lib/planGuards.ts` contain the string "stripe" zero times and must keep doing
+so. The only writer of `profiles.plan` is still `changePlan()`
+(`lib/planChange.ts`), and the only caller of it outside the dev switcher is
+the webhook. If a limit check ever joins `billing_subscriptions`, that is the
+bug.
+
+**`POST /api/stripe/webhook` is the seam.** Signature verified before the body
+is parsed; event claimed in `billing_events` for idempotency and *released*
+again if the handler throws, so Stripe's retry is not silently skipped. Every
+handled event funnels into one `applySubscription()` that re-states the whole
+truth rather than diffing — upsert the subscription row, `changePlan(userId,
+plan, { force: true })`, then `syncAddonsFromSubscription()`. The plan is
+resolved from the **Price id**, never from metadata (editable in the
+dashboard). The user is resolved from `billing_customers` first, metadata only
+as a fallback.
+
+⚠ **`force` exists for one caller.** By the time an event arrives the money has
+moved, so refusing to grant what was paid for is the worse failure. The
+pre-purchase refusal still happens in `POST /api/billing/checkout`, which runs
+the same `checkPlanConflicts` before a card is touched. `POST /api/me/plan`
+stays dev-gated — it was never the Stripe entry point and must not become one.
+
+**Everything that can be outsourced to Stripe is.** Checkout Session for the
+first payment (`allow_promotion_codes`, `tax_id_collection` — promo codes and
+VAT are Stripe's forms, not ours); Customer Portal for the card, invoices,
+billing address, plan switching, cancellation and reactivation. There is no
+card form, no invoice table and no VAT form in this codebase on purpose: a
+second copy of an invoice list is the one a user is looking at when it
+disagrees with the real one.
+
+**Stripe is the source of truth; `billing_subscriptions` is a mirror for
+display.** Any question whose wrong answer costs money — "does this user
+already have a live subscription?" — is asked of Stripe through
+`findEntitlingSubscription(customerId)`, never of the table. The table is only
+as current as the last webhook that landed, and the moment a guard needs it
+most (a user pressing Subscribe again because the page still shows the old
+plan) is exactly the moment the webhook has not landed. Reading the mirror
+there produced two active subscriptions on one customer, the second invisible
+to every screen in the app. `readLiveSubscription()` remains correct for
+`GET /api/me/billing` and anything else that only renders.
+
+**`past_due` still entitles the plan** (`statusEntitles`, `lib/billing/store.ts`).
+Stripe is retrying and the user cancelled nothing; freezing bands on the first
+failed retry would turn an expired card into something shaped like data loss.
+When Stripe gives up the status becomes `unpaid`/`canceled`, the plan drops to
+free through the ordinary path, and the 14-day grace period applies on top.
+
+**Add-ons are subscription items — ONE item per add-on price.** Stripe refuses
+the same price twice on one subscription, so the band split lives in the
+item's metadata (`b_<band uuid without hyphens>: "<units>"`, parsed by
+`lib/billing/addonItems.ts`; legacy items with `band_id` read as "all units on
+that band"). `syncAddonsFromSubscription()` writes one `plan_addons` row per
+(item, band), keyed by `stripe_allocation_key` = `<item id>:<band id | *>`.
+Units the metadata does not place on an owned band grant nothing (fail
+closed). A subscription that no longer entitles grants no add-ons. Rows with
+no Stripe item (support credits, grandfathered capacity) are never touched.
+Every webhook re-reads the subscription from Stripe rather than trusting the
+event snapshot — add-on flows produce several `updated` events in a row.
+
+**Adding charges NOW; the grant waits for payment** (`lib/billing/addonOrders.ts`).
+The `+`/`−` steppers only stage. `POST /api/billing/addons/preview` prices the
+staged set with `invoices.createPreview({ subscription_details: { items,
+proration_behavior: 'always_invoice', proration_date: t } })`. ⚠ The preview
+also lists invoice items already PENDING on the customer (left by the old
+flow); the pending-update invoice does not charge them. So the quoted amount
+is the preview's lines minus the ones whose invoice item id is currently
+pending — never `preview.amount_due` (that showed $6 for a $2 add-on). The
+order then stores the real invoice's `amount_due`; an unpaid invoice whose
+amount differs from the quote is voided. Plus two `preview_mode: 'recurring'` previews
+for the "then $Y/month" line. `POST /api/billing/addons/confirm` re-prices at
+the same `t`, refuses if the figure moved (409 `amount_changed`), then makes
+ONE `subscriptions.update` with `payment_behavior: 'pending_if_incomplete'`,
+`proration_behavior: 'always_invoice'`, `proration_date: t`: one invoice, one
+charge, and Stripe applies the items only if it is paid. Pending updates accept
+no item metadata, so which band gets the new units is stored on a
+`billing_addon_orders` row and written to the item by the webhook
+(`invoice.paid` / `customer.subscription.pending_update_applied` →
+`applyAddonOrder()`, idempotent: absolute targets from the order's
+`items_before` snapshot). **Nothing is granted from a route.** Declined →
+the route voids the invoice (discards the pending update) and reports it.
+3D Secure → the order is `requires_action`; the browser opens the invoice's
+`hosted_invoice_url` and polls `GET /api/billing/addons/orders/[id]`;
+`POST …/orders/[id]/cancel` voids it. One open order per user (partial
+unique index) — a double click cannot become a double charge. A declined
+add-on invoice never raises the dunning banner (`isAddonOrderInvoice`).
+
+**Removing takes effect at period end, with no refund, and is reversible.**
+The item is reduced immediately with `proration_behavior: 'none'` (so the
+renewal invoice cannot bill it and nothing is credited), and the paid-for
+capacity is kept by an **ending grant**: a `plan_addons` row with `ends_at` =
+the item's `current_period_end`, `ending_subscription_id`, and NO Stripe item
+id. `readAddons()` and `effective_band_limit()` ignore it the instant `ends_at`
+passes — change both together. `POST /api/billing/addons/keep` undoes it: the
+units go back on the item with `none` (free — the period is paid) and the
+grant is deleted; refused if the item's period no longer matches `ends_at`.
+Buying what is still ending is refused (409 `keep_first`) — that would charge
+twice for the same days. Subscription schedules were rejected for this: a
+schedule's next phase restates every item, so a portal plan switch or an
+add-on bought mid-period would be reverted at the boundary, and a phase change
+voids pending updates.
+
+⚠ The webhook endpoint must be subscribed to `invoice.paid`,
+`invoice.voided`, `customer.subscription.pending_update_applied` and
+`customer.subscription.pending_update_expired` in addition to the events it
+already took. Without `invoice.paid` / `pending_update_applied`, paid add-ons
+are never granted.
+
+`scripts/billing/verify-addons.mjs` checks all of the above against Stripe
+test mode on a test clock (refuses a live key).
+
+**Every money figure in the app comes from Stripe.** `GET
+/api/me/billing/upcoming` (`invoices.createPreview`) is the next invoice,
+broken down into the plan line, each renewing add-on, and "adjustments"
+(anything non-recurring — prorations left by the old flow, one-off items),
+plus tax, discount and credit. `POST /api/billing/addons/preview` is what a
+staged add-on change will charge. `formatMoney()` in
+`components/billing/types.ts` only moves Stripe's integer minor units into
+the user's locale and does no arithmetic. Do not extend this by summing
+anything in the browser. No customer, no live subscription or nothing left to
+bill answers `{ available: false, reason }` with a 200, and the footer then
+falls back to the plan's list price from the catalog below.
+
+**Prices come from Stripe, not from code.** There are no price strings in
+`lib/plans.ts` any more (`PlanDefinition.price` / `AddonDefinition.price` were
+removed — they drifted from what Stripe charged with nothing to catch it).
+`lib/billing/catalog.ts` (server) reads the Stripe Price behind each
+`STRIPE_PRICE_*` id — `unit_amount`, `currency`, `recurring.interval` — caches
+it 10 min (Prices are immutable; a new amount is a new id and a deploy), and
+never throws. Free is reported as 0 in the paid plans' currency. The browser
+gets it as `prices` on `GET /api/me/plan` (`PlanSnapshot.prices`); the static
+landing page gets it as a prop from `app/page.tsx` (`revalidate = 3600`).
+Format only with `formatCatalogPrice()` / `formatInterval()`
+(`lib/planPrices.ts`, isomorphic). An absent entry means Stripe could not be
+asked: render "—" or nothing, **never a remembered number**.
+
+**`BILLING_LIVE`** (`lib/billing/config.ts`) requires both the API key and the
+webhook secret — a deployment that can take money but cannot hear about it is
+the one failure that costs a user something real. While it is false the app
+keeps its current behaviour: "Subscribe" writes `subscription_intents` and
+shows the waitlist confirmation. The browser learns the flag from
+`GET /api/me/plan` (`billingLive`); it cannot read server env and must not guess.
+
+⚠ **Never build a job that replays current Stripe state through
+`changePlan()`.** Reconciliation looks like the obvious safety net and it is a
+trap: `grace_until`, `grace_keep_band_ids` and `bands.frozen_at` are HISTORY,
+written by the transition that created them, and nothing records which
+transition that was. Replay a subscription that has been on `band` for six
+months against a profile that has drifted to `free` and `changePlan` sees a
+plain upgrade — it arms a fresh 14-day grace period the user already served, and
+unfreezes bands that were correctly frozen. Replay it against a profile that
+matches and it lands on `direction === 'none'`, which is the branch that makes a
+duplicate webhook a no-op; that part is fine, and it is also why the wrong case
+is easy to miss in testing.
+
+Effective LIMITS do reconstruct cleanly from `profiles.plan` + `plan_addons` —
+`resolveEntitlements()` is a pure function of those. Account STATE does not. So
+a future reconciliation must be a **separate entry point** that re-states the
+plan and the addons and never arms grace, leaving `settleAccount()` — which
+derives state from the data as it is now — as the only thing that starts a
+clock.
+
+⚠ **`/api/stripe` is in `PUBLIC_PREFIXES` in `middleware.ts`, and must stay
+there.** Stripe carries no session, so the auth gate 307s the webhook to
+`/auth` and the handler never runs — and Stripe reads a 307 as a successful
+delivery, so nothing retries and nothing alerts. The route is not unprotected
+by being public: it verifies the signature against `STRIPE_WEBHOOK_SECRET`
+before parsing the body, which is the only gate that means anything for a
+caller that can never hold a cookie.
+
+**Coming back from Stripe is a poll, not a timer.** Checkout's `success_url`
+carries the plan that was bought (`?checkout=success&plan=band`); `/billing`
+shows "Confirming your payment…" from the first render and polls
+`usePaywall().refresh()` with backoff (~1/2/4/8/15 s) until the snapshot says
+that plan, then stops. It never renders the pre-payment plan as current, and on
+timeout it says the payment was received and will land shortly. `refresh()` is
+deliberately the request: it returns the new snapshot *and* invalidates the
+shared `PaywallContext` one, which is what unlocks `ab_compare` and
+`chord_detect` without a reload — for those two the client snapshot is the only
+gate. The portal's `return_url` carries `?portal=return` and gets the same poll,
+shorter and with **no** expected value: a portal change can be scheduled for
+period end, so "nothing changed yet" is a correct outcome.
+
+**Deleting a band stops its add-on billing first, or refuses.**
+`plan_addons.band_id` cascades on band delete, so the row disappears while the
+Stripe subscription item keeps charging with nothing left in the app that can
+see it. `DELETE /api/bands/[id]` calls `removeBandScopedAddonItems(bandId)`
+BEFORE the delete (`lib/billing/store.ts`: takes that band's units off the
+shared item with `proration_behavior: 'none'` — no credit, per the Refund
+Policy; it used to credit the unused days), and a failure
+there **blocks the deletion** with a 502 — the same trade account deletion
+makes, because a refused delete is a retry and billing for a band that no longer
+exists is not recoverable from this side. A band with no Stripe-backed add-ons,
+or a deployment with `BILLING_LIVE` false, touches Stripe not at all.
+
+Migration: `supabase/migrations/20260920_billing_stripe.sql` (manual, §5),
+then `20260921_plan_addons_unique_stripe_item.sql` (manual, §5 — replaces
+the PARTIAL unique index on `plan_addons.stripe_subscription_item_id` with a
+plain UNIQUE constraint; until it runs, **every addon purchase raises 42P10**
+in `syncAddonsFromSubscription()` and the paid-for row is never written) and
+`20260921_band_limit_override_floor.sql` (manual, §5 — makes
+`band_limit_override` a floor in `effective_band_limit()`; pairs with
+`lib/entitlements.ts`, apply together), and
+`20260924_addon_charge_now.sql` (manual, §5 — `plan_addons.stripe_allocation_key`
+/ `ends_at` / `ending_subscription_id`, unique key moved from the item id to
+the allocation key, `effective_band_limit()` ignores expired ending grants, new
+`billing_addon_orders` table. **Run it before deploying the add-on code** — the
+sync upserts on `stripe_allocation_key`).
+Routes: `POST /api/billing/checkout`, `POST /api/billing/portal`,
+`POST /api/billing/addons/preview`, `POST /api/billing/addons/confirm`,
+`POST /api/billing/addons/keep`, `GET /api/billing/addons/orders/[id]`,
+`POST /api/billing/addons/orders/[id]/cancel`, `GET /api/me/billing`,
+`GET /api/me/billing/upcoming`, `POST /api/stripe/webhook`.
+`POST /api/billing/addons` answers 410 — the old charge-later endpoint.
+Env: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_{SOLO,BAND,BAND_PLUS}`,
+`STRIPE_PRICE_EXTRA_{BAND,STORAGE,MEMBER}`.
+
+### Subscription UI
+
+Ported from the design kit in `sonicdesk_designs`. **Two routes there govern
+different things and neither is optional reading:**
+
+| kit route | governs |
+| --- | --- |
+| `/uikit/subscriptions` | every component STATE — grace, frozen, locks, usage, conflicts, messages |
+| `/subscription` | the Plan & billing SCREEN — `app/billing/` follows its layout |
+
+The kit paints on its own palette (`--sub-bg`, `--sub-line`, `--color-primary`);
+the mapping onto this app's tokens is fixed once in `components/plan/ui.tsx`
+(`TONE`) and nowhere else. Shared primitives: `Eyebrow`, `StatusBadge`,
+`InlineNotice`, `UsageBar`, `PlanPanel`.
+
+**The tone goes on the container, not on four children.** A banner sets
+`TONE[x].text` on its own section so the icon, the heading and any outline
+button inherit it through `currentColor`. Colouring each child separately is
+how a red banner ends up with an amber icon.
+
+**These screens do not use `TbButton`.** Its shell is
+`text-[10px] uppercase tracking-widest` on every variant — the app's control
+idiom, right for a toolbar and wrong for a decision about money. The kit uses
+body-sized text on taller buttons, so `components/plan/ui.tsx` exports the
+class strings instead: `actionOutlineTone`, `actionSolid`,
+`actionDestructive`, and the `…Tall` pair for the primary money CTA.
+⚠ `GraceBanner` still carries private copies of two of them; fold them in.
+
+**Body copy needs `font-body-tb`, and forgetting it is silent.** The app's
+default face IS mono — `--font-sans: var(--tb-font-mono)` (globals.css) and
+`html[data-theme] body { font-family: var(--tb-font-mono) }` — so a paragraph
+with no font class renders monospace and *looks* deliberate. The kit sets body
+copy in Inter, which is what `.font-body-tb` exists for. So: `font-mono-tb` at
+9–11px for labels, meta and badges; `font-body-tb` at `text-sm leading-6` for
+every sentence; `font-display-tb` for headings. The first port set explanatory
+prose in 11px mono, which is the app's caption style doing a paragraph's job,
+and the whole billing screen read as a terminal.
+
+**Headings need `tracking-normal!`, with the bang.** `html[data-theme] h1…h6`
+sets `letter-spacing: -0.02em` at specificity (0,1,1), which outranks a utility
+class; the kit's headings sit at normal tracking. **Tailwind here is v4, where
+the important modifier is a SUFFIX** — `tracking-normal!`, not
+`!tracking-normal`. The prefix form is not an error, it is simply an unknown
+class that does nothing, so the heading keeps the tight tracking and the diff
+looks correct.
+
+**A hairline grid needs OPAQUE cells.** The kit draws separators by filling a
+`grid gap-px` wrapper with the line colour and letting opaque cells cover
+everything but the 1px gaps. Give a cell a translucent face (`bg-surface/40`)
+and the line colour shows through its whole area: the row renders as one grey
+slab with separators you cannot see. Panels on these surfaces are `bg-surface`
+at full strength — the kit maps `--sub-panel` straight to `--surface`, and
+`--surface` is already only oklch 0.16 against a 0.13 page, so there is nothing
+to soften.
+
+**A 3px bar needs `bg-surface-2` as its track.** `bg-border` is the hairline
+colour; as a 3px fill it is invisible, and the bar then reads as a lone lime
+dash floating in nothing rather than as a proportion.
+
+**No component may state a limit or a price.** Cards render `planLimitRows()`,
+"plus:" bullets render `planUpgradeHighlights()` (a diff against the plan below
+it in `PLAN_ORDER`), refusal copy comes from `lib/planCopy.ts`. The one
+hand-written list is Free's *features*, because Free's value is everything that
+is not gated and no constant enumerates the product.
+
+`planTradeoffs(from, to)` exists because Free allows 3 members per band and Solo
+allows 2 — one of our upgrades lowers a ceiling. Each plan card checks it
+against the viewer's current plan and says so before the button, rather than
+letting `too_many_members` refuse them after they have paid.
+
+`/billing` is the one transactional screen (`app/billing/`) and it follows the
+kit's `/subscription` route: hero, a two-column current-plan panel, three
+headline usage tiles over a collapsible per-band breakdown, add-on ROWS with a
+stepper (`components/billing/AddonRows.tsx` — the card grid it replaced was the
+`/uikit` treatment, which browses rather than adjusts), then the footer.
+
+**Add-on steppers STAGE; one button pays.** `+`/`−` never touch the account:
+the row shows the new count as pending ("+1 pending", tinted row) and a sticky
+summary bar lists every staged change across rows. It shows Stripe's price
+("Charged now: $X — for the rest of this period" / "Then $Y/month from …") and
+a single primary button with the amount in it ("Pay $X and add"; "Apply
+changes" when only removing). Confirm is disabled while pricing. During
+payment the steppers lock; 3D Secure shows "Confirm with your bank" (Stripe's
+hosted invoice page, new tab) and "Cancel payment"; a decline says "Payment
+didn't go through. Nothing was changed.", keeps the staged changes and offers
+the portal. The row never shows an add-on as active until the order is
+`applied`. A removed add-on shows "N ACTIVE · ENDS <date>" and "Keep it". A `+`
+that could not raise any limit on the current plan (`addonHasEffect`, now in
+`lib/plans.ts` so client and server share it) is disabled with
+`addonWithoutEffectCopy()` beside it.
+
+⚠ **The footer computes no total.** It renders Stripe's own next-invoice
+breakdown (`GET /api/me/billing/upcoming`). The kit closes on an "estimated
+monthly total" added up in the page; do not build one by summing catalog
+prices in the browser — a total computed there would be a second source of
+truth for money, and the invoice is the one place it must never disagree.
+
+Preferences keeps a `<PlanUsage compact />` summary and a link; two full copies
+would be two places to keep in step. `PlanUsage` is now the kit's single framed
+panel and `/billing` no longer renders it — the usage tiles there come from
+`/subscription`, so Preferences is its only consumer.
+
+### Deletion safety — `lib/bandDelete.ts`
+
+Four invariants, enforced in the API layer and (once
+`supabase/migrations/20260923_deletion_invariants.sql` is applied) in Postgres:
+
+1. A band can be deleted only when its owner is its **only** member.
+2. An account can be deleted only when the user owns **no** bands.
+3. A band can never become ownerless.
+4. Deleting a band purges its R2 objects.
+
+Invariants 1–3 are refusals, not errors. `DELETE /api/bands/[id]` answers 409
+`{ error: 'band_not_empty', others, message }` and `DELETE /api/profile/account`
+answers 409 `{ error: 'account_owns_spaces', spaces, message }` — both are
+constructed by helpers in `lib/bandDelete.ts` so the wording and shape live in
+one place, and `parseBandNotEmpty` recognises the band refusal on the client
+**by shape, not by status**. Do not route either through
+`serverErrorResponse`.
+
+**Order matters in the band DELETE, and each step must succeed before the next:**
+member guard → Stripe addon removal (blocking; a failure is a 502 and nothing is
+deleted, because billing for a band that no longer exists is worse than a blocked
+deletion) → `purgeBandStorage` → row delete → `settleAccount`. The storage purge
+is the one step that is allowed to fail partially: it logs what it orphaned and
+the deletion continues. Leaked bytes are a cost problem; a band that cannot be
+deleted is a user problem.
+
+`purgeBandStorage` generalises the per-project walk in `DELETE /api/projects/[id]`
+with two deliberate deviations, both of which matter if you touch it:
+
+- The reference scope is the **whole band**, not one project. Scoped per project,
+  two projects in the same band sharing a file hash would each see the other as
+  an outside reference and neither would delete it.
+- Membership is tested against an in-memory `Set` of version ids rather than a
+  PostgREST `.not('version_id','in','(…)')`, which would put hundreds of uuids in
+  the query string.
+
+It also removes each project's `preview_mix_storage_path`, which the original
+walk does not cover. It does **not** touch `project_resources` objects — a known
+gap, not an oversight.
+
+Account deletion refuses **before** the Stripe cancel. A validation that can
+refuse has to precede the first destructive step, or a refused deletion would
+have already cancelled the subscription. It no longer deletes owned bands as a
+side effect: the user is told which spaces to delete first, one at a time.
+Destroying other people's work should take explicit, visible steps.
+
+Removing a member is therefore the path every owner now has to take before
+deleting anything, so it is not silent: `lib/memberRemoval.ts` exports
+`REMOVAL_CONSEQUENCE`, the single sentence used **verbatim** by both the owner's
+confirmation dialog in `app/band/[bandId]/page.tsx` and the email the removed
+member gets. Keep them sharing that constant — the promise made in the dialog is
+the promise delivered in the email.
+
+`lib/email.ts` is provider-agnostic and **ships inert**: with `EMAIL_API_KEY` /
+`EMAIL_FROM` unset it logs the whole message and returns
+`{ sent: false, reason: 'not_configured' }`. It never throws, and notification
+failures never fail the removal.
+
+### Default entry point — `/open`
+
+`app/open/route.ts` resolves where a signed-in user belongs: the band this
+**device** last opened (cookie `sd-last-band`, written by `GET /api/bands/[id]`
+where membership has just been proven), or `/dashboard`. Membership is
+re-checked there on every hit and a stale hint is cleared, so a deleted band or
+a removed member costs one redirect, not a 403.
+
+`ENTRY_PATH` is what post-login (`sanitizeRedirectPath` fallback), the
+middleware's already-authed `/auth` branch, the landing page's installed-PWA
+redirect and `manifest.start_url` all point at. `/dashboard` keeps meaning
+"show me every band" and is never rewritten — an explicit `?next=` always wins.
 
 ### Landing page A/B test (control vs. simple)
 Two landing pages exist and are split 50/50. `lib/landingVariant.ts` is the
@@ -670,7 +1396,14 @@ keyframes live in `app/globals.css`, and label sizing uses the `--vg-u`
 container-query unit so it scales with the hero column. The footer's
 PRODUCT column is **derived from `LANDING_NAV_ITEMS`** (`FOOTER_PRODUCT_LINKS`)
 so it can never drift from the sections the page actually has — add a section to
-the nav and the footer follows. The landing
+the nav and the footer follows. The **pricing section** (`Pricing`, `#pricing`)
+is generated like the plans modal: names, limits and feature unlocks from
+`PLANS` via `planLimitRows()` / `planTradeoffs()`, blurbs from `PLAN_BLURBS`
+(`lib/planCopy.ts`, shared with the modal), prices from Stripe via the `prices`
+prop. It used to be its own hand-written table ("$12 / $22 per member", plan
+names and limits the app never had) — do not reintroduce copy that states a
+limit or a price. The home FAQ's free-plan numbers are templated from
+`PLANS.free` (`lib/seo.ts`) for the same reason. The landing
 page forwards to `/dashboard` **only** when running as the installed app, via
 `isRunningAsInstalledPWA()` (`lib/pwa.ts`). That check matches
 `(display-mode: standalone)` — mirroring `display: 'standalone'` in
@@ -716,7 +1449,10 @@ name competitors in any sonicdesk metadata or content.**
 `push_subscriptions`, `project_checklist_items`, `feedback`) predate it and
 have no CREATE files here. Columns below are inferred from actual queries.
 
-- **bands** — id, name, invite_code (unique, nullable), created_at.
+- **bands** — id, name, invite_code (unique, nullable), created_at,
+  **frozen_at** (timestamptz, null = not frozen) and **frozen_reason**
+  (`'plan_downgrade'`). A frozen band is read-only; nothing is ever deleted.
+  Set and cleared lazily by `lib/bandFreeze.ts`, never by a background job.
 - **band_members** — band_id, user_id, role (`owner`/member), role_label,
   role_color. RLS referenced by most other policies. **This table is where
   ownership lives**, so the band-limit trigger
@@ -725,15 +1461,34 @@ have no CREATE files here. Columns below are inferred from actual queries.
 - **band_join_requests** — status `pending|approved|rejected`, resolved_by;
   unique pending per (band,user). RLS.
 - **profiles** — id (= auth.users.id), username (unique), display_name,
-  avatar_color, **band_limit** (integer not null default 3 — the user's
-  personal owned-band cap; grandfathered users hold a higher value, so always
-  read the column), **onboarding jsonb** (tour flags, e.g.
+  avatar_color, **plan** (text, `free|solo|band|band_plus`, default `free`),
+  **band_limit** (integer **NOT NULL default 3** — the *pre-plans* allowance,
+  read only by the `main` code path. The plan system never reads it; it is kept
+  populated so a rollback needs no data migration. Do not repurpose it —
+  that was tried and broke production twice), **band_limit_override**
+  (integer, **nullable — the plan system's MANUAL FLOOR**: non-null makes the
+  owned-bands allowance `max(override, plan base + extra_band addons)` — it
+  raises a plan that gives less and never caps a plan that gives more; null
+  means "use the plan". It *replaced* the computation until 2026-09-21, which
+  meant a grandfathered account on override 3 who bought Band+ (5) resolved to
+  3 and any `extra_band` addon granted nothing. Grandfathered beta accounts and
+  B2B only. **Never read it directly — go through `getEffectiveEntitlements()`**),
+  **grace_until** (timestamptz, null = no
+  grace period; account state is DERIVED from this and the data, never
+  stored), **grace_keep_band_ids** (uuid[], the user's choice of which bands
+  survive when grace ends; stale entries are tolerated and trimmed on use),
+  **onboarding jsonb** (tour flags, e.g.
   `project_tour_completed`), **acquisition_source** (text, null = direct) and
   **cohort** (text, default `'cold'`; `'warm'|'cold'`) — written once at
-  account creation only, see Campaign attribution in §4. RLS (public read,
+  account creation only, see Campaign attribution in §4,
+  **terms_accepted_at** (timestamptz) and **terms_version** (text) — written
+  only by `handle_new_user` at account creation (see Legal pages in §4); NULL
+  for accounts created before `20260923_terms_acceptance.sql`. RLS (public read,
   self update). Rows are inserted by the `handle_new_user` trigger, **not** by
   app code. ⚠ **The deployed trigger is `insert into public.profiles (id)
-  values (new.id)` — nothing else.** `username` starts **NULL** and is first
+  values (new.id)` — nothing else** (once `20260923_terms_acceptance.sql` is
+  applied: `(id, terms_accepted_at, terms_version)` with `now()` and
+  `current_terms_version()`, still nothing else). `username` starts **NULL** and is first
   set by `PATCH /api/profile/username`; there is no `user_<uuid>` placeholder,
   despite what `supabase/migrations/001_auth.sql` shows. That file was never
   applied in the form it records. Verify against the database, not the file:
@@ -767,9 +1522,20 @@ have no CREATE files here. Columns below are inferred from actual queries.
 - **band_activity** — band_id, user_id, action (enum in `lib/activity.ts`),
   subject, detail, project_id. RLS.
 - **push_subscriptions** — user_id, endpoint, p256dh, auth.
+- **plan_addons** — user_id, band_id (nullable), addon_type
+  (`extra_band|extra_storage|extra_member`), quantity, created_at. A CHECK
+  enforces the scope: `extra_band` must have a NULL band_id (it is
+  account-wide), the other two must name a band (storage and members are
+  per-band and are never pooled). RLS: owner can SELECT; **writes are
+  service-role only** — a client that could insert here could grant itself
+  capacity. Stripe will insert these rows later.
+- **plan_limits** — plan, bands_owned. ⚠ **A MIRROR of `lib/plans.ts`**,
+  read only by the DB trigger so it can enforce the owned-bands limit without
+  a round trip. The application never reads it. **Change both together** — a
+  drift here does not break the app, it silently makes the DB backstop wrong.
 - **subscription_intents** — user_id, plan `solo|band|band_plus`, email;
   unique (user_id, plan). RLS with **no client policies** — service-role
-  writes only. Not an entitlement table.
+  writes only. Not an entitlement table (demand measurement only).
 - **feedback** — inserted under the user's JWT (RLS applies).
 
 ## 6. External services & environment variables
@@ -803,6 +1569,38 @@ default `Sheet1`).
 value makes the script and every mirrored goal no-op, which is what keeps dev
 and preview traffic out of the counter.
 
+**Stripe** (all server-only — **never** `NEXT_PUBLIC_`; `lib/billing/config.ts`) —
+eight variables, and they travel together: `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_SOLO`, `STRIPE_PRICE_BAND`,
+`STRIPE_PRICE_BAND_PLUS`, `STRIPE_PRICE_EXTRA_BAND`,
+`STRIPE_PRICE_EXTRA_STORAGE`, `STRIPE_PRICE_EXTRA_MEMBER`. There is one price
+set per Stripe **mode**, so the scope decides the mode: Vercel **Production**
+gets `sk_live_` + live price ids, **Preview** and **Development** get `sk_test_`
++ test price ids, and `.env.local` gets test values. Mixing a key from one mode
+with prices from the other is the only way to get "No such price" at checkout.
+`BILLING_LIVE` is `STRIPE_SECRET_KEY && STRIPE_WEBHOOK_SECRET` — test keys turn
+it on exactly like live ones, and removing either turns it off, which is the
+supported way to get the waitlist behaviour back.
+
+### Testing billing locally
+
+Stripe cannot reach `localhost`, so the webhook — the only writer of
+`profiles.plan` — never fires without a forwarder. Run one:
+
+```
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+```
+
+It prints a signing secret (`whsec_…`) **for that session**. Put it in
+`.env.local` as `STRIPE_WEBHOOK_SECRET` and restart `next dev`. That secret is
+not the one from the Stripe dashboard's endpoint list and is not interchangeable
+with it: the wrong one verifies nothing and every event answers 400.
+
+With the key and that secret in place `BILLING_LIVE` is true locally, checkout
+opens in test mode (card `4242 4242 4242 4242`), and the plan changes only when
+the forwarded event arrives — which is the whole flow under test, including the
+post-checkout confirmation poll on `/billing`.
+
 **Site** — `NEXT_PUBLIC_SITE_URL` (canonical origin; prod
 `https://sonicdesk.studio`). Runtime also reads `NODE_ENV`, `VERCEL_ENV`.
 
@@ -831,6 +1629,30 @@ and preview traffic out of the counter.
   `app/design-system.css` (light + dark + multiple palettes via
   `PaletteContext` / `lib/design-theme.tsx`). `/uikit` is the living
   reference.
+- **In the product a band is a SPACE, and that is display-only too.** No
+  user-facing string inside the app says "band" — it says "space". The landing
+  pages are the exception and keep the musicians' word. Everything underneath
+  stays `band`: the tables (`bands`, `band_members`), the columns
+  (`bandsOwned`, `membersPerBand`), the routes (`/api/bands/[id]`,
+  `/api/me/plan/keep-bands`), the analytics parameter values
+  (`limit_type: 'bands'`), the `PlanId` `'band'` and the `AddonType`
+  `'extra_band'` — those are data and wire format, and a wording change must
+  never reach them. ⚠ A blanket find-and-replace WILL break this: `bands.` and
+  `band.` are property access, `band:` is an object key, and `'band'` is a
+  `PlanId` written to `profiles.plan` and mapped to a Stripe Price. Change
+  strings, by hand, and let `tsc` confirm nothing else moved. "Bandmate" is a
+  person, not a space — leave it or reword the sentence.
+- **Every subscription control reports through `usePlanTracking()`**
+  (`contexts/PaywallContext.tsx`), not through a bare `trackEvent`. It injects
+  `current_plan`, `plan_state` and `billing_live` into each event, so no call
+  site has to remember the one thing every subscription question needs: which
+  plan the person was on when they did it. The key is `current_plan` and NOT
+  `plan`, because several events already use `plan` for the tier being acted on
+  — a card someone pressed Subscribe on, the tier a limit belongs to — and
+  reusing the name would have the viewer's own plan overwrite the target. The
+  returned function is referentially stable, so it is safe in a dependency
+  array; that is deliberate, since one of its callers reports "modal opened"
+  from an effect and an unstable identity would re-count it on every refresh.
 - **Git→music terminology is display-only.** branch→version, main→Master,
   merge→apply. DB values stay `'main'`; resolve display names only via
   `getVersionDisplayName()`. "Master" is a reserved version name.
@@ -867,13 +1689,126 @@ and preview traffic out of the counter.
   set or update them (see §4). The trusted input is the `sd-campaign` cookie
   set by `middleware.ts`, resolved through the registry server-side — never
   store a client-supplied source without bounding it.
-- **The band limit is per-user, never a constant.** Read
-  `profiles.band_limit`; a hardcoded 3 silently demotes grandfathered users.
-  Any new code path that inserts into `bands` (or writes an owner row into
-  `band_members`) must go through `createBandForUser()` in `lib/bandLimit.ts`.
-  The beta-wide cap is **not** the subscription plan system — reconcile the two
-  deliberately when plans ship; `band_limit` is where a plan would write its
-  allowance.
+- **RLS is row-level, not column-level.** `profiles` carries a self-update
+  policy (`using (auth.uid() = id)`), so the browser can write that table
+  directly — `PreferencesModal` does, for `username`. A policy chooses *rows*;
+  only a GRANT chooses *columns*. Every entitlement column therefore lives
+  behind a column grant, applied by
+  `supabase/migrations/20260806_lock_entitlement_columns.sql`: `authenticated`
+  may update `username`, `display_name`, `avatar_color`, `onboarding` and
+  nothing else (and, since `20260923_terms_acceptance.sql`, cannot INSERT into
+  `profiles` at all). **Adding a user-editable column to `profiles` means adding it to
+  that grant; adding any other column means leaving it out.** Never add a
+  privileged field to a table a client can update without checking the grant.
+  **No client component writes `profiles` any more** — `PreferencesModal`'s
+  rename goes through `PATCH /api/profile/username` like onboarding does.
+  `AuthContext` still SELECTs it, which is unaffected. Keep it that way: a
+  server route with a field allowlist is the only shape of profile write.
+- **`file_size_bytes` is enforcement state, not metadata.**
+  `getBandStorageUsed()` sums it, so a client-writable byte count is a storage
+  ceiling that can be pushed to infinity with one negative number. It is written
+  only by the paths that produced the bytes (`tracks/process`, `tracks/upload`,
+  `tracks/edit`, `resources/process`), always from the buffer they just hashed —
+  never from a request body, not even as a fallback. It is deliberately absent
+  from the `PATCH /api/tracks/[id]` field allowlist.
+- **A declared size is not a size.** Presign routes take the client's
+  `fileSize` for an early 413/quota refusal, but the authoritative number is
+  read from the stored object after upload. Checking a quota against a declared
+  size and then recording that declared size lets a 500 MB file count as 1 byte.
+- **Never return a database error to the client.** `serverErrorResponse()`
+  (`lib/apiErrors.ts`) logs the real error under a `[scope]` prefix and returns
+  a written sentence. Postgres `message`/`details`/`hint` name tables, columns
+  and constraints, and the band-limit routines attach `DETAIL: limit=<n>
+  current=<n>` — handing a caller the shape of the rule refusing them.
+  `String(err)` from an ffmpeg/R2 path leaks filesystem paths and bucket keys.
+  ⚠ **Structured refusals are not errors** — `{ error: 'limit_reached', … }` and
+  `{ error: 'band_frozen', … }` come from `limitRefusalResponse()` and must
+  never go through this helper; `lib/planCopy.ts` parses them by shape.
+- **Object keys are derived, never accepted.** `storage_path` from a request
+  body is a write primitive over the whole R2 bucket — band membership
+  authorises the request, not the key. `PUT /api/tracks/[id]/midi-upload`
+  computes the key from the track's project plus a hash of the received bytes
+  and returns it; `PATCH /api/tracks/[id]` validates `storage_path` and
+  `file_hash` with `isValidProjectObjectKey()` / `isValidFileHash()`
+  (`lib/r2.ts`) against the canonical `projects/{thisProject}/{sha256}` shape.
+- **Routes that authenticate by hand do not get the frozen-band block.** It
+  lives in `requireBandMember` and keys off the HTTP method. Any route that
+  checks `band_members` itself must call `frozenBandRefusal()` /
+  `isBandFrozenForWrite()` explicitly — the resources routes and the
+  member-role route did not, and were writable in a frozen band.
+- **An accent used outside the landing page must be declared at the theme
+  root.** `--wave-amber`, `--wave-mint` and `--wave-violet` lived only inside
+  `.landing-page` (globals.css) while `TONE` (`components/plan/ui.tsx`) used
+  them on every subscription surface, so outside the landing page they resolved
+  to nothing — and an undefined var inside a colour throws no error and logs
+  nothing. `color: var(--missing)` falls back to inherit; `border-color:
+  color-mix(… var(--missing) …)` falls back to currentColor. The grace banner
+  therefore rendered WHITE and looked deliberate. They are now declared in
+  `:root` in `app/design-system.css` (with darkened values for the three light
+  themes) and registered in the `@theme` block, which is what makes
+  `text-wave-amber` a real utility. **Use the registered token, never
+  `text-[var(--wave-amber)]`** — the arbitrary form fails the same silent way if
+  the variable ever moves again. `--wave-coral` and `--wave-sky` are still
+  landing-only on purpose; nothing outside `.landing-page` may reference them.
+- **Never hardcode a plan limit.** `lib/plans.ts` is the only place a limit,
+  feature or price is written. Every check reads it through
+  `getEffectiveEntitlements()` / `getBandEntitlements()`. The one deliberate
+  duplicate is the `plan_limits` table (§5), which exists solely for the DB
+  trigger — change both together.
+- **Two band-limit columns, on purpose.** `profiles.band_limit` (NOT NULL
+  default 3) belongs to the pre-plans path; `profiles.band_limit_override`
+  (nullable) is the plan system's override, where non-null means "this account
+  never drops below this number" — a floor, resolved as
+  `max(override, plan base + extra_band addons)`, not a replacement and not a
+  cap. The same rule lives twice more, in `resolveEntitlements()`
+  (`lib/entitlements.ts`) and in `effective_band_limit()` (the DB trigger's
+  backstop, `20260921_band_limit_override_floor.sql`) — **change all three
+  together**, or the DB refuses a band the app just allowed. They are separate
+  columns because sharing one column broke
+  production twice: dropping the default gave new profiles a NULL that the old
+  code fails closed on, and the leftover value `3` then read as an override
+  that silently disabled every plan limit in the system. Read neither
+  directly — go through `getEffectiveEntitlements()`. Any new code path that
+  inserts into `bands` (or writes an owner row into `band_members`) must go
+  through `createBandForUser()` in `lib/bandLimit.ts`.
+- **The plans schema rolls out in two phases.**
+  `20260806_subscription_plans.sql` is additive only and safe to apply while
+  the old code is live; `20260807_plans_db_enforcement.sql` swaps the DB
+  routines and must come *after* the deploy. Keep it that way — anything that
+  changes a column or routine the deployed code reads belongs in phase 2.
+- **Membership is never capped.** Joining someone else's band is unlimited on
+  every plan, free included. Do not add a `bandsJoined` limit, and do not
+  count non-owner memberships in any entitlement code.
+- **Storage is per band and is never pooled.** Do not sum a user's bands, do
+  not add an account-wide storage total, and do not let an `extra_storage`
+  addon apply account-wide (the DB CHECK rejects it).
+- **Members are never removed automatically.** Not on downgrade, not when
+  grace expires, not ever. Over-limit blocks ADDING and nothing else.
+- **A frozen band must not be writable by any path.** The block lives in
+  `requireBandMember` and keys off the HTTP method, so new mutation routes are
+  covered automatically — but a route that authenticates some other way must
+  call `frozenBandRefusal()` / `assertBandWritable()` itself. If you add a
+  POST that is actually a read, pass `{ readOnlyRequest: true }` rather than
+  removing the guard. Band DELETE stays allowed on purpose.
+- **Plan state is derived and evaluated lazily.** No cron job, no `state`
+  column. If you need "is this frozen / in grace", call the resolver; do not
+  cache the answer across requests.
+- **A pending paywall gate must not render the real control at all** — not
+  even DOM-disabled. `disabled` is an attribute, and an attribute is one
+  devtools edit (or one `….disabled = false`) away from being gone; for
+  `ab_compare` and `chord_detect` there is no server behind it, so that edit IS
+  the feature. The pending branch renders its own inert element carrying no
+  `onClick` — React never attached a handler, so there is nothing in the DOM to
+  re-enable — plus `paywallPendingProps` (`tabIndex: -1`, `aria-disabled`) so a
+  keyboard user cannot reach it either. `guard()` from `usePaywallGate` wraps
+  the real action as a second line of defence. Never use the LOCKED treatment
+  for pending: a lock is a claim we cannot make yet, and flashing one over a
+  feature a paying user owns is the failure this state exists to prevent.
+- **A locked control is dimmed, never DOM-disabled** (`PaywallLock.tsx` rule 1).
+  The click is the whole point — it opens the plans modal and records the
+  demand signal. A dimmed control that does nothing when pressed reads as a bug
+  and measures as silence. This applies to the band-limit affordances on the
+  dashboard too, not only to feature locks.
 - **Never name competitors** in any metadata, landing copy, or content
   (legal requirement; /vs pages were removed for this reason).
 - **No test suite exists** — verify with `npm run build` and `npm run lint`.
@@ -897,9 +1832,13 @@ and preview traffic out of the counter.
    features do.
 4. **Analytics:** add snake_case `trackEvent('thing_happened', {...})`
    calls at user-intent points, consistent with the existing taxonomy.
-5. **Paywall (if gated):** add the feature key to `PaywallFeature` in
-   `contexts/PaywallContext.tsx` and wrap the entry point with
-   `PaywallLock`; remember it's presentation-only.
+5. **Gated by plan?** Add the key to `GatedFeature` in `lib/plans.ts` (and to
+   the plans that include it), wrap the entry point with `usePaywallGate` +
+   `PaywallLockWrap`, **and gate the server endpoint** with
+   `assertBandFeature(bandId, feature)`. The UI lock is presentation; the
+   server check is the gate. If the feature has a new limit, add it to
+   `lib/plans.ts`, resolve it in `lib/entitlements.ts`, enforce it in
+   `lib/planGuards.ts`, and word it in `lib/planCopy.ts` — never inline.
 6. **ffmpeg?** Add the route to `ffmpegRoutes` in `next.config.ts`.
 7. **Docs:** update this file (see the rule at the top), then verify with
    `npm run build`.

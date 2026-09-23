@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { createClient } from '@supabase/supabase-js'
 import { projectTimelineDurationMs, type TimelineTrack } from '@/lib/trackMerge'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 import { logActivity } from '@/lib/activity'
-import { bandStorageLimitBytes, getBandStorageUsed } from '@/lib/bandStorage'
+import { getBandStorageUsed } from '@/lib/bandStorage'
+import { frozenBandRefusal } from '@/lib/planGuards'
+import { ensureBandFreezeState, settleAccount } from '@/lib/bandFreeze'
+import { getBandEntitlements } from '@/lib/entitlements'
+import {
+  bandNotEmptyBody,
+  countOtherBandMembers,
+  purgeBandStorage,
+  sqlStateOf,
+  SQLSTATE_BAND_NOT_EMPTY,
+} from '@/lib/bandDelete'
+import { mbToBytes } from '@/lib/plans'
+import { rememberLastBand } from '@/lib/lastBand'
+import { removeBandScopedAddonItems } from '@/lib/billing/store'
 
 
 type TrackRow = TimelineTrack & {
@@ -318,7 +332,19 @@ export async function GET(
     }))
   }
 
-  return NextResponse.json({
+  // ── Plan surface ──────────────────────────────────────────────────────────
+  // Opening a band is "touching" it, so this is where the lazy freeze check
+  // runs: a band whose owner's grace period expired while nobody was looking
+  // is frozen right here, on the first read. There is no cron job.
+  //
+  // The limits returned are DISPLAY values. The client renders them; it never
+  // asserts them, and never sends them back.
+  const [freeze, entitlements] = await Promise.all([
+    ensureBandFreezeState(bandId),
+    getBandEntitlements(bandId),
+  ])
+
+  const res = NextResponse.json({
     band: bandRes.data,
     projects: enhancedProjects,
     members,
@@ -326,10 +352,26 @@ export async function GET(
     stats: { branches, merges, comments: totalComments, storage_bytes: storageBytes, tracks: totalTracks },
     recentActivity,
     totalActivity,
-    storageLimitBytes: bandStorageLimitBytes(),
+    // `null` means UNLIMITED, and the client renders it as such. It must not
+    // fall back to `bandStorageLimitBytes()` — that is the legacy pre-plans
+    // 1 GB constant, whose own docblock says not to use it as a value, and
+    // substituting it here would report 1 GB to a plan that has no ceiling.
+    storageLimitBytes: mbToBytes(entitlements.storagePerBandMB) ?? null,
+    memberLimit: entitlements.membersPerBand,
+    activeVersionLimit: entitlements.activeVersionsPerProject,
+    features: entitlements.features,
+    frozen: freeze.frozen,
+    frozenAt: freeze.frozenAt,
+    frozenReason: freeze.frozenReason,
     inviteCode,
     pendingJoinRequests,
   })
+
+  // Opening a band is what makes it "the last band you opened". Membership was
+  // proven at the top of this handler, so the cookie can only ever name a band
+  // this user could in fact open — see lib/lastBand.ts.
+  rememberLastBand(res, bandId)
+  return res
 }
 
 // PATCH /api/bands/[id] — owner updates band name
@@ -353,6 +395,11 @@ export async function PATCH(
   if (membership.role !== 'owner') {
     return NextResponse.json({ error: 'Only owners can rename a band' }, { status: 403 })
   }
+
+  // Frozen bands are read-only. Deleting one is still allowed (see DELETE
+  // below) — that is precisely how an over-limit user gets back under it.
+  const frozen = await frozenBandRefusal(bandId)
+  if (frozen) return frozen
 
   let body: { name?: string }
   try {
@@ -388,7 +435,7 @@ export async function PATCH(
     .select('id, name, created_at, invite_code')
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/update', error, 'Could not rename the space')
 
   void logActivity({
     bandId,
@@ -419,10 +466,107 @@ export async function DELETE(
     .maybeSingle()
 
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a band' }, { status: 403 })
+  if (membership.role !== 'owner') return NextResponse.json({ error: 'Only owners can delete a space' }, { status: 403 })
+
+  // ── The space must be empty but for the owner ─────────────────────────────
+  //
+  // This is the invariant, and it is checked before anything else because it is
+  // the only refusal that costs nothing: no Stripe call has been made and no
+  // object deleted, so a refusal here leaves the space exactly as it was.
+  //
+  // Emptying the space first is not a formality. Each removal notifies the
+  // person being removed (`members/[userId]`), which is the whole difference
+  // between "four people lost their work" and "four people were told".
+  //
+  // The database enforces this too, from
+  // `20260923_deletion_invariants.sql` — this check exists to produce a
+  // sentence a person can act on, not to be the guard.
+  let others: number
+  try {
+    others = await countOtherBandMembers(bandId, userId)
+  } catch (err) {
+    return serverErrorResponse('bands/delete', err, 'Could not check who is in this space')
+  }
+  if (others > 0) {
+    return NextResponse.json(bandNotEmptyBody(others), { status: 409 })
+  }
+
+  // ── Stop billing for this band's add-ons, BEFORE the band is gone ────────
+  //
+  // `plan_addons.band_id` cascades, so the row vanishes with the band while
+  // the Stripe subscription item behind it keeps charging — with no row, no
+  // band and no webhook path left to notice it, the charge is invisible from
+  // inside the app forever. The items have to be read while the band still
+  // exists, so this runs first.
+  //
+  // And it BLOCKS the delete when it fails, which is the same trade the
+  // account-deletion route makes: a space that refuses to delete today is a
+  // retry, a subscription item billing for a space that no longer exists is
+  // not fixable from this side at all. `removeBandScopedAddonItems` is a no-op
+  // when billing is off or the band has no Stripe-backed add-ons, so the
+  // ordinary delete is exactly as it was.
+  try {
+    const removed = await removeBandScopedAddonItems(bandId)
+    if (removed > 0) {
+      console.info(`[bands/delete] removed ${removed} add-on item(s) billing for band ${bandId}`)
+    }
+  } catch (err) {
+    console.error('[bands/delete] add-on billing cleanup failed for', bandId, err)
+    return NextResponse.json(
+      {
+        error:
+          'Could not update the billing for this space, so it was not deleted — ' +
+          'nothing has been removed. Try again in a moment, or remove its add-ons ' +
+          'from the billing page first.',
+      },
+      { status: 502 },
+    )
+  }
+
+  // ── Purge storage while the rows that point at it still exist ────────────
+  //
+  // `tracks.storage_path` and `projects.preview_mix_storage_path` are the only
+  // record that these objects exist. After the next statement they are gone and
+  // the bytes are unreachable forever, so the walk has to happen here.
+  //
+  // It never throws and never blocks: see `purgeBandStorage`. Anything it could
+  // not delete is named in the log and costs storage; refusing the delete over
+  // it would cost the user their afternoon instead.
+  const purge = await purgeBandStorage(bandId)
+  console.info(
+    `[bands/delete] ${bandId} storage: ${purge.deleted} deleted, ` +
+      `${purge.shared} still referenced elsewhere, ${purge.orphaned} ORPHANED`,
+  )
 
   const { error } = await supabase.from('bands').delete().eq('id', bandId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    // The database guard fired where the check above did not — a race, or a
+    // member added between the two. Answer with the same structured refusal.
+    if (sqlStateOf(error) === SQLSTATE_BAND_NOT_EMPTY) {
+      const now = await countOtherBandMembers(bandId, userId).catch(() => 1)
+      return NextResponse.json(bandNotEmptyBody(Math.max(1, now)), { status: 409 })
+    }
+    return serverErrorResponse('bands/delete', error, 'Could not delete the space')
+  }
+
+  // ── Settle before answering ───────────────────────────────────────────────
+  //
+  // Deleting a band is the documented way out of `too_many_bands` — it is why
+  // this route is deliberately NOT blocked in a frozen band. But the plan state
+  // is lazy, so nothing noticed: the account stayed in `grace`/`enforced` and
+  // any other frozen band stayed frozen until some later request happened to
+  // settle it. The user lands on the dashboard, which does settle, so this was
+  // invisible by luck rather than by design — and invisible only until somebody
+  // deleted a band from anywhere else.
+  //
+  // The acting user is the owner (checked above), so theirs is the account
+  // whose limits just changed. Best-effort: the band is already gone, and a
+  // failure here must not report the delete as failed.
+  try {
+    await settleAccount(userId)
+  } catch (err) {
+    console.warn('[bands/delete] settle failed after deleting', bandId, err)
+  }
 
   return NextResponse.json({ ok: true })
 }

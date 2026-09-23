@@ -25,6 +25,9 @@ const ENTRIES: { path: string; priority: number; changeFrequency: 'weekly' | 'mo
   { path: '/audience/indie-band', priority: 0.8, changeFrequency: 'monthly' },
   { path: '/audience/producer', priority: 0.8, changeFrequency: 'monthly' },
   { path: '/tools/chord-detector', priority: 0.9, changeFrequency: 'monthly' },
+  { path: '/terms', priority: 0.3, changeFrequency: 'monthly' },
+  { path: '/privacy', priority: 0.3, changeFrequency: 'monthly' },
+  { path: '/refund', priority: 0.3, changeFrequency: 'monthly' },
 ]
 
 export default function sitemap(): MetadataRoute.Sitemap {

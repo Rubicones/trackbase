@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { frozenBandRefusal } from '@/lib/planGuards'
+import { countBandOwners, LAST_OWNER_REFUSAL } from '@/lib/bandAccess'
+import { actorDisplayName, notifyMemberRemoved } from '@/lib/memberRemoval'
+import { sqlStateOf, SQLSTATE_BAND_OWNERLESS } from '@/lib/bandDelete'
 
 async function assertMember(bandId: string, userId: string) {
   const { data } = await supabase
@@ -29,6 +34,11 @@ export async function PATCH(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
+  // Band-level route: no `requireBandMember`, so the frozen block is explicit.
+  // Editing a role label is a write like any other.
+  const frozen = await frozenBandRefusal(bandId)
+  if (frozen) return frozen
+
   const { role_label, role_color } = await req.json()
   const { error } = await supabase
     .from('band_members')
@@ -36,7 +46,7 @@ export async function PATCH(
     .eq('band_id', bandId)
     .eq('user_id', targetUserId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('bands/members', error, 'Could not update that role')
   return NextResponse.json({ ok: true })
 }
 
@@ -56,12 +66,60 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  // ── The band must not be left without an owner ────────────────────────────
+  // The self-removal branch above skips the role check, so without this an
+  // owner could DELETE their own membership: the band survives with no owner
+  // row, the slot is freed on their account, and it can never be frozen again
+  // — `ensureBandFreezeState()` returns early on a null owner. The same guard
+  // already lives in `DELETE .../members/me`; it belongs here too, and is
+  // written against the TARGET rather than the requester so it holds for
+  // every path into this branch, not just self-removal.
+  //
+  // Not a transaction: two concurrent last-owner removals could in principle
+  // both read 1 and both delete. That race needs two owners to exist, in which
+  // case neither is the last one — so the window this guard covers is a band
+  // with exactly one owner, where there is only one request that can pass the
+  // authorisation check above. Left as a read-then-write deliberately.
+  const target =
+    requesterId === targetUserId ? membership : await assertMember(bandId, targetUserId)
+  if (target?.role === 'owner' && (await countBandOwners(bandId)) <= 1) {
+    return NextResponse.json({ error: LAST_OWNER_REFUSAL }, { status: 400 })
+  }
+
   const { error } = await supabase
     .from('band_members')
     .delete()
     .eq('band_id', bandId)
     .eq('user_id', targetUserId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    // The database guard caught what the read-then-write above raced past.
+    if (sqlStateOf(error) === SQLSTATE_BAND_OWNERLESS) {
+      return NextResponse.json({ error: LAST_OWNER_REFUSAL }, { status: 400 })
+    }
+    return serverErrorResponse('bands/members', error, 'Could not remove that member')
+  }
+
+  // ── Tell the person it happened to ───────────────────────────────────────
+  //
+  // Only when somebody else did it: leaving a space on your own does not need
+  // an email telling you that you left.
+  //
+  // Not awaited into the response and never able to fail it — the removal has
+  // already happened, and a notification that could undo it would be a worse
+  // bug than one that goes missing.
+  if (requesterId !== targetUserId) {
+    const [{ data: band }, removedByName] = await Promise.all([
+      supabase.from('bands').select('name').eq('id', bandId).maybeSingle(),
+      actorDisplayName(requesterId),
+    ])
+    void notifyMemberRemoved({
+      bandId,
+      bandName: band?.name ?? 'a space',
+      removedUserId: targetUserId,
+      removedByName,
+    })
+  }
+
   return NextResponse.json({ ok: true })
 }

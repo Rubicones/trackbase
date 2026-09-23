@@ -29,6 +29,7 @@ import {
   parseOtpRetryAfterSeconds,
 } from '@/lib/auth/otp'
 import { trackEvent } from '@/lib/analytics'
+import { PRIVACY_POLICY_HREF } from '@/lib/consent'
 import {
   AuthShell,
   AuthCard,
@@ -47,6 +48,7 @@ import {
 import { OtpInput } from '@/components/auth/OtpInput'
 
 const NEXT_STORAGE_KEY = 'tb-auth-next'
+const TERMS_HREF = '/terms'
 
 export default function AuthPage() {
   return (
@@ -313,6 +315,34 @@ function AuthPageContent() {
                 <AuthButton type="submit" disabled={sending || !email.trim()}>
                   {sending ? 'Sending code…' : 'Continue with email →'}
                 </AuthButton>
+
+                {/* Terms notice. Continuing creates the account for a new
+                    email (signInWithOtp, shouldCreateUser), and
+                    handle_new_user records terms_accepted_at/terms_version
+                    server-side (supabase/migrations/20260923_terms_acceptance.sql).
+                    "acknowledge", never "agree to", for the Privacy Policy:
+                    under GDPR it is information, not a contract. */}
+                <AuthHint>
+                  By continuing, you agree to our{' '}
+                  <a
+                    href={TERMS_HREF}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    Terms of Service
+                  </a>{' '}
+                  and acknowledge our{' '}
+                  <a
+                    href={PRIVACY_POLICY_HREF}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    Privacy Policy
+                  </a>
+                  .
+                </AuthHint>
 
                 <AuthHint>One-time code only — we never ask for a password.</AuthHint>
               </form>

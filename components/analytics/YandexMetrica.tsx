@@ -16,6 +16,7 @@ import { YANDEX_METRICA_ID, trackYandexPageView } from '@/lib/yandex-metrica'
  *   passing the previous URL as `referer`, which Metrica cannot infer itself
  *   on an SPA navigation.
  * - Skips the very first render so the initial load isn't double-counted.
+ * - Mounted only with cookie consent, by <ConsentedTrackers />.
  * - Renders nothing (and loads nothing) when the counter ID env var is absent,
  *   which is what keeps dev and preview deploys out of production stats.
  *
@@ -43,11 +44,8 @@ ym(${YANDEX_METRICA_ID}, "init", {
 });`}
       </Script>
 
-      <noscript
-        dangerouslySetInnerHTML={{
-          __html: `<div><img src="https://mc.yandex.ru/watch/${YANDEX_METRICA_ID}" style="position:absolute; left:-9999px;" alt="" /></div>`,
-        }}
-      />
+      {/* No <noscript> pixel on purpose: without JavaScript a visitor cannot
+          give consent, so the no-JS fallback could only ever track unconsented. */}
 
       {/* useSearchParams must live under a Suspense boundary in the App Router. */}
       <Suspense fallback={null}>

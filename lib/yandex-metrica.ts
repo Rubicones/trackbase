@@ -20,6 +20,8 @@
  * blocked script, ad blocker), so call sites never need to guard.
  */
 
+import { hasTrackingConsent } from './consent'
+
 declare global {
   interface Window {
     ym?: (counterId: number, action: string, ...args: unknown[]) => void
@@ -46,6 +48,7 @@ function ymReady(): YMCall | null {
   if (YANDEX_METRICA_ID === undefined) return null
   if (typeof window === 'undefined') return null
   if (typeof window.ym !== 'function') return null
+  if (!hasTrackingConsent()) return null
   return window.ym as YMCall
 }
 

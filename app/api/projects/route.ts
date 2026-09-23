@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
+import { frozenBandRefusal } from '@/lib/planGuards'
 import {
   createBandForUser,
   BandLimitReachedError,
@@ -40,6 +41,10 @@ export async function POST(req: NextRequest) {
       if (!membership) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 })
       }
+
+      // A frozen band accepts no new projects.
+      const frozen = await frozenBandRefusal(resolvedBandId)
+      if (frozen) return frozen
     } else {
       const band = await createBandForUser(userId, `${name.trim()} — band`)
       await ensureBandInviteCode(band.id)

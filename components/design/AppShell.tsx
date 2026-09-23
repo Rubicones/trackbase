@@ -7,6 +7,7 @@ import { AvatarDropdown } from '@/components/AvatarDropdown'
 import { PushBellButton } from '@/components/push/PushBellButton'
 import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
 import { FeedbackLauncher } from '@/components/feedback/FeedbackLauncher'
+import { CookieSettingsLink } from '@/components/consent/CookieSettingsLink'
 
 /** Exact current-route match — avoid prefetching the page you're already on. */
 function isCurrentPath(pathname: string, href: string) {
@@ -64,6 +65,7 @@ export function StatusFooter({ left, right }: { left?: ReactNode; right?: ReactN
       <div className="flex gap-6 items-center shrink-0">
         <span className="hidden sm:contents">{right}</span>
         <FeedbackLauncher />
+        <CookieSettingsLink className="hidden sm:inline uppercase tracking-widest hover:text-foreground" />
         <span className="text-foreground font-bold tracking-widest hidden sm:inline">sonicdesk // v0.9</span>
       </div>
     </footer>

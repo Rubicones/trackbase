@@ -1,5 +1,6 @@
 import { mirrorToMetaPixel } from './meta-pixel'
 import { mirrorToYandexMetrica, setYandexUserParams } from './yandex-metrica'
+import { hasTrackingConsent } from './consent'
 
 export type AnalyticsParams = Record<string, string | number | boolean>
 
@@ -28,12 +29,16 @@ declare global {
  */
 export function setUserProperties(properties: AnalyticsParams) {
   if (typeof window === 'undefined') return
+  // No consent (or withdrawn this page view) → send nothing anywhere.
+  if (!hasTrackingConsent()) return
   window.gtag?.('set', 'user_properties', properties)
   setYandexUserParams(properties)
 }
 
 export function trackEvent(eventName: string, params?: AnalyticsParams) {
   if (typeof window === 'undefined') return
+  // No consent (or withdrawn this page view) → send nothing anywhere.
+  if (!hasTrackingConsent()) return
 
   const enriched = { ...params, app_version: '0.9' }
 

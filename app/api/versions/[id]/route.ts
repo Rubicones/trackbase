@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity } from '@/lib/activity'
+import { settleAfterFreeingSpace } from '@/lib/planSettle'
 
 // PATCH /api/versions/[id] — rename a branch
 // Body: { name: string }
@@ -72,7 +73,11 @@ export async function DELETE(
   try {
     const { id: versionId } = await params
 
-    const access = await requireBandMemberForVersion(req, versionId)
+    // Deleting a version is allowed in a FROZEN band — one of the four
+    // exceptions to the read-only rule, for the same reason as the others: it
+    // reduces what the owner's plan has to cover (both stored bytes and the
+    // active-version count). See `BandAccessOptions.allowFrozenDelete`.
+    const access = await requireBandMemberForVersion(req, versionId, { allowFrozenDelete: true })
     if ('error' in access) return NextResponse.json({ error: access.error }, { status: access.status })
     const { userId, project } = access
 
@@ -128,6 +133,11 @@ export async function DELETE(
       bandId: project.band_id, userId, action: 'branch_remove',
       subject: version.name, projectId: project.id,
     })
+
+    // Same as the track delete: a version that held the only reference to a
+    // stored object has just freed it, and the active-version count dropped
+    // too. Settle so a resolved conflict clears without waiting for a reload.
+    await settleAfterFreeingSpace(project.band_id)
 
     return NextResponse.json({ deleted: true })
   } catch (err) {

@@ -65,6 +65,42 @@ export function r2Key(projectId: string, hash: string): string {
   return `projects/${projectId}/${hash}.flac`
 }
 
+/** Build the canonical R2 storage path for a project's MIDI file. */
+export function r2MidiKey(projectId: string, hash: string): string {
+  return `projects/${projectId}/${hash}.mid`
+}
+
+/** A SHA-256 hex digest, which is the only thing that may name an object. */
+const SHA256_HEX = /^[a-f0-9]{64}$/
+
+/**
+ * Is `key` a well-formed object path inside `projectId`?
+ *
+ * Object keys arrive from the browser on two paths — the MIDI save flow's
+ * `storage_path`, and the `PATCH /api/tracks/[id]` field of the same name — and
+ * an unvalidated one is a write primitive over the whole bucket: band
+ * membership authorises the *request*, not the *key*, so a member of any band
+ * could name `projects/<someone-else's-project>/<their-hash>.flac` and overwrite
+ * another band's audio, or point their own row at it to read it back.
+ *
+ * The shape is fully determined by server-side facts (the project the track
+ * belongs to, and the content hash), so validation is exact rather than a
+ * sanitising pass: a traversal sequence, an absolute path or a key belonging to
+ * another project all simply fail to match. Callers that can rebuild the key
+ * themselves should do that instead and never look at the client's value.
+ */
+export function isValidProjectObjectKey(key: unknown, projectId: string): key is string {
+  if (typeof key !== 'string') return false
+  const m = /^projects\/([^/]+)\/([^/]+)\.(flac|mid)$/.exec(key)
+  if (!m) return false
+  return m[1] === projectId && SHA256_HEX.test(m[2])
+}
+
+/** True for a SHA-256 hex digest — the only accepted `tracks.file_hash` value. */
+export function isValidFileHash(hash: unknown): hash is string {
+  return typeof hash === 'string' && SHA256_HEX.test(hash)
+}
+
 /**
  * Generate a presigned PUT URL so the browser can upload directly to R2
  * without routing file bytes through the Next.js server.

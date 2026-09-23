@@ -8,13 +8,22 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { formatActivityLine } from '@/lib/activityFormat'
 import { avatarColor, avatarInitials } from '@/lib/avatarTheme'
 import { usePalette } from '@/contexts/PaletteContext'
+import { usePaywall } from '@/contexts/PaywallContext'
+import {
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { DashboardWelcomeModal } from '@/components/onboarding/DashboardWelcomeModal'
+import { GraceBanner } from '@/components/plan/GraceBanner'
+import { FrozenBandChip } from '@/components/plan/FrozenBandBanner'
 import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppShell'
-import { TbButton, TbMenuButton } from '@/components/design/TbButton'
+import { TbButton, TbMenuButton, tbButtonClassName } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
 import { Toast } from '@/components/design/Toast'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { trackEvent } from '@/lib/analytics'
 import {
   type BandLimitInfo,
@@ -23,6 +32,7 @@ import {
   parseBandLimitError,
   reportBandLimitReached,
 } from '@/lib/bandLimitClient'
+import { formatStorageLimit } from '@/lib/bandStorage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,7 +46,16 @@ interface DashboardBand {
   userRole: string; userRoleLabel: string | null
   projectCount: number; memberCount: number; lastUpdated: string
   latestActivity: ActivityItem | null
-  storageBytes: number; storageLimitBytes: number
+  storageBytes: number
+  /**
+   * The band's own ceiling in bytes, resolved server-side from its OWNER's
+   * plan plus that band's addons. Null means unlimited, or not resolvable —
+   * either way the card shows no ceiling rather than a wrong one. Pending
+   * bands (not joined yet) always send null. Display only; never asserted.
+   */
+  storageLimitBytes: number | null
+  /** Read-only because the owner's plan no longer covers it. Display only. */
+  frozen?: boolean
   isPending?: boolean
   joinRequestId?: string
   joinRequestedAt?: string
@@ -104,8 +123,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function formatLimit(bytes: number): string {
-  return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
+/**
+ * A band's storage ceiling for display.
+ *
+ * Delegates to `formatStorageLimit`, which is what every other storage surface
+ * uses. The local version rounded to whole GB, which was harmless while every
+ * band had the same 1 GB ceiling and wrong the moment plans arrived: free's
+ * real 500 MB rendered as "0 GB".
+ */
+function formatLimit(bytes: number | null): string {
+  // Null is "no ceiling to show" — unresolvable, or a band not joined yet.
+  // Deliberately not "Unlimited": no plan grants unlimited storage, so that
+  // word would only ever appear on a failed read, on a free band.
+  if (bytes === null) return '—'
+  return formatStorageLimit(bytes)
 }
 
 function timeGreeting(): string {
@@ -379,7 +410,12 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
   const isOwner = !isPending && band.userRole === 'owner'
   const color = avatarColor(band.name, palette)
   const initials = avatarInitials(band.name, 'band')
-  const storagePct = band.storageLimitBytes > 0 ? band.storageBytes / band.storageLimitBytes : 0
+  // Null ceiling (unlimited, unresolvable, or a pending band) draws an empty
+  // bar rather than a full one.
+  const storagePct =
+    band.storageLimitBytes && band.storageLimitBytes > 0
+      ? band.storageBytes / band.storageLimitBytes
+      : 0
   const roleLabel = isPending
     ? 'pending'
     : (band.userRoleLabel ?? (isOwner ? 'owner' : 'member')).toLowerCase()
@@ -427,6 +463,11 @@ function BandCard({ band, index, onNavigate, onDelete, onLeave }: {
           {initials}
         </div>
         <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+          {/* The grace banner above this grid says bands over the limit are
+              frozen. Without a marker on the cards that sentence names no
+              band, and the user is left comparing a warning against four
+              identical-looking spaces. */}
+          {band.frozen && <FrozenBandChip />}
           <span className={`text-[9px] font-bold uppercase tracking-widest border px-2 py-1 ${
             isPending
               ? 'border-lime/50 text-lime'
@@ -547,6 +588,10 @@ function BandCardSkeleton() {
 export default function DashboardPage() {
   const router = useRouter()
   const { user, profile, loading: authLoading, updateOnboarding } = useAuth()
+  // The band ceiling is lifted by a bigger plan, so meeting it opens the plans
+  // modal with `limit` as the source — the same demand signal every other
+  // locked surface records.
+  const { openPaywall } = usePaywall()
   const searchRef = useRef<HTMLInputElement>(null)
 
   const [bands, setBands] = useState<DashboardBand[]>([])
@@ -648,14 +693,55 @@ export default function DashboardPage() {
   const atBandLimit = bandLimit?.atLimit === true
   const bandLimitCopy = bandLimit ? bandLimitMessage(bandLimit.limit) : ''
 
+  /**
+   * No answer on the ceiling yet — in flight, not "no ceiling".
+   *
+   * `bandLimit` is null in two situations that want opposite treatments: the
+   * dashboard fetch has not landed (wait), or it landed and the server could
+   * not read the limit (proceed, and let the create refuse). `loadingData` is
+   * the only thing that tells them apart, so it is part of the condition.
+   */
+  const bandLimitPending = loadingData && bandLimit === null
+
   // The create action is locked, so this is the moment the user meets the cap.
   // Guarded inside reportBandLimitReached so re-renders don't re-fire it.
   useEffect(() => {
     if (atBandLimit && bandLimit) reportBandLimitReached(bandLimit.limit)
   }, [atBandLimit, bandLimit])
 
+  /**
+   * Three states here too, for the same reason the mixer has three.
+   *
+   * A ceiling is not a feature gate: it depends on what the user has already
+   * done, so it cannot be read off a plan id and it costs a `count(*)`. That
+   * argues for letting the server refuse — and it still does, twice, in
+   * `createBandForUser()` and the database trigger behind it. What it does not
+   * argue for is leaving the affordance live while the answer is in flight. A
+   * user who opens the modal, names a band and presses create only to be
+   * refused had the worse experience of the two, and it is the one this file
+   * used to hand them on every load.
+   *
+   * `pending` costs nothing here because the band grid directly below this
+   * button is already rendering skeletons in exactly the same window. Nobody is
+   * shown a cap they do not have — they are shown a page that has not finished
+   * loading, which is what is happening.
+   *
+   * Once the answer lands and there is still no limit to show (the server could
+   * not read it), the affordance goes live and the server refuses. THAT is the
+   * case the "null stays unlocked" rule was written for, and it still holds.
+   */
   function openNewBandModal() {
-    if (atBandLimit) return
+    // Second line of defence. The pending branch renders no handler at all, so
+    // this only matters if some other path reaches here.
+    if (bandLimitPending) return
+    if (atBandLimit) {
+      // Was `return`, which made a dimmed control do nothing at all — the exact
+      // dead-button failure `PaywallLock` warns about. The way past this cap is
+      // a bigger plan, so say so.
+      trackEvent('band_create_blocked')
+      openPaywall('limit')
+      return
+    }
     trackEvent('band_create_clicked')
     setShowNewBand(true)
   }
@@ -764,15 +850,34 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <TbButton
-              variant="primary"
-              onClick={openNewBandModal}
-              disabled={atBandLimit}
-              title={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
-              className="h-10 px-4 shrink-0"
-            >
-              + New space
-            </TbButton>
+            {bandLimitPending ? (
+              // Inert markup carrying no click handler — never a `disabled`
+              // TbButton. Same rule as the mixer gates: an attribute can be
+              // deleted from the markup, a handler React never attached cannot
+              // be restored. `tbButtonClassName` keeps it pixel-identical to the
+              // real button so nothing shifts when the answer lands.
+              <span
+                className={`${tbButtonClassName({ variant: 'primary', className: 'h-10 px-4 shrink-0' })} ${paywallPendingButtonClass}`}
+                {...paywallPendingProps}
+              >
+                + New space
+              </span>
+            ) : (
+              <HoverTooltip
+                label={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                multiline
+                className="shrink-0 inline-flex"
+              >
+                <TbButton
+                  variant="primary"
+                  onClick={openNewBandModal}
+                  aria-disabled={atBandLimit || undefined}
+                  className={`h-10 px-4 shrink-0 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+                >
+                  + New space
+                </TbButton>
+              </HoverTooltip>
+            )}
             <TbButton onClick={() => setShowJoinBand(true)} className="h-10 px-4 shrink-0">
               Join band
             </TbButton>
@@ -793,6 +898,15 @@ export default function DashboardPage() {
         )}
       </section>
 
+      {/* Grace / enforced banner. Persistent, non-alarming, and self-hiding
+          while the account is active — see components/plan/GraceBanner.tsx. */}
+      {/* Spacing goes on the banner, not on this wrapper: `GraceBanner`
+          renders nothing while the account is active, and a margin on the
+          wrapper would leave that gap behind on every healthy dashboard. */}
+      <div className="mx-auto max-w-7xl px-6 w-full">
+        <GraceBanner className="mt-8" />
+      </div>
+
       {/* Band grid */}
       <section className="mx-auto max-w-7xl px-6 py-10 flex-1 w-full">
         {loadingData ? (
@@ -806,14 +920,20 @@ export default function DashboardPage() {
               Create your first band or request to join one with an invite code
             </p>
             <div className="flex flex-wrap gap-3 justify-center mt-2">
-              <TbButton
-                variant="primary"
-                onClick={openNewBandModal}
-                disabled={atBandLimit}
-                className="px-4 py-2"
+              <HoverTooltip
+                label={atBandLimit ? `${bandLimitCopy} ${BAND_LIMIT_HINT}` : undefined}
+                multiline
+                className="inline-flex"
               >
-                Create a band
-              </TbButton>
+                <TbButton
+                  variant="primary"
+                  onClick={openNewBandModal}
+                  aria-disabled={atBandLimit || undefined}
+                  className={`px-4 py-2 ${atBandLimit ? paywallLockedButtonClass : ''}`}
+                >
+                  Create a band
+                </TbButton>
+              </HoverTooltip>
               <TbButton onClick={() => setShowJoinBand(true)} className="px-4 py-2">
                 Join with code
               </TbButton>
@@ -880,9 +1000,10 @@ export default function DashboardPage() {
                   atBandLimit ? (
                     // Locked, not hidden: the affordance stays where the user
                     // expects it and explains itself instead of failing later.
-                    <div
-                      aria-disabled="true"
-                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground min-h-[200px] text-center opacity-60"
+                    <button
+                      type="button"
+                      onClick={openNewBandModal}
+                      className="bg-background p-5 flex flex-col items-center justify-center gap-3 text-muted-foreground min-h-[200px] text-center opacity-60 w-full"
                     >
                       <div className="size-12 border border-dashed border-border grid place-items-center text-muted-foreground">
                         <Lock size={18} strokeWidth={1.5} />
@@ -891,7 +1012,7 @@ export default function DashboardPage() {
                       <div className="text-[10px] text-muted-foreground max-w-[15rem] leading-relaxed">
                         {BAND_LIMIT_HINT}
                       </div>
-                    </div>
+                    </button>
                   ) : (
                     <button
                       type="button"

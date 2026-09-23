@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { frozenBandRefusal } from '@/lib/planGuards'
 
 
 // POST /api/bands/[id]/projects — create a project inside a band
@@ -21,6 +23,9 @@ export async function POST(
     .maybeSingle()
   if (!membership) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  const frozen = await frozenBandRefusal(bandId)
+  if (frozen) return frozen
+
   const { name, bpm, key } = await req.json()
   if (!name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
@@ -29,7 +34,7 @@ export async function POST(
     .insert({ name: name.trim(), band_id: bandId, bpm: bpm ?? 120, key: key ?? null })
     .select()
     .single()
-  if (projErr) return NextResponse.json({ error: projErr.message }, { status: 500 })
+  if (projErr) return serverErrorResponse('bands/projects', projErr, 'Could not create the song')
 
   // Seed main version
   const { data: version, error: verErr } = await supabase
@@ -37,7 +42,7 @@ export async function POST(
     .insert({ project_id: project.id, name: 'Master', type: 'main' })
     .select()
     .single()
-  if (verErr) return NextResponse.json({ error: verErr.message }, { status: 500 })
+  if (verErr) return serverErrorResponse('bands/projects', verErr, 'Could not create the song')
 
   return NextResponse.json({ project, version }, { status: 201 })
 }

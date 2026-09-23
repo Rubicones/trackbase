@@ -5,7 +5,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { Project, Track } from '@/lib/types'
 import { usePaywallGate } from '@/contexts/PaywallContext'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import type { GatedFeature } from '@/lib/plans'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { TactGrid } from '@/components/design/TactGrid'
 import { Spinner } from '@/components/ui/Spinner'
@@ -143,6 +149,7 @@ export const TrackRow = React.memo(function TrackRow({
   onEditApply,
   onEditCancel,
   editArea,
+  bandFeatures,
 }: {
   track: Track; index: number; muted: boolean; soloed: boolean; changed: boolean
   /** True while a new file is being uploaded/processed to replace this track. */
@@ -203,6 +210,13 @@ export const TrackRow = React.memo(function TrackRow({
   onEditCancel?: () => void
   /** Pre-built TrackEditArea element — replaces the waveform while editing. */
   editArea?: ReactNode
+  /**
+   * The gated features of the BAND this track belongs to, from
+   * `GET /api/projects/[id]`. Resolved from the band owner's plan, which is
+   * the real rule — passing it is what stops a free member of a paid band
+   * seeing a lock on a feature they are entitled to. `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const accentColor = trackAccentColor(track.icon_color, index)
@@ -211,8 +225,16 @@ export const TrackRow = React.memo(function TrackRow({
   // All state/refs must come before computed values that read state
   const [waveformReady, setWaveformReady] = useState(false)
   useEffect(() => { setWaveformReady(false) }, [track.id])
-  // Test-mode paywall — gates the Edit (pencil) entry point only
-  const { locked: trackEditLocked, onLockedClick: onTrackEditLockedClick } = usePaywallGate('track_edit')
+  // Gates the Edit (pencil) entry point only. Resolved against the BAND's
+  // features when we know them, falling back to the viewer's own plan — see
+  // `usePaywallGate`. The server checks `track_edit` again on
+  // `POST /api/tracks/[id]/edit` regardless; this is the button, not the gate.
+  const {
+    pending: trackEditPending,
+    locked: trackEditLocked,
+    onLockedClick: onTrackEditLockedClick,
+    guard: guardTrackEdit,
+  } = usePaywallGate('track_edit', bandFeatures)
   const [showColorPicker, setShowColorPicker] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showTools, setShowTools] = useState(false)
@@ -755,7 +777,15 @@ export const TrackRow = React.memo(function TrackRow({
             onClick={onToggleSolo}
           />
           {editable && !isMidi && !compact && (
-            trackEditLocked && !editMode ? (
+            trackEditPending && !editMode ? (
+              <span
+                aria-label="Edit track"
+                className={`size-5 border text-[9px] grid place-items-center border-border text-muted-foreground ${paywallPendingButtonClass}`}
+                {...paywallPendingProps}
+              >
+                <PencilIcon />
+              </span>
+            ) : trackEditLocked && !editMode ? (
               <PaywallLockWrap>
                 <button
                   type="button"
@@ -795,7 +825,7 @@ export const TrackRow = React.memo(function TrackRow({
               <HoverTooltip label={audioReady ? 'Edit track' : 'Loading audio…'}>
                 <button
                   type="button"
-                  onClick={onRequestEdit}
+                  onClick={guardTrackEdit(() => onRequestEdit?.())}
                   disabled={!audioReady || isReplacing}
                   aria-label="Edit track"
                   className="size-5 border text-[9px] grid place-items-center transition border-border hover:border-lime hover:text-lime text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-muted-foreground"

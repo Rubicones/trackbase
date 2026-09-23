@@ -4,6 +4,7 @@ import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, fmtTimecode } from '@/lib/activity'
 import { commentToTimelineMs } from '@/lib/commentTimecodes'
 import { trackStartBar } from '@/lib/trackMerge'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // POST /api/tracks/[id]/comments
 // Body: { content, timecode_start_ms, timecode_end_ms } — ms relative to track content (waveform)
@@ -48,11 +49,10 @@ export async function POST(
       .single()
 
     if (error) {
-      console.error('[comments/post] Supabase error:', error)
-      return NextResponse.json(
-        { error: error.message, details: error.details, hint: error.hint },
-        { status: 500 }
-      )
+      // `details` and `hint` are Postgres's advice to the query author — column
+      // names, constraint names, "Perhaps you meant to reference…". None of it
+      // belongs in a response. The full object goes to the log instead.
+      return serverErrorResponse('comments/post', error, 'Could not save your comment')
     }
 
     // Fetch author username
@@ -118,8 +118,6 @@ export async function POST(
 
     return NextResponse.json({ comment: commentWithAuthor }, { status: 201 })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[comments/post] Unexpected error:', err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return serverErrorResponse('comments/post', err, 'Could not save your comment')
   }
 }

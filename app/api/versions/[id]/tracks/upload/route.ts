@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { supabase } from '@/lib/supabase'
+import { serverErrorResponse } from '@/lib/apiErrors'
 import { uploadToR2, r2Key } from '@/lib/r2'
 import { audioToFlac } from '@/lib/ffmpeg'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
 import { pickTrackIconColor } from '@/lib/trackIcon'
-import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { storageRefusal } from '@/lib/planGuards'
+import { findBandTrackByHash } from '@/lib/trackDedup'
 
 const ALLOWED_AUDIO_MIMETYPES: Record<string, 'wav' | 'mp3'> = {
   'audio/wav':   'wav',
@@ -122,13 +124,10 @@ async function handleAudioUpload({
   const fileHash = createHash('sha256').update(audioBuffer).digest('hex')
   console.log('[upload] fileHash:', fileHash, '| size:', audioBuffer.byteLength)
 
-  // Dedup check
-  const { data: existing } = await supabase
-    .from('tracks')
-    .select('storage_path, duration_ms, file_size_bytes')
-    .eq('file_hash', fileHash)
-    .limit(1)
-    .maybeSingle()
+  // Dedup check, scoped to THIS band. A global match skipped the storage
+  // check below for any file already present anywhere in the database, and
+  // pointed this band's row at another band's object. See `lib/trackDedup.ts`.
+  const existing = await findBandTrackByHash(bandId, fileHash)
 
   let storagePath: string
   let fileSizeBytes: number
@@ -136,7 +135,12 @@ async function handleAudioUpload({
 
   if (existing) {
     storagePath = existing.storage_path
-    fileSizeBytes = existing.file_size_bytes ?? audioBuffer.byteLength
+    // Dedup hit: inherit the stored count. Falling back to the uploaded WAV's
+    // length here would record a number for a file that was never stored —
+    // storage holds the FLAC, typically 2–3× smaller — and it is a
+    // client-influenced number besides. An unknown size counts as 0 instead,
+    // matching `tracks/process`.
+    fileSizeBytes = existing.file_size_bytes ?? 0
     console.log('[upload] dedup hit — reusing', storagePath)
   } else {
     let flacBuffer: Buffer
@@ -148,21 +152,18 @@ async function handleAudioUpload({
       console.log('[upload] FLAC done, size:', flacBuffer.byteLength, 'duration:', audioDurationMs, 'ms')
     } catch (err) {
       console.error('[upload] ffmpeg conversion failed:', err)
-      return NextResponse.json({ error: 'Audio conversion failed', detail: String(err) }, { status: 500 })
+      return serverErrorResponse('versions/tracks/upload', err, 'Could not convert that audio file')
     }
-    const quota = await checkBandStorageQuota(supabase, bandId, flacBuffer.byteLength)
-    if (!quota.ok) {
-      return NextResponse.json(
-        { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-        { status: 413 },
-      )
-    }
+    // Per-band storage ceiling, resolved from the band owner's plan plus
+    // this band's extra_storage addons. Never pooled across bands.
+    const overQuota = await storageRefusal(bandId, flacBuffer.byteLength)
+    if (overQuota) return overQuota
     storagePath = r2Key(version.project_id, fileHash)
     try {
       await uploadToR2(storagePath, flacBuffer)
     } catch (err) {
       console.error('[upload] R2 upload failed:', err)
-      return NextResponse.json({ error: 'Storage upload failed', detail: String(err) }, { status: 500 })
+      return serverErrorResponse('versions/tracks/upload', err, 'Could not store that file')
     }
     fileSizeBytes = flacBuffer.byteLength
   }
@@ -187,7 +188,7 @@ async function handleAudioUpload({
     .single()
   if (trkErr) {
     console.error('[upload] track insert failed:', trkErr)
-    return NextResponse.json({ error: 'DB insert failed', detail: trkErr.message }, { status: 500 })
+    return serverErrorResponse('versions/tracks/upload', trkErr, 'Could not save the track')
   }
 
   console.log('[upload] done, track id:', track.id)
@@ -241,18 +242,13 @@ async function handleMidiUpload({
     console.log('[upload] MIDI parsed:', midiData.notes.length, 'notes, bpm:', midiData.bpm)
   } catch (err) {
     console.error('[upload] MIDI parse failed:', err)
-    return NextResponse.json({ error: 'Failed to parse MIDI file', detail: String(err) }, { status: 400 })
+    return serverErrorResponse('versions/tracks/upload', err, 'Could not read that MIDI file', 400)
   }
 
   const durationMs = Math.round(midiDurationMs(midiData))
 
-  // Dedup check
-  const { data: existing } = await supabase
-    .from('tracks')
-    .select('storage_path, duration_ms, file_size_bytes')
-    .eq('file_hash', fileHash)
-    .limit(1)
-    .maybeSingle()
+  // Dedup check, scoped to THIS band — same reasoning as the audio path above.
+  const existing = await findBandTrackByHash(bandId, fileHash)
 
   let storagePath: string
 
@@ -260,13 +256,10 @@ async function handleMidiUpload({
     storagePath = existing.storage_path
     console.log('[upload] MIDI dedup hit — reusing', storagePath)
   } else {
-    const quota = await checkBandStorageQuota(supabase, bandId, midiBuffer.byteLength)
-    if (!quota.ok) {
-      return NextResponse.json(
-        { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-        { status: 413 },
-      )
-    }
+    // Per-band storage ceiling, resolved from the band owner's plan plus
+    // this band's extra_storage addons. Never pooled across bands.
+    const overQuota = await storageRefusal(bandId, midiBuffer.byteLength)
+    if (overQuota) return overQuota
     // Store raw .mid file in R2
     storagePath = `projects/${version.project_id}/${fileHash}.mid`
     try {
@@ -275,7 +268,7 @@ async function handleMidiUpload({
       console.log('[upload] R2 MIDI upload ok')
     } catch (err) {
       console.error('[upload] R2 upload failed:', err)
-      return NextResponse.json({ error: 'Storage upload failed', detail: String(err) }, { status: 500 })
+      return serverErrorResponse('versions/tracks/upload', err, 'Could not store that file')
     }
   }
 
@@ -302,7 +295,7 @@ async function handleMidiUpload({
     .single()
   if (trkErr) {
     console.error('[upload] MIDI track insert failed:', trkErr)
-    return NextResponse.json({ error: 'DB insert failed', detail: trkErr.message }, { status: 500 })
+    return serverErrorResponse('versions/tracks/upload', trkErr, 'Could not save the track')
   }
 
   console.log('[upload] MIDI done, track id:', track.id)

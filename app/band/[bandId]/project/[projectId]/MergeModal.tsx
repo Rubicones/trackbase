@@ -14,7 +14,13 @@ import { mergeTargetVersions } from '@/lib/versionSort'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { usePaywallGate } from '@/contexts/PaywallContext'
-import { PaywallLockWrap, paywallLockedButtonClass } from '@/components/paywall/PaywallLock'
+import type { GatedFeature } from '@/lib/plans'
+import {
+  PaywallLockWrap,
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 
 export type {
   MergePreview,
@@ -519,9 +525,20 @@ function CommentChangesSection({
 
 // ─── Cherry-pick entry button ─────────────────────────────────────────────────
 
-function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
-  // Test-mode paywall — locked button stays clickable and opens the plans modal
-  const { locked, onLockedClick } = usePaywallGate('cherry_pick')
+function CherryPickDiffButton({
+  disabled,
+  onClick,
+  bandFeatures,
+}: {
+  disabled?: boolean
+  onClick: () => void
+  bandFeatures?: GatedFeature[] | null
+}) {
+  // A locked button stays clickable and opens the plans modal. Resolved against
+  // the BAND's features — `cherry_pick` comes from the band owner's plan, so a
+  // free member of a paid band must not see this locked. The server re-checks
+  // it on `POST /api/projects/[id]/merge` whenever selective fields are sent.
+  const { status, locked, onLockedClick, guard } = usePaywallGate('cherry_pick', bandFeatures)
 
   const icon = (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
@@ -529,6 +546,20 @@ function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onCli
       <path d="M9 2l1.5 1L9 4M11.5 8.25l-1.75 1.75-1-1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
+
+  // No answer yet. A span, not a disabled button: there is no handler to
+  // re-enable and no attribute to delete. See `usePaywallGate`.
+  if (status === 'pending') {
+    return (
+      <span
+        className={`hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground ${paywallPendingButtonClass}`}
+        {...paywallPendingProps}
+      >
+        {icon}
+        Show &amp; cherry-pick differences
+      </span>
+    )
+  }
 
   if (locked) {
     return (
@@ -551,7 +582,7 @@ function CherryPickDiffButton({ disabled, onClick }: { disabled?: boolean; onCli
       type="button"
       data-tour="cherrypick-entry-button"
       disabled={disabled}
-      onClick={onClick}
+      onClick={guard(onClick)}
       className="hidden sm:inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 border border-border text-muted-foreground hover:border-lime hover:text-lime transition disabled:opacity-50 disabled:pointer-events-none"
     >
       {icon}
@@ -569,6 +600,7 @@ export function MergeModal({
   onClose,
   onMerged,
   onOpenDiff,
+  bandFeatures,
 }: {
   projectId: string
   branchId: string
@@ -577,6 +609,11 @@ export function MergeModal({
   onMerged: (result: { tracksUpdated: number; branchName: string; targetName: string }) => void
   /** Opens the full cherry-pick diff view for the current branch → target pair. */
   onOpenDiff?: (targetVersionId: string) => void
+  /**
+   * Gated features of the BAND, from `GET /api/projects/[id]`. Resolved from
+   * the band owner's plan; `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }) {
   const defaultTargetId = useMemo(
     () => versions.find(v => v.type === 'main')?.id ?? mergeTargetVersions(versions, branchId)[0]?.id ?? '',
@@ -743,6 +780,7 @@ export function MergeModal({
     <CherryPickDiffButton
       disabled={previewLoading || merging || !hasAnyChanges}
       onClick={() => onOpenDiff(targetVersionId)}
+      bandFeatures={bandFeatures}
     />
   )
 

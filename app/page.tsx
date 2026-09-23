@@ -1,4 +1,5 @@
 import LandingPage from '@/components/LandingPage'
+import { getPriceCatalog } from '@/lib/billing/catalog'
 import { JsonLd } from '@/components/seo/JsonLd'
 import { buildHomeJsonLd, homeMetadata, SEO_DEFAULT_DESCRIPTION, SEO_FEATURE_SUMMARY } from '@/lib/seo'
 
@@ -7,10 +8,20 @@ export const metadata = homeMetadata
 /** Static marketing page — full HTML for crawlers without auth cookies. */
 export const dynamic = 'force-static'
 
+/**
+ * Re-rendered at most hourly so the pricing section follows Stripe. The
+ * prices are read on the server (`lib/billing/catalog.ts`) at build and on
+ * each revalidation; a Price changed in Stripe means a new Price id in env,
+ * i.e. a deploy, which rebuilds this anyway — the hour is a safety net.
+ */
+export const revalidate = 3600
+
 // buildHomeJsonLd() includes FAQPage schema mirroring the visible FAQ section
 // in LandingPage.tsx (see lib/seo.ts#SEO_FAQS) — kept in sync there.
 
-export default function Home() {
+export default async function Home() {
+  const prices = await getPriceCatalog()
+
   return (
     <>
       <JsonLd data={buildHomeJsonLd()} />
@@ -29,7 +40,7 @@ export default function Home() {
           ))}
         </ul>
       </div>
-      <LandingPage />
+      <LandingPage prices={prices} />
     </>
   )
 }

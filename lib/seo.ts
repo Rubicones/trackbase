@@ -1,5 +1,10 @@
 import type { Metadata } from 'next'
 import { getSeoOrigin } from '@/lib/site-url'
+import { PLANS, formatMB } from '@/lib/plans'
+
+// The free plan's numbers in the FAQ come from PLANS — this line used to say
+// "1 GB" while the plan granted 500 MB.
+const FREE = PLANS.free
 
 export const SITE_NAME = 'sonicdesk.'
 export const SITE_SHORT_NAME = 'sonicdesk'
@@ -91,7 +96,7 @@ export const SEO_FAQS: { tag: string; question: string; answer: string }[] = [
     tag: 'pricing',
     question: 'is it free?',
     answer:
-      'yes — the free plan covers 1 band, up to 3 members and 1 GB of storage. plenty for a first project or a small duo. paid plans lift the limits when your world gets bigger.',
+      `yes — the free plan covers ${FREE.bandsOwned} band, up to ${FREE.membersPerBand} members and ${formatMB(FREE.storagePerBandMB)} of storage. plenty for a first project or a small duo. paid plans lift the limits when your world gets bigger.`,
   },
   {
     tag: 'pricing',

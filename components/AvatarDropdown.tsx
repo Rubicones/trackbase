@@ -7,7 +7,8 @@ import { avatarInitials } from '@/lib/avatarTheme'
 import { DESIGN_THEMES, useDesignTheme } from '@/lib/design-theme'
 import { UserAvatar } from '@/components/ui/avatar'
 import { ThemePicker } from '@/components/design/ThemePicker'
-import { TbMenuButton } from '@/components/design/TbButton'
+import Link from 'next/link'
+import { TbMenuButton, tbMenuButtonClassName } from '@/components/design/TbButton'
 import { PreferencesModal } from '@/components/PreferencesModal'
 
 function ThemeSwatches({ colors, size = 10 }: { colors: string[]; size?: number }) {
@@ -26,7 +27,7 @@ function ThemeSwatches({ colors, size = 10 }: { colors: string[]; size?: number 
 
 export function AvatarDropdown() {
   const { profile } = useAuth()
-  const { enabled: paywallEnabled, openPaywall } = usePaywall()
+  const { snapshot: plan, openPaywall } = usePaywall()
   const { theme } = useDesignTheme()
   const [open, setOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
@@ -114,8 +115,8 @@ export function AvatarDropdown() {
               </div>
             )}
 
-            {/* Test-mode paywall entry — only rendered while "Show paywall" is ON */}
-            {paywallEnabled && (
+            {/* Upgrade entry — shown to anyone not already on the top plan. */}
+            {plan.plan !== 'band_plus' && (
               <div className="border-t border-border">
                 <TbMenuButton
                   className="gap-2.5"
@@ -130,6 +131,21 @@ export function AvatarDropdown() {
                 </TbMenuButton>
               </div>
             )}
+
+            {/* Billing lives on its own page — this is the way in from anywhere. */}
+            <div className="border-t border-border">
+              <Link
+                href="/billing"
+                onClick={() => {
+                  setOpen(false)
+                  setThemeOpen(false)
+                }}
+                className={tbMenuButtonClassName({ className: 'gap-2.5 no-underline' })}
+              >
+                <span className="shrink-0 text-muted-foreground"><CardIcon /></span>
+                Plan &amp; billing
+              </Link>
+            </div>
           </div>
         )}
       </div>
@@ -171,6 +187,16 @@ function StarIcon() {
         strokeWidth="1"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function CardIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <rect x="1.5" y="3" width="11" height="8" rx="1" stroke="currentColor" strokeWidth="1" />
+      <path d="M1.5 5.75h11" stroke="currentColor" strokeWidth="1" />
+      <path d="M3.75 8.75h2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
     </svg>
   )
 }

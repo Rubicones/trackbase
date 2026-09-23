@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { getUserBandCount, getUserPendingJoinRequestCount } from '@/lib/bandAccess'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 
 const adminSupabase = createClient(
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return serverErrorResponse('me/join-requests', error, 'Could not load your join requests')
 
   return NextResponse.json({
     requests: (requests ?? []).map(r => {

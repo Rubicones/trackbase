@@ -16,6 +16,22 @@ const variantClass: Record<TbButtonVariant, string> = {
   link: 'border-0 text-muted-foreground hover:text-lime px-2 py-1 bg-transparent',
 }
 
+/**
+ * The button's classes without the button.
+ *
+ * For the cases where the control has to be an `<a>` — a Next `Link`, mostly.
+ * Nesting a `<button>` inside an anchor is invalid HTML and gives assistive
+ * technology two conflicting controls in one place, so a link that should look
+ * like a button borrows the classes instead of wrapping one.
+ */
+export function tbButtonClassName({
+  variant = 'ghost',
+  className = '',
+}: { variant?: TbButtonVariant; className?: string } = {}) {
+  const typeClass = variant === 'primary' ? '' : monoType
+  return `${shell} ${typeClass} ${variantClass[variant]} ${className}`.trim()
+}
+
 export function TbButton({
   children,
   variant = 'ghost',

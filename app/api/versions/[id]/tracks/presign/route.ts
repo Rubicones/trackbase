@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { supabase } from '@/lib/supabase'
 import { getPresignedUploadUrl } from '@/lib/r2'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
-import { checkBandStorageQuota, storageQuotaError } from '@/lib/bandStorage'
+import { storageRefusal } from '@/lib/planGuards'
 
 // ── File size + type limits ────────────────────────────────────────────────────
 
@@ -69,13 +68,10 @@ export async function POST(
     )
   }
 
-  const quota = await checkBandStorageQuota(supabase, access.project.band_id, fileSize)
-  if (!quota.ok) {
-    return NextResponse.json(
-      { error: storageQuotaError(quota.used, quota.limit), code: 'STORAGE_LIMIT' },
-      { status: 413 },
-    )
-  }
+  // Per-band storage ceiling, resolved from the band owner's plan plus
+  // this band's extra_storage addons. Never pooled across bands.
+  const overQuota = await storageRefusal(access.project.band_id, fileSize)
+  if (overQuota) return overQuota
 
   const contentType = inferContentType(filename, rawContentType ?? '')
 

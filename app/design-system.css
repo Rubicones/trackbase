@@ -39,11 +39,44 @@
   /* Compare mode — B side (related to accent, visually distinct) */
   --compare-b: oklch(0.68 0.22 285);
   --compare-b-foreground: oklch(0.98 0 0);
+
+  /* ── Wave accents ──────────────────────────────────────────
+     Amber, mint and violet: the three non-semantic accents the subscription
+     surfaces use for grace, information and account overrides (`TONE` in
+     components/plan/ui.tsx).
+
+     ⚠ These used to be declared ONLY inside `.landing-page`, over in
+     globals.css. Everywhere else in the app they were undefined — and an
+     undefined var inside a colour is not a visible error. `color:
+     var(--wave-amber)` falls back to inherit, and `border-color:
+     color-mix(… var(--wave-amber) …)` falls back to currentColor. So the
+     grace banner rendered WHITE: white border, white heading, no wash, and
+     it read as a deliberate design. Same trap the plans-modal note in
+     globals.css describes for the plan accents. Declare an accent at the
+     theme root, or do not declare it. */
+  --wave-amber: oklch(0.82 0.17 80);
+  --wave-mint: oklch(0.78 0.16 165);
+  --wave-violet: oklch(0.72 0.16 295);
+}
+
+/* Light themes darken their accents exactly as `--destructive` and the chart
+   colours do (0.62 → 0.55). An 0.82-lightness amber is all but invisible as
+   text on a white card. */
+:root[data-theme="blush-light"],
+:root[data-theme="studio-dim-light"],
+:root[data-theme="studio-light"] {
+  --wave-amber: oklch(0.62 0.15 80);
+  --wave-mint: oklch(0.56 0.14 165);
+  --wave-violet: oklch(0.52 0.16 295);
 }
 
 /* ─── lime (also forced on marketing landing) ─── */
 :root[data-theme="lime"],
-.landing-page {
+.landing-page,
+/* Cookie banner renders at <body> level, outside .landing-page — on marketing
+   and legal pages it always takes the lime theme; inside the app it inherits
+   the user's chosen theme. */
+html:has(.landing-page) .cookie-banner {
   --background: oklch(0 0 0);
   --foreground: oklch(0.93 0 0);
   --surface: oklch(0.16 0 0);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRequestUserId } from '@/lib/supabase/server'
 import { assertBandOwner } from '@/lib/bandAccess'
+import { frozenBandRefusal } from '@/lib/planGuards'
 import { ensureBandInviteCode } from '@/lib/inviteCode'
 
 
@@ -41,6 +42,9 @@ export async function POST(
 
   try {
     const { generateUniqueInviteCode } = await import('@/lib/inviteCode')
+    const frozen = await frozenBandRefusal(bandId)
+    if (frozen) return frozen
+
     const { supabase } = await import('@/lib/supabase')
     const code = await generateUniqueInviteCode()
     const { data, error } = await supabase

@@ -4,9 +4,20 @@ import { logActivity, resourceSubject } from '@/lib/activity'
 import { enrichResources, validateResourceContext } from '@/lib/resource-context'
 import { deleteFromR2 } from '@/lib/r2'
 import { getRequestUserId } from '@/lib/supabase/server'
+import { isBandFrozenForWrite } from '@/lib/bandAccess'
+import { BAND_FROZEN_STATUS } from '@/lib/bandFreeze'
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
+/**
+ * Membership + resource resolution for the two write handlers below.
+ *
+ * Both callers mutate, and neither goes through `requireBandMember`, so the
+ * frozen-band block that guard applies by HTTP method does not reach them. It is
+ * asserted here instead — including on DELETE: a frozen band is read-only and
+ * nothing in it is removable. (Deleting the *band* is the one deliberate
+ * exception, and it lives on a different route.)
+ */
 async function resolveResource(projectId: string, resourceId: string, userId: string) {
   // Verify project membership
   const { data: project } = await supabase
@@ -23,6 +34,10 @@ async function resolveResource(projectId: string, resourceId: string, userId: st
     .eq('user_id', userId)
     .maybeSingle()
   if (!member) return { error: 'Not a member of this band', status: 403 }
+
+  if (await isBandFrozenForWrite(project.band_id)) {
+    return { error: 'band_frozen', status: BAND_FROZEN_STATUS }
+  }
 
   const { data: resource } = await supabase
     .from('project_resources')

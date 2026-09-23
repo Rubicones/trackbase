@@ -11,6 +11,7 @@ import { mkdir, writeFile, rm } from 'fs/promises'
 import path from 'path'
 import { Readable } from 'stream'
 import archiver from 'archiver'
+import { serverErrorResponse } from '@/lib/apiErrors'
 
 // Transcoding every stem is minutes of work for a big project, and the
 // function stays alive for as long as the client is still downloading.
@@ -189,11 +190,12 @@ export async function GET(
       },
     })
   } catch (err) {
-    console.error(`[versions/export] failed at stage=${stage}`, err)
-    return NextResponse.json(
-      { error: 'Export failed', stage, detail: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    )
+    // `stage` stays in the body — it is a fixed marker from this file, names
+    // nothing about the user's data, and is how a failure gets localised
+    // (AGENTS.md §4). The free-text `detail` was the underlying ffmpeg / R2 /
+    // filesystem error and only ever belonged in the log line above it.
+    console.error(`[versions/export] failed at stage=${stage}`)
+    return serverErrorResponse('versions/export', err, 'Export failed', 500, { stage })
   } finally {
     if (!streaming) dropTmpDir()
   }

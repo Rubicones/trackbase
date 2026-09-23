@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from 'react'
 import { sectionLabel, SectionEditPopover, useSectionEditActions } from '@/components/StructureEditor'
+import type { GatedFeature } from '@/lib/plans'
 import { resolveTransportStatus, transportStatusClass } from '@/lib/transportStatus'
 import { formatTrackStartBar } from '@/lib/trackMerge'
 import { commentsToTimeline } from '@/lib/commentTimecodes'
@@ -739,6 +740,15 @@ export type MobileMixerPortraitProps = {
   currentUser: { username: string } | null
   /** False while audio/MIDI tracks are still loading — blocks waveform comment drag. */
   waveformsInteractive?: boolean
+  /**
+   * Gated features of the BAND, from `GET /api/projects/[id]`. Resolved from
+   * the band OWNER's plan, which is the real rule — without it the gate falls
+   * back to the viewer's own plan and a free member of a paid band is locked
+   * out. For `chord_detect` that lock is the ONLY gate (detection runs in a
+   * browser worker, there is no endpoint to refuse it), so passing this is the
+   * difference between the feature working and not. `null` while unknown.
+   */
+  bandFeatures?: GatedFeature[] | null
 }
 
 export function MobileMixerPortrait(props: MobileMixerPortraitProps) {
@@ -797,6 +807,7 @@ function MobileMixerPortraitInner({
   isOwner,
   currentUser,
   waveformsInteractive = true,
+  bandFeatures,
 }: MobileMixerPortraitProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [colorPickerTrackId, setColorPickerTrackId] = useState<string | null>(null)
@@ -1282,6 +1293,7 @@ function MobileMixerPortraitInner({
           onNoteChange={sectionActions.handleNoteChange}
           onDelete={id => { sectionActions.handleDelete(id); setEditingSectionId(null) }}
           onClose={() => setEditingSectionId(null)}
+          bandFeatures={bandFeatures}
         />
       )}
     </div>

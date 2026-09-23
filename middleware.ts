@@ -15,6 +15,7 @@ import {
   CAMPAIGN_COOKIE,
   CAMPAIGN_COOKIE_MAX_AGE,
 } from '@/lib/campaigns'
+import { ENTRY_PATH } from '@/lib/lastBand'
 import {
   isLandingVariant,
   LANDING_VARIANT_COOKIE,
@@ -34,6 +35,23 @@ const PUBLIC_PREFIXES = [
   // Standalone SEO tools — no login required, no app shell.
   '/tools',
   '/api/tools',
+  // ⚠ Stripe's webhook. It MUST be public: Stripe has no session and never
+  // will, so the auth gate 307s it to /auth and the handler never runs —
+  // which is every subscription event silently lost, in production, with a
+  // dashboard that looks perfectly healthy because Stripe got a 307 and
+  // counts it as delivered.
+  //
+  // Public does not mean unauthenticated: the route verifies Stripe's
+  // signature against STRIPE_WEBHOOK_SECRET before it parses a byte, which is
+  // the real gate. A session cookie would add nothing an attacker could not
+  // also omit. `/api/stripe` is prefixed rather than the exact path so a
+  // second Stripe-called route cannot be added and quietly gated.
+  '/api/stripe',
+  // Legal pages must be readable without an account (the cookie banner and
+  // every footer link here). Pages: app/{terms,privacy,refund}.
+  '/privacy',
+  '/refund',
+  '/terms',
 ]
 const PUBLIC_EXACT = ['/', SIMPLE_LANDING_PATH]
 
@@ -138,7 +156,7 @@ export async function middleware(request: NextRequest) {
 
   if (isAuthed && pathname.startsWith('/auth')) {
     if (hasUsername && onboardingComplete) {
-      return finalize(NextResponse.redirect(new URL('/dashboard', request.url)))
+      return finalize(NextResponse.redirect(new URL(ENTRY_PATH, request.url)))
     }
     return finalize(NextResponse.redirect(new URL('/onboarding', request.url)))
   }

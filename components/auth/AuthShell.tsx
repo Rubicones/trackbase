@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import { Spinner } from '@/components/ui/Spinner'
 import { SonicdeskWordmark } from '@/components/design/SonicdeskWordmark'
+import { CookieSettingsLink } from '@/components/consent/CookieSettingsLink'
 
 export function AuthShell({ children }: { children: ReactNode }) {
   return (
@@ -23,9 +24,12 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <span className="size-1.5 rounded-full bg-online animate-pulse-dot" />
           <span className="uppercase tracking-widest">SYS OK</span>
         </div>
-        <span className="hidden sm:inline text-foreground font-bold tracking-widest">
-          sonicdesk // v0.9
-        </span>
+        <div className="flex items-center gap-6">
+          <CookieSettingsLink className="uppercase tracking-widest hover:text-foreground" />
+          <span className="hidden sm:inline text-foreground font-bold tracking-widest">
+            sonicdesk // v0.9
+          </span>
+        </div>
       </footer>
     </div>
   )

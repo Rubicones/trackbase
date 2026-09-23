@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { BandWelcomeModal } from '@/components/onboarding/BandWelcomeModal'
+import { FrozenBandBanner } from '@/components/plan/FrozenBandBanner'
 import { FeedbackHint } from '@/components/onboarding/FeedbackHint'
 import { StructurePreviewPanel } from '@/components/StructurePreviewPanel'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -15,6 +16,7 @@ import { AppHeader, SectionLabel, StatusFooter } from '@/components/design/AppSh
 import { TbButton, TbMenuButton } from '@/components/design/TbButton'
 import { TbInput } from '@/components/design/TbInput'
 import { TbModal } from '@/components/design/TbModal'
+import { HoverTooltip } from '@/components/design/HoverTooltip'
 import { ResourceErrorScreen } from '@/components/design/ResourceErrorScreen'
 import { RoadmapPreview } from '@/components/RoadmapPreview'
 import type { ProjectRoadmap } from '@/lib/roadmap'
@@ -22,8 +24,18 @@ import { registerPlaybackStop } from '@/lib/playbackSession'
 import { ChatDock, ChatLauncherButton } from '@/components/chat/ChatDock'
 import { useChatPanel } from '@/components/chat/useChatPanel'
 import { BAND_CHANNEL, type ChannelKey } from '@/lib/chat'
-import { BAND_STORAGE_LIMIT_BYTES } from '@/lib/bandStorage'
 import { trackEvent } from '@/lib/analytics'
+import { REMOVAL_CONSEQUENCE } from '@/lib/memberRemovalCopy'
+import { bytesToMB, formatMB, type Limit } from '@/lib/plans'
+import { useBandPlan } from '@/components/plan/BandEntitlements'
+import { usePaywall } from '@/contexts/PaywallContext'
+import { limitMessage } from '@/lib/planCopy'
+import { trackLimitReached } from '@/lib/planAnalytics'
+import {
+  paywallLockedButtonClass,
+  paywallPendingButtonClass,
+  paywallPendingProps,
+} from '@/components/paywall/PaywallLock'
 import { BandFetchError, fetchBandData, invalidateBandData } from '@/lib/bandDataCache'
 
 // Max times we retry the band fetch after a cold-load 401 before surfacing an error.
@@ -124,8 +136,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function formatLimit(bytes: number): string {
-  return `${Math.round(bytes / (1024 * 1024 * 1024))} GB`
+/**
+ * The storage ceiling, in the words `lib/plans.ts` uses for it.
+ *
+ * Three inputs, three answers: `undefined` is "no answer yet", `null` is
+ * unlimited, a number is the ceiling. The previous version took a plain number
+ * and rounded to whole gigabytes, which rendered Free's 500 MB ceiling as
+ * "0 GB" and had no way to say "Unlimited" at all — so the caller passed the
+ * legacy 1 GB constant instead and every plan was reported as 1 GB until the
+ * fetch landed.
+ */
+function formatLimit(bytes: number | null | undefined): string {
+  if (bytes === undefined) return '\u2026'
+  return formatMB(bytes === null ? null : bytesToMB(bytes))
 }
 
 function formatFoundedHero(iso: string): string {
@@ -170,6 +193,16 @@ function IconPlus({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
       <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+/** Frozen-state marker. Local inline SVG to match the other icons in this file. */
+function IconLock({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
+      <rect x="3" y="6" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5 6V4.5a2 2 0 0 1 4 0V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   )
 }
@@ -604,6 +637,11 @@ export default function BandPage() {
   const [chatInitialChannel, setChatInitialChannel] = useState<ChannelKey | undefined>(undefined)
 
   // ── Data state ──────────────────────────────────────────────────────────────
+  // Resolved server-side from the band id in the URL — there before the first
+  // byte, so ceilings do not have to be invented while the fetch is in flight.
+  const bandPlan = useBandPlan()
+  const { snapshot: planSnapshot, openPaywall } = usePaywall()
+
   const [band, setBand] = useState<Band | null>(null)
   const [projects, setProjects] = useState<EnhancedProject[]>([])
   const [members, setMembers] = useState<BandMember[]>([])
@@ -611,7 +649,14 @@ export default function BandPage() {
   const [stats, setStats] = useState<BandStats>({ branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 })
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [totalActivity, setTotalActivity] = useState(0)
-  const [storageLimitBytes, setStorageLimitBytes] = useState(BAND_STORAGE_LIMIT_BYTES)
+  // Ceilings from `GET /api/bands/[id]`. `undefined` = not answered yet; `null`
+  // = answered, unlimited. Neither ever falls back to a constant: seeding this
+  // with the legacy 1 GB limit is how a Band+ band reported 1 GB on every load
+  // until the fetch landed, and how a paying owner saw "Storage full".
+  const [fetchedStorageLimit, setFetchedStorageLimit] = useState<number | null | undefined>(undefined)
+  const [fetchedMemberLimit, setFetchedMemberLimit] = useState<Limit | undefined>(undefined)
+  const [frozen, setFrozen] = useState(false)
+  const [frozenReason, setFrozenReason] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'not_found' | 'access_denied' | 'unknown' | null>(null)
   // Bumped when a 401 suggests our fetch beat the client cookie sync; drives a
@@ -638,11 +683,39 @@ export default function BandPage() {
   const [regeneratingCode, setRegeneratingCode] = useState(false)
   const [showRegenerateCodeModal, setShowRegenerateCodeModal] = useState(false)
   const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([])
+
+  // ── Ceilings ──────────────────────────────────────────────────────────────
+  //
+  // Two sources, most authoritative last: the server-rendered layout answer is
+  // there from the first byte, the fetched one wins when it arrives.
+  const storageLimitBytes =
+    fetchedStorageLimit !== undefined ? fetchedStorageLimit : bandPlan?.storagePerBandBytes
+  const memberLimit: Limit | undefined =
+    fetchedMemberLimit !== undefined
+      ? fetchedMemberLimit
+      : bandPlan
+        ? bandPlan.membersPerBand
+        : undefined
+
+  // As with versions, TWO unknowns: the ceiling, and the list counted against
+  // it. `loading` covers the second — against an empty member list any real
+  // ceiling reads as roomy.
+  const memberLimitPending = memberLimit === undefined || loading
+  const atMemberLimit =
+    memberLimit !== undefined && memberLimit !== null && !loading && members.length >= memberLimit
+  const memberLimitCopy = atMemberLimit
+    ? limitMessage({ limit_type: 'members', limit: memberLimit, current: members.length })
+    : undefined
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(null)
   const [editingMember, setEditingMember] = useState<string | null>(null)
   const [editRoleLabel, setEditRoleLabel] = useState('')
   const [memberMenu, setMemberMenu] = useState<string | null>(null)
   const [deleteModal, setDeleteModal] = useState<{ id: string; name: string } | null>(null)
+  // Removing a member used to fire on the menu click with no confirmation at
+  // all — and it is now the step an owner has to repeat for every person before
+  // a space can be deleted, so it is the one that needs a moment of friction.
+  const [removeMember, setRemoveMember] = useState<{ id: string; name: string } | null>(null)
+  const [removingMember, setRemovingMember] = useState(false)
   const [renameModal, setRenameModal] = useState<{ id: string; name: string } | null>(null)
   const [projectSearch, setProjectSearch] = useState('')
   const projectSearchRef = useRef<HTMLInputElement>(null)
@@ -748,7 +821,15 @@ export default function BandPage() {
     setStats((data.stats ?? { branches: 0, merges: 0, comments: 0, storage_bytes: 0, tracks: 0 }) as BandStats)
     setRecentActivity((data.recentActivity ?? []) as ActivityItem[])
     setTotalActivity((data.totalActivity ?? 0) as number)
-    setStorageLimitBytes((data.storageLimitBytes ?? BAND_STORAGE_LIMIT_BYTES) as number)
+    // `null` from the server means unlimited and must survive as null.
+    setFetchedStorageLimit((data.storageLimitBytes ?? null) as number | null)
+    setFetchedMemberLimit(
+      data.memberLimit === undefined ? undefined : (data.memberLimit as Limit),
+    )
+    // Freeze state is evaluated server-side when the band is read — opening it
+    // is the "touch" that applies an expired grace period. See lib/bandFreeze.ts.
+    setFrozen(Boolean(data.frozen))
+    setFrozenReason((data.frozenReason ?? null) as string | null)
     setInviteCode((data.inviteCode ?? null) as string | null)
     setPendingJoinRequests((data.pendingJoinRequests ?? []) as JoinRequest[])
     setLoading(false)
@@ -876,6 +957,19 @@ export default function BandPage() {
 
   async function handleResolveJoinRequest(requestId: string, action: 'approve' | 'reject') {
     if (myRole !== 'owner' || resolvingRequestId) return
+
+    // Approving inserts a member, so it meets `assertCanAddMember()` on the
+    // server. Rejecting never does, and is never gated here. Refusing early is
+    // a courtesy — the server still refuses — but it saves the owner pressing
+    // Approve on someone and watching nothing happen.
+    if (action === 'approve') {
+      if (memberLimitPending) return
+      if (atMemberLimit) {
+        trackLimitReached('members', planSnapshot.plan)
+        openPaywall('limit')
+        return
+      }
+    }
     setResolvingRequestId(requestId)
     try {
       const res = await fetch(`/api/bands/${bandId}/join-requests/${requestId}`, {
@@ -908,12 +1002,23 @@ export default function BandPage() {
     if (res.ok) trackEvent('member_role_edited')
   }
 
-  async function handleRemoveMember(memberId: string) {
-    setMemberMenu(null)
-    // Optimistic update — remove the member from state immediately
-    setMembers(prev => prev.filter(m => m.user_id !== memberId))
-    invalidateBandCache()
-    await fetch(`/api/bands/${bandId}/members/${memberId}`, { method: 'DELETE' })
+  async function handleRemoveMember() {
+    if (!removeMember) return
+    const memberId = removeMember.id
+    setRemovingMember(true)
+    try {
+      const res = await fetch(`/api/bands/${bandId}/members/${memberId}`, { method: 'DELETE' })
+      if (!res.ok) return
+      // Only after the server agrees. The old version removed the row from
+      // state first and never read the response, so a refused removal — the
+      // last-owner guard, a frozen space — looked like it had worked until the
+      // next reload put the person back.
+      setMembers(prev => prev.filter(m => m.user_id !== memberId))
+      invalidateBandCache()
+      setRemoveMember(null)
+    } finally {
+      setRemovingMember(false)
+    }
   }
 
   async function handleDeleteProject() {
@@ -1203,8 +1308,14 @@ export default function BandPage() {
   }, [activeTab])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const storagePct = Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
-  const storageFull = stats.storage_bytes >= storageLimitBytes
+  // Unknown and unlimited both mean "no bar to fill" — a percentage of a
+  // ceiling we cannot name is a made-up number, and the old code made one up on
+  // every load.
+  const storagePct = storageLimitBytes
+    ? Math.min(100, (stats.storage_bytes / storageLimitBytes) * 100)
+    : 0
+  const storageFull =
+    typeof storageLimitBytes === 'number' && stats.storage_bytes >= storageLimitBytes
   const bandColor = band ? avatarColor(band.name, palette) : 'var(--lime)'
   const bandInitials = band ? avatarInitials(band.name, 'band') : '??'
   const roleLabel = myRole === 'owner' ? 'OWNER' : myRole.toUpperCase() || 'MEMBER'
@@ -1245,6 +1356,15 @@ export default function BandPage() {
         }
       />
 
+      {/* Frozen state — above the hero, because a read-only band must be
+          obvious before anyone tries to change something. Presentation only:
+          every write endpoint refuses independently (lib/bandFreeze.ts). */}
+      {frozen && (
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-4 w-full">
+          <FrozenBandBanner reason={frozenReason} isOwner={myRole === 'owner'} />
+        </div>
+      )}
+
       {/* Band hero */}
       <section className="border-b border-border bg-surface/40">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-6 items-end">
@@ -1278,13 +1398,13 @@ export default function BandPage() {
                 />
               ) : (
                 <span
-                  className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' ? 'cursor-text' : ''}`}
-                  onDoubleClick={myRole === 'owner' ? startBandRename : undefined}
+                  className={`inline-flex items-center gap-2 max-w-full group ${myRole === 'owner' && !frozen ? 'cursor-text' : ''}`}
+                  onDoubleClick={myRole === 'owner' && !frozen ? startBandRename : undefined}
                 >
                   <span className={`truncate transition-colors ${bandNameFlash ? 'text-lime' : ''}`}>
                     {band?.name}
                   </span>
-                  {myRole === 'owner' && (
+                  {myRole === 'owner' && !frozen && (
                     <button
                       type="button"
                       onClick={startBandRename}
@@ -1435,22 +1555,45 @@ export default function BandPage() {
                     />
                   ))
                 )}
+                {/* Creating a project is a write, so a frozen band cannot do
+                    it — the server refuses (`frozenBandRefusal` in
+                    /api/bands/[id]/projects). Offering the action anyway and
+                    failing afterwards is the worst of both: the tile stays,
+                    but it states the situation instead of inviting a click
+                    that cannot succeed. */}
                 {!loading && (
-                  <button
-                    type="button"
-                    onClick={openNewProjectModal}
-                    className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
-                  >
-                    <div className="size-8 border border-border grid place-items-center text-muted-foreground">
-                      <IconPlus size={14} />
+                  frozen ? (
+                    <div
+                      className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 text-center w-full select-none"
+                      aria-disabled="true"
+                    >
+                      <div className="size-8 border border-border grid place-items-center text-muted-foreground/60">
+                        <IconLock size={14} />
+                      </div>
+                      <span className="text-sm text-muted-foreground font-medium">
+                        New projects are paused
+                      </span>
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                        This band is frozen
+                      </span>
                     </div>
-                    <span className="text-sm text-muted-foreground hover:text-lime transition-colors font-medium">
-                      Start a new project
-                    </span>
-                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
-                      Upload stems or start blank
-                    </span>
-                  </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openNewProjectModal}
+                      className="bg-background px-4 py-8 flex flex-col items-center justify-center gap-2 border-0 hover:bg-surface transition-colors text-center w-full"
+                    >
+                      <div className="size-8 border border-border grid place-items-center text-muted-foreground">
+                        <IconPlus size={14} />
+                      </div>
+                      <span className="text-sm text-muted-foreground hover:text-lime transition-colors font-medium">
+                        Start a new project
+                      </span>
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                        Upload stems or start blank
+                      </span>
+                    </button>
+                  )
                 )}
               </div>
             </div>
@@ -1544,14 +1687,30 @@ export default function BandPage() {
                           <div className="text-[9px] text-muted-foreground">Wants to join</div>
                         </div>
                         <div className="flex gap-1 shrink-0">
-                          <button
-                            type="button"
-                            disabled={resolvingRequestId === req.id}
-                            onClick={() => handleResolveJoinRequest(req.id, 'approve')}
-                            className="text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online hover:bg-online/10 bg-transparent cursor-pointer disabled:opacity-50"
-                          >
-                            Approve
-                          </button>
+                          {memberLimitPending ? (
+                            // Ceiling not answered yet. Inert markup with no
+                            // handler — same rule as every other gate here.
+                            <span
+                              className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent ${paywallPendingButtonClass}`}
+                              {...paywallPendingProps}
+                            >
+                              Approve
+                            </span>
+                          ) : (
+                            <HoverTooltip label={memberLimitCopy} multiline className="inline-flex">
+                              <button
+                                type="button"
+                                disabled={resolvingRequestId === req.id}
+                                aria-disabled={atMemberLimit || undefined}
+                                onClick={() => handleResolveJoinRequest(req.id, 'approve')}
+                                className={`text-[9px] uppercase tracking-widest px-2 py-1 border border-online text-online bg-transparent cursor-pointer disabled:opacity-50 ${
+                                  atMemberLimit ? paywallLockedButtonClass : 'hover:bg-online/10'
+                                }`}
+                              >
+                                Approve
+                              </button>
+                            </HoverTooltip>
+                          )}
                           <button
                             type="button"
                             disabled={resolvingRequestId === req.id}
@@ -1622,8 +1781,17 @@ export default function BandPage() {
                           </button>
                           {memberMenu === m.user_id && (
                             <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] border border-border bg-popover shadow-2xl flex flex-col overflow-hidden">
-                              <TbMenuButton danger onClick={() => handleRemoveMember(m.user_id)}>
-                                Remove from band
+                              <TbMenuButton
+                                danger
+                                onClick={() => {
+                                  setMemberMenu(null)
+                                  setRemoveMember({
+                                    id: m.user_id,
+                                    name: m.profiles?.display_name ?? m.profiles?.username ?? 'this member',
+                                  })
+                                }}
+                              >
+                                Remove from space
                               </TbMenuButton>
                             </div>
                           )}
@@ -1679,14 +1847,20 @@ export default function BandPage() {
                 <p className="text-[10px] text-muted-foreground m-0 leading-relaxed">
                   Share this code so others can request to join. You approve each request.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowRegenerateCodeModal(true)}
-                  disabled={regeneratingCode}
-                  className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
-                >
-                  {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
-                </button>
+                {frozen ? (
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground/70 m-0">
+                    Regenerating paused — band frozen
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowRegenerateCodeModal(true)}
+                    disabled={regeneratingCode}
+                    className="text-[9px] uppercase tracking-widest text-muted-foreground hover:text-lime bg-transparent border-0 cursor-pointer p-0 disabled:opacity-50"
+                  >
+                    {regeneratingCode ? 'Regenerating…' : 'Regenerate code'}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1746,7 +1920,10 @@ export default function BandPage() {
 
           {/* Storage — sidebar only; stats live in the hero grid above */}
           <div className="hidden lg:block">
-            <SectionLabel>STORAGE · 1 GB</SectionLabel>
+            {/* Never a literal. AGENTS.md §7: a plan number written anywhere
+                outside `lib/plans.ts` drifts, and this one already had — it
+                said 1 GB to every plan, including the 50 GB one. */}
+            <SectionLabel>{`STORAGE · ${formatLimit(storageLimitBytes)}`}</SectionLabel>
             <div className="mt-3">
               <div className="flex justify-between text-[9px] uppercase tracking-widest text-muted-foreground mb-1">
                 <span>USED</span>
@@ -1824,6 +2001,30 @@ export default function BandPage() {
           onClose={() => setRenameModal(null)}
           onRenamed={name => handleProjectRenamed(renameModal.id, name)}
         />
+      )}
+
+      {removeMember && (
+        <TbModal onClose={() => setRemoveMember(null)}>
+          <p className="font-display text-lg uppercase tracking-tight text-foreground mb-3 m-0">
+            Remove {removeMember.name}?
+          </p>
+          {/*
+            The same two facts the removed person is emailed, in the same words
+            — `REMOVAL_CONSEQUENCE` is shared by both so the promise made here
+            is the promise delivered there. Owners hold off on removing people
+            because they assume it takes the person's uploads with them; it
+            does not, and saying so is what makes this step usable.
+          */}
+          <p className="text-xs leading-relaxed text-muted-foreground mb-4 m-0">
+            {REMOVAL_CONSEQUENCE} We&rsquo;ll let them know.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <TbButton onClick={() => setRemoveMember(null)}>Cancel</TbButton>
+            <TbButton variant="danger" onClick={handleRemoveMember} disabled={removingMember}>
+              {removingMember ? 'Removing…' : 'Remove'}
+            </TbButton>
+          </div>
+        </TbModal>
       )}
 
       {deleteModal && (
