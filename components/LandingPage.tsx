@@ -36,8 +36,12 @@ import {
   formatInterval,
   type PriceCatalog,
 } from "@/lib/planPrices";
+import { LandingVariantEvent } from "@/components/landing/LandingVariantEvent";
+import { RoadmapShowcase } from "@/components/landing/RoadmapShowcase";
 
-const LANDING_NAV_ITEMS: Array<[string, string]> = [
+export type LandingNavItem = [href: string, label: string];
+
+export const LANDING_NAV_ITEMS: LandingNavItem[] = [
   ["#top", "HOME"],
   ["#versioning", "VERSIONING"],
   ["#features", "FEATURES"],
@@ -54,20 +58,28 @@ const LANDING_NAV_ITEMS: Array<[string, string]> = [
  * Footer "PRODUCT" column — derived from the header nav so the footer can never
  * drift from the sections the page actually has. Labels are title-cased for the
  * footer's sentence-case link style; acronyms stay upper-case.
+ *
+ * Derived per nav list rather than once at module scope: the A/B variant at
+ * /simple drops sections (see components/landing/SimpleLandingPage.tsx) and its
+ * footer has to follow its own nav, not this file's.
  */
 const ACRONYM_NAV_LABELS = new Set(["FAQ"]);
-const FOOTER_PRODUCT_LINKS = LANDING_NAV_ITEMS.map(([href, label]) => ({
-  href,
-  label: ACRONYM_NAV_LABELS.has(label)
-    ? label
-    : label.charAt(0) + label.slice(1).toLowerCase(),
-}));
+function footerProductLinks(navItems: LandingNavItem[]) {
+  return navItems.map(([href, label]) => ({
+    href,
+    label: ACRONYM_NAV_LABELS.has(label)
+      ? label
+      : label.charAt(0) + label.slice(1).toLowerCase(),
+  }));
+}
 
 /** Widest mobile section label — keeps the status dot pinned while the wheel rolls. */
-const LONGEST_NAV_LABEL = LANDING_NAV_ITEMS.reduce(
-  (longest, [, label]) => (label.length > longest.length ? label : longest),
-  "",
-);
+function longestNavLabel(navItems: LandingNavItem[]) {
+  return navItems.reduce(
+    (longest, [, label]) => (label.length > longest.length ? label : longest),
+    "",
+  );
+}
 
 import {
   Users, Tag, Activity, BarChart3,
@@ -177,7 +189,7 @@ function useScrollHoverTarget<T extends HTMLElement>() {
   return ref;
 }
 
-function useMounted() {
+export function useMounted() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   return mounted;
@@ -189,7 +201,7 @@ type LandingHoverCardProps = {
   lift?: number;
 } & Omit<ComponentProps<typeof motion.div>, "children">;
 
-function LandingHoverCard({
+export function LandingHoverCard({
   children,
   className = "",
   lift = 0,
@@ -208,7 +220,7 @@ function LandingHoverCard({
   );
 }
 
-function LandingHoverItem({
+export function LandingHoverItem({
   children,
   className = "",
 }: {
@@ -238,7 +250,7 @@ function MonoLabel({ children, className = "" }: { children: ReactNode; classNam
   );
 }
 
-function LimeTag({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function LimeTag({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <span
       className={`inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--lime)_60%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.22em] text-lime ${className}`}
@@ -249,7 +261,7 @@ function LimeTag({ children, className = "" }: { children: ReactNode; className?
   );
 }
 
-function SectionHeader({
+export function SectionHeader({
   index,
   kicker,
   title,
@@ -290,7 +302,7 @@ function SectionHeader({
   );
 }
 
-function GhostButton({
+export function GhostButton({
   children,
   variant = "ghost",
   className = "",
@@ -366,13 +378,27 @@ function Waveform({
 export function TopBar({
   authHref = "/auth",
   authLabel = "+ SIGN IN",
+  navItems = LANDING_NAV_ITEMS,
+  /**
+   * "Do the sections these hashes point at exist on the page I'm rendering on?"
+   * Defaults to the pathname check that has always driven this, so the control
+   * landing page is unaffected. The A/B variant passes `true` explicitly: it is
+   * a landing page too, but it is served both as `/` (middleware rewrite, where
+   * `usePathname()` reports `/`) and as `/simple` (shared link), and on the
+   * latter the pathname check would turn every in-page anchor into a
+   * cross-page `/#hash` link back to the control page.
+   */
+  isLandingRoute,
 }: {
   authHref?: string;
   authLabel?: string;
+  navItems?: LandingNavItem[];
+  isLandingRoute?: boolean;
 }) {
   const pathname = usePathname();
-  const isHome = pathname === "/";
+  const isHome = isLandingRoute ?? pathname === "/";
   const hrefFor = (hash: string) => (isHome ? hash : `/${hash}`);
+  const longestLabel = longestNavLabel(navItems);
   const [time, setTime] = useState("");
   const [open, setOpen] = useState(false);
   const [activeLabel, setActiveLabel] = useState("HOME");
@@ -432,7 +458,7 @@ export function TopBar({
   useEffect(() => {
     if (!isHome) return;
 
-    const sections = LANDING_NAV_ITEMS.map(([hash, label]) => ({
+    const sections = navItems.map(([hash, label]) => ({
       id: hash.slice(1),
       label,
     }));
@@ -463,7 +489,7 @@ export function TopBar({
       if (el) observer.observe(el);
     }
     return () => observer.disconnect();
-  }, [isHome, rollToLabel]);
+  }, [isHome, rollToLabel, navItems]);
 
   function goToSection(hash: string, label: string) {
     const id = hash.replace(/^#/, "");
@@ -501,7 +527,7 @@ export function TopBar({
             </span>
           </a>
           <nav className="flex items-center gap-6">
-            {LANDING_NAV_ITEMS.map(([href, label]) => (
+            {navItems.map(([href, label]) => (
               <a
                 key={href}
                 href={hrefFor(href)}
@@ -551,7 +577,7 @@ export function TopBar({
               aria-hidden
               className="invisible col-start-1 row-start-1 whitespace-nowrap font-mono-tb text-[10px] uppercase tracking-[0.22em]"
             >
-              {LONGEST_NAV_LABEL}
+              {longestLabel}
             </span>
             {leavingLabel && (
               <span
@@ -595,7 +621,7 @@ export function TopBar({
               className="absolute left-0 right-0 top-full z-50 border-b border-[color-mix(in_oklab,var(--border)_60%,transparent)] bg-background/70 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-md md:hidden"
             >
               <nav className="flex flex-col px-4 py-2">
-                {LANDING_NAV_ITEMS.map(([href, label], i) => {
+                {navItems.map(([href, label], i) => {
                   const active = label === activeLabel;
                   return (
                     <motion.a
@@ -873,7 +899,18 @@ function HeroVersionGraph() {
   );
 }
 
-function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
+/**
+ * The hero. Both landing variants render this same component — `/simple` only
+ * passes `showFeaturePills={false}`, which drops the four "Versions & diff /
+ * Comments on bars / …" tag pills between the intro copy and the buttons.
+ * Everything else (beta badge, wordmark, intro paragraph, the version-graph
+ * column, parallax and the scanning line) is shared, so the two heroes cannot
+ * drift apart.
+ */
+export function Hero({
+  signInHref = "/auth",
+  showFeaturePills = true,
+}: { signInHref?: string; showFeaturePills?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const mounted = useMounted();
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
@@ -921,40 +958,51 @@ function Hero({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="sr-only"> — the band workspace with version control, comments on bars, chord detection, and rehearsal mode for music bands</span>
         </h1>
 
+        {/* Sub-headline sits directly under the wordmark, outside the two-column
+            grid below. Inside it, the grid's `lg:items-center` would centre the
+            text column against the much taller version-graph column and drop the
+            line far below the H1 it belongs to. */}
+        <motion.p
+          initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          className="relative mt-5 font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground md:mt-6"
+        >
+          An ultimate workspace <span className="text-lime">for your music.</span>
+        </motion.p>
+
         <div className="relative mt-8 grid gap-10 lg:grid-cols-2 lg:items-center md:mt-12">
           <div className="min-w-0">
-            <motion.p
-              initial={mounted && !reduce ? { opacity: 0, y: 20 } : false}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-              className="font-display-tb text-[clamp(1.25rem,2.6vw,2.1rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-foreground"
-            >
-              An ultimate workspace <span className="text-lime">for your music.</span>
-            </motion.p>
             <motion.p
               initial={mounted && !reduce ? { opacity: 0 } : false}
               animate={{ opacity: 1 }}
               transition={{ duration: 1, delay: 0.2 }}
-              className="mt-5 max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:text-[1rem]"
+              /* Three steps rather than one: 15px on phones (the copy is already
+                 the tallest block there), 1.1rem through tablet and laptop
+                 widths, and the full 1.3rem only on wide desktops from 1536px,
+                 where the hero has the room for it. */
+              className="max-w-xl font-mono-tb text-[15px] leading-relaxed text-muted-foreground md:max-w-2xl md:text-[1.1rem] 2xl:text-[1.3rem]"
             >
-              Branch a mix like code. Comment on bar 34. Map the structure, write the chords,
-              rehearse from your phone. Everything your band needs — in one place, versioned
-              end-to-end.
+              For bands and collabs — no matter what DAW your partner uses. From the first demo to the last rehearsal. Store your songs, try new versions
+              without losing the old ones, comment on the second that matters, and pull the
+              whole thing up on your phone when you&rsquo;re in the room together.
             </motion.p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              {pills.map(({ icon, label, iconScale }, i) => (
-                <motion.span
-                  key={label}
-                  initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 + i * 0.08 }}
-                  className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
-                >
-                  <span className={`inline-flex items-center text-lime ${iconScale ?? ""}`}>{icon}</span>
-                  {label}
-                </motion.span>
-              ))}
-            </div>
+            {showFeaturePills && (
+              <div className="mt-6 flex flex-wrap gap-2">
+                {pills.map(({ icon, label, iconScale }, i) => (
+                  <motion.span
+                    key={label}
+                    initial={mounted && !reduce ? { opacity: 0, y: 8 } : false}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 + i * 0.08 }}
+                    className="inline-flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+                  >
+                    <span className={`inline-flex items-center text-lime ${iconScale ?? ""}`}>{icon}</span>
+                    {label}
+                  </motion.span>
+                ))}
+              </div>
+            )}
             <div className="relative mt-8 flex flex-wrap items-center gap-3">
               <GhostButton variant="lime" href={signInHref}>+ Start a band</GhostButton>
               <GhostButton variant="outline" href="#versioning">See how it works</GhostButton>
@@ -1006,7 +1054,12 @@ function Marquee() {
  * Philosophy
  * ============================================================ */
 
-function Philosophy() {
+/**
+ * 04 · Philosophy. `showIntro` drops only the sub-headline under "THREE THINGS
+ * WE BELIEVE" — the three belief cards and the closing quote are identical on
+ * both variants, so this stays one component instead of a near-duplicate.
+ */
+export function Philosophy({ showIntro = true }: { showIntro?: boolean } = {}) {
   const pillars = [
     {
       n: "01",
@@ -1031,7 +1084,11 @@ function Philosophy() {
         kicker="PHILOSOPHY"
         title="THREE THINGS"
         accent="WE BELIEVE."
-        description="The product is the consequence of three convictions about how music actually gets made between humans."
+        description={
+          showIntro
+            ? "The product is the consequence of three convictions about how music actually gets made between humans."
+            : undefined
+        }
       />
 
       <div className="mt-12 grid gap-px border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--border)_80%,transparent)] md:grid-cols-3">
@@ -1296,7 +1353,17 @@ function BranchApplyRibbon({ version }: { version: (typeof VERSIONS)[number] }) 
 }
 
 /** Version tree + "what changed" diff board. Exported — reused on /features/versions. */
-export function BranchBoard({ className = "" }: { className?: string }) {
+/**
+ * Version tree + diff board. Also mounted on /features/versions.
+ *
+ * `showStats` controls the ∞ VERSIONS / 0 LOST TAKES / 1-CLICK APPLY /
+ * VISUAL DIFF strip under the board. The /simple landing variant turns it off;
+ * everywhere else keeps it.
+ */
+export function BranchBoard({
+  className = "",
+  showStats = true,
+}: { className?: string; showStats?: boolean }) {
   const [active, setActive] = useState(1);
   const [pinned, setPinned] = useState(false);
   useEffect(() => {
@@ -1427,25 +1494,32 @@ export function BranchBoard({ className = "" }: { className?: string }) {
             <BranchApplyRibbon version={v} />
           </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-            {[
-              ["∞", "VERSIONS"],
-              ["0", "LOST TAKES"],
-              ["1-CLICK", "APPLY"],
-              ["VISUAL", "DIFF"],
-            ].map(([k, l]) => (
-              <div key={l} className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
-                <div className="font-display-tb text-2xl font-bold tracking-tight text-lime">{k}</div>
-                <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{l}</div>
-              </div>
-            ))}
-          </div>
+          {showStats && (
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+              {[
+                ["∞", "VERSIONS"],
+                ["0", "LOST TAKES"],
+                ["1-CLICK", "APPLY"],
+                ["VISUAL", "DIFF"],
+              ].map(([k, l]) => (
+                <div key={l} className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-3">
+                  <div className="font-display-tb text-2xl font-bold tracking-tight text-lime">{k}</div>
+                  <div className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{l}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
     </div>
   );
 }
 
-function BranchShowcase() {
+/**
+ * 01 · Versions & Diff. One component for both landing pages — the /simple
+ * variant differs only by dropping the stat strip under the board, so it passes
+ * `showStats={false}` rather than forking the section.
+ */
+export function BranchShowcase({ showStats = true }: { showStats?: boolean } = {}) {
   return (
     <section id="versioning" className="landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
@@ -1457,7 +1531,7 @@ function BranchShowcase() {
         seoNote="Version control for music: branch, merge, and compare takes without losing the original mix"
       />
 
-      <BranchBoard className="mt-12" />
+      <BranchBoard className="mt-12" showStats={showStats} />
     </section>
   );
 }
@@ -1631,7 +1705,15 @@ function LandingMobileTransportBtn({
  * Features (comments · structure & chords · social)
  * ============================================================ */
 
-function FeaturePanel({
+/**
+ * One 02 · Features row: heading block on one side, live demo on the other.
+ *
+ * `copy` and `chips` are optional because the /simple A/B variant renders the
+ * same headings and demos with the prose and tag pills stripped out. Omitting
+ * them removes the elements entirely rather than rendering empty containers, so
+ * the surrounding spacing collapses cleanly.
+ */
+export function FeaturePanel({
   side,
   eyebrow,
   title,
@@ -1642,8 +1724,8 @@ function FeaturePanel({
   side: "left" | "right";
   eyebrow: string;
   title: string;
-  copy: string;
-  chips: string[];
+  copy?: string;
+  chips?: string[];
   demo: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -1660,17 +1742,21 @@ function FeaturePanel({
         <h3 className="mt-4 font-display-tb text-3xl font-bold leading-[0.95] tracking-tight text-foreground md:text-5xl">
           {title}
         </h3>
-        <p className="mt-5 max-w-md font-mono-tb text-sm leading-relaxed text-muted-foreground">{copy}</p>
-        <div className="mt-6 flex flex-wrap gap-2">
-          {chips.map((c) => (
-            <span
-              key={c}
-              className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
-            >
-              {c}
-            </span>
-          ))}
-        </div>
+        {copy && (
+          <p className="mt-5 max-w-md font-mono-tb text-sm leading-relaxed text-muted-foreground">{copy}</p>
+        )}
+        {chips && chips.length > 0 && (
+          <div className="mt-6 flex flex-wrap gap-2">
+            {chips.map((c) => (
+              <span
+                key={c}
+                className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-2.5 py-1 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
       </motion.div>
       <motion.div
         initial={{ opacity: 0, y: 40 }}
@@ -1686,33 +1772,19 @@ function FeaturePanel({
 
 /* --- 02.1 comments demo --- */
 
-const COMMENT_REPLIES = [
-  "Yeah bar 34 has a tempo bump — mine drifts",
-  "Moving the crash 1/8 later fixes it, pushing v1.5",
-  "Confirmed on my end. Resolving.",
-];
-const COMMENT_REPLY_AUTHORS = ["ava", "elias", "jules"];
-
-function CommentsDemo() {
-  const [count, setCount] = useState(0);
-  const [typed, setTyped] = useState("");
-  useEffect(() => {
-    if (count >= COMMENT_REPLIES.length) return;
-    const text = COMMENT_REPLIES[count];
-    let i = 0;
-    setTyped("");
-    const iv = setInterval(() => {
-      i++;
-      setTyped(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(iv);
-        setTimeout(() => setCount((c) => (c + 1) % (COMMENT_REPLIES.length + 1)), 1400);
-      }
-    }, 28);
-    return () => clearInterval(iv);
-  }, [count]);
-  const shown = COMMENT_REPLIES.slice(0, count);
-
+/**
+ * 02.1 demo — a comment anchored to a waveform range.
+ *
+ * One comment and a reply affordance, nothing else. Both landing variants
+ * render this identically; there is no per-page prop.
+ *
+ * Previously this animated a three-message thread typing itself out and closed
+ * with an "@mention · attach · link version / ↵ reply" toolbar. Both were cut:
+ * they described the composer rather than the idea the section is selling
+ * (a note that sticks to a region of audio), and the typing loop ran a 28ms
+ * interval for the whole time the section was on screen.
+ */
+export function CommentsDemo() {
   return (
     <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
       <div className="flex items-center justify-between border-b border-[color-mix(in_oklab,var(--border)_80%,transparent)] px-3 py-2 font-mono-tb text-[10px] uppercase tracking-[0.18em]">
@@ -1733,33 +1805,18 @@ function CommentsDemo() {
             <UserAvatar seed="marek" size={24} kind="user" />
             <span className="font-mono-tb text-[10px] uppercase tracking-[0.18em] text-foreground">marek</span>
             <span className="font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">now</span>
-            <span className="ml-auto font-mono-tb text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-              3 replies
-            </span>
           </div>
           <div className="text-[13px] text-foreground">
             This section feels slightly off — anyone else hearing it drift on the second half?
           </div>
-          <div className="mt-3 space-y-2 border-l border-[color-mix(in_oklab,var(--border)_80%,transparent)] pl-4">
-            {shown.map((r, i) => (
-              <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2">
-                <UserAvatar seed={COMMENT_REPLY_AUTHORS[i]} size={20} kind="user" className="shrink-0" />
-                <div className="text-[12px] text-foreground/90">{r}</div>
-              </motion.div>
-            ))}
-            {count < COMMENT_REPLIES.length && (
-              <div className="flex items-center gap-2">
-                <UserAvatar seed={COMMENT_REPLY_AUTHORS[count]} size={20} kind="user" className="shrink-0" />
-                <div className="text-[12px] text-foreground/90">
-                  {typed}
-                  <span className="tb-caret ml-0.5 inline-block h-3 w-1.5 align-middle bg-lime" />
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="mt-3 flex items-center justify-between border-t border-[color-mix(in_oklab,var(--border)_80%,transparent)] pt-3 font-mono-tb text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            <span>@mention · attach · link version</span>
-            <span className="text-lime">↵ reply</span>
+          {/* Reply affordance. Presentational only — a div, not an <input>, so
+              nothing on a marketing page is focusable or submittable. */}
+          <div
+            aria-hidden
+            className="mt-4 flex items-center gap-2 border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--background)_60%,transparent)] px-3 py-2.5"
+          >
+            <span className="tb-caret inline-block h-3.5 w-[2px] shrink-0 bg-lime" />
+            <span className="text-[12px] text-muted-foreground">Reply…</span>
           </div>
         </div>
       </div>
@@ -1916,12 +1973,6 @@ export function StructureDemo() {
 
 /* --- 02.3 social demo --- */
 
-const SOCIAL_TASKS = [
-  { t: "Final vocal take", who: "ava", color: "var(--wave-sky)" },
-  { t: "Re-amp bass DI", who: "elias", color: "var(--wave-amber)" },
-  { t: "Master pass 1", who: "jules", color: "var(--wave-coral)" },
-];
-
 const SOCIAL_MESSAGES: Array<{
   who: string;
   body: ReactNode;
@@ -1949,44 +2000,20 @@ const SOCIAL_MEMBERS = [
   { who: "jules", role: "Drums", color: "var(--wave-coral)" },
 ];
 
-function SocialDemo() {
-  const [checked, setChecked] = useState<number[]>([0]);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setChecked((c) => (c.length >= SOCIAL_TASKS.length ? [0] : [...c, c.length]));
-    }, 1800);
-    return () => clearInterval(id);
-  }, []);
-
+/**
+ * 02.3 demo — roadmap card, chat card, member strip.
+ *
+ * The roadmap card is the app's real `SongRoadmap`, read-only and filled with
+ * placeholders (see components/landing/RoadmapShowcase.tsx), not an
+ * illustration of it — so the section can't drift from the product it is
+ * advertising. It replaced a hand-rolled self-checking task list. Both landing
+ * variants render this identically; there is no per-page prop.
+ */
+export function SocialDemo() {
   return (
     <div className="grid gap-3">
-      {/* roadmap */}
-      <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)] p-4">
-        <div className="mb-3 flex items-center justify-between font-mono-tb text-[10px] uppercase tracking-[0.18em]">
-          <span className="text-lime">ROADMAP · NORTHERN ROOM</span>
-          <span className="text-muted-foreground">STAGE 2 / 3</span>
-        </div>
-        <div className="space-y-2">
-          {SOCIAL_TASKS.map((task, i) => {
-            const done = checked.includes(i);
-            return (
-              <div key={task.t} className="flex items-center gap-3">
-                <span
-                  className={`grid size-4 place-items-center border text-[10px] transition-colors ${
-                    done ? "border-lime bg-lime text-primary-foreground" : "border-border text-transparent"
-                  }`}
-                >
-                  ✓
-                </span>
-                <span className={`text-[12px] ${done ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                  {task.t}
-                </span>
-                <UserAvatar seed={task.who} size={20} kind="user" className="ml-auto shrink-0" />
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* roadmap — the real component, non-interactive */}
+      <RoadmapShowcase />
 
       {/* chat */}
       <div className="border border-[color-mix(in_oklab,var(--border)_80%,transparent)] bg-[color-mix(in_oklab,var(--card)_40%,transparent)]">
@@ -2495,7 +2522,15 @@ export function MobileComparisonTable({ className = "" }: { className?: string }
   );
 }
 
-function MobileSection() {
+/**
+ * 03 · Mobile. `showComparisonTable` drops the desktop-vs-mobile feature matrix
+ * for the /simple variant. What remains — the two phone mocks, the "two modes ·
+ * one project" divider and the closing line — is still a complete section, so
+ * no filler is substituted in its place.
+ */
+export function MobileSection({
+  showComparisonTable = true,
+}: { showComparisonTable?: boolean } = {}) {
   return (
     <section id="mobile" className="relative landing-section-border px-4 py-20 md:px-8 md:py-28">
       <SectionHeader
@@ -2555,9 +2590,9 @@ function MobileSection() {
         </motion.div>
       </div>
 
-      <MobileComparisonTable className="mt-16" />
+      {showComparisonTable && <MobileComparisonTable className="mt-16" />}
 
-      <div className="mt-8 border-l-2 border-lime pl-4 sm:pl-6">
+      <div className={`${showComparisonTable ? "mt-8" : "mt-16"} border-l-2 border-lime pl-4 sm:pl-6`}>
         <div className="font-display-tb text-2xl font-bold tracking-tight text-foreground md:text-3xl">
           Your studio in your pocket. <span className="text-lime">It never lets you down.</span>
         </div>
@@ -2736,7 +2771,12 @@ function ThemeRehearsalPreview({
   );
 }
 
-function ThemingSection() {
+/**
+ * 05 · Theming. `showSyncNote` drops the single trailing line about instant
+ * switching / band sync / per-project overrides for the /simple variant; the
+ * seven-room picker itself is byte-identical on both pages.
+ */
+export function ThemingSection({ showSyncNote = true }: { showSyncNote?: boolean } = {}) {
   const themes: ThemeTokens[] = [
     { id: "lime",              name: "LIME",              sub: "Bone-black canvas, chartreuse signal.",   bg: "oklch(0.13 0 0)",        surface: "oklch(0.16 0 0)",        line: "oklch(0.26 0 0)",        accent: "#dfff00",  fg: "oklch(0.93 0 0)",       mute: "oklch(0.58 0 0)" },
     { id: "blush-light",       name: "BLUSH LIGHT",       sub: "Clean white, rose-pink signature.",     bg: "oklch(0.97 0 0)",        surface: "oklch(1 0 0)",           line: "oklch(0.85 0 0)",        accent: "oklch(0.58 0.22 350)", fg: "oklch(0.16 0 0)",       mute: "oklch(0.42 0 0)" },
@@ -2902,9 +2942,11 @@ function ThemingSection() {
         })}
       </div>
 
-      <p className="mt-8 max-w-2xl font-mono-tb text-[11px] uppercase leading-relaxed tracking-[0.18em] text-muted-foreground">
-        Switch instantly · syncs across band · per-project overrides for cohorts & labels.
-      </p>
+      {showSyncNote && (
+        <p className="mt-8 max-w-2xl font-mono-tb text-[11px] uppercase leading-relaxed tracking-[0.18em] text-muted-foreground">
+          Switch instantly · syncs across band · per-project overrides for cohorts & labels.
+        </p>
+      )}
     </section>
   );
 }
@@ -3408,16 +3450,34 @@ function Pricing({
 const FAQ_TAGS = ["all", "basics", "solo", "pricing", "versioning", "files", "security", "mobile"] as const;
 type FaqTag = (typeof FAQ_TAGS)[number];
 
-function FAQ() {
+/**
+ * Sentence-case the first letter only. Deliberately not a title-caser and
+ * deliberately not applied to `SEO_FAQS` itself: that array is the single source
+ * of truth for the FAQPage JSON-LD emitted on `/`, and rewriting it would change
+ * the control page's structured data. The transform is presentational, applied
+ * per-render, and leaves the substance of every question untouched.
+ */
+function sentenceCaseQuestion(question: string) {
+  return question.charAt(0).toUpperCase() + question.slice(1);
+}
+
+/**
+ * 08 · FAQ. `capitalizeQuestions` is on for the /simple variant, where every
+ * question is required to start with a capital letter; the control page keeps
+ * the authored lower-case styling.
+ */
+export function FAQ({ capitalizeQuestions = false }: { capitalizeQuestions?: boolean } = {}) {
   const [openIdx, setOpenIdx] = useState<number | null>(0);
   const [filter, setFilter] = useState<FaqTag>("all");
 
   const filtered = useMemo(
     () =>
-      SEO_FAQS.map((item, i) => ({ ...item, i })).filter(
-        (item) => filter === "all" || item.tag === filter,
-      ),
-    [filter],
+      SEO_FAQS.map((item, i) => ({
+        ...item,
+        question: capitalizeQuestions ? sentenceCaseQuestion(item.question) : item.question,
+        i,
+      })).filter((item) => filter === "all" || item.tag === filter),
+    [filter, capitalizeQuestions],
   );
 
   return (
@@ -3559,7 +3619,7 @@ function FAQ() {
  * Final CTA
  * ============================================================ */
 
-function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
+export function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
   return (
     <section id="join" className="relative landing-section-border px-4 py-24 md:px-8 md:py-32">
       <div
@@ -3594,7 +3654,8 @@ function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
  * Footer
  * ============================================================ */
 
-function Footer() {
+export function Footer({ navItems = LANDING_NAV_ITEMS }: { navItems?: LandingNavItem[] } = {}) {
+  const productLinks = footerProductLinks(navItems);
   return (
     <footer className="landing-full-bleed px-4 py-10 md:px-8">
       <div className="mx-auto w-full max-w-[1920px]">
@@ -3611,7 +3672,7 @@ function Footer() {
           </p>
         </div>
         {[
-          ["PRODUCT", FOOTER_PRODUCT_LINKS],
+          ["PRODUCT", productLinks],
           [
             "DEEP DIVES",
             [
@@ -3712,6 +3773,8 @@ export default function LandingPage({
 
   return (
     <div className="landing-page min-h-screen" data-theme="lime">
+      {/* A/B measurement only — additional to page_view, which is untouched. */}
+      <LandingVariantEvent variant="control" />
       <div className="mx-auto w-full max-w-[1920px]">
         <main className="min-h-screen bg-background text-foreground">
           <TopBar authHref={authHref} authLabel={authLabel} />
