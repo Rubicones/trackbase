@@ -271,7 +271,13 @@ export function SectionHeader({
 }: {
   index: string;
   kicker: string;
-  title: string;
+  /**
+   * The big display headline. Optional: a section can drop it and keep the
+   * kicker and description (Pricing does). When it is absent the section still
+   * gets an H2 — see below — because the page's heading outline is not a
+   * styling choice.
+   */
+  title?: string;
   accent?: string;
   description?: string;
   /** Visually hidden but crawlable — spells out the plain-language feature name inside the H2 for search engines and screen readers, without touching the stylized visible heading. */
@@ -285,14 +291,28 @@ export function SectionHeader({
         </MonoLabel>
         <MonoLabel className="hidden md:inline">#{kicker.toLowerCase().replace(/\s+/g, "-")}</MonoLabel>
       </div>
-      <h2
-        className="font-display-tb text-[2.6rem] font-bold leading-[0.95] tracking-[-0.02em] text-foreground md:text-[3.75rem] lg:text-[4.5rem]"
+      {title ? (
+        <h2
+          className="font-display-tb text-[2.6rem] font-bold leading-[0.95] tracking-[-0.02em] text-foreground md:text-[3.75rem] lg:text-[4.5rem]"
 
-      >
-        {title}{" "}
-        {accent && <span className="text-lime">{accent}</span>}
-        {seoNote && <span className="sr-only"> — {seoNote}</span>}
-      </h2>
+        >
+          {title}{" "}
+          {accent && <span className="text-lime">{accent}</span>}
+          {seoNote && <span className="sr-only"> — {seoNote}</span>}
+        </h2>
+      ) : (
+        /*
+          No visible headline, but still an H2. Dropping the heading outright
+          would leave a hole in the document outline between the sections
+          around it — crawlers and screen-reader landmark navigation read that
+          outline, and a section with a visible kicker but no heading simply
+          disappears from it. The kicker is the heading in that case.
+        */
+        <h2 className="sr-only">
+          {kicker}
+          {seoNote && ` — ${seoNote}`}
+        </h2>
+      )}
       {description && (
         <p className="mt-6 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
           {description}
@@ -3032,8 +3052,7 @@ export function Pricing({
       <SectionHeader
         index="07"
         kicker="PRICING"
-        title="ONE SURFACE."
-        accent="FOUR ROOMS."
+        title="PRICING"
         description="Pricing scales with the room you're working in — not with how many seconds of audio you happened to upload this month."
       />
 
