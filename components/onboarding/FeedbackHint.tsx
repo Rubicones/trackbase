@@ -169,7 +169,7 @@ export function FeedbackHint({ onDismiss }: { onDismiss: () => void }) {
           Tell us what to fix
         </h2>
         <p className="text-sm text-muted-foreground leading-relaxed m-0 mb-4">
-          sonicdesk is in beta and we read everything. Hit{' '}
+          We read everything. Hit{' '}
           <span className="text-lime">Feedback &amp; Report</span> down here any
           time something breaks, feels wrong, or you have an idea that would make
           it better for your band.

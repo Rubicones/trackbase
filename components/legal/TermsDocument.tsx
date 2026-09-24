@@ -217,8 +217,8 @@ export default function TermsDocument() {
 
       <LegalSection number="09" id="availability" title="Availability">
         <p>
-          Sonicdesk is in beta. Features change, and the service may be unavailable at times, planned or otherwise. We
-          do not promise any particular level of uptime.
+          Sonicdesk is under active development. Features change, and the service may be unavailable at times,
+          planned or otherwise. We do not promise any particular level of uptime.
         </p>
         <p>
           We will give reasonable notice before removing a feature you rely on or making a change that would cause you

@@ -14,11 +14,13 @@ import {
   MobileSection,
   Philosophy,
   ThemingSection,
+  Pricing,
   FAQ,
   CTA,
   Footer,
   type LandingNavItem,
 } from "@/components/LandingPage";
+import { EMPTY_PRICE_CATALOG, type PriceCatalog } from "@/lib/planPrices";
 import { SystemAccordion } from "@/components/landing/SystemAccordion";
 import { LandingVariantEvent } from "@/components/landing/LandingVariantEvent";
 import { useLandingAuth } from "@/hooks/useLandingAuth";
@@ -50,11 +52,18 @@ import { isRunningAsInstalledPWA } from "@/lib/pwa";
  *    and used only here. The control page keeps its original `FeatureIndex`.
  *  * REMOVED — 07 · Roadmap does not appear on this variant, and is dropped from
  *    the nav below so the header and footer can't link to a section that isn't
- *    on the page.
+ *    on the page. (It is now commented out on the control page too.)
+ *  * MOVED — Pricing is the control's `Pricing`, unchanged, but placed AFTER the
+ *    FAQ rather than in the control's section-07 slot. This variant has no
+ *    section numbering and a much shorter middle, so the plans land where the
+ *    objections have just been answered and the CTA is the next thing on
+ *    screen. It needs `prices`, which is why `app/simple/page.tsx` fetches the
+ *    catalogue and carries `revalidate`.
  */
 
 /**
- * Nav for this variant: the control page's list minus ROADMAP.
+ * Nav for this variant: the control page's list minus ROADMAP, with PRICING
+ * moved to the end to match where the section actually sits here.
  *
  * `TopBar` and `Footer` both derive from this, so the header nav, the mobile
  * section wheel and the footer's PRODUCT column can never point at a section
@@ -69,6 +78,9 @@ const SIMPLE_NAV_ITEMS: LandingNavItem[] = [
   ["#themes", "THEMES"],
   ["#system", "SYSTEM"],
   ["#faq", "FAQ"],
+  // Listed after FAQ because that is where the section sits on this variant —
+  // the nav is read as a map of the page, so its order has to match the page's.
+  ["#pricing", "PRICING"],
 ];
 
 /* ============================================================
@@ -120,7 +132,17 @@ function SimpleFeatures() {
  * Page root
  * ============================================================ */
 
-export default function SimpleLandingPage() {
+export default function SimpleLandingPage({
+  prices = EMPTY_PRICE_CATALOG,
+}: {
+  /**
+   * Stripe's prices, read by `app/simple/page.tsx` at build / revalidate time
+   * — the same contract as the control page. Defaulted so the component can
+   * still be rendered without a server fetch (tests, the kit); `Pricing` then
+   * shows its em-dash fallback rather than a wrong number.
+   */
+  prices?: PriceCatalog;
+} = {}) {
   const { authHref, authLabel } = useLandingAuth();
   const router = useRouter();
   const [standaloneRedirect, setStandaloneRedirect] = useState(false);
@@ -160,6 +182,13 @@ export default function SimpleLandingPage() {
           <SystemAccordion />
           {/* 07 · Roadmap is deliberately absent on this variant. */}
           <FAQ capitalizeQuestions />
+          {/*
+            Pricing sits AFTER the FAQ on this variant, not in the control's
+            section-07 slot. The simplified page has no section numbering and a
+            much shorter middle, so the plans land where the objections have
+            just been answered and the next thing on screen is the CTA.
+          */}
+          <Pricing signInHref={authHref} prices={prices} />
           <CTA signInHref={authHref} />
           <Footer navItems={SIMPLE_NAV_ITEMS} />
         </main>

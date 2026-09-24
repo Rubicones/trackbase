@@ -551,7 +551,7 @@ export function buildHomeJsonLd(): JsonLd[] {
       '@type': 'Offer',
       price: '0',
       priceCurrency: 'USD',
-      description: 'Free during private beta',
+      description: 'Free plan — no card required',
     },
     featureList: [
       'Version control for music — branching, merging, and version comparison',

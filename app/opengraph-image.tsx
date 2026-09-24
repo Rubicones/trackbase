@@ -38,7 +38,7 @@ export default function OpenGraphImage() {
               background: '#FF4D00',
             }}
           />
-          Private beta · open
+          Music is a process · Not a file
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>

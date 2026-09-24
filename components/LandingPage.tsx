@@ -903,7 +903,7 @@ function HeroVersionGraph() {
  * The hero. Both landing variants render this same component — `/simple` only
  * passes `showFeaturePills={false}`, which drops the four "Versions & diff /
  * Comments on bars / …" tag pills between the intro copy and the buttons.
- * Everything else (beta badge, wordmark, intro paragraph, the version-graph
+ * Everything else (wordmark, intro paragraph, the version-graph
  * column, parallax and the scanning line) is shared, so the two heroes cannot
  * drift apart.
  */
@@ -947,10 +947,15 @@ export function Hero({
           />
         )}
 
-        <div className="relative -mt-1 mb-5 flex flex-wrap items-center gap-4 md:mt-0 md:mb-0">
-          <LimeTag>PRIVATE BETA · OPEN · V0.1</LimeTag>
-        </div>
-
+        {/*
+          The "PRIVATE BETA · OPEN · V0.1" badge used to sit here, above the
+          wordmark. Removed outright, not hidden: the product no longer
+          describes itself as a beta anywhere, and on a phone it was spending
+          the most valuable line on the page — the one read before the decision
+          to scroll — on a status label rather than on the product. The hero
+          now opens on the wordmark at every width. `LimeTag` is kept exported
+          for the next thing that needs a small accent label.
+        */}
         <h1 className="relative font-display-tb font-bold leading-[0.82] tracking-[-0.045em]">
           <span className="block text-[clamp(3.2rem,13vw,12rem)] text-lime">
             sonicdesk.
@@ -2999,7 +3004,7 @@ function landingPlanLines(id: PlanId): string[] {
   return lines;
 }
 
-function Pricing({
+export function Pricing({
   signInHref = "/auth",
   prices,
 }: {
@@ -3627,9 +3632,10 @@ export function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
         className="landing-full-bleed-abs pointer-events-none absolute inset-0 tb-grid-bg-landing"
       />
       <div className="relative mx-auto max-w-5xl text-center">
-        <LimeTag className="mx-auto">PRIVATE BETA · OPEN</LimeTag>
+        {/* Second beta badge, removed with the hero's. The heading's `mt-8`
+            went with it — it existed only to clear the tag. */}
         <h2
-          className="font-display-tb mt-8 font-bold leading-[0.9] tracking-[-0.03em]"
+          className="font-display-tb font-bold leading-[0.9] tracking-[-0.03em]"
           style={{
             fontSize: "clamp(2.5rem, 8vw, 7rem)",
           }}
@@ -3638,7 +3644,7 @@ export function CTA({ signInHref = "/auth" }: { signInHref?: string }) {
           <span className="text-lime">FINAL_V3_FINAL.zip</span>
         </h2>
         <p className="mx-auto mt-8 max-w-2xl font-mono-tb text-sm leading-relaxed text-muted-foreground md:text-base">
-          Bring your band, your roster, your class. sonicdesk is free during beta — every workspace
+          Bring your band, your roster, your class. sonicdesk starts free — every workspace
           ships with branches, a mixer, structure, chords, chat and the rehearsal view from day one.
         </p>
         <div className="mt-10 flex flex-wrap items-center justify-center gap-3">

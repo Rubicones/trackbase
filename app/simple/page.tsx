@@ -1,4 +1,5 @@
 import SimpleLandingPage from '@/components/landing/SimpleLandingPage'
+import { getPriceCatalog } from '@/lib/billing/catalog'
 import { JsonLd } from '@/components/seo/JsonLd'
 import {
   buildHomeJsonLd,
@@ -23,7 +24,16 @@ export const metadata = simpleLandingMetadata
  */
 export const dynamic = 'force-static'
 
-export default function SimpleLanding() {
+/**
+ * Re-rendered at most hourly, for the same reason as `/`: this variant now has
+ * a pricing section, and a force-static page with no revalidation would serve
+ * whatever the prices were at build time forever.
+ */
+export const revalidate = 3600
+
+export default async function SimpleLanding() {
+  const prices = await getPriceCatalog()
+
   return (
     <>
       <JsonLd data={buildHomeJsonLd()} />
@@ -42,7 +52,7 @@ export default function SimpleLanding() {
           ))}
         </ul>
       </div>
-      <SimpleLandingPage />
+      <SimpleLandingPage prices={prices} />
     </>
   )
 }
