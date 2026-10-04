@@ -25,8 +25,16 @@ import { sha256OfBlob } from '@/lib/sha256'
 import { SINGLE_PUT_MAX_BYTES, expectedPartBytes } from '@/lib/multipartSizing'
 
 const PARALLEL_PARTS = 4
-const MAX_ATTEMPTS = 8
-const STALL_MS = 60_000
+/**
+ * How long a transfer may keep failing for network reasons before the upload
+ * gives up. Long on purpose: a laptop changing networks, a train tunnel or
+ * wifi switched off for a few minutes must resume, not fail. Server refusals
+ * (4xx) still fail immediately.
+ */
+const NETWORK_RETRY_WINDOW_MS = 10 * 60 * 1000
+const MAX_BACKOFF_MS = 10_000
+/** No upload progress for this long = the connection is dead; cut and retry. */
+const STALL_MS = 20_000
 const RESUME_MAX_AGE_MS = 20 * 60 * 60 * 1000 // under the 1-day R2 lifecycle rule
 const SIGN_BATCH = 20
 
@@ -56,18 +64,33 @@ function abortError() {
   return new DOMException('Upload cancelled', 'AbortError')
 }
 
-function sleep(ms: number, signal?: AbortSignal) {
+function hasWindow() {
+  return typeof window !== 'undefined' && typeof window.addEventListener === 'function'
+}
+
+/**
+ * Wait `ms`, but wake early when the browser reports it is back online — a
+ * retry backoff must not keep the user waiting after the network returns.
+ */
+function sleepOrOnline(ms: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) return reject(abortError())
-    const t = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
-    const onAbort = () => { clearTimeout(t); reject(abortError()) }
+    const cleanup = () => {
+      clearTimeout(t)
+      signal?.removeEventListener('abort', onAbort)
+      if (hasWindow()) window.removeEventListener('online', onWake)
+    }
+    const onWake = () => { cleanup(); resolve() }
+    const onAbort = () => { cleanup(); reject(abortError()) }
+    const t = setTimeout(onWake, ms)
     signal?.addEventListener('abort', onAbort, { once: true })
+    if (hasWindow()) window.addEventListener('online', onWake)
   })
 }
 
 /** Resolves when the browser reports being online (immediately if it is). */
 function whenOnline(signal?: AbortSignal) {
-  if (typeof navigator === 'undefined' || navigator.onLine) return Promise.resolve()
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return Promise.resolve()
   return new Promise<void>((resolve, reject) => {
     const done = () => { window.removeEventListener('online', done); signal?.removeEventListener('abort', onAbort); resolve() }
     const onAbort = () => { window.removeEventListener('online', done); reject(abortError()) }
@@ -76,40 +99,72 @@ function whenOnline(signal?: AbortSignal) {
   })
 }
 
-async function api<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  // Control calls are tiny — retry transient failures, never 4xx.
-  let lastErr: unknown
-  for (let attempt = 0; attempt < 5; attempt++) {
+function isRetryable(err: unknown) {
+  if (err instanceof DOMException && err.name === 'AbortError') return false
+  if (err instanceof TrackUploadError) {
+    // No status = network-level failure. 403 = expired/invalid signature →
+    // retryable with a fresh URL.
+    return !err.status || err.status >= 500 || err.status === 403 || err.status === 408 || err.status === 429
+  }
+  return true // fetch() TypeError etc. — network
+}
+
+/**
+ * Run `fn` until it succeeds. Network-type failures are retried for up to
+ * NETWORK_RETRY_WINDOW_MS of *continuous* failure (any success resets it),
+ * with capped backoff that is cut short by the browser's `online` event, and
+ * paused entirely while the browser says it's offline. `navigator.onLine` is
+ * only a hint — it is often wrong (stays true with wifi off) — so the time
+ * window, not the flag, is what bounds the retries.
+ */
+async function withRetries<T>(fn: (attempt: number) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  let failingSince = 0
+  for (let attempt = 0; ; attempt++) {
     await whenOnline(signal)
     try {
-      const res = await fetch(url, {
+      return await fn(attempt)
+    } catch (err) {
+      if (signal?.aborted) throw abortError()
+      if (!isRetryable(err)) throw err
+      const now = Date.now()
+      failingSince ||= now
+      if (now - failingSince > NETWORK_RETRY_WINDOW_MS) throw err
+      await sleepOrOnline(Math.min(MAX_BACKOFF_MS, 500 * 2 ** Math.min(attempt, 10)), signal)
+    }
+  }
+}
+
+async function api<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return withRetries(async () => {
+    let res: Response
+    try {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal,
       })
-      const json = await res.json().catch(() => ({}))
-      if (res.ok) return json as T
-      const msg = (json as { error?: string }).error ?? `HTTP ${res.status}`
-      if (res.status < 500 && res.status !== 408 && res.status !== 429) {
-        throw new TrackUploadError(msg, res.status, json)
-      }
-      lastErr = new TrackUploadError(msg, res.status, json)
     } catch (err) {
       if (signal?.aborted) throw abortError()
-      if (err instanceof TrackUploadError && err.status && err.status < 500 && err.status !== 408 && err.status !== 429) throw err
-      lastErr = err
+      throw new TrackUploadError(`Network error — ${(err as Error)?.message ?? 'request failed'}`)
     }
-    await sleep(500 * 2 ** attempt, signal)
-  }
-  throw lastErr instanceof TrackUploadError
-    ? lastErr
-    : new TrackUploadError('Network error — check your connection and try again')
+    const json = await res.json().catch(() => ({}))
+    if (res.ok) return json as T
+    const msg = (json as { error?: string }).error ?? `HTTP ${res.status}`
+    throw new TrackUploadError(msg, res.status, json)
+  }, signal)
 }
 
 /**
  * PUT `body` to `url` with progress. Rejects on non-2xx, network error, abort,
  * or a stall (no progress for STALL_MS). `status` is set on HTTP failures.
+ *
+ * Network changes: when the browser fires `offline`, the request is cut at
+ * once (its socket is about to die anyway); when it fires `online`, a request
+ * that hasn't progressed recently is cut too — after wifi comes back, a PUT
+ * that was in flight usually sits on a dead TCP connection that would only be
+ * noticed at the stall timeout. Both are retryable errors, so the caller
+ * re-sends the part immediately on the new connection.
  */
 function xhrPut(
   url: string,
@@ -121,23 +176,37 @@ function xhrPut(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     let stallTimer: ReturnType<typeof setTimeout> | null = null
+    let lastProgressAt = Date.now()
     let settled = false
-    const finish = (err?: Error) => {
+    const finish = (err?: unknown) => {
       if (settled) return
       settled = true
       if (stallTimer) clearTimeout(stallTimer)
       signal?.removeEventListener('abort', onAbort)
+      if (hasWindow()) {
+        window.removeEventListener('offline', onOffline)
+        window.removeEventListener('online', onOnline)
+      }
       if (err) reject(err)
       else resolve()
     }
+    const cut = (err: unknown) => { xhr.abort(); finish(err) }
     const armStall = () => {
       if (stallTimer) clearTimeout(stallTimer)
-      stallTimer = setTimeout(() => { xhr.abort(); finish(new TrackUploadError('Upload stalled')) }, STALL_MS)
+      stallTimer = setTimeout(() => cut(new TrackUploadError('Upload stalled')), STALL_MS)
     }
-    const onAbort = () => { xhr.abort(); finish(abortError() as unknown as Error) }
+    const onAbort = () => cut(abortError())
+    const onOffline = () => cut(new TrackUploadError('Went offline'))
+    const onOnline = () => {
+      if (Date.now() - lastProgressAt > 2000) cut(new TrackUploadError('Network changed'))
+    }
     signal?.addEventListener('abort', onAbort, { once: true })
+    if (hasWindow()) {
+      window.addEventListener('offline', onOffline)
+      window.addEventListener('online', onOnline)
+    }
 
-    xhr.upload.onprogress = e => { armStall(); onLoaded(e.loaded) }
+    xhr.upload.onprogress = e => { lastProgressAt = Date.now(); armStall(); onLoaded(e.loaded) }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) finish()
       else finish(new TrackUploadError(`Upload failed (HTTP ${xhr.status})`, xhr.status))
@@ -149,31 +218,6 @@ function xhrPut(
     armStall()
     xhr.send(body)
   })
-}
-
-function isRetryable(err: unknown) {
-  if (err instanceof DOMException && err.name === 'AbortError') return false
-  if (err instanceof TrackUploadError) {
-    // 403 = expired/invalid signature → retryable with a fresh URL.
-    return !err.status || err.status >= 500 || err.status === 403 || err.status === 408 || err.status === 429
-  }
-  return true
-}
-
-/** Run `fn` with retries (backoff, offline-aware). `fn` gets the attempt index. */
-async function withRetries(fn: (attempt: number) => Promise<void>, signal?: AbortSignal) {
-  for (let attempt = 0; ; attempt++) {
-    await whenOnline(signal)
-    try {
-      return await fn(attempt)
-    } catch (err) {
-      if (signal?.aborted) throw abortError()
-      if (!isRetryable(err) || attempt + 1 >= MAX_ATTEMPTS) throw err
-      // Offline failures don't burn the budget — wait for the network instead.
-      if (typeof navigator !== 'undefined' && !navigator.onLine) { attempt--; continue }
-      await sleep(Math.min(30_000, 1000 * 2 ** attempt), signal)
-    }
-  }
 }
 
 // ── resume state ──────────────────────────────────────────────────────────────

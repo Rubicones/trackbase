@@ -424,8 +424,13 @@ needs CORS, see comment in `lib/r2.ts`) and returns `{ tempKey, sha256 }`:
 - Larger: R2 multipart via `POST /api/versions/[id]/tracks/multipart`
   (`action`: create / sign / list / complete / abort). Server picks the part
   size (≥16 MB, equal parts — R2 requirement); the client sends 4 parts in
-  parallel, each retried with backoff (offline → waits for `online`; stalls
-  >60 s are cut; 403 → re-signed). Resume: upload identity is kept in
+  parallel, each retried with backoff. Network failures are retried for up
+  to 10 min of *continuous* failure (not a count — `navigator.onLine` is
+  unreliable, e.g. stays true with wifi off); backoff wakes on `online`;
+  `offline` cuts in-flight PUTs at once and `online` cuts ones that stopped
+  progressing (a PUT in flight across a network change sits on a dead socket);
+  no progress for 20 s = stall → cut and retry; 403 → re-signed; other 4xx
+  fail at once. Resume: upload identity is kept in
   localStorage under the file fingerprint (version + name + size +
   lastModified, ≤20 h); re-picking the same file lists R2's parts and sends
   only the missing ones. `complete` ignores the client's part list: it lists
