@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { downloadFromR2 } from '@/lib/r2'
+import { getPresignedDownloadUrl } from '@/lib/r2'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
+import { r2ObjectResponse } from '@/lib/trackDelivery'
 
 /** Auth-gated audio — must not be cached as public at CDN/browser. */
 const STREAM_CACHE_CONTROL = 'private, no-store'
 
+/** Lifetime of a signed playback URL. Long enough for a slow full download. */
+const SIGNED_URL_TTL_SEC = 3600
+
 // GET /api/tracks/[id]/stream
-// Streams the FLAC file for a track.
-// Supports Range requests for seek support in Web Audio / <audio>.
+//
+// The stored FLAC for a track (see lib/trackDelivery.ts):
+//   ?signed=1 → JSON { url, expiresAt }: a presigned R2 GET the browser reads
+//               directly (lib/trackAudioFetch.ts — the normal path).
+//   otherwise → the bytes, streamed through this function with Range
+//               passthrough (fallback path, and what older clients call).
+//               Never buffered: the previous version loaded the whole FLAC
+//               into memory per request, Range requests included.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -21,46 +31,24 @@ export async function GET(
 
     const { data: track, error } = await supabase
       .from('tracks')
-      .select('storage_path, file_size_bytes, name')
+      .select('storage_path, file_type')
       .eq('id', trackId)
       .single()
-    if (error) return NextResponse.json({ error: 'Track not found' }, { status: 404 })
+    if (error || !track) return NextResponse.json({ error: 'Track not found' }, { status: 404 })
 
-    const buffer = await downloadFromR2(track.storage_path)
-    const totalSize = buffer.byteLength
+    const contentType = track.file_type === 'midi' ? 'audio/midi' : 'audio/flac'
 
-    const rangeHeader = req.headers.get('range')
-
-    if (rangeHeader) {
-      const [startStr, endStr] = rangeHeader.replace(/bytes=/, '').split('-')
-      const start = parseInt(startStr, 10)
-      const end = endStr ? parseInt(endStr, 10) : totalSize - 1
-      const chunkSize = end - start + 1
-
-      return new NextResponse(new Uint8Array(buffer.subarray(start, end + 1)), {
-        status: 206,
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': String(chunkSize),
-          'Content-Type': 'audio/flac',
-          'Cache-Control': STREAM_CACHE_CONTROL,
-          Vary: 'Cookie',
-        },
-      })
+    if (req.nextUrl.searchParams.get('signed') === '1') {
+      const url = await getPresignedDownloadUrl(track.storage_path, null, SIGNED_URL_TTL_SEC)
+      return NextResponse.json(
+        { url, expiresAt: Date.now() + SIGNED_URL_TTL_SEC * 1000 },
+        { headers: { 'Cache-Control': STREAM_CACHE_CONTROL, Vary: 'Cookie' } },
+      )
     }
 
-    return new NextResponse(new Uint8Array(buffer), {
-      headers: {
-        'Content-Type': 'audio/flac',
-        'Content-Length': String(totalSize),
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': STREAM_CACHE_CONTROL,
-        Vary: 'Cookie',
-      },
-    })
+    return await r2ObjectResponse(req, track.storage_path, { contentType })
   } catch (err) {
-    console.error(err)
+    console.error('[stream]', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

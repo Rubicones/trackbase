@@ -479,7 +479,16 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
     if (downloading) return
     setDownloadPct(-1)
     try {
-      const res = await fetch(`/api/tracks/${track.id}/download`)
+      // Default: the route redirects to a presigned R2 URL (direct, fast). If
+      // that cross-origin read fails (e.g. R2 CORS), ?proxy=1 streams the
+      // same file through the app instead.
+      let res: Response
+      try {
+        res = await fetch(`/api/tracks/${track.id}/download`)
+        if (!res.ok || !res.body) throw new Error('download failed')
+      } catch {
+        res = await fetch(`/api/tracks/${track.id}/download?proxy=1`)
+      }
       if (!res.ok || !res.body) throw new Error('download failed')
       const total = Number(res.headers.get('Content-Length') ?? 0)
       const reader = res.body.getReader()
@@ -493,6 +502,9 @@ const MobileMixerTrackRow = memo(function MobileMixerTrackRow({
         received += value.length
         if (total > 0) setDownloadPct(Math.min(99, Math.round((received / total) * 100)))
       }
+      // A dropped connection ends the body early without an error — never hand
+      // the user a truncated WAV.
+      if (total > 0 && received !== total) throw new Error('download incomplete')
       const ext = isMidi ? 'mid' : 'wav'
       const mime = isMidi ? 'audio/midi' : 'audio/wav'
       const blob = new Blob(chunks as BlobPart[], { type: mime })

@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createHash, randomUUID } from 'crypto'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import { unlink } from 'fs/promises'
+import { createHash } from 'crypto'
 import { supabase } from '@/lib/supabase'
-import { streamR2ObjectToFile, uploadToR2, r2Key } from '@/lib/r2'
-import { renderEditedFlac, type RenderEditSegment } from '@/lib/ffmpeg'
+import { getR2ObjectStream, readR2ObjectHead, r2Key, uploadStreamToR2 } from '@/lib/r2'
+import { parseFlacStreamInfo, renderEditedFlacStream, type RenderEditSegment } from '@/lib/ffmpeg'
+import { deleteObjectIfUnreferenced } from '@/lib/trackDedup'
+import { MAX_TRACK_DURATION_MS, tooLongMessage } from '@/lib/uploadLimits'
 import { requireBandMemberForTrack } from '@/lib/supabase/server'
 import { logActivity, trackActivityLabel } from '@/lib/activity'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { assertBandFeature, limitRefusalResponse, storageRefusal } from '@/lib/planGuards'
 import { barDurationSecFor, contentBarsFor } from '@/lib/trackEdit'
+
+// Streaming render + upload of a long hi-res track.
+export const maxDuration = 300
 
 const MAX_SEGMENTS = 256
 const MAX_CLIPS_PER_SEGMENT = 512
@@ -116,16 +118,7 @@ export async function POST(
   const timeSignature = projectRow?.time_signature ?? '4/4'
   const barDurSec = barDurationSecFor(bpm, timeSignature)
 
-  const sourcePath = join(tmpdir(), `${randomUUID()}.flac`)
   try {
-    // ── Download source from R2 ────────────────────────────────────────────────
-    try {
-      await streamR2ObjectToFile(track.storage_path, sourcePath)
-    } catch (err) {
-      console.error('[track-edit] R2 download failed:', err)
-      return NextResponse.json({ error: 'Failed to retrieve source audio' }, { status: 502 })
-    }
-
     // ── Validate clip ranges against actual source length ─────────────────────
     // (renderEditedFlac clamps clips to the probed source duration; this is a
     // sanity bound against absurd payloads when we know the stored duration)
@@ -144,13 +137,37 @@ export async function POST(
       }
     }
 
-    // ── Render with ffmpeg ─────────────────────────────────────────────────────
-    let flac: Buffer
+    // ── Render: R2 source → ffmpeg (stdin) → count → FLAC → R2 ───────────────
+    // Streamed end to end — no /tmp, no buffers. The key is content-addressed
+    // by the edit itself (source object + segments + tempo), so the same edit
+    // of the same source maps to the same object; the rendered bytes are
+    // deterministic, so an overwrite is identical.
+    const fileHash = createHash('sha256')
+      .update(JSON.stringify({ v: 'edit-v2', src: track.storage_path, segments, barDurSec }))
+      .digest('hex')
+    const storagePath = r2Key(project.id, fileHash)
+
+    const alreadyFull = await storageRefusal(project.band_id, 0)
+    if (alreadyFull) return alreadyFull
+
+    let flacBytes: number
     let durationMs: number
     try {
-      const result = await renderEditedFlac(sourcePath, segments, barDurSec, sourceDurSec)
-      flac = result.flac
-      durationMs = result.durationMs
+      const srcInfo = parseFlacStreamInfo(await readR2ObjectHead(track.storage_path, 42))
+      if (!srcInfo) {
+        return NextResponse.json({ error: 'Source audio could not be read' }, { status: 422 })
+      }
+      const { body: source } = await getR2ObjectStream(track.storage_path)
+      const { encoder, durationMs: timelineMs } = renderEditedFlacStream(source, srcInfo, segments, barDurSec)
+      if (timelineMs > MAX_TRACK_DURATION_MS) {
+        source.destroy()
+        return NextResponse.json({ error: tooLongMessage() }, { status: 413 })
+      }
+      const { bytes } = await uploadStreamToR2(storagePath, encoder.stream, 'audio/flac', {
+        finalizeHead: encoder.patchStreamInfo,
+      })
+      flacBytes = bytes
+      durationMs = Math.round((encoder.frames() / srcInfo.sampleRate) * 1000)
     } catch (err) {
       console.error('[track-edit] render failed:', err)
       return NextResponse.json(
@@ -159,19 +176,14 @@ export async function POST(
       )
     }
 
-    // ── Quota + upload ─────────────────────────────────────────────────────────
-    // Per-band storage ceiling, resolved from the band owner's plan plus
-    // this band's extra_storage addons. Never pooled across bands.
-    const overQuota = await storageRefusal(project.band_id, flac.byteLength)
-    if (overQuota) return overQuota
-
-    const fileHash = createHash('sha256').update(flac).digest('hex')
-    const storagePath = r2Key(project.id, fileHash)
-    try {
-      await uploadToR2(storagePath, flac)
-    } catch (err) {
-      console.error('[track-edit] R2 upload failed:', err)
-      return NextResponse.json({ error: 'Storage upload failed' }, { status: 500 })
+    // ── Quota ──────────────────────────────────────────────────────────────────
+    // Per-band storage ceiling, resolved from the band owner's plan plus this
+    // band's extra_storage addons. Never pooled across bands. The size is only
+    // known after the streamed write, so a refusal undoes it.
+    const overQuota = await storageRefusal(project.band_id, flacBytes)
+    if (overQuota) {
+      await deleteObjectIfUnreferenced(storagePath)
+      return overQuota
     }
 
     // ── Repoint the track at the rendered file ─────────────────────────────────
@@ -182,7 +194,7 @@ export async function POST(
         storage_path: storagePath,
         file_hash: fileHash,
         duration_ms: durationMs,
-        file_size_bytes: flac.byteLength,
+        file_size_bytes: flacBytes,
         start_bar: 0,
         midi_start_bar: 0,
       })
@@ -217,7 +229,5 @@ export async function POST(
   } catch (err) {
     console.error('[track-edit]', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  } finally {
-    await unlink(sourcePath).catch(() => {})
   }
 }

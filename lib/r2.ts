@@ -4,12 +4,18 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3'
 import type { GetObjectCommandInput } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { Readable, pipeline as streamPipeline } from 'stream'
 import { createWriteStream } from 'fs'
 import { promisify } from 'util'
+import { createHash } from 'crypto'
+import { attachmentDisposition } from '@/lib/contentDisposition'
 
 const pipeline = promisify(streamPipeline)
 
@@ -111,10 +117,13 @@ export function isValidFileHash(hash: unknown): hash is string {
  *   {
  *     "AllowedOrigins": ["https://sonicdesk.studio", "http://localhost:3000"],
  *     "AllowedMethods": ["PUT", "GET"],
- *     "AllowedHeaders": ["Content-Type"],
+ *     "AllowedHeaders": ["Content-Type", "Range"],
+ *     "ExposeHeaders": ["Content-Range", "Content-Length", "ETag"],
  *     "MaxAgeSeconds": 3600
  *   }
  * ]
+ * Range/Content-Range are for ranged direct playback reads
+ * (lib/trackAudioFetch.ts); ETag for browser multipart uploads.
  */
 /**
  * Generate a presigned GET URL so the browser can download a file directly
@@ -128,8 +137,7 @@ export async function getPresignedDownloadUrl(
 ): Promise<string> {
   const input: GetObjectCommandInput = { Bucket: BUCKET, Key: key }
   if (originalFilename) {
-    const safe = encodeURIComponent(originalFilename)
-    input.ResponseContentDisposition = `attachment; filename="${safe}"; filename*=UTF-8''${safe}`
+    input.ResponseContentDisposition = attachmentDisposition(originalFilename)
   }
   const command = new GetObjectCommand(input)
   return getSignedUrl(client, command, { expiresIn })
@@ -156,6 +164,205 @@ export async function streamR2ObjectToFile(key: string, destPath: string): Promi
   const response = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
   const stream = response.Body as Readable
   await pipeline(stream, createWriteStream(destPath))
+}
+
+/**
+ * Size of an object, or null when it does not exist. Any other failure
+ * (network, auth) throws — "unknown" must never read as "absent" for callers
+ * that gate on size.
+ */
+export async function headR2Object(key: string): Promise<{ size: number } | null> {
+  try {
+    const res = await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }))
+    return { size: res.ContentLength ?? 0 }
+  } catch (err) {
+    const e = err as { name?: string; $metadata?: { httpStatusCode?: number } }
+    if (e?.name === 'NotFound' || e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) {
+      return null
+    }
+    throw err
+  }
+}
+
+/** First `length` bytes of an object (e.g. a FLAC's STREAMINFO header). */
+export async function readR2ObjectHead(key: string, length: number): Promise<Buffer> {
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: BUCKET, Key: key, Range: `bytes=0-${length - 1}` }),
+  )
+  return streamToBuffer(res.Body as Readable)
+}
+
+/**
+ * Open an object as a stream, optionally for a single byte range
+ * (`bytes=start-end`, `bytes=start-`). Nothing is buffered.
+ */
+export async function getR2ObjectStream(key: string, range?: string): Promise<{
+  body: Readable
+  contentLength: number | undefined
+  contentRange: string | undefined
+}> {
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: BUCKET, Key: key, ...(range ? { Range: range } : {}) }),
+  )
+  return {
+    body: res.Body as Readable,
+    contentLength: res.ContentLength,
+    contentRange: res.ContentRange,
+  }
+}
+
+/**
+ * Open several objects as streams at once. All-or-nothing: if any open fails,
+ * the ones that did open are destroyed (no leaked sockets) and the error is
+ * rethrown.
+ */
+export async function openR2Streams(keys: string[]): Promise<Readable[]> {
+  const opened = await Promise.allSettled(keys.map(k => getR2ObjectStream(k)))
+  const failed = opened.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+  if (failed) {
+    for (const r of opened) if (r.status === 'fulfilled') r.value.body.destroy()
+    throw failed.reason
+  }
+  return opened.map(r => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof getR2ObjectStream>>>).value.body)
+}
+
+/** Part size for server-side multipart uploads. R2 requires every part but the last to be the same size. */
+const MULTIPART_PART_SIZE = 16 * 1024 * 1024
+const MULTIPART_CONCURRENCY = 4
+
+/**
+ * Upload a stream of unknown length to R2 without buffering it whole.
+ *
+ * Small sources (< one part) go up as a single PutObject. Larger ones use a
+ * multipart upload with fixed-size parts, at most MULTIPART_CONCURRENCY in
+ * flight (≈64 MB of memory). The object only becomes visible when
+ * CompleteMultipartUpload succeeds — any failure (including the source
+ * throwing) aborts the upload, so a reader can never see a half-written
+ * object under `key`.
+ *
+ * `finalizeHead`: for formats whose header can only be known once the whole
+ * stream has been produced (a FLAC written to a pipe has no sample count in
+ * STREAMINFO). The first part is held back in memory instead of uploaded;
+ * after the source ends it is passed to `finalizeHead`, which may patch it in
+ * place (same length) or throw to abort, and only then uploaded.
+ */
+export async function uploadStreamToR2(
+  key: string,
+  source: AsyncIterable<Uint8Array>,
+  contentType: string,
+  opts: { finalizeHead?: (head: Buffer) => void } = {},
+): Promise<{ bytes: number }> {
+  let uploadId: string | null = null
+  const parts: { PartNumber: number; ETag: string }[] = []
+  const inflight = new Set<Promise<void>>()
+  let failure: unknown = null
+  let nextPartNumber = 1
+  let total = 0
+  /** Part 1, held back until the end when `finalizeHead` is set. */
+  let heldHead: Buffer | null = null
+
+  let buf = Buffer.allocUnsafe(MULTIPART_PART_SIZE)
+  let fill = 0
+
+  async function ensureUpload(): Promise<string> {
+    if (uploadId) return uploadId
+    const res = await client.send(
+      new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
+    )
+    if (!res.UploadId) throw new Error('R2 did not return an UploadId')
+    uploadId = res.UploadId
+    return uploadId
+  }
+
+  async function sendPart(n: number, body: Buffer): Promise<void> {
+    const id = await ensureUpload()
+    const p = client
+      .send(new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: id, PartNumber: n, Body: body }))
+      .then(res => {
+        if (!res.ETag) throw new Error(`R2 part ${n} returned no ETag`)
+        parts.push({ PartNumber: n, ETag: res.ETag })
+      })
+      .catch(err => { failure ??= err })
+      .finally(() => { inflight.delete(p) })
+    inflight.add(p)
+    while (inflight.size >= MULTIPART_CONCURRENCY) await Promise.race(inflight)
+    if (failure) throw failure
+  }
+
+  async function completePart(body: Buffer): Promise<void> {
+    const n = nextPartNumber++
+    if (n === 1 && opts.finalizeHead) {
+      heldHead = body
+      return
+    }
+    await sendPart(n, body)
+  }
+
+  try {
+    for await (const chunk of source) {
+      let off = 0
+      while (off < chunk.length) {
+        const n = Math.min(chunk.length - off, MULTIPART_PART_SIZE - fill)
+        buf.set(chunk.subarray(off, off + n), fill)
+        fill += n
+        off += n
+        total += n
+        if (fill === MULTIPART_PART_SIZE) {
+          await completePart(buf)
+          buf = Buffer.allocUnsafe(MULTIPART_PART_SIZE)
+          fill = 0
+        }
+      }
+    }
+
+    if (nextPartNumber === 1) {
+      // Whole source fit in one part — a plain PUT is simpler and atomic too.
+      const body = buf.subarray(0, fill)
+      opts.finalizeHead?.(body)
+      await client.send(new PutObjectCommand({
+        Bucket: BUCKET, Key: key, Body: body, ContentType: contentType,
+      }))
+      return { bytes: total }
+    }
+
+    if (fill > 0) await completePart(buf.subarray(0, fill))
+    if (heldHead) {
+      opts.finalizeHead!(heldHead)
+      await sendPart(1, heldHead)
+    }
+    await Promise.all(inflight)
+    if (failure) throw failure
+
+    parts.sort((a, b) => a.PartNumber - b.PartNumber)
+    const expected = nextPartNumber - 1
+    if (parts.length !== expected || parts.some((p, i) => p.PartNumber !== i + 1)) {
+      throw new Error('Multipart upload lost a part')
+    }
+    await client.send(new CompleteMultipartUploadCommand({
+      Bucket: BUCKET, Key: key, UploadId: uploadId!, MultipartUpload: { Parts: parts },
+    }))
+    return { bytes: total }
+  } catch (err) {
+    await Promise.allSettled(inflight)
+    if (uploadId) {
+      await client
+        .send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }))
+        .catch(() => { /* lifecycle rule reclaims it */ })
+    }
+    throw err
+  }
+}
+
+/** Stream an object into a hash (or any sink) without storing it. Returns the byte count. */
+export async function sha256OfR2Object(key: string): Promise<{ sha256: string; bytes: number }> {
+  const hash = createHash('sha256')
+  const res = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
+  let bytes = 0
+  for await (const chunk of res.Body as Readable) {
+    hash.update(chunk as Buffer)
+    bytes += (chunk as Buffer).length
+  }
+  return { sha256: hash.digest('hex'), bytes }
 }
 
 // ---- helpers ---------------------------------------------------------------

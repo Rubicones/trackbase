@@ -3,7 +3,8 @@ import { createHash } from 'crypto'
 import { supabase } from '@/lib/supabase'
 import { serverErrorResponse } from '@/lib/apiErrors'
 import { uploadToR2, r2Key } from '@/lib/r2'
-import { audioToFlac } from '@/lib/ffmpeg'
+import { audioToFlac, AudioTooLongError } from '@/lib/ffmpeg'
+import { MAX_TRACK_DURATION_MS, tooLongMessage } from '@/lib/uploadLimits'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
@@ -146,11 +147,14 @@ async function handleAudioUpload({
     let flacBuffer: Buffer
     try {
       console.log('[upload] converting to FLAC...')
-      const result = await audioToFlac(audioBuffer, inputFormat)
+      const result = await audioToFlac(audioBuffer, inputFormat, { maxDurationMs: MAX_TRACK_DURATION_MS })
       flacBuffer = result.flac
       audioDurationMs = result.durationMs
       console.log('[upload] FLAC done, size:', flacBuffer.byteLength, 'duration:', audioDurationMs, 'ms')
     } catch (err) {
+      if (err instanceof AudioTooLongError) {
+        return NextResponse.json({ error: tooLongMessage() }, { status: 413 })
+      }
       console.error('[upload] ffmpeg conversion failed:', err)
       return serverErrorResponse('versions/tracks/upload', err, 'Could not convert that audio file')
     }

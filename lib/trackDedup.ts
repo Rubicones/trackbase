@@ -34,6 +34,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { deleteFromR2 } from '@/lib/r2'
 
 export interface DedupMatch {
   storage_path: string
@@ -77,4 +78,19 @@ export async function findBandTrackByHash(
     .maybeSingle()
 
   return (data as DedupMatch | null) ?? null
+}
+
+/**
+ * Delete a track object unless some `tracks` row points at it. Used to undo a
+ * write that a later check refused (the storage ceiling, which for streamed
+ * conversions can only be checked once the FLAC's size is known). Keys are
+ * content-addressed and shared between rows, so never delete blindly.
+ */
+export async function deleteObjectIfUnreferenced(storagePath: string): Promise<void> {
+  const { count, error } = await supabase
+    .from('tracks')
+    .select('id', { count: 'exact', head: true })
+    .eq('storage_path', storagePath)
+  if (error || (count ?? 0) > 0) return
+  await deleteFromR2(storagePath).catch(err => console.warn('[trackDedup] orphan cleanup failed:', err))
 }

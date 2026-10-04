@@ -15,6 +15,7 @@ import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBar
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { usePaywallGate } from '@/contexts/PaywallContext'
 import type { GatedFeature } from '@/lib/plans'
+import { fetchTrackFile } from '@/lib/trackAudioFetch'
 import {
   PaywallLockWrap,
   paywallLockedButtonClass,
@@ -194,8 +195,7 @@ function MiniWaveform({ trackId, color }: { trackId: string; color: string }) {
     async function load() {
       try {
         const actx = new AudioContext()
-        const res = await fetch(`/api/tracks/${trackId}/stream`)
-        const ab = await res.arrayBuffer()
+        const ab = await fetchTrackFile(trackId)
         const decoded = await actx.decodeAudioData(ab)
         const raw = decoded.getChannelData(0)
         const N = 48

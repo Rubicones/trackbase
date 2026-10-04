@@ -3,10 +3,12 @@ import { randomUUID } from 'crypto'
 import { getPresignedUploadUrl } from '@/lib/r2'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { storageRefusal } from '@/lib/planGuards'
+import { MAX_TRACK_UPLOAD_BYTES, MAX_MIDI_UPLOAD_BYTES, tooLargeMessage } from '@/lib/uploadLimits'
 
 // ── File size + type limits ────────────────────────────────────────────────────
 
-const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200 MB
+// Size limit: lib/uploadLimits.ts. This checks the DECLARED size only — the
+// process route re-checks what R2 actually received.
 
 const ALLOWED_MIMETYPES = new Set([
   'audio/wav',
@@ -61,9 +63,9 @@ export async function POST(
   if (typeof fileSize !== 'number' || fileSize <= 0) {
     return NextResponse.json({ error: 'fileSize must be a positive number' }, { status: 400 })
   }
-  if (fileSize > MAX_FILE_SIZE) {
+  if (fileSize > MAX_TRACK_UPLOAD_BYTES) {
     return NextResponse.json(
-      { error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024} MB.` },
+      { error: tooLargeMessage() },
       { status: 413 },
     )
   }
@@ -74,6 +76,10 @@ export async function POST(
   if (overQuota) return overQuota
 
   const contentType = inferContentType(filename, rawContentType ?? '')
+
+  if (contentType.includes('midi') && fileSize > MAX_MIDI_UPLOAD_BYTES) {
+    return NextResponse.json({ error: tooLargeMessage(MAX_MIDI_UPLOAD_BYTES) }, { status: 413 })
+  }
 
   if (!ALLOWED_MIMETYPES.has(contentType)) {
     return NextResponse.json(

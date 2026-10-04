@@ -4,6 +4,8 @@
  * lifetime of the browser tab.
  */
 
+import { fetchTrackFile } from '@/lib/trackAudioFetch'
+
 /** Decoded waveform bar amplitudes per track ID (72 floats, normalised 0–1). */
 export const waveformBarsCache = new Map<string, number[]>()
 
@@ -51,11 +53,9 @@ export async function fetchTrackAudioBuffer(
   const inflightKey = contentKey ? `content:${contentKey}` : `track:${trackId}`
   let inflight = audioFetchInflight.get(inflightKey)
   if (!inflight) {
-    inflight = fetch(`/api/tracks/${trackId}/stream`)
-      .then(res => {
-        if (!res.ok) throw new Error(`stream ${res.status}`)
-        return res.arrayBuffer()
-      })
+    // Direct-from-R2 ranged read with proxy fallback; resolves only with the
+    // complete file (lib/trackAudioFetch.ts).
+    inflight = fetchTrackFile(trackId)
       .then(ab => {
         const stored = ab.slice(0)
         warmTrackAudioCache(trackId, stored)

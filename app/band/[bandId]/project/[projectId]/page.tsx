@@ -129,6 +129,7 @@ import {
   uploadToR2Direct,
 } from './mixerUtils'
 import type { ActiveCommentInput, UploadItem } from './mixerTypes'
+import { MAX_TRACK_UPLOAD_BYTES, fmtUploadLimitBytes } from '@/lib/uploadLimits'
 // ─── Audio caches ─────────────────────────────────────────────────────────────
 // Imported from @/lib/waveformCache (shared with StructureEditor).
 
@@ -2059,7 +2060,6 @@ export default function ProjectPage() {
 
   // ── Entry points ─────────────────────────────────────────────────────────────
 
-  const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200 MB
 
 function uploadFileType(file: File): 'audio' | 'midi' {
   return file.name.endsWith('.mid') || file.name.endsWith('.midi') ? 'midi' : 'audio'
@@ -2075,8 +2075,8 @@ function uploadFileType(file: File): 'audio' | 'midi' {
 
     const newUploads: UploadItem[] = []
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        setToast({ message: `${file.name} is too large (max 200MB)`, variant: 'error' })
+      if (file.size > MAX_TRACK_UPLOAD_BYTES) {
+        setToast({ message: `${file.name} is too large (max ${fmtUploadLimitBytes()})`, variant: 'error' })
         setTimeout(() => setToast(null), 4000)
         continue
       }

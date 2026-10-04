@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { downloadFromR2 } from '@/lib/r2'
-import { ensureFfmpegConfigured } from '@/lib/ffmpeg'
-import ffmpeg from 'fluent-ffmpeg'
+import { openR2Streams } from '@/lib/r2'
+import { mixStreamsToMp3 } from '@/lib/ffmpeg'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import { writeFile, readFile, unlink } from 'fs/promises'
+import { readFile, unlink } from 'fs/promises'
 import path from 'path'
 import { requireBandMember } from '@/lib/supabase/server'
+import { r2ObjectResponse } from '@/lib/trackDelivery'
 
 // GET /api/projects/[id]/mix
 // Downloads all tracks from the project's main version, mixes them with ffmpeg
@@ -55,53 +55,28 @@ export async function GET(
     return NextResponse.json({ error: 'No audio tracks found' }, { status: 404 })
   }
 
-  // Single audio track — skip ffmpeg, proxy directly
+  // Single audio track — skip ffmpeg, stream the object through (never buffered).
   if (tracks.length === 1) {
-    const buffer = await downloadFromR2(tracks[0].storage_path)
-    // Detect type by extension so the browser picks the right decoder
     const ext = tracks[0].storage_path.split('.').pop()?.toLowerCase()
     const contentType = ext === 'mp3' ? 'audio/mpeg'
       : ext === 'wav' ? 'audio/wav'
       : ext === 'ogg' ? 'audio/ogg'
       : 'audio/flac'
-    return new NextResponse(new Uint8Array(buffer), {
-      headers: {
-        'Content-Type': contentType,
-        'Content-Length': String(buffer.byteLength),
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'no-store',
-      },
-    })
+    return r2ObjectResponse(req, tracks[0].storage_path, { contentType })
   }
 
-  // Download all audio buffers in parallel
-  const buffers = await Promise.all(tracks.map(t => downloadFromR2(t.storage_path)))
-
-  ensureFfmpegConfigured()
   const id = randomUUID()
-  const tmpPaths: string[] = []
   const outPath = path.join(tmpdir(), `${id}-mix.mp3`)
 
   try {
-    for (let i = 0; i < buffers.length; i++) {
-      // Preserve original extension so ffmpeg reads the correct container format
-      const origExt = tracks[i].storage_path.split('.').pop()?.toLowerCase() ?? 'flac'
-      const p = path.join(tmpdir(), `${id}-track${i}.${origExt}`)
-      await writeFile(p, buffers[i])
-      tmpPaths.push(p)
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg()
-      for (const p of tmpPaths) cmd.input(p)
-      cmd
-        .complexFilter([`amix=inputs=${tmpPaths.length}:duration=longest`])
-        .audioCodec('libmp3lame')
-        .audioBitrate('192k')
-        .output(outPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run()
+    // Stems stream from R2 into ffmpeg (one pipe each) — nothing buffered or staged.
+    const inputs = await openR2Streams(tracks.map(t => t.storage_path))
+    const labels = inputs.map((_, i) => `[${i}:a]`).join('')
+    await mixStreamsToMp3({
+      inputs,
+      filterGraph: `${labels}amix=inputs=${inputs.length}:duration=longest[out]`,
+      outPath,
+      bitrate: '192k',
     })
 
     const mixed = await readFile(outPath)
@@ -114,7 +89,6 @@ export async function GET(
       },
     })
   } finally {
-    for (const p of tmpPaths) await unlink(p).catch(() => {})
     await unlink(outPath).catch(() => {})
   }
 }

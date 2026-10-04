@@ -327,7 +327,8 @@ Project meta (name/bpm/key/time_signature) via `/api/projects/[id]`;
 project stage via `PATCH /api/projects/[id]/stage`
 (`idea|demo|arrangement|recording|mixing|mastering|released` →
 `projects.stage`, `stage_since`). Track streaming/download:
-`/api/tracks/[id]/stream`, `/api/tracks/[id]/download`; track rename/icon:
+`/api/tracks/[id]/stream`, `/api/tracks/[id]/download` (see *Track delivery*
+below); track rename/icon:
 `PATCH /api/tracks/[id]/rename`, `PATCH /api/tracks/[id]/icon`.
 
 ### Versioning
@@ -364,8 +365,12 @@ Client editing (split/duplicate/copy/paste on a quarter-bar grid) in
 `components/TrackEditArea.tsx` + `lib/trackEdit.ts`. On apply,
 `POST /api/tracks/[id]/edit` sends segments/clips (bar numbers validated as
 ¼-bar multiples, ≤256 segments × ≤512 clips), the server re-renders via
-`renderEditedFlac()` (`lib/ffmpeg.ts`), hashes, uploads a new FLAC to R2, and
-updates the row. Editing Master prompts `MasterEditConfirmModal` (suppression
+`renderEditedFlacStream()` (`lib/ffmpeg.ts` — at the source's native sample
+rate and bit depth, streamed R2 → ffmpeg → R2, no /tmp; reordered/duplicated
+material is held in ffmpeg's memory until its slot), uploads it under a key
+content-addressed by the edit itself (`sha256` of source object + segments +
+tempo — same edit, same object), refuses timelines over the 20-minute cap,
+checks quota after the write (refusal deletes it), and updates the row. Editing Master prompts `MasterEditConfirmModal` (suppression
 stored 24 h in localStorage — `lib/masterEditGuard.ts`). Paywall-gated as
 `track_edit`.
 
@@ -409,16 +414,97 @@ rate; pinning 22050 previously caused glitchy monitoring). Metronome:
 context.
 
 ### Upload pipeline
-Preferred: `POST /api/versions/[id]/tracks/presign` (≤200 MB; wav/mp3/midi)
+Preferred: `POST /api/versions/[id]/tracks/presign` (size limit from
+`lib/uploadLimits.ts`; wav/mp3/midi)
 → browser PUTs directly to R2 at `temp/{uuid}-{filename}` (R2 bucket needs
 CORS, see comment in `lib/r2.ts`) → `POST /api/versions/[id]/tracks/process`
-validates the temp key against `lib/r2TempKey.ts` **exactly**, transcodes to
-FLAC (`audioToFlacFromFile`), SHA-hashes, **dedups by `file_hash`** (reuses
-the existing R2 object at `projects/{projectId}/{hash}.flac` — `r2Key()`),
-inserts the `tracks` row, deletes the temp object, and calls
-`markPreviewMixStale`. Legacy: `POST /api/versions/[id]/tracks/upload`
+validates the temp key against `lib/r2TempKey.ts` **exactly**, HEADs it (real
+size gate), SHA-hashes it **streamed from R2** (`sha256OfR2Object`; optional
+client `sha256` in the body must match or the upload is refused as damaged),
+**dedups by `file_hash`** (reuses the existing R2 object at
+`projects/{projectId}/{hash}.flac` — `r2Key()` — and skips conversion), else
+probes the first 16 MB for rate/channels/bit depth and **streams the
+conversion**: R2 temp → ffmpeg decode → PCM counter → ffmpeg FLAC encode →
+R2 multipart at the final key (`encodeFlacStream` + `uploadStreamToR2` with
+`finalizeHead`). Nothing touches /tmp or the heap, so upload size isn't bounded
+by the function. The counter gives the exact length (`duration_ms`) and
+enforces the 20-minute cap live; it is also written into the FLAC's
+STREAMINFO, which a piped ffmpeg can't do itself (the header's first part is
+held back until the end — see `encodeFlacStream`). The quota check needs the
+FLAC size, so it runs after the write and a refusal deletes the object
+(`deleteObjectIfUnreferenced`, `lib/trackDedup.ts`); a band already full is
+refused before converting. Then it inserts the `tracks` row, deletes the temp
+object, and calls `markPreviewMixStale`. MIDI (≤`MAX_MIDI_UPLOAD_BYTES`) is
+read into memory and parsed as before. Legacy: `POST /api/versions/[id]/tracks/upload`
 (multipart through the server). Both enforce the **1 GB per-band storage
 quota** (`lib/bandStorage.ts`).
+
+**Upload limits** live in `lib/uploadLimits.ts` and nowhere else (browser
+pre-check, presign, process, legacy upload all import them):
+`MAX_TRACK_UPLOAD_BYTES` (200 MB) and `MAX_TRACK_DURATION_MS` (20 min — this
+one protects the mixer, which decodes every track whole at ~23 MB RAM per
+stereo minute; a 200 MB MP3 can run for hours). Presign can only check the
+size the browser *declares* — a presigned PUT doesn't pin Content-Length — so
+`process` HEADs the temp object and refuses (and deletes) anything over the
+limit before downloading it. Length is checked from ffprobe before
+transcoding and again from the encoded FLAC's sample count after
+(`AudioTooLongError`); recordings go through `process` too, so the length
+limit applies to them. Rejected uploads delete their temp object; other
+failure paths leave it to the `temp/` lifecycle rule (below).
+
+**Sample rate / bit depth are native, end to end** (policy block in
+`lib/ffmpeg.ts`). The stored FLAC keeps the upload's rate and bit depth (a
+96 kHz/24-bit WAV stays 96/24), capped only at `MAX_STORED_SAMPLE_RATE`
+(192 kHz — DXD and above is resampled down). Downloads and stem export
+(`flacStreamToWav`) and track edits (`renderEditedFlacStream`) read the
+rate/bit depth from the FLAC's STREAMINFO header (`parseFlacStreamInfo` — no ffprobe)
+and reproduce it: 16-bit → 16-bit WAV, otherwise 24-bit. **Projects can
+therefore mix rates.** Browser playback doesn't care (the shared 48 kHz
+AudioContext resamples on decode); server mixes that combine stems (preview
+mix, `/mix`) pin their output to `MIX_OUTPUT_SAMPLE_RATE` (48 kHz) — never let
+amix negotiation pick it. Not covered: 32-bit float WAVs are stored as 24-bit
+integer FLAC, so content above 0 dBFS clips. The rate/bit depth is not stored
+in the DB. Tracks created before this change are 48 kHz/24-bit (everything
+was resampled then).
+
+### Track delivery (playback + download)
+`lib/trackDelivery.ts` (server) and `lib/trackAudioFetch.ts` (browser). Goal:
+bytes go R2 → browser directly, never pile up in a function, and a reader can
+never get a partial file.
+
+- **Playback/decoding** (`fetchTrackFile`, used by `waveformCache.ts` →
+  player/waveforms, and `MergeModal`): asks
+  `GET /api/tracks/[id]/stream?signed=1` for a presigned R2 URL (1 h), reads
+  the first 8 MB to learn the total (Content-Range), then the rest as ≤4
+  parallel 8 MB ranges. A range that breaks mid-body resumes from the last
+  byte (backoff, 4 stalls max); 4xx is fatal. Any failure of the direct read
+  → the whole read is redone through `GET /api/tracks/[id]/stream` (no
+  param), which **streams** the object through the function with Range
+  passthrough (`r2ObjectResponse`). It resolves only with every byte.
+  The proxy form is also what older cached clients call — keep it.
+- **Download** (`GET /api/tracks/[id]/download`, `maxDuration = 300`): the WAV
+  is rendered once into `cache/wav/v1/{flacHash}-d{delayµs}.wav`
+  (`wavCacheKey`, content-addressed → never stale) by streaming
+  R2 → ffmpeg (`flacStreamToWav`) → R2 multipart (`uploadStreamToR2`): no
+  /tmp, constant memory. The WAV header's size is computed from FLAC
+  STREAMINFO and the output is held to exactly that length (a truncated
+  decode throws and the multipart upload is aborted, so nothing partial is
+  published). The start_bar offset is applied sample-exactly. Then 302 to a
+  presigned URL with `Content-Disposition: attachment`; `?proxy=1` streams the
+  same bytes through the function (mobile mixer's fetch falls back to it).
+  MIDI: the raw object, same two modes.
+- **`uploadStreamToR2`** (`lib/r2.ts`) — server-side multipart for streams of
+  unknown length: fixed 16 MB parts (R2 needs equal-size parts), 4 in flight,
+  single PUT when it fits in one part, abort on any error.
+
+**R2 bucket config this relies on** (Cloudflare dashboard, not code):
+- CORS: `AllowedMethods` PUT, GET; `AllowedHeaders` `Content-Type`, `Range`;
+  `ExposeHeaders` `Content-Range`, `Content-Length`, `ETag`; origins prod +
+  localhost. Without `Range`/`Content-Range`, direct reads fail and
+  everything silently runs through the proxy fallback — correct but slower,
+  so check the console for `[trackAudioFetch] direct R2 read failed`.
+- Lifecycle rules: `cache/` → delete after 7 days; `temp/` → delete after
+  1 day, and abort incomplete multipart uploads after 1 day.
 
 ### Export WAV
 `GET /api/versions/[id]/export` (`maxDuration = 300`) — audio stems converted
@@ -426,24 +512,26 @@ FLAC→WAV, each padded/trimmed by its `start_bar` offset converted to ms,
 returned as a ZIP built by archiver.
 
 **There is no size limit, and that is load-bearing on the design.** The route
-is a streaming producer: exactly one stem exists on disk at a time. Each is
-pulled from R2 to a file (`streamR2ObjectToFile`), transcoded file→file
-(`flacFileToWavFile`), appended to the archive, and deleted before the next one
-starts. Peak `/tmp` is one stem no matter how large the version is, and no
-audio ever touches the heap. Every rule below is a production bug this replaced
+is a streaming producer, one stem at a time: R2 → ffmpeg (`flacStreamToWav`,
+WAV header sized from STREAMINFO) → archive entry → response. Audio stems
+never touch `/tmp` or the heap (only MIDI, and FLACs without a sample count
+via the `flacFileToWavFile` fallback, stage one file). Every rule below is a
+production bug an earlier design hit
 — the function has a 512 MB `/tmp` and a fixed heap, and earlier revisions blew
 through both:
 
 - **Never `Promise.all` the stems.** That held every FLAC *and* its decoded
-  24-bit WAV (~17 MB per stereo minute) in memory at once and exhausted the
-  heap.
-- **Never buffer.** `flacToWav` / `flacToWavFile` (buffer-taking) are for
-  single-track downloads only; bulk paths use `flacFileToWavFile`.
+  24-bit WAV (~17 MB per stereo minute at 48 kHz — up to 4× that now that
+  stems keep their native rate) in memory at once and exhausted the heap.
+- **Never buffer.** `flacToWav` / `flacToWavFile` (buffer-taking) are not for
+  bulk paths; use `flacFileToWavFile` (or the streaming `flacStreamToWav`,
+  which single-track downloads now use).
 - **Never write the ZIP to `/tmp` first.** That made peak disk the stems *plus*
   a zipped copy of them and failed with a bare `ENOSPC: no space left on
   device`. The archive goes to the response via `Readable.toWeb()`.
 - **`appendAndWait` is not an ornament.** Awaiting archiver's `entry` event is
-  both the signal that the staged file is safe to delete *and* the backpressure
+  both the signal that the entry is finished (and a staged file safe to
+  delete) *and* the backpressure; a streamed entry's source error rejects it
   — the archive drains only as fast as the client downloads, so a slow
   connection throttles transcoding instead of letting stems pile up.
 - **Consequence: no `Content-Length`** (chunked response, no browser progress
@@ -470,6 +558,10 @@ stage=…` — keep the `stage` markers, they are the only way to localise a
 failure in Vercel's runtime logs.
 
 ### Preview mix
+Stems are **streamed** into one ffmpeg run, each through its own pipe
+(`mixStreamsToMp3`: `-i pipe:3`, `pipe:4`, … fed from `openR2Streams`) —
+never downloaded into the heap or staged on /tmp; `/api/projects/[id]/mix`
+does the same (and streams a single-track project through untouched).
 `lib/previewMix.ts` — cached 128 kbps MP3 of Master at R2
 `previews/{projectId}/mix.mp3`. State machine on `projects`:
 `preview_mix_status ∈ 'none' | 'fresh' | 'stale' | 'computing'`, plus

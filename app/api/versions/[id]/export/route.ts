@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { downloadFromR2, streamR2ObjectToFile } from '@/lib/r2'
+import { downloadFromR2, streamR2ObjectToFile, getR2ObjectStream, readR2ObjectHead } from '@/lib/r2'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
-import { flacFileToWavFile } from '@/lib/ffmpeg'
+import { flacFileToWavFile, flacStreamToWav, parseFlacStreamInfo } from '@/lib/ffmpeg'
 import { trackStartBar, startBarToMs } from '@/lib/trackMerge'
 import { attachmentDisposition } from '@/lib/contentDisposition'
 import { randomUUID } from 'crypto'
@@ -105,12 +105,12 @@ export async function GET(
     await mkdir(tmpDir, { recursive: true })
 
     // ── Streaming producer ────────────────────────────────────────────────
-    // One stem exists on disk at a time. Each is fetched from R2 to a file,
-    // transcoded file→file, appended to the archive, and deleted before the
-    // next one starts — so peak disk is a single stem regardless of how big
-    // the version is, and nothing about the audio touches the heap. This is
-    // what removed the old size ceiling: earlier revisions staged every stem
-    // (and then a full zip alongside them) inside the function's 512 MB /tmp.
+    // One stem at a time, streamed: R2 → ffmpeg (flacStreamToWav) → zip entry
+    // → response. Nothing about an audio stem touches /tmp or the heap, so
+    // neither the version's size nor a single stem's size is bounded by the
+    // function. (Only MIDI and the rare header-less FLAC still stage one file
+    // on disk.) Earlier revisions staged every stem — and then a full zip
+    // alongside them — inside the function's 512 MB /tmp.
     stage = 'zip'
     // Level 9 on PCM buys little and costs a lot of the function's CPU budget.
     const archive = archiver('zip', { zlib: { level: 1 } })
@@ -122,13 +122,19 @@ export async function GET(
      * the client downloads, so a slow connection throttles transcoding instead
      * of letting stems pile up on disk.
      */
-    const appendAndWait = (file: string, name: string) =>
+    const appendAndWait = (source: string | Readable, name: string) =>
       new Promise<void>((resolve, reject) => {
         const onEntry = () => { archive.off('error', onError); resolve() }
         const onError = (err: Error) => { archive.off('entry', onEntry); reject(err) }
         archive.once('entry', onEntry)
         archive.once('error', onError)
-        archive.file(file, { name })
+        if (typeof source === 'string') archive.file(source, { name })
+        else {
+          // A decode failure mid-stem must fail the archive, not end the
+          // entry early as if the stem were shorter.
+          source.once('error', onError)
+          archive.append(source, { name })
+        }
       })
 
     let aborted = false
@@ -154,10 +160,22 @@ export async function GET(
         if (isMidi) {
           await writeFile(staged, await downloadFromR2(track.storage_path as string))
         } else {
+          const key = track.storage_path as string
+          const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
+          // Normal path: R2 → ffmpeg → straight into the zip entry. Nothing on
+          // /tmp, so a 20-minute hi-res stem (~0.7–1.4 GB of WAV) is fine.
+          const info = parseFlacStreamInfo(await readR2ObjectHead(key, 42))
+          if (info && info.totalSamples > 0) {
+            const { body } = await getR2ObjectStream(key)
+            const { stream } = flacStreamToWav(body, info, delayMs)
+            await appendAndWait(Readable.from(stream), name)
+            continue
+          }
+          // FLAC without a sample count in its header: the file-based
+          // conversion can fix the WAV header after the fact. Bounded by /tmp.
           const flacPath = path.join(tmpDir, `${randomUUID()}.flac`)
           try {
-            await streamR2ObjectToFile(track.storage_path as string, flacPath)
-            const delayMs = startBarToMs(trackStartBar(track), bpm, timeSignature)
+            await streamR2ObjectToFile(key, flacPath)
             await flacFileToWavFile(flacPath, staged, delayMs)
           } finally {
             await rm(flacPath, { force: true }).catch(() => {})

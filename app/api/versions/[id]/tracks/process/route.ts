@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
-import { unlink, readFile } from 'fs/promises'
-import { createReadStream } from 'fs'
+import { unlink, writeFile } from 'fs/promises'
 import { supabase } from '@/lib/supabase'
 import { serverErrorResponse } from '@/lib/apiErrors'
-import { streamR2ObjectToFile, uploadToR2, deleteFromR2, r2Key } from '@/lib/r2'
-import { audioToFlacFromFile } from '@/lib/ffmpeg'
+import {
+  uploadToR2, deleteFromR2, r2Key, headR2Object, downloadFromR2,
+  getR2ObjectStream, readR2ObjectHead, sha256OfR2Object, uploadStreamToR2,
+} from '@/lib/r2'
+import { AudioTooLongError, encodeFlacStream, probeAudioFormat } from '@/lib/ffmpeg'
+import {
+  MAX_TRACK_UPLOAD_BYTES, MAX_TRACK_DURATION_MS, MAX_MIDI_UPLOAD_BYTES,
+  tooLargeMessage, tooLongMessage,
+} from '@/lib/uploadLimits'
 import { requireBandMemberForVersion } from '@/lib/supabase/server'
 import { logActivity, fmtFileSize } from '@/lib/activity'
 import { parseMidiFile, midiDurationMs } from '@/lib/midi'
@@ -16,7 +21,10 @@ import { pickTrackIconColor } from '@/lib/trackIcon'
 import { markPreviewMixStale } from '@/lib/previewMix'
 import { storageRefusal } from '@/lib/planGuards'
 import { isValidTempKey } from '@/lib/r2TempKey'
-import { findBandTrackByHash } from '@/lib/trackDedup'
+import { findBandTrackByHash, deleteObjectIfUnreferenced } from '@/lib/trackDedup'
+
+// Hash pass + streaming conversion of a long hi-res upload can take a while.
+export const maxDuration = 300
 
 // ── File type helpers (mirrors upload/route.ts) ────────────────────────────────
 
@@ -46,16 +54,25 @@ function isAudioFile(filename: string, mimetype: string): boolean {
   )
 }
 
-// ── Hash a file by streaming (no full load into memory) ───────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function hashFile(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256')
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex')))
-    stream.on('error', reject)
-  })
+/** Bytes of the upload's head handed to ffprobe — enough for any sane header (incl. big ID3 art). */
+const PROBE_HEAD_BYTES = 16 * 1024 * 1024
+
+/**
+ * Stream parameters (rate / channels / bit depth) of an upload, from its first
+ * PROBE_HEAD_BYTES only — the full file never touches /tmp. The duration this
+ * returns is an estimate for a file larger than the head (ffprobe sees a
+ * truncated file); the exact length is counted during the encode.
+ */
+async function probeR2AudioHead(key: string, size: number) {
+  const headPath = join(tmpdir(), `${randomUUID()}.probe`)
+  try {
+    await writeFile(headPath, await readR2ObjectHead(key, Math.min(size, PROBE_HEAD_BYTES)))
+    return await probeAudioFormat(headPath)
+  } finally {
+    await unlink(headPath).catch(() => {})
+  }
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -86,8 +103,14 @@ export async function POST(
     mimetype?: string
     midiStartBar?: number
     startBar?: number
-    /** Client-computed recording duration — used as fallback when ffprobe returns 0. */
+    /** Client-computed recording duration — only a fallback for dedup hits with no stored duration. */
     durationMs?: number
+    /**
+     * Optional SHA-256 (hex) of the file as the browser read it. When present
+     * it must match what R2 holds, or the upload was damaged in transit and is
+     * refused. (Sent by the multipart uploader.)
+     */
+    sha256?: string
     /** Preserve metadata when replacing an existing track. */
     name?: string
     position?: number
@@ -111,6 +134,7 @@ export async function POST(
     position: requestedPosition,
     iconColor: requestedIconColor,
     displayName: requestedDisplayName,
+    sha256: expectedSha256,
   } = body
 
   if (!tempKey || typeof tempKey !== 'string') {
@@ -150,26 +174,58 @@ export async function POST(
       ? requestedDisplayName.trim()
       : null
 
-  // Determine temp local path for streaming download
-  const ext = filename.match(/\.[^.]+$/)?.[0] ?? '.tmp'
-  const tempFilePath = join(tmpdir(), `${randomUUID()}${ext}`)
+  /** Refuse an upload and drop its temp object — nothing else will ever read it. */
+  const reject = (error: string, status: number) => {
+    deleteFromR2(tempKey).catch(err => console.warn('[process] temp R2 cleanup failed:', err))
+    return NextResponse.json({ error }, { status })
+  }
 
   try {
-    // ── Step 1: Download temp file from R2 to disk ─────────────────────────────
-    console.log('[process] downloading temp file from R2:', tempKey)
+    // ── Step 0: Real size gate ─────────────────────────────────────────────────
+    // The presigned PUT doesn't pin Content-Length, so the size presign
+    // checked was only what the browser declared. Check what R2 holds before
+    // pulling a byte of it.
+    let stored: { size: number } | null
     try {
-      await streamR2ObjectToFile(tempKey, tempFilePath)
+      stored = await headR2Object(tempKey)
     } catch (err) {
-      console.error('[process] R2 download failed:', err)
-      return NextResponse.json(
-        { error: 'Failed to retrieve uploaded file from storage' },
-        { status: 502 },
-      )
+      console.error('[process] R2 head failed:', err)
+      return NextResponse.json({ error: 'Failed to retrieve uploaded file from storage' }, { status: 502 })
+    }
+    if (!stored) {
+      return NextResponse.json({ error: 'Uploaded file not found — please upload it again' }, { status: 404 })
+    }
+    if (stored.size > MAX_TRACK_UPLOAD_BYTES) {
+      return reject(tooLargeMessage(), 413)
     }
 
-    // ── Step 2: Hash file by streaming ─────────────────────────────────────────
-    const fileHash = await hashFile(tempFilePath)
+    const isMidi = isMidiFile(filename, mimetype)
+    if (isMidi && stored.size > MAX_MIDI_UPLOAD_BYTES) {
+      return reject(tooLargeMessage(MAX_MIDI_UPLOAD_BYTES), 413)
+    }
+
+    // ── Step 1–2: Hash, streamed straight from R2 (nothing on disk) ───────────
+    // Hashing first (one extra read) means a dedup hit skips the conversion
+    // entirely, and the final object key is known before anything is written.
+    let fileHash: string
+    let midiBuffer: Buffer | null = null
+    try {
+      if (isMidi) {
+        midiBuffer = await downloadFromR2(tempKey)
+        fileHash = createHash('sha256').update(midiBuffer).digest('hex')
+      } else {
+        const h = await sha256OfR2Object(tempKey)
+        if (h.bytes !== stored.size) throw new Error(`temp object changed size ${stored.size} → ${h.bytes}`)
+        fileHash = h.sha256
+      }
+    } catch (err) {
+      console.error('[process] R2 read failed:', err)
+      return NextResponse.json({ error: 'Failed to retrieve uploaded file from storage' }, { status: 502 })
+    }
     console.log('[process] fileHash:', fileHash)
+    if (typeof expectedSha256 === 'string' && expectedSha256.toLowerCase() !== fileHash) {
+      return reject('The upload was damaged in transit — please upload the file again.', 422)
+    }
 
     // ── Step 3: Dedup check, scoped to THIS band ───────────────────────────────
     //
@@ -183,9 +239,8 @@ export async function POST(
 
     // ── Step 4: Convert / parse ────────────────────────────────────────────────
 
-    if (isMidiFile(filename, mimetype)) {
+    if (isMidi && midiBuffer) {
       // ── MIDI path ────────────────────────────────────────────────────────────
-      const midiBuffer = await readFile(tempFilePath)
       let midiData
       try {
         midiData = parseMidiFile(midiBuffer.buffer as ArrayBuffer)
@@ -263,7 +318,7 @@ export async function POST(
 
     } else if (isAudioFile(filename, mimetype)) {
       // ── Audio path ───────────────────────────────────────────────────────────
-      const inputFormat = AUDIO_FORMAT_MAP[mimetype] ?? (filename.endsWith('.mp3') ? 'mp3' : 'wav')
+      // Stored at the upload's native sample rate / bit depth (lib/ffmpeg.ts).
 
       let storagePath: string
       let fileSizeBytes: number
@@ -277,35 +332,59 @@ export async function POST(
         fileSizeBytes = existing.file_size_bytes ?? 0
         // Fill in duration from client if the stored value is missing
         if (!audioDurationMs && clientDurationMs) audioDurationMs = clientDurationMs
+        // Same bytes as an existing track, but that one may predate the length
+        // limit — the limit is about what the mixer can hold, so apply it here too.
+        if (audioDurationMs > MAX_TRACK_DURATION_MS) return reject(tooLongMessage(), 413)
         console.log('[process] dedup hit — reusing', storagePath)
       } else {
-        let flacBuffer: Buffer
+        // A band already at its ceiling is refused before the conversion runs.
+        const alreadyFull = await storageRefusal(access.project.band_id, 0)
+        if (alreadyFull) return alreadyFull
+
+        // Stream parameters from the first few MB. The duration here is only
+        // an estimate (exact for files under the probe size, low for larger
+        // ones), so it can refuse early but never wrongly.
+        const probe = await probeR2AudioHead(tempKey, stored.size)
+        if (!probe) return reject('Could not read that audio file', 400)
+        if (probe.durationMs > MAX_TRACK_DURATION_MS) return reject(tooLongMessage(), 413)
+        const { format } = probe
+
+        // ── Convert: R2 temp → ffmpeg decode → count → ffmpeg FLAC → R2 ──────
+        // No /tmp, constant memory; the object appears under storagePath only
+        // if every step succeeded (uploadStreamToR2 aborts otherwise).
+        storagePath = r2Key(version.project_id, fileHash)
+        let frames: number
         try {
-          console.log('[process] converting to FLAC from file:', tempFilePath)
-          const result = await audioToFlacFromFile(tempFilePath, inputFormat)
-          flacBuffer = result.flac
-          // ffprobe can return 0 for browser-recorded WAV (missing duration header);
-          // fall back to the client-reported duration in that case.
-          audioDurationMs = result.durationMs || clientDurationMs || 0
-          console.log('[process] FLAC done, size:', flacBuffer.byteLength, 'duration:', audioDurationMs, 'ms')
+          const { body: source } = await getR2ObjectStream(tempKey)
+          const enc = encodeFlacStream({
+            source,
+            decodeArgs: ['-i', 'pipe:0'],
+            format,
+            maxFrames: Math.floor((MAX_TRACK_DURATION_MS / 1000) * format.sampleRate),
+          })
+          const { bytes } = await uploadStreamToR2(storagePath, enc.stream, 'audio/flac', {
+            finalizeHead: enc.patchStreamInfo,
+          })
+          fileSizeBytes = bytes
+          frames = enc.frames()
         } catch (err) {
-          console.error('[process] ffmpeg conversion failed:', err)
+          if (err instanceof AudioTooLongError) return reject(tooLongMessage(), 413)
+          console.error('[process] streaming conversion failed:', err)
           return serverErrorResponse('versions/tracks/process', err, 'Could not convert that audio file')
         }
+        // Exact: counted samples at the stored rate.
+        audioDurationMs = Math.round((frames / format.sampleRate) * 1000)
+        console.log('[process] FLAC stored, size:', fileSizeBytes, 'duration:', audioDurationMs, 'ms', format)
 
         // Per-band storage ceiling, resolved from the band owner's plan plus
-        // this band's extra_storage addons. Never pooled across bands.
-        const overQuota = await storageRefusal(access.project.band_id, flacBuffer.byteLength)
-        if (overQuota) return overQuota
-
-        storagePath = r2Key(version.project_id, fileHash)
-        try {
-          await uploadToR2(storagePath, flacBuffer)
-        } catch (err) {
-          console.error('[process] R2 upload failed:', err)
-          return serverErrorResponse('versions/tracks/process', err, 'Could not store that file')
+        // this band's extra_storage addons. Never pooled across bands. The
+        // FLAC size is only known now, so on refusal undo the write.
+        const overQuota = await storageRefusal(access.project.band_id, fileSizeBytes)
+        if (overQuota) {
+          await deleteObjectIfUnreferenced(storagePath)
+          deleteFromR2(tempKey).catch(() => {})
+          return overQuota
         }
-        fileSizeBytes = flacBuffer.byteLength
       }
 
       // Clean up temp R2 object
@@ -369,7 +448,7 @@ export async function POST(
       )
     }
   } finally {
-    // Always clean up the local temp file
-    await unlink(tempFilePath).catch(() => {})
+    // Nothing on local disk to clean up: audio streams R2 → ffmpeg → R2, and
+    // the probe head is removed by probeR2AudioHead itself.
   }
 }

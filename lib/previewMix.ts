@@ -16,13 +16,12 @@
  */
 
 import { supabase } from '@/lib/supabase'
-import { downloadFromR2, uploadToR2 } from '@/lib/r2'
-import { ensureFfmpegConfigured } from '@/lib/ffmpeg'
+import { openR2Streams, uploadToR2 } from '@/lib/r2'
+import { mixStreamsToMp3 } from '@/lib/ffmpeg'
 import { startBarToMs } from '@/lib/trackMerge'
-import ffmpeg from 'fluent-ffmpeg'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import { writeFile, readFile, unlink } from 'fs/promises'
+import { readFile, unlink } from 'fs/promises'
 import path from 'path'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -152,23 +151,12 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
   }
 
   const id = randomUUID()
-  const tmpPaths: string[] = []
   const outPath = path.join(tmpdir(), `${id}-preview.mp3`)
 
   try {
-    ensureFfmpegConfigured()
-
-    // Download all audio buffers in parallel and write to temp files
-    const buffers = await Promise.all(
-      audioTracks.map(t => downloadFromR2(t.storage_path))
-    )
-
-    for (let i = 0; i < buffers.length; i++) {
-      const origExt = audioTracks[i].storage_path.split('.').pop()?.toLowerCase() ?? 'flac'
-      const p = path.join(tmpdir(), `${id}-track${i}.${origExt}`)
-      await writeFile(p, buffers[i])
-      tmpPaths.push(p)
-    }
+    // Stems are streamed from R2 straight into ffmpeg (one pipe per input) —
+    // nothing is buffered or staged on /tmp, so project size doesn't matter.
+    const inputs = await openR2Streams(audioTracks.map(t => t.storage_path))
 
     // Build ffmpeg adelay + amix filter graph
     //
@@ -203,20 +191,7 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
 
     const filterGraph = [...delayFilters, mixFilter].join(';')
 
-    await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg()
-      for (const p of tmpPaths) cmd.input(p)
-      cmd
-        .complexFilter(filterGraph)
-        .outputOptions(['-map', '[out]'])
-        .audioCodec('libmp3lame')
-        .audioBitrate('128k')
-        .audioChannels(2)
-        .output(outPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run()
-    })
+    await mixStreamsToMp3({ inputs, filterGraph, outPath, bitrate: '128k' })
 
     // Read mixed output and upload to R2
     const mixedBuffer = await readFile(outPath)
@@ -251,7 +226,6 @@ export async function recomputePreviewMix(projectId: string): Promise<void> {
 
     console.log(`[previewMix] recompute done for ${projectId}, status=${finalStatus}`)
   } finally {
-    for (const p of tmpPaths) await unlink(p).catch(() => {})
     await unlink(outPath).catch(() => {})
   }
 }
