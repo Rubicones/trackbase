@@ -10,7 +10,8 @@ export interface UploadItem {
   status: UploadStatus
   progress: number    // 0-100, meaningful during 'uploading'
   error?: string
-  tempKey?: string    // saved after presign; if set on error, only processing failed
+  tempKey?: string    // set once the file is fully on R2; if set on error, only processing failed
+  sha256?: string     // of the uploaded bytes, sent to process for the integrity check
 }
 
 export interface ActiveCommentInput {

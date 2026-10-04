@@ -126,10 +126,10 @@ import {
   TRACK_ROW_H,
   fmtTime,
   trackContentDurationMs,
-  uploadToR2Direct,
 } from './mixerUtils'
 import type { ActiveCommentInput, UploadItem } from './mixerTypes'
 import { MAX_TRACK_UPLOAD_BYTES, fmtUploadLimitBytes } from '@/lib/uploadLimits'
+import { uploadTrackFile, TrackUploadError } from '@/lib/trackUpload'
 // ─── Audio caches ─────────────────────────────────────────────────────────────
 // Imported from @/lib/waveformCache (shared with StructureEditor).
 
@@ -1912,30 +1912,27 @@ export default function ProjectPage() {
   async function uploadFile(upload: UploadItem) {
     if (!activeVersionId) return
     try {
-      // Step 1: Get presigned URL
+      // Step 1–2: Upload directly to R2 (lib/trackUpload.ts — single PUT for
+      // small files, parallel resumable parts for large ones; SHA-256 in the
+      // background). Resolves only once the whole file is on R2.
       updateUpload(upload.id, { status: 'presigning', error: undefined })
-
-      const presignRes = await fetch(`/api/versions/${activeVersionId}/tracks/presign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: upload.file.name,
-          fileSize: upload.file.size,
-          contentType: upload.file.type || 'application/octet-stream',
-        }),
+      let started = false
+      const { tempKey, sha256 } = await uploadTrackFile({
+        versionId: activeVersionId,
+        file: upload.file,
+        filename: upload.file.name,
+        onProgress: fraction => {
+          if (!started) { started = true; updateUpload(upload.id, { status: 'uploading', progress: 0 }) }
+          updateUpload(upload.id, { progress: Math.round(fraction * 100) })
+        },
+      }).catch(err => {
+        if (err instanceof TrackUploadError && err.body) {
+          throw new Error(describeApiError(err.body, 'Upload failed'))
+        }
+        throw err
       })
-      if (!presignRes.ok) {
-        const msg = describeApiError(await presignRes.json().catch(() => ({})), 'Failed to prepare upload')
-        throw new Error(msg)
-      }
-      const { presignedUrl, tempKey } = await presignRes.json()
-
-      // Step 2: Upload directly to R2
-      updateUpload(upload.id, { status: 'uploading', tempKey, progress: 0 })
-
-      await uploadToR2Direct(upload.file, presignedUrl, (percent) => {
-        updateUpload(upload.id, { progress: percent })
-      })
+      // Only now is the temp object complete — a retry may skip straight to processing.
+      updateUpload(upload.id, { tempKey, sha256 })
 
       // Step 3: Process on server (convert, hash, dedup, insert DB)
       updateUpload(upload.id, { status: 'processing', progress: 100 })
@@ -1946,6 +1943,7 @@ export default function ProjectPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tempKey,
+          sha256,
           originalFilename: upload.file.name,
           fileSize: upload.file.size,
           mimetype: upload.file.type || 'application/octet-stream',
@@ -2005,6 +2003,7 @@ export default function ProjectPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tempKey: upload.tempKey,
+          sha256: upload.sha256,
           originalFilename: upload.file.name,
           fileSize: upload.file.size,
           mimetype: upload.file.type || 'application/octet-stream',
@@ -2161,22 +2160,16 @@ function uploadFileType(file: File): 'audio' | 'midi' {
     setUploading(true)
     setReplacingTrackId(track.id)
     try {
-      const presignRes = await fetch(`/api/versions/${activeVersionId}/tracks/presign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          fileSize: file.size,
-          contentType: file.type || 'application/octet-stream',
-        }),
+      const { tempKey, sha256 } = await uploadTrackFile({
+        versionId: activeVersionId,
+        file,
+        filename: file.name,
+      }).catch(err => {
+        if (err instanceof TrackUploadError && err.body) {
+          throw new Error(describeApiError(err.body, 'Failed to prepare upload'))
+        }
+        throw err
       })
-      if (!presignRes.ok) {
-        const msg = describeApiError(await presignRes.json().catch(() => ({})), 'Failed to prepare upload')
-        throw new Error(msg)
-      }
-      const { presignedUrl, tempKey } = await presignRes.json()
-
-      await uploadToR2Direct(file, presignedUrl, () => {})
 
       const isMidi = file.name.endsWith('.mid') || file.name.endsWith('.midi')
       const startBar = track.start_bar ?? track.midi_start_bar ?? 0
@@ -2185,6 +2178,7 @@ function uploadFileType(file: File): 'audio' | 'midi' {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tempKey,
+          sha256,
           originalFilename: file.name,
           fileSize: file.size,
           mimetype: file.type || 'application/octet-stream',

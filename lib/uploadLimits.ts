@@ -16,7 +16,7 @@
  *   is what crashes a phone tab. A 200 MB MP3 can run for hours.
  */
 
-export const MAX_TRACK_UPLOAD_BYTES = 200 * 1024 * 1024 // 200 MB
+export const MAX_TRACK_UPLOAD_BYTES = 1024 * 1024 * 1024 // 1 GB
 
 export const MAX_TRACK_DURATION_MS = 20 * 60 * 1000 // 20 minutes
 

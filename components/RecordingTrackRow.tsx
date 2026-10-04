@@ -11,6 +11,7 @@ import { useMobileTimelineScroll, useRegisterTimelineScroll } from '@/components
 import { snapToPreviousBarSec, barDurationSec } from '@/lib/metronomeAudio'
 import { waveformBarsCache } from '@/lib/waveformCache'
 import { WaveformBarRow, downsampleWaveformBars } from '@/components/WaveformBars'
+import { uploadTrackFile } from '@/lib/trackUpload'
 
 const TRACK_LABEL_W = 192
 const TRACK_ROW_H = 96
@@ -1104,26 +1105,14 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
       const safeName = editName.replace(/[^a-z0-9\s-]/gi, '').trim() || 'New recording'
       const filename = `${safeName.replace(/\s+/g, '_')}_${Date.now()}.wav`
 
-      const presignRes = await fetch(`/api/versions/${versionId}/tracks/presign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, fileSize: wavBlob.size, contentType: 'audio/wav' }),
-      })
-      if (!presignRes.ok) throw new Error(`Presign ${presignRes.status}`)
-      const { presignedUrl, tempKey } = await presignRes.json()
-
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.upload.addEventListener('progress', e => {
-          if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100))
-        })
-        xhr.addEventListener('load', () =>
-          xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Upload ${xhr.status}`)),
-        )
-        xhr.addEventListener('error', () => reject(new Error('Network error')))
-        xhr.open('PUT', presignedUrl)
-        xhr.setRequestHeader('Content-Type', 'audio/wav')
-        xhr.send(wavBlob)
+      // Retried, part-wise for long takes, with an integrity hash
+      // (lib/trackUpload.ts) — a network blip no longer loses the take.
+      const { tempKey, sha256 } = await uploadTrackFile({
+        versionId,
+        file: wavBlob,
+        filename,
+        contentType: 'audio/wav',
+        onProgress: f => setUploadProgress(Math.round(f * 100)),
       })
 
       const processRes = await fetch(`/api/versions/${versionId}/tracks/process`, {
@@ -1131,6 +1120,7 @@ export const RecordingTrackRow = memo(function RecordingTrackRow({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tempKey,
+          sha256,
           originalFilename: filename,
           fileSize: wavBlob.size,
           mimetype: 'audio/wav',

@@ -8,6 +8,7 @@ import {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListPartsCommand,
 } from '@aws-sdk/client-s3'
 import type { GetObjectCommandInput } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -123,7 +124,8 @@ export function isValidFileHash(hash: unknown): hash is string {
  *   }
  * ]
  * Range/Content-Range are for ranged direct playback reads
- * (lib/trackAudioFetch.ts); ETag for browser multipart uploads.
+ * (lib/trackAudioFetch.ts). ETag is not required: browser multipart uploads
+ * are completed server-side from R2's own part listing (tracks/multipart).
  */
 /**
  * Generate a presigned GET URL so the browser can download a file directly
@@ -351,6 +353,70 @@ export async function uploadStreamToR2(
     }
     throw err
   }
+}
+
+// ── Browser multipart uploads (tracks/multipart) ─────────────────────────────
+
+export async function createMultipartUpload(key: string, contentType: string): Promise<string> {
+  const res = await client.send(
+    new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
+  )
+  if (!res.UploadId) throw new Error('R2 did not return an UploadId')
+  return res.UploadId
+}
+
+/** Presigned PUT for one part. Nothing but the host is signed, so the browser sends the bytes as-is. */
+export async function presignUploadPart(
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  expiresIn = 3600,
+): Promise<string> {
+  return getSignedUrl(
+    client,
+    new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+    { expiresIn },
+  )
+}
+
+export interface UploadedPart { PartNumber: number; ETag: string; Size: number }
+
+/**
+ * Every part R2 has received for an upload (paginated), or null if the upload
+ * doesn't exist (completed, aborted, or expired by the lifecycle rule).
+ */
+export async function listUploadedParts(key: string, uploadId: string): Promise<UploadedPart[] | null> {
+  const parts: UploadedPart[] = []
+  let marker: string | undefined
+  try {
+    for (;;) {
+      const res = await client.send(new ListPartsCommand({
+        Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumberMarker: marker, MaxParts: 1000,
+      }))
+      for (const p of res.Parts ?? []) {
+        if (p.PartNumber && p.ETag) parts.push({ PartNumber: p.PartNumber, ETag: p.ETag, Size: p.Size ?? 0 })
+      }
+      if (!res.IsTruncated) break
+      marker = res.NextPartNumberMarker
+      if (!marker) break
+    }
+  } catch (err) {
+    const e = err as { name?: string; $metadata?: { httpStatusCode?: number } }
+    if (e?.name === 'NoSuchUpload' || e?.$metadata?.httpStatusCode === 404) return null
+    throw err
+  }
+  return parts.sort((a, b) => a.PartNumber - b.PartNumber)
+}
+
+export async function completeMultipartUpload(key: string, uploadId: string, parts: UploadedPart[]): Promise<void> {
+  await client.send(new CompleteMultipartUploadCommand({
+    Bucket: BUCKET, Key: key, UploadId: uploadId,
+    MultipartUpload: { Parts: parts.map(p => ({ PartNumber: p.PartNumber, ETag: p.ETag })) },
+  }))
+}
+
+export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  await client.send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }))
 }
 
 /** Stream an object into a hash (or any sink) without storing it. Returns the byte count. */

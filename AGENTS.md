@@ -414,10 +414,31 @@ rate; pinning 22050 previously caused glitchy monitoring). Metronome:
 context.
 
 ### Upload pipeline
-Preferred: `POST /api/versions/[id]/tracks/presign` (size limit from
-`lib/uploadLimits.ts`; wav/mp3/midi)
-→ browser PUTs directly to R2 at `temp/{uuid}-{filename}` (R2 bucket needs
-CORS, see comment in `lib/r2.ts`) → `POST /api/versions/[id]/tracks/process`
+The browser side is **`uploadTrackFile()` (`lib/trackUpload.ts`)** — used by
+the mixer's upload queue, track replace, and recordings; nothing else should
+PUT to R2 by hand. It puts the file at `temp/{uuid}-{filename}` (R2 bucket
+needs CORS, see comment in `lib/r2.ts`) and returns `{ tempKey, sha256 }`:
+- ≤16 MB (`SINGLE_PUT_MAX_BYTES`, `lib/multipartSizing.ts`): one presigned PUT
+  via `POST /api/versions/[id]/tracks/presign` (it returns the `contentType` it
+  signed — send exactly that), retried with a fresh URL.
+- Larger: R2 multipart via `POST /api/versions/[id]/tracks/multipart`
+  (`action`: create / sign / list / complete / abort). Server picks the part
+  size (≥16 MB, equal parts — R2 requirement); the client sends 4 parts in
+  parallel, each retried with backoff (offline → waits for `online`; stalls
+  >60 s are cut; 403 → re-signed). Resume: upload identity is kept in
+  localStorage under the file fingerprint (version + name + size +
+  lastModified, ≤20 h); re-picking the same file lists R2's parts and sends
+  only the missing ones. `complete` ignores the client's part list: it lists
+  what R2 holds, verifies parts 1..N at their exact sizes (409
+  `missingParts` → client re-sends those), then completes — so a partial
+  object can never exist, and the browser never needs the ETag header.
+  One failing part stops the other workers.
+- SHA-256 is computed in the background (`lib/sha256.ts`, incremental, no
+  dependency) and sent to `process`, which refuses a mismatch (422).
+- `UploadItem.tempKey` is set only after the file is fully on R2, so the
+  retry button's "processing only" path is never taken for a half upload.
+Validation for both presign and multipart is in `lib/trackUploadPolicy.ts`.
+→ `POST /api/versions/[id]/tracks/process`
 validates the temp key against `lib/r2TempKey.ts` **exactly**, HEADs it (real
 size gate), SHA-hashes it **streamed from R2** (`sha256OfR2Object`; optional
 client `sha256` in the body must match or the upload is refused as damaged),
@@ -441,7 +462,7 @@ quota** (`lib/bandStorage.ts`).
 
 **Upload limits** live in `lib/uploadLimits.ts` and nowhere else (browser
 pre-check, presign, process, legacy upload all import them):
-`MAX_TRACK_UPLOAD_BYTES` (200 MB) and `MAX_TRACK_DURATION_MS` (20 min — this
+`MAX_TRACK_UPLOAD_BYTES` (1 GB) and `MAX_TRACK_DURATION_MS` (20 min — this
 one protects the mixer, which decodes every track whole at ~23 MB RAM per
 stereo minute; a 200 MB MP3 can run for hours). Presign can only check the
 size the browser *declares* — a presigned PUT doesn't pin Content-Length — so
@@ -499,8 +520,8 @@ never get a partial file.
 
 **R2 bucket config this relies on** (Cloudflare dashboard, not code):
 - CORS: `AllowedMethods` PUT, GET; `AllowedHeaders` `Content-Type`, `Range`;
-  `ExposeHeaders` `Content-Range`, `Content-Length`, `ETag`; origins prod +
-  localhost. Without `Range`/`Content-Range`, direct reads fail and
+  `ExposeHeaders` `Content-Range`, `Content-Length` (`ETag` harmless, not
+  needed); origins prod + localhost. Without `Range`/`Content-Range`, direct reads fail and
   everything silently runs through the proxy fallback — correct but slower,
   so check the console for `[trackAudioFetch] direct R2 read failed`.
 - Lifecycle rules: `cache/` → delete after 7 days; `temp/` → delete after

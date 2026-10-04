@@ -4,41 +4,6 @@ import { sixteenthDuration } from '@/lib/midi'
 import type { Track } from '@/lib/types'
 
 
-/**
- * Upload a File directly to a presigned R2 URL via XHR.
- * Uses XHR (not fetch) because fetch doesn't expose upload progress.
- */
-export function uploadToR2Direct(
-  file: File,
-  presignedUrl: string,
-  onProgress: (percent: number) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-    }
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve()
-      } else {
-        reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
-      }
-    }
-
-    xhr.onerror = () => reject(new Error('Network error during upload'))
-    xhr.ontimeout = () => reject(new Error('Upload timed out'))
-
-    xhr.open('PUT', presignedUrl)
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-    xhr.timeout = 30 * 60 * 1000 // 30 min for very large files
-    xhr.send(file)
-  })
-}
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function fmtSize(b: number | null) {

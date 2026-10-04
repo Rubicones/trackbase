@@ -1,7 +1,7 @@
 /**
  * R2 temporary upload keys — format must match presign issuers exactly.
  *
- * Track presign:    temp/{uuid}-{sanitizedFilename}           (suffix max 100)
+ * Track upload:     temp/{uuid}-{sanitizedFilename}           (suffix max 100; presign + multipart)
  * Resource presign: temp/resources/{uuid}-{sanitizedFilename}  (suffix max 120)
  *
  * Process routes MUST reject any key that does not match before touching R2.
@@ -13,7 +13,7 @@ const UUID_V4 =
 
 const SAFE_FILENAME = '[a-zA-Z0-9._-]'
 
-/** Max sanitized filename length in tracks/presign/route.ts */
+/** Max sanitized filename length in lib/trackUploadPolicy.ts (newTrackTempKey) */
 export const TRACK_TEMP_FILENAME_MAX = 100
 
 /** Max sanitized filename length in lib/resource-presign.ts */
